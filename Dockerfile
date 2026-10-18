@@ -7,7 +7,7 @@
 #     Refresh with: docker buildx imagetools inspect rust:1.97.1-slim-bookworm
 #     (Dependabot's docker ecosystem bumps both tag and digest.)
 # ---------------------------------------------------------------------------
-FROM rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS builder
+FROM rust:1.99.0-slim-bookworm@sha256:2c3a22f0a5533ea2dd5a16627bc841228151faa2d4de2644ac9987e4a2f1f2fa AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
