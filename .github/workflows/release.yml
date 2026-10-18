@@ -1,8 +1,9 @@
 name: Release
 
 on:
+  # develop -> :edge, main -> :main, v* tags -> :X.Y.Z, :X.Y and :latest.
   push:
-    branches: [main]
+    branches: [main, develop]
     tags: ["v*"]
 
 # Never cancel a publish half-way through.
@@ -46,7 +47,8 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=edge,branch=main
+            type=edge,branch=develop
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,format=long
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

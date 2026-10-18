@@ -279,17 +279,21 @@ The scene is serialised with `SceneFile` (`format: "observation-scene"`, `versio
 
 ### Workflows
 
-All five workflows set `permissions: {}` at the top and grant each job only what it needs. Every action is pinned to a full commit SHA, and checkouts use `persist-credentials: false`.
+All six workflows set `permissions: {}` at the top and grant each job only what it needs. Every action is pinned to a full commit SHA, and checkouts use `persist-credentials: false`.
 
 | Workflow | Triggers | What it does |
 | --- | --- | --- |
-| `ci.yml` | every push and pull request | `cargo fmt --check`; clippy with `-D warnings` for the native workspace and, separately, the client for `wasm32-unknown-unknown`; tests; the design-token guard; a release `trunk build` with a size report and `dist/` artifact; a Docker build with a smoke test (image runs as 65532, `/healthz` answers, `dist/index.html` is present) |
-| `security.yml` | push to `main`, pull requests, daily, manual | `cargo-deny` (advisories, bans, licences, sources); `cargo-audit`, which on the scheduled run opens issues for new advisories; Trivy filesystem scan (vulnerabilities, Dockerfile misconfiguration, secrets) and image scan, failing on fixable critical or high findings and uploading SARIF |
-| `codeql.yml` | push and pull request to `main`, weekly | CodeQL for `rust` and for the workflows themselves (`actions`) |
-| `scorecard.yml` | push to `main`, weekly, branch-protection changes | OpenSSF Scorecard, results published and uploaded to code scanning |
-| `release.yml` | push to `main`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation` with tags `edge`, the full commit SHA, and semver tags; SLSA provenance (`mode=max`), an SBOM, and a GitHub build-provenance attestation |
+| `ci.yml` | push to `main`, `develop`, `release/**`, `hotfix/**`; every pull request | `cargo fmt --check`; clippy with `-D warnings` for the native workspace and, separately, the client for `wasm32-unknown-unknown`; tests; the design-token guard; a release `trunk build` with a size report and `dist/` artifact; a Docker build with a smoke test (image runs as 65532, `/healthz` answers, `dist/index.html` is present) |
+| `security.yml` | push to `main` and `develop`, pull requests, daily, manual | `cargo-deny` (advisories, bans, licences, sources); `cargo-audit`, which on the scheduled run opens issues for new advisories; Trivy filesystem scan (vulnerabilities, Dockerfile misconfiguration, secrets) and image scan, failing on fixable critical or high findings and uploading SARIF |
+| `codeql.yml` | push and pull request to `main` and `develop`, weekly | CodeQL for `rust` and for the workflows themselves (`actions`) |
+| `scorecard.yml` | push to `develop` (the default branch), weekly, branch-protection changes | OpenSSF Scorecard, results published and uploaded to code scanning |
+| `release.yml` | push to `main` and `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `edge` from `develop`, `main` from `main`, semver tags and `latest` from `v*` tags, plus the full commit SHA; SLSA provenance (`mode=max`), an SBOM, and a GitHub build-provenance attestation |
 
-**Dependabot** proposes weekly updates for Cargo, GitHub Actions and Docker, grouped by minor and patch, after a 7-day cooldown that gives the community time to catch a bad release (security updates are not delayed). Dependabot alerts and security updates are repository settings, not part of the config file.
+| `branch-policy.yml` | pull requests | Fails PRs into `main` unless they come from a same-repo `release/*` or `hotfix/*` branch (git-flow) |
+
+Branching, rulesets and the required checks are described in [CONTRIBUTING.md](../CONTRIBUTING.md); the rulesets themselves are versioned in `.github/rulesets/`.
+
+**Dependabot** proposes weekly updates against `develop` for Cargo, GitHub Actions and Docker, grouped by minor and patch, after a 7-day cooldown that gives the community time to catch a bad release (security updates are not delayed). Dependabot alerts and security updates are repository settings, not part of the config file.
 
 **Trivy.** The Trivy binary is downloaded from a pinned GitHub release and verified against a pinned SHA-256 instead of using `aquasecurity/trivy-action`, whose tags were compromised in March 2026 (CVE-2026-33634). Trunk 0.21.14 is installed the same way: a pinned release tarball verified against its SHA-256 in CI (x86_64) and in the Dockerfile (amd64 and arm64).
 

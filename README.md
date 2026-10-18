@@ -63,6 +63,7 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 - [Using the app](docs/usage.md)
 - [Architecture and design](docs/design.md), including configuration, security and testing
 - [Camera catalogue](docs/camera-catalog.md): sources and how to add a model
+- [Contributing](CONTRIBUTING.md): git-flow branching, rulesets and required checks
 - [Security policy](SECURITY.md): supported versions and how to report a vulnerability
 
 ## Copyright and licensing
