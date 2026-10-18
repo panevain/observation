@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - run: cargo fmt --all --check
+
+  clippy-native:
+    name: clippy (native workspace)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: native
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked --workspace --exclude observation-client --all-targets -- -D warnings
+
+  clippy-wasm:
+    name: clippy (wasm client)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: wasm-clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      # Bevy's native audio/input backends need these headers to compile the
+      # client's unit tests on Linux.
+      - name: Install system libraries (Bevy)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Test (core + server)
+        run: cargo test --locked --workspace --exclude observation-client
+      - name: Test (client, native unit tests)
+        run: |
+          if [ -f crates/observation-client/src/lib.rs ]; then
+            cargo test --locked -p observation-client --lib
+          else
+            echo "observation-client has no library target; skipping."
+          fi
+
+  tokens:
+    name: design tokens
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/check-design-tokens.sh
+
+  wasm:
+    name: wasm (trunk build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      TRUNK_VERSION: "0.21.14"
+      # sha256 of trunk-x86_64-unknown-linux-gnu.tar.gz, from
+      # https://github.com/trunk-rs/trunk/releases/tag/v0.21.14
+      TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: wasm-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install trunk (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          archive="trunk-x86_64-unknown-linux-gnu.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/${archive}"
+          echo "${TRUNK_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/trunk-bin"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/trunk-bin" trunk
+          echo "${RUNNER_TEMP}/trunk-bin" >> "${GITHUB_PATH}"
+      - name: Install brotli (for the size report)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends brotli
+      - name: trunk build --release
+        run: |
+          trunk --version
+          trunk build --release --locked
+      - name: Wasm size report
+        run: |
+          set -euo pipefail
+          {
+            echo "### Wasm size report"
+            echo
+            echo "| file | raw | gzip -9 | brotli -q 11 |"
+            echo "| --- | ---: | ---: | ---: |"
+            found=0
+            for f in dist/*.wasm; do
+              [ -e "$f" ] || continue
+              found=1
+              raw=$(stat -c %s "$f")
+              gz=$(gzip -9 -c "$f" | wc -c)
+              if command -v brotli >/dev/null 2>&1; then
+                br="$(brotli -q 11 -c "$f" | wc -c | awk '{printf "%.2f MiB", $1/1048576}')"
+              else
+                br="n/a"
+              fi
+              printf '| `%s` | %s | %s | %s |\n' "$(basename "$f")" \
+                "$(awk -v n="$raw" 'BEGIN{printf "%.2f MiB", n/1048576}')" \
+                "$(awk -v n="$gz" 'BEGIN{printf "%.2f MiB", n/1048576}')" \
+                "$br"
+            done
+            if [ "$found" -eq 0 ]; then
+              echo "| _no .wasm files in dist/_ | | | |"
+            fi
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  docker:
+    name: docker (build + smoke test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      IMAGE: observation:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha,scope=ci-image
+          cache-to: type=gha,scope=ci-image,mode=max
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          user="$(docker image inspect --format '{{.Config.User}}' "${IMAGE}")"
+          echo "image user: ${user}"
+          case "${user}" in 65532:65532|65532|nonroot|nonroot:nonroot) ;; *) echo "image must run as nonroot" >&2; exit 1 ;; esac
+
+          docker run -d --name obs -p 8080:8080 "${IMAGE}"
+          trap 'docker logs obs || true; docker rm -f obs >/dev/null 2>&1 || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8080/healthz; then
+              echo
+              echo "healthz OK after ${i} attempt(s)"
+              break
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' obs)" != "true" ]; then
+              echo "container exited early" >&2
+              exit 1
+            fi
+            if [ "${i}" -eq 30 ]; then
+              echo "healthz did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # The static bundle must have been copied into the image.
+          docker cp obs:/app/dist/index.html "${RUNNER_TEMP}/index.html"
+          grep -qi '<html' "${RUNNER_TEMP}/index.html"

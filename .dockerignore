@@ -1,0 +1,17 @@
+# Build outputs and caches
+target
+**/target
+dist
+cache
+node_modules
+
+# VCS / CI / editor
+.git
+.github
+.gitignore
+.dockerignore
+*.swp
+.DS_Store
+
+# Not needed in the image (docs/ and *.md are kept: crates may include_str! them)
+Dockerfile
