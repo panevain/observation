@@ -98,6 +98,11 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     egui.auto_create_primary_context = false;
     commands.spawn((
         bevy_egui::PrimaryEguiContext,
+        // Hyperlinks (attribution, spec sheets) open in a new tab, keeping the app.
+        bevy_egui::EguiContextSettings {
+            default_open_url_target: Some("_blank".to_owned()),
+            ..default()
+        },
         Camera2d,
         bevy::camera::visibility::RenderLayers::none(),
         Camera {
