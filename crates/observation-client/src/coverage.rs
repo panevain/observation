@@ -1,0 +1,205 @@
+//! Incremental coverage computation and overlay painting.
+//!
+//! Each camera's visibility is cached under a key derived from everything
+//! that affects it, so moving one camera only recomputes that camera.
+
+use crate::state::{Area, Models, OverlayMode, Scene, UiState};
+use crate::theme::Tokens;
+use crate::world::{CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
+use bevy::platform::collections::HashMap;
+use bevy::prelude::*;
+use observation_core::camera::{CameraModel, CameraPlacement};
+use observation_core::coverage::{
+    CoverageCounts, CoverageParams, CoverageStats, Visibility as CellVisibility,
+};
+use observation_core::frustum::ViewCone;
+use std::hash::{Hash, Hasher};
+
+#[derive(Default, Resource)]
+pub struct CoverageState {
+    cams: HashMap<u32, (u64, CellVisibility)>,
+    counts: Option<CoverageCounts>,
+    pub stats: CoverageStats,
+    /// Range used for each camera (for the inspector), metres.
+    pub ranges: HashMap<u32, f32>,
+    paint: bool,
+    painted_mode: Option<(OverlayMode, bool)>,
+}
+
+impl CoverageState {
+    pub fn visibility(&self, id: u32) -> Option<&CellVisibility> {
+        self.cams.get(&id).map(|(_, v)| v)
+    }
+}
+
+pub struct CoveragePlugin;
+
+impl Plugin for CoveragePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<CoverageState>()
+            .add_systems(Update, (update_coverage, paint_overlay).chain());
+    }
+}
+
+fn key(c: &CameraPlacement, m: &CameraModel, p: &CoverageParams) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for v in c
+        .position
+        .iter()
+        .chain([&c.yaw_deg, &c.pitch_deg, &c.roll_deg])
+    {
+        v.to_bits().hash(&mut h);
+    }
+    (
+        m.hfov_deg.to_bits(),
+        m.vfov_deg.to_bits(),
+        m.resolution,
+        m.ir_range_m.map(f32::to_bits),
+    )
+        .hash(&mut h);
+    (p.dori, p.lighting, p.subject_height_m.to_bits()).hash(&mut h);
+    h.finish()
+}
+
+/// The view cone used for analysis and drawing.
+pub fn cone_for(c: &CameraPlacement, m: &CameraModel, p: &CoverageParams) -> ViewCone {
+    ViewCone::new(c, m, m.effective_range_m(p.dori, p.lighting))
+}
+
+fn update_coverage(
+    scene: Res<Scene>,
+    models: Res<Models>,
+    area: Option<Res<Area>>,
+    mut state: ResMut<CoverageState>,
+) {
+    let Some(area) = area else { return };
+    if !scene.is_changed() && !models.is_changed() && !area.is_changed() && state.counts.is_some() {
+        return;
+    }
+    let layers = &area.layers;
+    let state = &mut *state;
+    let counts = state
+        .counts
+        .get_or_insert_with(|| CoverageCounts::new(layers));
+    let mut changed = false;
+
+    let live: Vec<u32> = scene
+        .cameras
+        .iter()
+        .filter(|c| c.enabled)
+        .map(|c| c.id)
+        .collect();
+    state.cams.retain(|id, (_, vis)| {
+        let keep = live.contains(id);
+        if !keep {
+            counts.remove(vis);
+            changed = true;
+        }
+        keep
+    });
+    state.ranges.clear();
+    for c in scene.cameras.iter().filter(|c| c.enabled) {
+        let Some(m) = models.get(&c.model_id) else {
+            continue;
+        };
+        state.ranges.insert(
+            c.id,
+            m.effective_range_m(scene.params.dori, scene.params.lighting),
+        );
+        let k = key(c, m, &scene.params);
+        if state.cams.get(&c.id).is_some_and(|(old, _)| *old == k) {
+            continue;
+        }
+        let vis = layers.visibility(
+            &cone_for(c, m, &scene.params),
+            scene.params.subject_height_m,
+        );
+        if let Some((_, old)) = state.cams.insert(c.id, (k, vis)) {
+            counts.remove(&old);
+        }
+        if let Some((_, new)) = state.cams.get(&c.id) {
+            counts.add(new);
+        }
+        changed = true;
+    }
+    if changed || state.painted_mode.is_none() {
+        state.stats = CoverageStats::compute(layers, counts);
+        state.paint = true;
+    }
+}
+
+fn paint_overlay(
+    mut state: ResMut<CoverageState>,
+    ui: Res<UiState>,
+    scene: Res<Scene>,
+    tokens: Res<Tokens>,
+    overlay: Option<Res<Overlay>>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut facade_vis: Query<&mut Visibility, With<FacadeOverlay>>,
+) {
+    let Some(overlay) = overlay else { return };
+    for mut v in &mut facade_vis {
+        let want = if ui.show_facades {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    let mode = (ui.overlay, ui.show_facades);
+    if !state.paint && state.painted_mode == Some(mode) && !overlay.is_changed() {
+        return;
+    }
+    let Some(counts) = &state.counts else { return };
+    let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match ui.overlay {
+        OverlayMode::Overlap => (
+            counts
+                .ground
+                .iter()
+                .map(|&c| {
+                    if c == 0 {
+                        CLEAR
+                    } else {
+                        texel(tokens.coverage_color(c))
+                    }
+                })
+                .collect(),
+            counts
+                .facade
+                .iter()
+                .map(|&c| {
+                    if c == 0 {
+                        CLEAR
+                    } else {
+                        texel(tokens.coverage_color(c))
+                    }
+                })
+                .collect(),
+        ),
+        OverlayMode::PerCamera => (
+            vec![CLEAR; counts.ground.len()],
+            vec![CLEAR; counts.facade.len()],
+        ),
+    };
+    if ui.overlay == OverlayMode::PerCamera {
+        for c in &scene.cameras {
+            let Some(vis) = state.visibility(c.id) else {
+                continue;
+            };
+            let mut col = texel(tokens.camera_color(c.color_index));
+            col[3] = 150;
+            for &i in &vis.ground {
+                ground[i as usize] = col;
+            }
+            for &i in &vis.facade {
+                facade[i as usize] = col;
+            }
+        }
+    }
+    write_overlay(&overlay, &mut images, &mut meshes, &ground, &facade);
+    state.paint = false;
+    state.painted_mode = Some(mode);
+}
