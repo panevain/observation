@@ -278,9 +278,23 @@ pub struct OverpassClient {
     client: reqwest::Client,
     url: String,
     in_flight: Semaphore,
+    /// Requests waiting for `in_flight`; bounded so distinct boxes can't build a backlog.
+    waiting: std::sync::atomic::AtomicUsize,
     cooldown_until: Mutex<Option<Instant>>,
     retry_wait: Duration,
     cooldown: Duration,
+}
+
+/// Most Overpass requests allowed to queue behind the one in flight.
+const MAX_WAITING: usize = 3;
+
+/// Decrements the waiting counter when dropped.
+struct WaitGuard<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for WaitGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl OverpassClient {
@@ -290,6 +304,7 @@ impl OverpassClient {
             client,
             url: config.overpass_url.clone(),
             in_flight: Semaphore::new(1),
+            waiting: std::sync::atomic::AtomicUsize::new(0),
             cooldown_until: Mutex::new(None),
             retry_wait: config.overpass_retry_wait,
             cooldown: config.overpass_cooldown,
@@ -299,11 +314,22 @@ impl OverpassClient {
     /// Fetches and parses buildings and roads for `bbox`.
     pub async fn fetch(&self, bbox: &BBox) -> Result<OsmData, ApiError> {
         self.check_cooldown()?;
+        let guard = WaitGuard(&self.waiting);
+        if self
+            .waiting
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            >= MAX_WAITING
+        {
+            return Err(ApiError::RateLimited {
+                retry_after_secs: 10,
+            });
+        }
         let _permit = self
             .in_flight
             .acquire()
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
+        drop(guard);
         // We may have queued behind a request that got us rate limited.
         self.check_cooldown()?;
 

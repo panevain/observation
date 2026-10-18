@@ -48,9 +48,11 @@ For a level with density `ppm`:
 range = width_px / (2 * ppm * tan(hfov / 2))      capped at 100 m
 ```
 
-- **Night:** the range is the smaller of the DORI range and `ir_range_m`. A model
-  with `ir_range_m: None` has zero modelled range at night, because the catalog
-  never guesses a night-vision distance.
+- **Night:** the range is the smaller of the DORI range and `ir_range_m`. The
+  catalog never guesses a night-vision distance: for a model with
+  `ir_range_m: None` the app assumes 7.5 m (≈25 ft, typical of consumer IR LEDs,
+  `ASSUMED_IR_RANGE_M` in `observation-core`) and labels the value as assumed
+  in the inspector.
 - **Wide lenses:** the model is rectilinear, so FOVs above 170 degrees are clamped
   to 170. Fisheye doorbells (150 degrees and wider) are therefore approximations,
   and the centre-of-frame pixel density overstates range toward the edges.

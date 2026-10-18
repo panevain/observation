@@ -109,7 +109,7 @@ const FONT: TypeScale = TypeScale {
 };
 const LAYOUT: Layout = Layout {
     hit_target: 32.0,
-    toolbar_width: 64.0,
+    toolbar_width: 76.0,
     inspector_width: 320.0,
     topbar_height: 48.0,
     statusbar_height: 28.0,

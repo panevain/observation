@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use axum::body::Bytes;
-use observation_core::bundle::BUNDLE_MAGIC;
+use observation_core::bundle::{BUNDLE_MAGIC, BUNDLE_VERSION};
 use observation_core::tiles::TileId;
 use serde::{Deserialize, Serialize};
 
@@ -83,8 +83,10 @@ impl Cache {
         let path = self.bundle_path(key)?;
         let meta = tokio::fs::metadata(&path).await.ok()?;
         let bytes = tokio::fs::read(&path).await.ok()?;
-        if !bytes.starts_with(&BUNDLE_MAGIC) {
-            tracing::warn!(key, "ignoring cached bundle with bad magic");
+        if !bytes.starts_with(&BUNDLE_MAGIC)
+            || bytes.get(4..6) != Some(&BUNDLE_VERSION.to_le_bytes()[..])
+        {
+            tracing::warn!(key, "ignoring cached bundle with bad magic or old version");
             return None;
         }
         let age = meta

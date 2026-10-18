@@ -174,6 +174,7 @@ pub fn window(
     t: &Tokens,
     p: &mut MapPicker,
     tile_ids: &HashMap<TileId, egui::TextureId>,
+    attribution: &str,
     open: &mut bool,
 ) -> Option<BBox> {
     let mut result = None;
@@ -295,8 +296,7 @@ pub fn window(
                 );
             }
             // Attribution (required by the tile policy).
-            let attr = "© OpenStreetMap contributors";
-            let galley = painter.layout_no_wrap(attr.to_owned(), egui::FontId::proportional(t.font.caption), t.text);
+            let galley = painter.layout_no_wrap(attribution.to_owned(), egui::FontId::proportional(t.font.caption), t.text);
             let ar = Rect::from_min_size(rect.right_bottom() - galley.size() - vec2(t.space.sm, t.space.xs) * 2.0, galley.size() + vec2(t.space.sm, t.space.xs) * 2.0);
             painter.rect_filled(ar, CornerRadius::same(t.radius.sm), t.surface_raised.gamma_multiply(0.85));
             painter.galley(ar.min + vec2(t.space.sm, t.space.xs), galley, t.text);

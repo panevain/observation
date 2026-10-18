@@ -82,9 +82,26 @@ impl Plugin for InputPlugin {
     }
 }
 
-fn spawn_camera(mut commands: Commands) {
+fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSettings>) {
     let orbit = OrbitCamera::default();
     commands.spawn((Camera3d::default(), Msaa::Sample4, orbit.transform(), orbit));
+    // egui gets its own full-window overlay camera so that shrinking the 3D
+    // viewport to the space between panels doesn't clip the UI.
+    egui.auto_create_primary_context = false;
+    commands.spawn((
+        bevy_egui::PrimaryEguiContext,
+        Camera2d,
+        bevy::camera::visibility::RenderLayers::none(),
+        Camera {
+            order: 1,
+            output_mode: bevy::camera::CameraOutputMode::Write {
+                blend_state: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            ..default()
+        },
+    ));
 }
 
 fn apply_orbit(mut q: Query<(&OrbitCamera, &mut Transform), Changed<OrbitCamera>>) {

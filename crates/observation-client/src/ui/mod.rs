@@ -58,6 +58,7 @@ pub struct UiData<'w> {
     pub loading: Res<'w, Loading>,
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
+    pub config: Res<'w, crate::net::ServerConfig>,
 }
 
 fn draw_ui(
@@ -119,9 +120,11 @@ fn draw_ui(
         .response
         .rect
         .width();
+    // Keep at least ~60% of the width for the 3D view on portrait tablets.
+    let max_inspector = (window.width() * 0.4).clamp(260.0, 440.0);
     let right = egui::Panel::right("inspector")
-        .default_size(t.layout.inspector_width)
-        .size_range(280.0..=440.0)
+        .default_size(t.layout.inspector_width.min(max_inspector))
+        .size_range(260.0..=max_inspector)
         .resizable(true)
         .frame(t.panel())
         .show(&mut root, |ui| inspector::inspector(ui, &mut d))
@@ -164,8 +167,14 @@ fn draw_ui(
         overlays::help(&ctx, &t, &mut d.ui);
     }
     if d.ui.map_open
-        && let Some(bbox) =
-            map_picker::window(&ctx, &t, &mut d.picker, &tile_ids, &mut d.ui.map_open)
+        && let Some(bbox) = map_picker::window(
+            &ctx,
+            &t,
+            &mut d.picker,
+            &tile_ids,
+            &d.config.tile_attribution,
+            &mut d.ui.map_open,
+        )
     {
         load.write(LoadArea::osm(bbox));
     }

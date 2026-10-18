@@ -6,7 +6,7 @@
 // Units: hfov_deg / vfov_deg in degrees; resolution = [width, height] px of the
 // main stream; ir_range_m in metres (feet x 0.3048, rounded to 1 decimal).
 // ir_range_m = None means the manufacturer publishes no night-vision distance
-// (the app then models zero range at night rather than guessing).
+// (the app then assumes 7.5 m at night and labels it as an assumption).
 //
 // Source policy: values come from the manufacturer's spec / tech-specs / support
 // page linked in `source`. Where only a diagonal FOV is published, H/V are derived

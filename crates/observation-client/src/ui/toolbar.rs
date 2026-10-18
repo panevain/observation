@@ -81,6 +81,7 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
     );
     ui.vertical_centered(|ui| {
         ui.spacing_mut().item_spacing.y = t.space.xs;
+        ui.spacing_mut().button_padding = vec2(t.space.xs, t.space.xs);
         for tool in Tool::ALL {
             let on = d.ui.tool == tool;
             let disabled = tool.needs_selection() && d.ui.selected.is_none();
@@ -146,9 +147,15 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
     ui.horizontal_centered(|ui| {
         hint(ui, &t, d.ui.tool.hint());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let attribution = d.area.as_ref().map_or("© OpenStreetMap contributors", |a| {
+            let data = d.area.as_ref().map_or("© OpenStreetMap contributors", |a| {
                 a.bundle.attribution.as_str()
             });
+            let tiles = d.config.tile_attribution.as_str();
+            let attribution = if tiles == data {
+                data.to_owned()
+            } else {
+                format!("{data} · Tiles {tiles}")
+            };
             ui.hyperlink_to(
                 RichText::new(attribution)
                     .size(t.font.caption)

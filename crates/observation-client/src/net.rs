@@ -15,8 +15,24 @@ use observation_core::tiles::TileId;
 
 #[derive(Debug, Clone)]
 enum Request {
+    Config,
     Area(LoadArea),
     Tile(TileId),
+}
+
+/// Settings published by the server at `/api/config`.
+#[derive(Debug, Resource)]
+pub struct ServerConfig {
+    /// Attribution required by the configured tile provider.
+    pub tile_attribution: String,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            tile_attribution: "© OpenStreetMap contributors".to_owned(),
+        }
+    }
 }
 
 type Reply = (Request, Result<Vec<u8>, String>);
@@ -114,6 +130,10 @@ impl Plugin for NetPlugin {
         app.init_resource::<Net>()
             .init_resource::<Tiles>()
             .init_resource::<Loading>()
+            .init_resource::<ServerConfig>()
+            .add_systems(Startup, |net: Res<Net>| {
+                net.get("/api/config".to_owned(), Request::Config)
+            })
             .add_message::<LoadArea>()
             .add_message::<AreaLoaded>()
             .add_systems(
@@ -150,9 +170,19 @@ fn drain_replies(
     mut loaded: MessageWriter<AreaLoaded>,
     mut loading: ResMut<Loading>,
     mut ui: ResMut<UiState>,
+    mut config: ResMut<ServerConfig>,
 ) {
     for (req, res) in net.rx.try_iter() {
         match req {
+            Request::Config => {
+                let attribution = res.ok().and_then(|b| {
+                    let v: serde_json::Value = serde_json::from_slice(&b).ok()?;
+                    v.get("attribution")?.as_str().map(str::to_owned)
+                });
+                if let Some(a) = attribution.filter(|a| !a.is_empty()) {
+                    config.tile_attribution = a;
+                }
+            }
             Request::Area(request) => {
                 if loading.area == Some(request.area) {
                     loading.area = None;
@@ -186,7 +216,7 @@ fn drain_replies(
         }
     }
     if tiles.tiles.len() > MAX_TILES {
-        // Evict failed and far-zoom tiles first; simple and good enough.
+        // Drop failed entries so they can be retried; loaded tiles stay cached.
         tiles
             .tiles
             .retain(|_, s| matches!(s, TileState::Ready(_) | TileState::Pending));

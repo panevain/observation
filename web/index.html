@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="description" content="See how much of your street home security cameras can see." />
     <title>Observation</title>
-    <link data-trunk rel="rust" href="../crates/observation-client/Cargo.toml" data-bin="observation-client" data-cargo-profile="wasm-release" data-wasm-opt="s" />
+    <link data-trunk rel="rust" href="../crates/observation-client/Cargo.toml" data-bin="observation-client" data-cargo-profile="wasm-release" data-wasm-opt="s" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
     <style>
       /* Mirrors crates/observation-client/src/theme.rs — keep in sync. */
       :root {
@@ -58,7 +58,7 @@
       @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
       @media (prefers-reduced-motion: reduce) { .bar::after { animation: none; width: 100%; } }
       #gate { display: none; }
-      /* Phones and very small windows: block before downloading the app. */
+      /* Phones and very small windows: show the gate immediately and hide the app (it still downloads; the app shows the same gate). */
       @media (max-width: 767.98px), (max-height: 599.98px) {
         #gate { display: block; }
         #loader, #app { display: none; }

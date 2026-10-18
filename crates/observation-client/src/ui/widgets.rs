@@ -68,8 +68,8 @@ pub fn segmented<T: PartialEq + Copy>(
     options: &[(T, &str)],
 ) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = t.space.xs;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(t.space.xs, t.space.xs);
         for (v, label) in options {
             let on = *value == *v;
             let text = RichText::new(*label).color(if on { t.on_accent } else { t.text });

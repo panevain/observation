@@ -42,18 +42,16 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             "Place a camera to see what it covers. Use the Place tool (P) and click a wall.",
         );
     }
-    ui.horizontal(|ui| {
-        ui.columns(3, |c| {
-            stat(&mut c[0], t, s.street_fraction(), "of street seen", t.text);
-            stat(
-                &mut c[1],
-                t,
-                s.street_multi_fraction(),
-                "by 2+ cameras",
-                t.text,
-            );
-            stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
-        });
+    ui.columns(3, |c| {
+        stat(&mut c[0], t, s.street_fraction(), "of street seen", t.text);
+        stat(
+            &mut c[1],
+            t,
+            s.street_multi_fraction(),
+            "by 2+ cameras",
+            t.text,
+        );
+        stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
     });
     bar(ui, t, s.street_fraction(), t.coverage_color(1));
     hint(
@@ -75,7 +73,7 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         ],
     );
     if d.ui.overlay == OverlayMode::Overlap {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (i, label) in ["1", "2", "3", "4+"].iter().enumerate() {
                 swatch(ui, t, t.coverage_ramp[i]);
                 ui.label(
@@ -111,7 +109,7 @@ fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         &mut p.lighting,
         &[(Lighting::Day, "Day"), (Lighting::Night, "Night (IR)")],
     );
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Subject height");
         ui.add(
             DragValue::new(&mut p.subject_height_m)
@@ -305,7 +303,7 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             }
         });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.add(secondary(t, "Aim (A)")).clicked() {
             d.ui.tool = Tool::Aim;
         }

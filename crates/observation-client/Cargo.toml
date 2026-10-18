@@ -34,7 +34,6 @@ bevy = { workspace = true, features = [
     "bevy_gizmos_render",
     "bevy_picking",
     "mesh_picking",
-    "bevy_anti_alias",
     "tonemapping_luts",
     "ktx2",
     "zstd_rust",
