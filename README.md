@@ -40,6 +40,12 @@ Dev loop: the server reads `dist/` from disk on every request, so after the firs
 
 Tablets and desktops with a viewport of at least 768 x 600 CSS px, in a browser with WebAssembly and WebGL2. Smaller screens see a "Larger screen needed" notice instead of the app.
 
+## Bundle size
+
+The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size](docs/design.md#bundle-size) for what dominates it and how to regenerate this chart.
+
+[![Treemap of the WebAssembly bundle, tiled by size per crate](docs/images/wasm-bundle-treemap.svg)](docs/design.md#bundle-size)
+
 ## Repository layout
 
 | Path | Contents |
@@ -49,7 +55,7 @@ Tablets and desktops with a viewport of at least 768 x 600 CSS px, in a browser 
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |
-| `scripts/` | `check-design-tokens.sh`, the colour-literal guard run in CI |
+| `scripts/` | `check-design-tokens.sh` (colour-literal guard run in CI); `wasm-size-report.sh` and `wasm-size-treemap.py` (regenerate the bundle-size treemap) |
 | `.github/` | CI, security, CodeQL, Scorecard and release workflows; Dependabot config |
 
 ## Documentation
@@ -67,3 +73,5 @@ Code is offered under MIT OR Apache-2.0 ([LICENSE-MIT](LICENSE-MIT), [LICENSE-AP
 - **Dependencies** keep their own licences; `cargo deny check licenses` enforces a permissive allow-list (see `deny.toml`).
 - **Camera specifications** are factual figures taken from the manufacturers' published spec pages, cited per model in the catalogue. Product names and trademarks belong to their owners; this project is not affiliated with or endorsed by any manufacturer, OpenStreetMap or the OpenStreetMap Foundation.
 - **Map data** and buildings are © OpenStreetMap contributors, available under the [ODbL](https://www.openstreetmap.org/copyright). The server follows the OSM tile usage policy and Overpass fair-use guidance (identifying `User-Agent`, `Referer` forwarding, caching, bounded concurrency, visible attribution); details in [docs/design.md](docs/design.md#tile-proxy-and-osm-policy-compliance). The default upstreams are public community services, so put a heavily used deployment on its own tile and Overpass providers via `OBS_TILE_URL` and `OBS_OVERPASS_URL`.
+
+No telemetry: the app and server have no analytics, crash reporting or update checks, and the browser only talks to its own server. The only outbound traffic is the OpenStreetMap tile and Overpass requests the server makes for you; see [Privacy and network traffic](docs/design.md#privacy-and-network-traffic).

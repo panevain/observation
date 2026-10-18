@@ -226,6 +226,7 @@ async fn healthz_and_security_headers() {
         "strict-origin-when-cross-origin"
     );
     assert_eq!(headers["x-frame-options"], "DENY");
+    assert_eq!(headers["cross-origin-opener-policy"], "same-origin");
     let csp = headers["content-security-policy"].to_str().unwrap();
     assert!(csp.contains("'wasm-unsafe-eval'") && csp.contains("frame-ancestors 'none'"));
 

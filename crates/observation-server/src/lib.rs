@@ -140,6 +140,12 @@ pub fn app(state: AppState) -> Router {
             "strict-origin-when-cross-origin",
         ))
         .layer(sec(header::X_FRAME_OPTIONS, "DENY"))
+        // Links the UI opens in new tabs (spec sheets, OSM copyright) get no
+        // `window.opener` handle back to the app.
+        .layer(sec(
+            HeaderName::from_static("cross-origin-opener-policy"),
+            "same-origin",
+        ))
         .layer(sec(
             header::CONTENT_SECURITY_POLICY,
             CONTENT_SECURITY_POLICY,

@@ -121,6 +121,8 @@ jobs:
       # sha256 of trunk-x86_64-unknown-linux-gnu.tar.gz, from
       # https://github.com/trunk-rs/trunk/releases/tag/v0.21.14
       TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
+      # Trunk otherwise queries the crates.io API for a newer trunk release.
+      TRUNK_SKIP_VERSION_CHECK: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
