@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Convert an OSM API `/map` XML extract into the Overpass `out geom` JSON
+shape served by /api/demo.
+
+Keeps building ways, building multipolygon relations and highway ways, i.e.
+the same feature set as the server's Overpass query.
+
+Usage: python3 -I osm_to_overpass.py map.osm > demo-overpass.json
+"""
+import json
+import sys
+import xml.etree.ElementTree as ET
+
+
+def main(path):
+    root = ET.parse(path).getroot()
+    nodes = {n.get("id"): (float(n.get("lat")), float(n.get("lon"))) for n in root.iter("node")}
+    ways = {}
+    for w in root.iter("way"):
+        refs = [nd.get("ref") for nd in w.iter("nd")]
+        tags = {t.get("k"): t.get("v") for t in w.iter("tag")}
+        geom = [{"lat": nodes[r][0], "lon": nodes[r][1]} for r in refs if r in nodes]
+        ways[w.get("id")] = (tags, geom, len(geom) == len(refs))
+    elements = []
+    for wid, (tags, geom, complete) in ways.items():
+        if complete and ("building" in tags or "highway" in tags):
+            elements.append({"type": "way", "id": int(wid), "geometry": geom, "tags": tags})
+    for r in root.iter("relation"):
+        tags = {t.get("k"): t.get("v") for t in r.iter("tag")}
+        if tags.get("type") != "multipolygon" or "building" not in tags:
+            continue
+        members = []
+        for m in r.iter("member"):
+            if m.get("type") == "way" and m.get("ref") in ways:
+                members.append({"type": "way", "ref": int(m.get("ref")), "role": m.get("role"),
+                                "geometry": ways[m.get("ref")][1]})
+        elements.append({"type": "relation", "id": int(r.get("id")), "members": members, "tags": tags})
+    out = {
+        "version": 0.6,
+        "generator": "osm_to_overpass.py (from OSM API 0.6 /map extract)",
+        "osm3s": {"copyright": "The data included in this document is from www.openstreetmap.org. "
+                               "The data is made available under ODbL."},
+        "elements": elements,
+    }
+    json.dump(out, sys.stdout, separators=(",", ":"))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1])

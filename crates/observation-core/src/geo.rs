@@ -134,11 +134,15 @@ impl BBox {
     /// Expands the box outward so each edge lies on a grid of `step_deg`
     /// degrees. Used to build stable cache keys from user-drawn boxes.
     pub fn snapped(&self, step_deg: f64) -> Self {
+        // Tolerate float noise so already-aligned edges stay put.
+        const EPS: f64 = 1e-6;
+        let down = |v: f64| ((v / step_deg) + EPS).floor() * step_deg;
+        let up = |v: f64| ((v / step_deg) - EPS).ceil() * step_deg;
         Self {
-            south: (self.south / step_deg).floor() * step_deg,
-            west: (self.west / step_deg).floor() * step_deg,
-            north: (self.north / step_deg).ceil() * step_deg,
-            east: (self.east / step_deg).ceil() * step_deg,
+            south: down(self.south),
+            west: down(self.west),
+            north: up(self.north),
+            east: up(self.east),
         }
     }
 
@@ -241,5 +245,7 @@ mod tests {
         let s = b.snapped(0.0001);
         assert!(s.south <= b.south && s.west <= b.west && s.north >= b.north && s.east >= b.east);
         assert_eq!(s.cache_key(), b.snapped(0.0001).cache_key());
+        let aligned = BBox::parse("47.7075,-122.208,47.7098,-122.204").unwrap();
+        assert_eq!(aligned.snapped(0.0001).cache_key(), aligned.cache_key());
     }
 }

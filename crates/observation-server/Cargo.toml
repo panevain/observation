@@ -1,0 +1,31 @@
+[package]
+name = "observation-server"
+description = "Bundle server for Observation: OSM building bundles, tile proxy, static client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+observation-core.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+# `form` is needed to POST the Overpass query as `application/x-www-form-urlencoded`.
+reqwest = { workspace = true, features = ["form"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+httpdate = "1.0"
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+tempfile = "3"
+
+[lints]
+workspace = true
