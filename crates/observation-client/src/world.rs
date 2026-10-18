@@ -53,12 +53,12 @@ impl Plugin for WorldPlugin {
 fn setup_lights(mut commands: Commands, tokens: Res<Tokens>) {
     commands.insert_resource(ClearColor(to_bevy(tokens.world.sky)));
     commands.insert_resource(GlobalAmbientLight {
-        brightness: 700.0,
+        brightness: 380.0,
         ..default()
     });
     commands.spawn((
         DirectionalLight {
-            illuminance: 9_000.0,
+            illuminance: 5_000.0,
             shadow_maps_enabled: true,
             ..default()
         },

@@ -84,7 +84,15 @@ impl Plugin for InputPlugin {
 
 fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSettings>) {
     let orbit = OrbitCamera::default();
-    commands.spawn((Camera3d::default(), Msaa::Sample4, orbit.transform(), orbit));
+    // Khronos PBR Neutral keeps base colours close to the design tokens and,
+    // unlike the default, needs no LUT assets (and their zstd decoder).
+    commands.spawn((
+        Camera3d::default(),
+        bevy::core_pipeline::tonemapping::Tonemapping::KhronosPbrNeutral,
+        Msaa::Sample4,
+        orbit.transform(),
+        orbit,
+    ));
     // egui gets its own full-window overlay camera so that shrinking the 3D
     // viewport to the space between panels doesn't clip the UI.
     egui.auto_create_primary_context = false;

@@ -17,7 +17,14 @@ yanked = "deny"
 # Keep empty. If an advisory truly cannot be fixed yet, add an entry WITH a
 # reason and an expiry note, e.g.
 #   { id = "RUSTSEC-0000-0000", reason = "no fix upstream; tracked in #123" }
-ignore = []
+ignore = [
+    # ruzstd 0.8 is a hard dependency of bevy_image 0.20; the fix (>= 0.9.1) is
+    # semver-incompatible, so it can't be updated until Bevy moves. The vulnerable
+    # decoder is only reached for zstd-supercompressed KTX2 textures, and the
+    # client neither enables the `ktx2`/`zstd_rust` features nor loads untrusted
+    # textures. Re-check (and remove) on every Bevy upgrade. Mirrored in .cargo/audit.toml.
+    { id = "RUSTSEC-2026-0344", reason = "unreachable: no KTX2/zstd texture decoding; blocked on Bevy upgrade" },
+]
 
 [licenses]
 allow = [
@@ -36,6 +43,8 @@ allow = [
     "0BSD",
     "OFL-1.1",              # Bevy's bundled fonts
     "CDLA-Permissive-2.0",  # webpki-roots
+    "MIT-0",                # encase (Bevy shader data layout)
+    "Ubuntu-font-1.0",      # epaint_default_fonts (egui UI font)
 ]
 confidence-threshold = 0.9
 # The allow-list is deliberately a superset of what is in use today (Bevy / rustls

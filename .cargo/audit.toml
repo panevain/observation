@@ -1,0 +1,6 @@
+# cargo-audit configuration (also read by rustsec/audit-check in CI).
+# Keep in sync with [advisories].ignore in deny.toml; every entry needs a reason there.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0344", # ruzstd via bevy_image 0.20: unreachable, blocked on Bevy upgrade
+]
