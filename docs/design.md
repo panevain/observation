@@ -304,6 +304,47 @@ There are no accounts, sessions or personal data. The assets worth protecting ar
 | **Supply chain** | Everything above: pinned SHAs and digests, checksum-verified tools, `--locked` builds, cargo-deny, Trivy, CodeQL, Scorecard, provenance and SBOM | Dependencies still update through Dependabot PRs, so review them |
 | **Data poisoning** (bad OSM data) | Bundles are rebuilt from a fresh parse; heights are clamped; degenerate geometry is dropped | OSM edits can change results; cached bundles live for the TTL (7 days) and can be served stale if upstream is down |
 
+## Privacy and network traffic
+
+Observation has no telemetry: no analytics, crash reporting, usage pings, update checks, accounts or cookies, in the app or the server. The only network traffic is what the feature in use needs, listed below. This was audited against the sources of the pinned dependencies and tools, and the CI-side opt-outs were verified against the real Trivy 0.76.0 and trunk 0.21.14 binaries.
+
+### Runtime
+
+| Component | Destination | When | What is sent | Can it be disabled or changed? |
+| --- | --- | --- | --- | --- |
+| Browser (page and static files) | The server that served the page | Page load | Ordinary HTTP request data (IP, `User-Agent`, `Referer`). No cookies are set; the scene lives in `localStorage` and never leaves the browser | No (it is the app). The server writes no access log (request tracing is at `DEBUG`, below the default `RUST_LOG=info`) |
+| Browser (`net.rs`) | `/api/config`, `/api/area?bbox=...`, `/api/demo`, `/api/tiles/{z}/{x}/{y}.png` on the same origin | Start-up; when an area is loaded; while map tiles are shown | The chosen bounding box (about 20-500 m square) or tile coordinates | The demo street needs only `/api/demo` and the map tiles |
+| Browser to any third party | None | Never automatically | Nothing. `Content-Security-Policy` has `default-src 'self'` and `connect-src 'self'`, and `img-src` allows only `'self' data: blob:`, so scripts, fonts, styles, images, fetch, XHR, WebSocket and beacons cannot reach another origin. `web/index.html` loads no external script, font or stylesheet. The client has no HTTP, WebSocket or analytics crate, and compiles in none of Bevy's `http`, `https`, `web_asset_cache`, `bevy_remote`, `bevy_dev_tools`, `sysinfo_plugin` or trace features | Already off |
+| Browser (user-clicked links: catalogue "spec sheet", OSM copyright) | The linked site | Only when the user clicks | A top-level navigation. CSP does not restrict these, and `Referrer-Policy: strict-origin-when-cross-origin` sends the origin (not the path) | The client does not enable `bevy_egui`'s `open_url`, so these links currently do nothing when clicked (see the notes below) |
+| Server, Overpass client | `OBS_OVERPASS_URL` (default `overpass-api.de`) | Bundle cache miss or expiry (default TTL 7 days) | `POST` form field `data` holding the query above with the snapped bounding box; `User-Agent: observation/<version> (+OBS_CONTACT)` | Not for live areas. Point it at your own instance, or serve only the demo street. `OBS_CONTACT` sets the contact string |
+| Server, tile proxy | `OBS_TILE_URL` (default `tile.openstreetmap.org`) | Tile cache miss or expiry (at least 7 days) | `GET` of the tile; the same `User-Agent`; the browser's `Referer` header; `If-None-Match` / `If-Modified-Since` when revalidating | Point `OBS_TILE_URL` at another provider. The `Referer` is forwarded on purpose (see below) |
+| Server, anything else | None | Never | No version check, metrics or tracing exporter, or error reporting. Logs go to stdout only. `Cargo.lock` has no telemetry crate (no sentry, opentelemetry, segment, posthog, mixpanel, datadog, honeycomb, metrics, prometheus or self-update crate) | Already off |
+
+Upstream services see the server's IP address and the server's `User-Agent`. They never see the visitor's IP address, `User-Agent` or any other header besides the `Referer`, because the browser only talks to the proxy. `reqwest` honours the standard `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` variables if the operator sets them.
+
+**The forwarded `Referer`.** The OSM tile usage policy asks that browser apps not strip it, and it is what identifies the deployment to the tile operator. For a proxy it is a judgement call, and it is kept. The browser sends the page URL (`strict-origin-when-cross-origin` keeps the full URL on same-origin requests; the app uses no query string or path), so in practice it names the operator's own site. The server does not validate the header, so a page on another site that embeds `/api/tiles/...` images, or any script, can put its own URL there. Only the request that causes an upstream fetch forwards its `Referer`; cache hits send nothing upstream. An operator who wants to drop it can remove the `referer` argument in `routes/tiles.rs`, at the cost of departing from the policy's wording.
+
+### Build, CI and development tools
+
+| Tool | Destination | What is sent | Status |
+| --- | --- | --- | --- |
+| trunk 0.21.14 (Docker build, CI, local) | `crates.io` API | A once-per-interval check for a newer trunk | Off: `TRUNK_SKIP_VERSION_CHECK=true` in the `Dockerfile` builder stage and the `wasm` CI job. It is a CLI option or environment variable only (not available in `Trunk.toml`), so set it in your own shell for local builds |
+| trunk | `github.com` releases of wasm-bindgen and binaryen (`wasm-opt`) | Plain downloads | Required for the build. wasm-bindgen's version is taken from `Cargo.lock` (and so already pinned); `wasm-opt` defaults to `version_123`, fixed by the pinned trunk. Pinning them in `Trunk.toml` would add a second place to update. trunk 0.22's source (`src/tools.rs`) has no checksum check for these downloads, so treat them as trusted-by-TLS only |
+| cargo, rustup | `crates.io` index and `static.rust-lang.org` | Package and toolchain downloads | No telemetry. CI and the Dockerfile pass `--no-self-update` to rustup |
+| Trivy 0.76.0 (`security.yml`) | `check.trivy.dev/updates` | Version check plus anonymous usage data | Off: `TRIVY_DISABLE_TELEMETRY=true` and `TRIVY_SKIP_VERSION_CHECK=true`. Confirmed with the real binary: its debug log says "Version check and telemetry are disabled, skipping request" |
+| Trivy | `ghcr.io/aquasecurity/trivy-db`, `mirror.gcr.io/aquasec/trivy-db` and `trivy-checks` | Downloads of the vulnerability database and rules | Required for scanning |
+| `docker/build-push-action` | GitHub only | A build summary and a `.dockerbuild` build-record artifact on the workflow run | Left on: both stay on GitHub (`DOCKER_BUILD_SUMMARY` and `DOCKER_BUILD_RECORD_UPLOAD` default to true and can be set to false) |
+| OpenSSF Scorecard (`scorecard.yml`) | `api.scorecard.dev` | The Scorecard results for this repository, signed with the workflow's OIDC token | Left on (`publish_results: true`): it feeds the README badge and makes the results public. Set it to `false` to keep results inside GitHub code scanning, at the cost of the badge |
+| CodeQL, `upload-sarif`, Dependabot, cache and artifact actions, `rustsec/audit-check` | GitHub only (plus the RustSec advisory database for cargo-deny and cargo-audit) | Results, caches, advisory lookups | Required for the checks |
+
+The README badges are images fetched by whoever views the README on GitHub (from `github.com` and `api.scorecard.dev`); they are not part of the app.
+
+### Notes for the maintainer
+
+- `bevy_egui`'s default `open_url` feature (the `webbrowser` crate) is off, so egui hyperlinks, including the required OSM attribution link in the status bar, do nothing on click in the browser. Enabling it would make a click open the linked site in the same tab (`_self` by default, with the origin as `Referer`); that is user-initiated, not telemetry, but it should be a deliberate choice.
+- Bevy's asset server has a `fetch`-based reader for `assets/` paths on the same origin in every wasm build. The client never calls `AssetServer::load`, so it is never used.
+- Changing `Referrer-Policy` to `no-referrer` would also stop browsers sending any `Referer` to the proxy, which ends the forwarding described above. Treat the two as one decision.
+
 ## Testing
 
 - **Core unit tests** cover projection round trips and axes, bounding-box parsing and snapping, tile maths, height and length parsing, extrusion winding and normals (with holes and raised parts), bundle round trips and rejection of bad input, road widths, DORI ranges, yaw and pitch conversion, catalogue parsing, view cones, exact occlusion cases, coverage on a small synthetic street, and scene file validation. An integration test (`crates/observation-core/tests/catalog.rs`) parses the shipped catalogue and requires a manufacturer `https://` source for every model that has a vendor.

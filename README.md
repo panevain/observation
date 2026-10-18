@@ -59,3 +59,5 @@ Tablets and desktops with a viewport of at least 768 x 600 CSS px, in a browser 
 ## Data and licensing
 
 Code is licensed under MIT OR Apache-2.0 ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). Map data and buildings are © OpenStreetMap contributors, available under the [ODbL](https://www.openstreetmap.org/copyright). The server follows the OSM tile usage policy and Overpass fair-use guidance (identifying `User-Agent`, `Referer` forwarding, caching, bounded concurrency, visible attribution); details in [docs/design.md](docs/design.md#tile-proxy-and-osm-policy-compliance). The default upstreams are public community services, so put a heavily used deployment on its own tile and Overpass providers via `OBS_TILE_URL` and `OBS_OVERPASS_URL`.
+
+No telemetry: the app and server have no analytics, crash reporting or update checks, and the browser only talks to its own server. The only outbound traffic is the OpenStreetMap tile and Overpass requests the server makes for you; see [Privacy and network traffic](docs/design.md#privacy-and-network-traffic).
