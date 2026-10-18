@@ -71,6 +71,11 @@ jobs:
       TRIVY_VERSION: "0.76.0"
       TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
       IMAGE: observation:scan
+      # No phoning home: Trivy 0.76.0 otherwise sends a version check plus
+      # anonymous usage data to check.trivy.dev on every run. The vulnerability
+      # DB and check bundle downloads (ghcr.io / mirror.gcr.io) are still needed.
+      TRIVY_DISABLE_TELEMETRY: "true"
+      TRIVY_SKIP_VERSION_CHECK: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

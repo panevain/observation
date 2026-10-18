@@ -18,8 +18,11 @@ ARG TRUNK_VERSION=0.21.14
 ARG TRUNK_SHA256_AMD64=f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
 ARG TRUNK_SHA256_ARM64=b1d8e60e454f7fc182d9a4d95d1506ffbae947d8ba90f8f6f02da93b60f980f9
 
+# TRUNK_SKIP_VERSION_CHECK: trunk would otherwise query the crates.io API for a
+# newer trunk release on every build (builder stage only; not in the runtime image).
 ENV CARGO_TERM_COLOR=always \
-    CARGO_INCREMENTAL=0
+    CARGO_INCREMENTAL=0 \
+    TRUNK_SKIP_VERSION_CHECK=true
 
 # curl + ca-certificates: fetch trunk (and, at build time, trunk fetches the
 # wasm-bindgen / wasm-opt versions matching Cargo.lock).
