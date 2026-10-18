@@ -37,6 +37,12 @@ Dev loop: the server reads `dist/` from disk on every request, so after the firs
 
 Tablets and desktops with a viewport of at least 768 x 600 CSS px, in a browser with WebAssembly and WebGL2. Smaller screens see a "Larger screen needed" notice instead of the app.
 
+## Bundle size
+
+The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size](docs/design.md#bundle-size) for what dominates it and how to regenerate this chart.
+
+[![Treemap of the WebAssembly bundle, tiled by size per crate](docs/images/wasm-bundle-treemap.svg)](docs/design.md#bundle-size)
+
 ## Repository layout
 
 | Path | Contents |

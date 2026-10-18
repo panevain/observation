@@ -213,6 +213,14 @@ A failed load shows an error toast and leaves the previous area in place. Camera
 
 Pointer picking uses Bevy's mesh ray casting against three kinds of target: building mesh, ground, camera bodies. A hit whose normal is mostly horizontal counts as a wall: the camera is placed 0.15 m off the surface along the normal, at the clicked height, facing outward. Any other hit is a pole at the model's default mount height. Presses move into a pending state and become a click, orbit or pan only after travelling 5 px, so taps and drags are distinguished on touch and mouse alike.
 
+### Bundle size
+
+[![Treemap of the shipped WebAssembly module, one rectangle per crate](images/wasm-bundle-treemap.svg)](images/wasm-bundle-treemap.svg)
+
+The shipped module is about 26.1 MB raw and 7.8 MB gzip. Bevy is half of it (about 12.5 MiB), and `bevy_ecs` alone is 6.8 MiB (27%) because every system function is monomorphised into its own `FunctionSystem<fn(...)>` (2.9 MiB in total), plus reflection and command-queue glue. The same machinery is instantiated for every system of every Bevy plugin, so `bevy_ecs` here is mostly the cost of the plugins' systems rather than the ECS core. Data segments are the next block (4.4 MiB, 18%): font tables, WGSL shader sources, and type-registry strings and vtables, none of which can be attributed to a crate by name. The application's own code (`observation_client` and `observation_core`) is under 1%. The client already builds Bevy with `default-features = false` and a short feature list, and drops `ktx2`, `zstd_rust` and `tonemapping_luts` (see `crates/observation-client/Cargo.toml`), so the remaining levers are structural: trimming further Bevy features such as `bevy_gizmos` or `bevy_picking` if they can be replaced by a few hundred lines of app code, compiling the heavy non-hot crates (`naga`, `wgsl_parse`, `bevy_reflect`) with `opt-level = "z"` through a profile override, and serving the module with brotli instead of gzip. Each of these needs measuring before it is adopted, since attribution is by symbol name after inlining and does not equal the saving from removing a crate.
+
+The figure is measured on the `wasm-release` profile after `wasm-bindgen` and `wasm-opt -Os`, with symbol names kept (`strip = false`, `--debuginfo`) and then excluded from the sizes; the result is within 0.03% of the module `trunk build` ships. To regenerate it after a dependency or feature change, run `scripts/wasm-size-report.sh` (a fat-LTO build, 15 to 20 minutes on four cores; `--no-build` reuses the last build). It needs only `cargo`, `python3`, and the `wasm-bindgen` and `wasm-opt` binaries that trunk caches, prints a top-15 table, and rewrites `docs/images/wasm-bundle-treemap.svg` through `scripts/wasm-size-treemap.py`, which is stdlib-only and also accepts `twiggy top --format csv` output.
+
 ## Coverage algorithm
 
 Core code in `observation-core`; the client only schedules it and paints the result.
