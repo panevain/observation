@@ -17,13 +17,18 @@ updates:
       time: "06:30"
       timezone: Etc/UTC
     open-pull-requests-limit: 5
-    labels: [dependencies]
     # Wait a week after a release before proposing it (supply-chain hygiene);
     # does not delay Dependabot *security* updates.
     cooldown:
       default-days: 7
     commit-message:
       prefix: "deps"
+    ignore:
+      # glam types cross the observation-core <-> Bevy boundary, so glam must
+      # stay on the exact minor version Bevy uses (0.x minors are breaking).
+      # Bump it together with Bevy, by hand.
+      - dependency-name: glam
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       cargo-minor-patch:
         update-types: [minor, patch]
@@ -38,7 +43,6 @@ updates:
       time: "06:45"
       timezone: Etc/UTC
     open-pull-requests-limit: 5
-    labels: [dependencies]
     # Wait a week after a release before proposing it (supply-chain hygiene);
     # does not delay Dependabot *security* updates.
     cooldown:
@@ -59,13 +63,17 @@ updates:
       time: "07:00"
       timezone: Etc/UTC
     open-pull-requests-limit: 3
-    labels: [dependencies]
     # Wait a week after a release before proposing it (supply-chain hygiene);
     # does not delay Dependabot *security* updates.
     cooldown:
       default-days: 7
     commit-message:
       prefix: "docker"
+    ignore:
+      # The builder image's Rust version must match rust-toolchain.toml (and
+      # Bevy's MSRV); bump both together, by hand. Patch/digest updates still flow.
+      - dependency-name: rust
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
