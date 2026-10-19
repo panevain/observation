@@ -313,6 +313,17 @@ impl OverpassClient {
 
     /// Fetches and parses buildings and roads for `bbox`.
     pub async fn fetch(&self, bbox: &BBox) -> Result<OsmData, ApiError> {
+        let result = self.fetch_inner(bbox).await;
+        let outcome = match &result {
+            Ok(_) => "ok",
+            Err(ApiError::RateLimited { .. }) => "rate_limited",
+            Err(_) => "error",
+        };
+        metrics::counter!(crate::metrics::OVERPASS_FETCH, "outcome" => outcome).increment(1);
+        result
+    }
+
+    async fn fetch_inner(&self, bbox: &BBox) -> Result<OsmData, ApiError> {
         self.check_cooldown()?;
         let guard = WaitGuard(&self.waiting);
         if self

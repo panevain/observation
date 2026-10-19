@@ -29,10 +29,12 @@ ron = "0.12"
 axum = "0.8"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "sync", "time"] }
 tower = "0.5"
-tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "compression-br", "set-header", "limit", "timeout"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "compression-br", "set-header", "limit", "timeout", "request-id"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 # client
 bevy = { version = "0.20", default-features = false }

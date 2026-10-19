@@ -1,0 +1,12 @@
+# zizmor configuration (see .github/workflows/security.yml).
+rules:
+  cache-poisoning:
+    ignore:
+      # Caches are only written from main and develop (save-if in each rust-cache step), never
+      # from pull requests, and the release image is built from a clean Docker cache scope.
+      - ci.yml
+  dangerous-triggers:
+    ignore:
+      # workflow_run fires only after our own Release workflow, checks out no PR code, and
+      # needs no secrets beyond GITHUB_TOKEN with packages: write.
+      - prune-images.yml

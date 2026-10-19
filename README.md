@@ -33,7 +33,7 @@ cp mise.local.toml.example mise.local.toml   # then set OBS_CONTACT (gitignored)
 mise run serve                        # dev-build the client -> dist/, then run the server
 ```
 
-Without mise, run `rustup toolchain install` in the repository, install trunk, then run the underlying commands directly:
+Without mise, run `rustup toolchain install` in the repository (`rust-toolchain.toml` is the single source for the Rust version), install trunk, then run the underlying commands directly:
 
 ```sh
 trunk build --release                 # client -> dist/

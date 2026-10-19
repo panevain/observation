@@ -2,4 +2,6 @@
 target = "web/index.html"
 dist = "dist"
 filehash = true
-# Optimise with wasm-opt in release builds (see data-wasm-opt in web/index.html).
+# wasm-opt already runs in release builds: web/index.html sets data-wasm-opt="s" (with the
+# feature flags Bevy's output needs) on the rust link, and `trunk build --release` honours it.
+# The remaining size levers are listed in docs/design.md#bundle-size.

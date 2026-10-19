@@ -1,0 +1,5 @@
+# Review requests are automatic; the rulesets do not require code-owner approval.
+*                        @panevain
+/.github/                @panevain
+/Dockerfile              @panevain
+/deny.toml               @panevain

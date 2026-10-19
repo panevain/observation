@@ -43,8 +43,10 @@ impl BundleService {
     pub async fn get(self: &Arc<Self>, bbox: BBox) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
         if let Some((bytes, true)) = self.cache.get_bundle(&key).await {
+            metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
+        metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "miss").increment(1);
         self.flight(key, bbox).await
     }
 
@@ -90,6 +92,8 @@ impl BundleService {
             Ok(d) => d,
             Err(e) => {
                 if let Some((stale, _)) = self.cache.get_bundle(key).await {
+                    metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "stale_served")
+                        .increment(1);
                     tracing::warn!(key, error = %e, "serving expired bundle because upstream failed");
                     return Ok(stale);
                 }

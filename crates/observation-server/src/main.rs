@@ -1,18 +1,28 @@
 //! Observation server binary: configuration, tracing, serve with graceful shutdown.
 
-use observation_server::config::Config;
+use observation_server::config::{Config, LogFormat};
 use observation_server::{AppState, app};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     let config = Config::from_env()?;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    match config.log_format {
+        LogFormat::Text => tracing_subscriber::fmt().with_env_filter(filter).init(),
+        LogFormat::Json => tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .init(),
+    }
+    if let Some(addr) = config.metrics_bind {
+        let handle = observation_server::metrics::install()?;
+        tokio::spawn(async move {
+            if let Err(e) = observation_server::metrics::serve(addr, handle).await {
+                tracing::error!(error = %e, "metrics server stopped");
+            }
+        });
+    }
     if !config.static_dir.join("index.html").is_file() {
         tracing::warn!(dir = %config.static_dir.display(), "no index.html in static dir; the client will not load");
     }

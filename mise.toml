@@ -1,16 +1,19 @@
 # Dev tooling and tasks: https://mise.jdx.dev
 # CI runs these same tasks (.github/workflows/ci.yml), so `mise run check` matches it.
-# mise installs rustup and the Rust toolchain; rust-toolchain.toml stays the source of
-# truth for plain rustup users, CI and the Dockerfile.
+# rust-toolchain.toml is the single source of truth for the Rust version, components and
+# targets: rustup reads it directly, mise reads it through idiomatic version files (see
+# [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
+# aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start.
 
+[settings]
+# Take the Rust version from rust-toolchain.toml instead of repeating it here.
+idiomatic_version_file_enable_tools = ["rust"]
+
 [tools]
-# Installed via rustup (into ~/.rustup and ~/.cargo). Keep in sync with
-# rust-toolchain.toml.
-rust = { version = "1.97.1", profile = "minimal", components = "rustfmt,clippy", targets = "wasm32-unknown-unknown" }
-# mise.lock records the release checksums. Keep the version in sync with
-# TRUNK_VERSION in the Dockerfile.
+# mise.lock records the release checksums. scripts/check-toolchain-sync.sh keeps the
+# version in sync with TRUNK_VERSION in the Dockerfile.
 "github:trunk-rs/trunk" = "0.21.14"
 
 [env]
@@ -30,9 +33,14 @@ description = "Clippy on the wasm client"
 run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
 
 [tasks.test]
-description = "Unit tests (core + server, then client if it has a lib target)"
+description = "Unit tests (core + server, then client if it has a lib target); uses cargo-nextest when installed"
 run = '''
-cargo test --locked --workspace --exclude observation-client
+if cargo nextest --version >/dev/null 2>&1; then
+  cargo nextest run --locked --workspace --exclude observation-client
+  cargo test --locked --doc --workspace --exclude observation-client
+else
+  cargo test --locked --workspace --exclude observation-client
+fi
 if [ -f crates/observation-client/src/lib.rs ]; then
   cargo test --locked -p observation-client --lib
 else
@@ -40,9 +48,21 @@ else
 fi
 '''
 
+[tasks.coverage]
+description = "Line coverage of core + server (needs cargo-llvm-cov and the llvm-tools-preview component); writes lcov.info"
+run = "cargo llvm-cov --locked --workspace --exclude observation-client --lcov --output-path lcov.info"
+
 [tasks.tokens]
 description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
+
+[tasks.sync]
+description = "Rust and trunk versions agree across rust-toolchain.toml, Cargo.toml, Dockerfile and mise.toml"
+run = "scripts/check-toolchain-sync.sh"
+
+[tasks.treemap]
+description = "Regenerate docs/images/wasm-bundle-treemap.svg (fat-LTO build, 15-20 minutes)"
+run = "scripts/wasm-size-report.sh"
 
 [tasks.build]
 description = "Release-build the wasm client into dist/ (as CI does)"
@@ -63,5 +83,5 @@ depends = ["build"]
 run = "cargo run --locked --release -p observation-server"
 
 [tasks.check]
-description = "fmt, clippy, tests and design tokens (the non-Docker CI checks; build is separate)"
-depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens"]
+description = "fmt, clippy, tests, design tokens and version sync (the non-Docker CI checks; build is separate)"
+depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens", "sync"]
