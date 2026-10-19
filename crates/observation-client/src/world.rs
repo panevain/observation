@@ -269,6 +269,8 @@ fn on_area_loaded(
     let area = msg.request.area;
     if !msg.request.keep_cameras || scene.area != Some(area) {
         scene.cameras.clear();
+        // A region belongs to the area it was drawn on.
+        scene.region = None;
         ui.selected = None;
         if area == AreaRef::Demo {
             // A fresh demo street comes with example cameras to explore.

@@ -67,6 +67,8 @@ pub struct ToolColors {
     pub place: Color32,
     pub aim: Color32,
     pub move_: Color32,
+    /// Also the colour of the region outline in the scene.
+    pub region: Color32,
     /// Text on any of the above.
     pub on_tool: Color32,
 }
@@ -158,6 +160,7 @@ const TOOL_COLORS: ToolColors = ToolColors {
     place: Color32::from_rgb(0x2B, 0x8A, 0x3E),
     aim: Color32::from_rgb(0xD9, 0x48, 0x0F),
     move_: Color32::from_rgb(0x84, 0x3D, 0xC9),
+    region: Color32::from_rgb(0x0C, 0x85, 0x99),
     on_tool: Color32::from_rgb(0xFF, 0xFF, 0xFF),
 };
 
@@ -256,6 +259,7 @@ impl Tokens {
             Tool::Place => self.tools.place,
             Tool::Aim => self.tools.aim,
             Tool::Move => self.tools.move_,
+            Tool::Region => self.tools.region,
         }
     }
 

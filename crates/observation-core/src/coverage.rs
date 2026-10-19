@@ -8,7 +8,7 @@ use crate::building::{Footprint, clean_ring, signed_area2};
 use crate::bundle::AreaBundle;
 use crate::camera::{DoriLevel, Lighting};
 use crate::frustum::ViewCone;
-use crate::occlusion::Occluders;
+use crate::occlusion::{Occluders, point_in_ring};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +32,84 @@ impl Default for CoverageParams {
             lighting: Lighting::Day,
             subject_height_m: 1.0,
         }
+    }
+}
+
+/// Most corners a [`Region`] may have.
+pub const MAX_REGION_POINTS: usize = 256;
+
+/// A user-drawn ground polygon the coverage figures can be limited to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Region {
+    /// Corners in world `[x, z]`, metres, in drawing order (not repeated at the end).
+    pub points: Vec<[f32; 2]>,
+    /// Whether the figures are currently limited to the region.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Region {
+    /// Enough corners to enclose an area.
+    pub fn is_closed(&self) -> bool {
+        self.points.len() >= 3 && self.area_m2() > 0.01
+    }
+
+    /// The figures should be limited to this region.
+    pub fn is_active(&self) -> bool {
+        self.enabled && self.is_closed()
+    }
+
+    /// Enclosed area (absolute, so either winding works), m².
+    pub fn area_m2(&self) -> f32 {
+        let p = &self.points;
+        let twice: f32 = (0..p.len())
+            .map(|i| {
+                let (a, b) = (p[i], p[(i + 1) % p.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum();
+        (twice / 2.0).abs()
+    }
+
+    pub fn contains(&self, xz: Vec2) -> bool {
+        let ring: Vec<Vec2> = self.points.iter().map(|p| Vec2::from_array(*p)).collect();
+        point_in_ring(xz, &ring)
+    }
+}
+
+/// Which analysis cells lie inside a [`Region`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionMask {
+    pub ground: Vec<bool>,
+    pub facade: Vec<bool>,
+}
+
+impl RegionMask {
+    pub fn new(layers: &StaticLayers, region: &Region) -> Self {
+        let ring: Vec<Vec2> = region.points.iter().map(|p| Vec2::from_array(*p)).collect();
+        let (lo, hi) = ring.iter().fold(
+            (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        );
+        let mut ground = vec![false; layers.grid.len()];
+        if let Some((x0, x1, z0, z1)) = layers.grid.range(lo, hi) {
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    let i = (z * layers.grid.w + x) as usize;
+                    ground[i] = point_in_ring(layers.grid.center(i), &ring);
+                }
+            }
+        }
+        let facade = layers
+            .facades
+            .iter()
+            .map(|f| point_in_ring(Vec2::new(f.center.x, f.center.z), &ring))
+            .collect();
+        Self { ground, facade }
     }
 }
 
@@ -353,9 +431,21 @@ pub struct CoverageStats {
 
 impl CoverageStats {
     pub fn compute(layers: &StaticLayers, counts: &CoverageCounts) -> Self {
+        Self::compute_in(layers, counts, None)
+    }
+
+    /// Statistics over the cells inside `region` only (all cells if `None`).
+    pub fn compute_in(
+        layers: &StaticLayers,
+        counts: &CoverageCounts,
+        region: Option<&RegionMask>,
+    ) -> Self {
         let a = layers.grid.cell_area_m2();
         let mut s = Self::default();
         for (i, &c) in counts.ground.iter().enumerate() {
+            if region.is_some_and(|r| !r.ground[i]) {
+                continue;
+            }
             if layers.street_mask[i] {
                 s.street_m2 += a;
                 if c >= 1 {
@@ -369,7 +459,10 @@ impl CoverageStats {
                 s.open_ground_seen_m2 += a;
             }
         }
-        for (f, &c) in layers.facades.iter().zip(&counts.facade) {
+        for (i, (f, &c)) in layers.facades.iter().zip(&counts.facade).enumerate() {
+            if region.is_some_and(|r| !r.facade[i]) {
+                continue;
+            }
             let fa = f.area_m2();
             s.facade_m2 += fa;
             if c >= 1 {
@@ -446,6 +539,65 @@ mod tests {
             ..fp
         };
         assert!(facade_cells([&nan], 1.0).is_empty());
+    }
+
+    #[test]
+    fn region_limits_the_figures() {
+        let l = layers();
+        let a = ViewCone::from_angles(
+            Vec3::new(-20.0, 2.5, 10.0),
+            90.0,
+            -10.0,
+            0.0,
+            100.0,
+            60.0,
+            30.0,
+        );
+        let mut counts = CoverageCounts::new(&l);
+        counts.add(&l.visibility(&a, 1.0));
+        let all = CoverageStats::compute(&l, &counts);
+
+        // The road west of x = 0 (the camera looks east from x = -20, so it
+        // sees part of the road in the east half only).
+        let west = Region {
+            points: vec![[-50.0, -5.0], [0.0, -5.0], [0.0, 5.0], [-50.0, 5.0]],
+            enabled: true,
+        };
+        assert!(west.is_active());
+        assert_eq!(west.area_m2(), 500.0);
+        let mask = RegionMask::new(&l, &west);
+        let s = CoverageStats::compute_in(&l, &counts, Some(&mask));
+        assert!(
+            (s.street_m2 - all.street_m2 / 2.0).abs() < 10.0,
+            "half the road: {} of {}",
+            s.street_m2,
+            all.street_m2
+        );
+        assert!(s.street_seen_m2 < all.street_seen_m2);
+        // No walls inside a box over the road.
+        assert_eq!(s.facade_m2, 0.0);
+
+        // Around the house: all its walls, none of the road.
+        let house = Region {
+            points: vec![[-10.0, -30.0], [10.0, -30.0], [10.0, -10.0], [-10.0, -10.0]],
+            enabled: true,
+        };
+        let s = CoverageStats::compute_in(&l, &counts, Some(&RegionMask::new(&l, &house)));
+        assert_eq!(s.street_m2, 0.0);
+        assert!((s.facade_m2 - all.facade_m2).abs() < 1e-3);
+
+        let line = Region {
+            points: vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
+            enabled: true,
+        };
+        assert!(!line.is_closed());
+        assert!(
+            !Region {
+                enabled: false,
+                ..west
+            }
+            .is_active()
+        );
     }
 
     #[test]

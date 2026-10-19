@@ -1,7 +1,7 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
 use crate::camera::{CameraModel, CameraPlacement, is_https_url};
-use crate::coverage::CoverageParams;
+use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -32,6 +32,9 @@ pub struct SceneFile {
     pub custom_models: Vec<CameraModel>,
     #[serde(default)]
     pub params: CoverageParams,
+    /// Area the coverage figures are limited to, if one was drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<Region>,
 }
 
 #[derive(Debug, Error)]
@@ -62,6 +65,7 @@ impl SceneFile {
             cameras: Vec::new(),
             custom_models: Vec::new(),
             params: CoverageParams::default(),
+            region: None,
         }
     }
 
@@ -86,6 +90,11 @@ impl SceneFile {
             if !finite(&c.position) || !finite(&[c.yaw_deg, c.pitch_deg, c.roll_deg]) {
                 return Err(SceneError::Invalid("camera position/orientation"));
             }
+        }
+        if let Some(r) = &scene.region
+            && (r.points.len() > MAX_REGION_POINTS || !r.points.iter().all(|p| finite(p)))
+        {
+            return Err(SceneError::Invalid("region"));
         }
         if !(0.0..=10.0).contains(&scene.params.subject_height_m) {
             return Err(SceneError::Invalid("subject height"));
@@ -189,6 +198,29 @@ mod tests {
         assert!(json.contains("color_index"), "{json}");
         let s = SceneFile::from_json(&json).unwrap();
         assert_eq!(s.cameras[0].color, None);
+    }
+
+    #[test]
+    fn region_round_trips_and_is_checked() {
+        let mut s = scene();
+        s.region = Some(Region {
+            points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            enabled: false,
+        });
+        assert_eq!(SceneFile::from_json(&s.to_json()).unwrap(), s);
+        assert!(!scene().to_json().contains("region"), "omitted when absent");
+
+        let mut bad = s.clone();
+        bad.region = Some(Region {
+            points: vec![[0.0, 0.0]; MAX_REGION_POINTS + 1],
+            enabled: true,
+        });
+        assert!(matches!(
+            SceneFile::from_json(&bad.to_json()),
+            Err(SceneError::Invalid("region"))
+        ));
+        let far = s.to_json().replace("10.0", "1e9");
+        assert!(SceneFile::from_json(&far).is_err());
     }
 
     #[test]
