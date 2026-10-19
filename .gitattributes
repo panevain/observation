@@ -15,10 +15,11 @@
 *.wasm binary
 fuzz/seeds/**/* binary
 
-# Lockfiles are generated: collapse in diffs, never merge textually.
-Cargo.lock linguist-generated=true -diff
-fuzz/Cargo.lock linguist-generated=true -diff
-mise.lock linguist-generated=true -diff
+# Lockfiles are generated: collapsed in GitHub diffs, but still diffable locally so that
+# dependency changes can be reviewed.
+Cargo.lock linguist-generated=true
+fuzz/Cargo.lock linguist-generated=true
+mise.lock linguist-generated=true
 
 # Build artifacts excluded from language stats and diffs.
 /dist/** linguist-generated=true
