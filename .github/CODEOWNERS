@@ -1,0 +1,3 @@
+# Review requests are automatic; the rulesets do not require code-owner approval.
+# Add a path-specific line here when part of the tree gets a different owner.
+*  @panevain

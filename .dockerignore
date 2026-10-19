@@ -16,3 +16,4 @@ node_modules
 
 # Not needed in the image (docs/ and *.md are kept: crates may include_str! them)
 Dockerfile
+/lcov.info

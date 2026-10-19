@@ -10,6 +10,7 @@ pub mod cache;
 pub mod config;
 pub mod demo;
 pub mod error;
+pub mod metrics;
 pub mod overpass;
 pub mod routes;
 pub mod tiles;
@@ -23,6 +24,7 @@ use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use thiserror::Error;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -148,12 +150,25 @@ pub fn app(state: AppState) -> Router {
     let sec = |name: HeaderName, value: &'static str| {
         SetResponseHeaderLayer::overriding(name, HeaderValue::from_static(value))
     };
-    // Layers added last are outermost: trace > security headers > compression > timeout.
+    let request_id = HeaderName::from_static("x-request-id");
+    let metrics_on = state.config().metrics_bind.is_some();
+    // Layers added last are outermost: request id > trace > security headers >
+    // compression > metrics > timeout. Metrics sit outside the timeout so timed-out
+    // requests are counted too.
     routes::router(state)
         .layer(RequestBodyLimitLayer::new(16 * 1024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             timeout,
+        ))
+        .layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                if metrics_on {
+                    metrics::track(req, next).await
+                } else {
+                    next.run(req).await
+                }
+            },
         ))
         .layer(CompressionLayer::new())
         .layer(sec(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
@@ -172,7 +187,27 @@ pub fn app(state: AppState) -> Router {
             header::CONTENT_SECURITY_POLICY,
             CONTENT_SECURITY_POLICY,
         ))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+                let id = req
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-");
+                // DEBUG under tower_http's target, like TraceLayer's own events, so
+                // `RUST_LOG=tower_http=debug` shows the id and the default level logs none.
+                tracing::debug_span!(
+                    target: "tower_http::trace::make_span",
+                    "request",
+                    method = %req.method(),
+                    uri = %req.uri().path(),
+                    request_id = %id,
+                )
+            }),
+        )
+        // Echo the id on the response; the outermost layer assigns it first.
+        .layer(PropagateRequestIdLayer::new(request_id.clone()))
+        .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
 }
 
 #[cfg(test)]

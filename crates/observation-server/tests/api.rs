@@ -235,6 +235,10 @@ async fn healthz_and_security_headers() {
     assert_eq!(headers["cross-origin-opener-policy"], "same-origin");
     let csp = headers["content-security-policy"].to_str().unwrap();
     assert!(csp.contains("'wasm-unsafe-eval'") && csp.contains("frame-ancestors 'none'"));
+    assert!(
+        headers.contains_key("x-request-id"),
+        "every response carries a request id"
+    );
 
     // Error responses carry them too.
     let (status, headers, _) = get_uri(&h.app, "/api/area").await;

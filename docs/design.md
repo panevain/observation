@@ -66,7 +66,7 @@ Errors are JSON `{"error": "..."}`: 400 bad request, 404, 502 upstream failure, 
 
 ### Configuration
 
-Read from the environment at start-up; empty values count as unset; invalid `OBS_BIND`, `OBS_BUNDLE_TTL_DAYS` or `OBS_OVERPASS_URL` stop the server with an error.
+Read from the environment at start-up; empty values count as unset; invalid `OBS_BIND`, `OBS_BUNDLE_TTL_DAYS`, `OBS_OVERPASS_URL`, `OBS_METRICS_BIND` (or one equal to `OBS_BIND`) or `OBS_LOG_FORMAT`, and an address that cannot be bound, stop the server with an error.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -78,7 +78,21 @@ Read from the environment at start-up; empty values count as unset; invalid `OBS
 | `OBS_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Upstream tile template (`{z}`, `{x}`, `{y}`; `{s}` becomes `a`) |
 | `OBS_TILE_ATTRIBUTION` | `© OpenStreetMap contributors` | Attribution embedded in bundles and `/api/config` |
 | `OBS_BUNDLE_TTL_DAYS` | `7` | Bundle freshness; fractional values allowed, `0` revalidates every time |
+| `OBS_LOG_FORMAT` | `text` | `json` writes one JSON object per log event; set the level with `RUST_LOG` (default `info`) |
+| `OBS_METRICS_BIND` | unset | Address for a separate Prometheus listener such as `127.0.0.1:9090`. Unset disables metrics. It is not the public port, so `/metrics` is never reachable through the app's own address |
 | `RUST_LOG` | `info` | `tracing` filter |
+
+### Observability
+
+Every response carries an `x-request-id` header (taken from the request if the client or a proxy sent one, otherwise a UUID). Request tracing stays at `DEBUG`, so no access log is written by default (see the privacy table); the id is on the request span, which is `DEBUG` under the `tower_http` target (`RUST_LOG=tower_http=debug`), and upstream warnings from a bundle fetch carry the id of the request that started it. With `OBS_METRICS_BIND` set, `GET /metrics` on that address serves Prometheus text:
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `observation_http_requests_total` | `method`, `route`, `status` | Requests by matched route pattern, never the raw path; methods outside the standard set are labelled `other`. Timed-out requests (408) are included, and requests the client abandons are counted with `status="cancelled"`. The request counter and histogram exist only when `OBS_METRICS_BIND` is set |
+| `observation_http_request_duration_seconds` | `method`, `route` | Latency histogram (buckets from 5 ms to 80 s) |
+| `observation_bundle_cache_total` | `result`: `hit`, `built`, `stale_served`, `error` | `hit` is per request served from a fresh file. The others are per upstream refresh, which concurrent requests for the same area share |
+| `observation_tile_cache_total` | `result`: `hit`, `miss` (nothing cached), `refreshed` (expired copy replaced), `revalidated` (304), `stale_served`, `error` (upstream failed, no copy) | Tile cache outcomes, one per request |
+| `observation_overpass_fetches_total` | `outcome`: `ok`, `error`, `rate_limited` | Upstream Overpass fetches |
 
 Fixed in code (not configurable): tile minimum freshness 7 days, tile cache cap 512 MiB, at most 4 concurrent upstream tile fetches, Overpass retry pause 2 s and cooldown 30 s, Overpass timeout 35 s per attempt, tile client timeout 20 s, whole-request timeout 80 s, request body limit 16 KiB. The container sets `OBS_BIND=0.0.0.0:8080`, `OBS_STATIC_DIR=/app/dist` and `OBS_CACHE_DIR=/var/cache/observation`. The cache directory is not a volume; mount one there (writable by uid 65532) to keep it across container runs.
 
@@ -219,7 +233,7 @@ Pointer picking uses Bevy's mesh ray casting against three kinds of target: buil
 
 The shipped module is about 26.1 MB raw and 7.8 MB gzip. Bevy is half of it (about 12.5 MiB), and `bevy_ecs` alone is 6.8 MiB (27%) because every system function is monomorphised into its own `FunctionSystem<fn(...)>` (2.9 MiB in total), plus reflection and command-queue glue. The same machinery is instantiated for every system of every Bevy plugin, so `bevy_ecs` here is mostly the cost of the plugins' systems rather than the ECS core. Data segments are the next block (4.4 MiB, 18%): font tables, WGSL shader sources, and type-registry strings and vtables, none of which can be attributed to a crate by name. The application's own code (`observation_client` and `observation_core`) is under 1%. The client already builds Bevy with `default-features = false` and a short feature list, and drops `ktx2`, `zstd_rust` and `tonemapping_luts` (see `crates/observation-client/Cargo.toml`), so the remaining levers are structural: trimming further Bevy features such as `bevy_gizmos` or `bevy_picking` if they can be replaced by a few hundred lines of app code, compiling the heavy non-hot crates (`naga`, `wgsl_parse`, `bevy_reflect`) with `opt-level = "z"` through a profile override, and serving the module with brotli instead of gzip. Each of these needs measuring before it is adopted, since attribution is by symbol name after inlining and does not equal the saving from removing a crate.
 
-The figure is measured on the `wasm-release` profile after `wasm-bindgen` and `wasm-opt -Os`, with symbol names kept (`strip = false`, `--debuginfo`) and then excluded from the sizes; the result is within 0.03% of the module `trunk build` ships. To regenerate it after a dependency or feature change, run `scripts/wasm-size-report.sh` (a fat-LTO build, 15 to 20 minutes on four cores; `--no-build` reuses the last build). It needs only `cargo`, `python3`, and the `wasm-bindgen` and `wasm-opt` binaries that trunk caches, prints a top-15 table, and rewrites `docs/images/wasm-bundle-treemap.svg` through `scripts/wasm-size-treemap.py`, which is stdlib-only and also accepts `twiggy top --format csv` output.
+The figure is measured on the `wasm-release` profile after `wasm-bindgen` and `wasm-opt -Os`, with symbol names kept (`strip = false`, `--debuginfo`) and then excluded from the sizes; the result is within 0.03% of the module `trunk build` ships. The Treemap workflow regenerates it for every release tag and opens a PR. To regenerate it by hand after a dependency or feature change, run `mise run treemap` or `scripts/wasm-size-report.sh` (a fat-LTO build, 15 to 20 minutes on four cores; `--no-build` reuses the last build). It needs only `cargo`, `python3`, and the `wasm-bindgen` and `wasm-opt` binaries that trunk caches, prints a top-15 table, and rewrites `docs/images/wasm-bundle-treemap.svg` through `scripts/wasm-size-treemap.py`, which is stdlib-only and also accepts `twiggy top --format csv` output.
 
 ## Coverage algorithm
 
@@ -279,30 +293,33 @@ The scene is serialised with `SceneFile` (`format: "observation-scene"`, `versio
 
 ### Workflows
 
-All eight workflows set `permissions: {}` at the top and grant each job only what it needs. Every action is pinned to a full commit SHA, and checkouts use `persist-credentials: false`.
+All eleven workflows set `permissions: {}` at the top and grant each job only what it needs. Every action is pinned to a full commit SHA, and checkouts use `persist-credentials: false`.
 
 | Workflow | Triggers | What it does |
 | --- | --- | --- |
-| `ci.yml` | push to `main`, `develop`, `release/**`, `hotfix/**`; every pull request | `cargo fmt --check`; clippy with `-D warnings` for the native workspace and, separately, the client for `wasm32-unknown-unknown`; tests; the design-token guard; a release `trunk build` with a size report and `dist/` artifact; a Docker build with a smoke test (image runs as 65532, `/healthz` answers, `dist/index.html` is present) |
-| `security.yml` | push to `main` and `develop`, pull requests, daily, manual | `cargo-deny` (advisories, bans, licences, sources); `cargo-audit`, which on the scheduled run opens issues for new advisories; Trivy filesystem scan (vulnerabilities, Dockerfile misconfiguration, secrets) and image scan, failing on fixable critical or high findings and uploading SARIF |
+| `ci.yml` | push to `main`, `develop`, `release/**`, `hotfix/**`; every pull request | `cargo fmt --check`; clippy with `-D warnings` for the native workspace and, separately, the client for `wasm32-unknown-unknown`; tests (cargo-nextest, plus doctests); the design-token guard and the toolchain version sync check; an informational coverage run (cargo-llvm-cov); a release `trunk build` with a size report and `dist/` artifact; a Docker build with a smoke test built from that `dist/` (Dockerfile target `runtime-prebuilt`, so Bevy is compiled once; the image runs as 65532, `/healthz` answers and `dist/index.html` is present) |
+| `security.yml` | push to `main` and `develop`, pull requests, daily, manual | `cargo-deny` (advisories, bans, licences, sources); zizmor over the workflows (SARIF to code scanning, config in `.github/zizmor.yml`); `cargo-audit`, which on the scheduled run opens issues for new advisories; Trivy filesystem scan (vulnerabilities, Dockerfile misconfiguration, secrets) and image scan, failing on fixable critical or high findings and uploading SARIF (the image scan uses a stub `dist/`, since Trivy does not inspect the static client) |
 | `codeql.yml` | push and pull request to `main` and `develop`, weekly | CodeQL for `rust` and for the workflows themselves (`actions`) |
 | `scorecard.yml` | push to whichever of `main`/`develop` is the default branch, weekly, branch-protection changes, manual | OpenSSF Scorecard, results published and uploaded to code scanning |
-| `release.yml` | push to `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `devel` from `develop`, the version tag and `latest` from `v*` tags; SLSA provenance (`mode=max`), an SBOM, and a GitHub build-provenance attestation |
+| `release.yml` | push to `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `devel` from `develop`, the version tag and `latest` from `v*` tags; SLSA provenance (`mode=max`), an SBOM, a keyless cosign signature and a GitHub build-provenance attestation; the client is compiled inside the image build, not taken from CI, so provenance covers everything |
 | `prune-images.yml` | weekly, after each Release run, manual (dry run by default) | Deletes tagged image versions whose tags are not `devel`, `latest` or `X.Y.Z`, and `sha256-<digest>` attestation tags whose image the registry no longer serves; untagged versions are never deleted |
 | `fuzz.yml` | pull requests, push to `develop`, nightly, manual | cargo-fuzz (libFuzzer) on the untrusted-input parsers and coverage geometry: 30 s per target on PRs, 10 min nightly; crashing inputs uploaded as an artifact. See [fuzz/README.md](../fuzz/README.md) |
+| `image-full.yml` | pull requests touching the Dockerfile or build inputs, weekly, manual | Builds the default Dockerfile target, with the client compiled inside the image as Release does, and runs the same smoke test as the CI docker job. Not a required check |
+| `treemap.yml` | tags `v*`, manual | Runs `scripts/wasm-size-report.sh` (a separate fat-LTO build) and opens a PR to `develop` when `docs/images/wasm-bundle-treemap.svg` changed |
+| `release-prep.yml` | manual | Starts a release: creates `release/<version>` from `develop`, bumps the version and `Cargo.lock`, dates the changelog, opens the PR into `main` |
 | `branch-policy.yml` | pull requests | Fails PRs into `main` unless they come from a same-repo `release/*` or `hotfix/*` branch (git-flow) |
 
 Branching, rulesets and the required checks are described in [CONTRIBUTING.md](../CONTRIBUTING.md); the rulesets themselves are versioned in `.github/rulesets/`.
 
-**Dependabot** proposes weekly updates against `develop` for Cargo, GitHub Actions and Docker, grouped by minor and patch, after a 7-day cooldown that gives the community time to catch a bad release (security updates are not delayed). Dependabot alerts and security updates are repository settings, not part of the config file.
+**Dependabot** proposes weekly updates against `develop` for Cargo, GitHub Actions, Docker and the hash-pinned PyPI requirements for zizmor, grouped by minor and patch, after a 7-day cooldown that gives the community time to catch a bad release (security updates are not delayed). Dependabot alerts and security updates are repository settings, not part of the config file.
 
-**Trivy.** The Trivy binary is downloaded from a pinned GitHub release and verified against a pinned SHA-256 instead of using `aquasecurity/trivy-action`, whose tags were compromised in March 2026 (CVE-2026-33634). Trunk 0.21.14 is installed the same way: a pinned release tarball verified against its SHA-256 in CI (x86_64) and in the Dockerfile (amd64 and arm64).
+**Trivy.** The Trivy binary is downloaded from a pinned GitHub release and verified against a pinned SHA-256 instead of using `aquasecurity/trivy-action`, whose tags were compromised in March 2026 (CVE-2026-33634). cargo-nextest, cargo-llvm-cov and cosign are installed the same way, and zizmor from PyPI with hash-pinned requirements. Trunk 0.21.14 is installed the same way: a pinned release tarball verified against its SHA-256 in CI (x86_64) and in the Dockerfile (amd64 and arm64).
 
 **cargo-deny** (`deny.toml`): yanked crates and advisories are errors; only an allow-list of permissive licences passes; wildcard versions are denied (workspace path dependencies excepted); duplicate versions only warn, since Bevy's tree has many; crates must come from crates.io and git dependencies are denied. The graph is resolved for x86_64 and aarch64 Linux and wasm32.
 
 **Accepted advisories.** An advisory may only be ignored with a written reason in `deny.toml`, mirrored in `.cargo/audit.toml` for cargo-audit, and must be re-checked on every dependency upgrade. Currently one: RUSTSEC-2026-0344 (decompression bomb in `ruzstd`). `ruzstd` 0.8 is a hard dependency of `bevy_image` 0.20 and the fix (0.9.1) is semver-incompatible. The vulnerable decoder is only used for zstd-supercompressed KTX2 textures, and the client disables Bevy's `ktx2`/`zstd_rust`/`tonemapping_luts` features (using the LUT-free Khronos PBR Neutral tonemapper) and never loads untrusted textures. Remove the ignore when Bevy updates.
 
-**Container image.** Multi-stage. The builder is `rust:1.97.1-slim-bookworm`, pinned by digest to match `rust-toolchain.toml`, and builds with `--locked`. The runtime is `gcr.io/distroless/cc-debian12:nonroot`, also pinned by digest, which has no shell and runs as uid and gid 65532. Release images can be verified with `gh attestation verify`; see [SECURITY.md](../SECURITY.md) for reporting and scope.
+**Container image.** Multi-stage. The builder is `rust:1.97.1-slim-bookworm`, pinned by digest to match `rust-toolchain.toml`, and builds with `--locked`. The runtime is `gcr.io/distroless/cc-debian12:nonroot`, also pinned by digest, which has no shell and runs as uid and gid 65532. Release images can be verified with `gh attestation verify` or `cosign verify ghcr.io/panevain/observation:<tag> --certificate-identity-regexp '^https://github.com/panevain/observation/\.github/workflows/release\.yml@' --certificate-oidc-issuer https://token.actions.githubusercontent.com`; see [SECURITY.md](../SECURITY.md) for reporting and scope.
 
 ### Threat model
 
@@ -331,7 +348,7 @@ Observation has no telemetry: no analytics, crash reporting, usage pings, update
 | Browser (user-clicked links: model "spec sheet" (`https://` only), OSM copyright) | The linked site | Only when the user clicks | A new tab (`window.open`, target `_blank`). CSP does not restrict these, and `Referrer-Policy: strict-origin-when-cross-origin` sends the origin (not the path). `Cross-Origin-Opener-Policy: same-origin` denies the opened page a handle back to the app | Don't click them |
 | Server, Overpass client | `OBS_OVERPASS_URL` (default `overpass-api.de`) | Bundle cache miss or expiry (default TTL 7 days) | `POST` form field `data` holding the query above with the snapped bounding box; `User-Agent: observation/<version> (+OBS_CONTACT)` | Not for live areas. Point it at your own instance, or serve only the demo street. `OBS_CONTACT` sets the contact string |
 | Server, tile proxy | `OBS_TILE_URL` (default `tile.openstreetmap.org`) | Tile cache miss or expiry (at least 7 days) | `GET` of the tile; the same `User-Agent`; the browser's `Referer` header; `If-None-Match` / `If-Modified-Since` when revalidating | Point `OBS_TILE_URL` at another provider. The `Referer` is forwarded on purpose (see below) |
-| Server, anything else | None | Never | No version check, metrics or tracing exporter, or error reporting. Logs go to stdout only. `Cargo.lock` has no telemetry crate (no sentry, opentelemetry, segment, posthog, mixpanel, datadog, honeycomb, metrics, prometheus or self-update crate) | Already off |
+| Server, anything else | None | Never | No version check, tracing exporter or error reporting. Logs go to stdout only. The `metrics` and `metrics-exporter-prometheus` crates are present for opt-in Prometheus metrics: nothing is sent anywhere, they are served pull-only on the separate address `OBS_METRICS_BIND`, and with it unset (the default) no recorder is installed and no listener opens. `Cargo.lock` has no other telemetry crate (no sentry, opentelemetry, segment, posthog, mixpanel, datadog, honeycomb or self-update crate) | Already off (unset `OBS_METRICS_BIND`) |
 
 Upstream services see the server's IP address and the server's `User-Agent`. They never see the visitor's IP address, `User-Agent` or any other header besides the `Referer`, because the browser only talks to the proxy. `reqwest` honours the standard `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` variables if the operator sets them.
 
@@ -348,6 +365,9 @@ Upstream services see the server's IP address and the server's `User-Agent`. The
 | Trivy | `ghcr.io/aquasecurity/trivy-db`, `mirror.gcr.io/aquasec/trivy-db` and `trivy-checks` | Downloads of the vulnerability database and rules | Required for scanning |
 | `docker/build-push-action` | GitHub only | A build summary and a `.dockerbuild` build-record artifact on the workflow run | Left on: both stay on GitHub (`DOCKER_BUILD_SUMMARY` and `DOCKER_BUILD_RECORD_UPLOAD` default to true and can be set to false) |
 | OpenSSF Scorecard (`scorecard.yml`) | `api.scorecard.dev` | The Scorecard results for this repository, signed with the workflow's OIDC token | Left on (`publish_results: true`): it feeds the README badge and makes the results public. Set it to `false` to keep results inside GitHub code scanning, at the cost of the badge |
+| cosign 3.0.2 (`release.yml`) | Sigstore: Fulcio (certificate), Rekor (public transparency log), the TUF root CDN | The image digest and the workflow's OIDC identity, which Rekor publishes with the repository and workflow name | Required for signing; this is what makes the signature verifiable. Remove the signing step to stop it |
+| zizmor 1.31.1 (`security.yml`) | None | Nothing: run with `--offline`, so it makes no GitHub API calls | Off by flag, not by default; keep `--offline` |
+| cargo-nextest, cargo-llvm-cov | `get.nexte.st` and `github.com` for the pinned download only | Plain downloads, checksum-verified | No telemetry. Neither runs a self-update check in CI (`cargo nextest self update` is only run by hand) |
 | CodeQL, `upload-sarif`, Dependabot, cache and artifact actions, `rustsec/audit-check` | GitHub only (plus the RustSec advisory database for cargo-deny and cargo-audit) | Results, caches, advisory lookups | Required for the checks |
 
 The README badges are images fetched by whoever views the README on GitHub (from `github.com` and `api.scorecard.dev`); they are not part of the app.
