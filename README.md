@@ -25,15 +25,15 @@ Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to O
 
 ### From source
 
-You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (run `rustup toolchain install` in the repository to get it, with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14. [mise](https://mise.jdx.dev) installs trunk and provides the tasks below:
+You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14. [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
 
 ```sh
-mise install                          # trunk, checksum-verified via mise.lock
+mise install                          # Rust (via rustup) and trunk (checksum-verified via mise.lock)
 cp mise.local.toml.example mise.local.toml   # then set OBS_CONTACT (gitignored)
 mise run serve                        # dev-build the client -> dist/, then run the server
 ```
 
-Without mise, run the underlying commands directly:
+Without mise, run `rustup toolchain install` in the repository, install trunk, then run the underlying commands directly:
 
 ```sh
 trunk build --release                 # client -> dist/
