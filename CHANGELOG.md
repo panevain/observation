@@ -14,10 +14,11 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - `image-full.yml` builds the in-image client path before release, and a `zizmor (workflow audit)` check (required in the rulesets: re-import them).
 - Treemap workflow that refreshes the bundle-size chart for each release tag.
 - `cargo-nextest` and `cargo-llvm-cov` support (`mise run coverage`), and a zizmor audit of the workflows.
-- A colour-coded mode banner across the top of the 3D view (Select, Place, Aim, Move) with the selected camera or the model being placed.
+- A colour-coded mode banner across the top of the 3D view (Select, Place, Aim, Move, Region) with the selected camera or the model being placed.
 - Search in the camera model lists.
 - Per-camera colours: each type has a default colour (further cameras of a type get lighter and darker shades), and any camera's colour can be changed.
 - The demo street starts with ten example cameras.
+- A Region tool (R) to outline part of the area on the ground; while it is on, the coverage figures count only what lies inside. The region can be switched off, redrawn or cleared, and is saved with the scene (scene files gain an optional `region`).
 
 ### Changed
 
