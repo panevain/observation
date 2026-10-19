@@ -1,0 +1,86 @@
+name: Fuzz
+
+# cargo-fuzz (libFuzzer) targets in fuzz/ for the parsers that handle
+# untrusted input: bundles, scene files, Overpass responses, bbox queries,
+# and the coverage geometry. Short smoke runs on PRs; longer runs nightly.
+on:
+  pull_request:
+  push:
+    branches: [develop]
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to fuzz each target
+        required: false
+        default: "300"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: "0.13.2"
+
+jobs:
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (from fuzz/rust-toolchain.toml)
+        working-directory: fuzz
+        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz -> target
+          shared-key: fuzz
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: Install cargo-fuzz (pinned)
+        working-directory: fuzz
+        run: |
+          if ! cargo fuzz --version 2>/dev/null | grep -q "${CARGO_FUZZ_VERSION}"; then
+            cargo install --locked --version "${CARGO_FUZZ_VERSION}" cargo-fuzz
+          fi
+          cargo fuzz --version
+      - name: Build targets
+        working-directory: fuzz
+        run: cargo fuzz build
+      - name: Run targets
+        working-directory: fuzz
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_SECONDS: ${{ inputs.seconds }}
+        run: |
+          set -euo pipefail
+          case "${EVENT}" in
+            schedule) secs=600 ;;
+            workflow_dispatch) secs="${INPUT_SECONDS:-300}" ;;
+            *) secs=30 ;;
+          esac
+          [[ "${secs}" =~ ^[0-9]+$ ]] || { echo "::error::seconds must be a number"; exit 1; }
+          for t in $(cargo fuzz list); do
+            mkdir -p "corpus/${t}"
+            dirs=("corpus/${t}")
+            if [ -d "seeds/${t}" ]; then dirs+=("seeds/${t}"); fi
+            echo "::group::${t} (${secs}s)"
+            cargo fuzz run "${t}" "${dirs[@]}" -- -max_total_time="${secs}" -rss_limit_mb=2048
+            echo "::endgroup::"
+          done
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30
