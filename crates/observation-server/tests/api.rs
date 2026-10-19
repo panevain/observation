@@ -568,6 +568,35 @@ async fn upstream_tiles_must_be_png() {
     assert!(!h.cache.path().join("tiles").exists());
 }
 
+#[tokio::test]
+async fn endless_tile_bodies_are_cut_off() {
+    // A chunked body that never ends: buffering it whole would only stop at the
+    // client timeout (and after eating memory); the streaming cap stops at 2 MiB.
+    let router = Router::new().route(
+        "/{z}/{x}/{y}",
+        get(|| async {
+            let first = futures_util::stream::once(async { Ok(Bytes::from_static(PNG)) });
+            let rest = futures_util::stream::repeat_with(|| {
+                Ok::<_, std::io::Error>(Bytes::from(vec![0u8; 64 * 1024]))
+            });
+            Body::from_stream(futures_util::StreamExt::chain(first, rest))
+        }),
+    );
+    let addr = spawn(router).await;
+    let h = harness(
+        "http://127.0.0.1:9/o",
+        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
+    );
+    let (status, _, _) = tokio::time::timeout(
+        Duration::from_secs(10),
+        get_uri(&h.app, "/api/tiles/1/0/0.png"),
+    )
+    .await
+    .expect("oversized body is rejected while streaming");
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(!h.cache.path().join("tiles").exists());
+}
+
 // ----- static files ---------------------------------------------------------------------
 
 #[tokio::test]

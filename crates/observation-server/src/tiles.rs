@@ -122,11 +122,16 @@ impl TileProxy {
         match status {
             StatusCode::OK => {
                 let meta = new_meta(resp.headers(), None);
-                let body = resp.bytes().await.map_err(|e| {
-                    tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
-                    ApiError::Upstream("tile download failed".into())
-                })?;
-                if body.len() > MAX_TILE_BYTES || !body.starts_with(PNG_MAGIC) {
+                let body = crate::read_capped(resp, MAX_TILE_BYTES)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
+                        ApiError::Upstream("tile download failed".into())
+                    })?
+                    .ok_or_else(|| {
+                        ApiError::Upstream("tile server returned a tile that is too large".into())
+                    })?;
+                if !body.starts_with(PNG_MAGIC) {
                     return Err(ApiError::Upstream(
                         "tile server returned something that is not a PNG".into(),
                     ));

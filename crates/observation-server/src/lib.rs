@@ -36,6 +36,26 @@ use crate::tiles::TileProxy;
 /// `content-security-policy` sent with every response.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
+/// Reads an upstream response body, giving up as soon as it grows past `max`
+/// bytes. `Ok(None)` means it was too large; a `Content-Length` is not
+/// required (chunked bodies are capped while streaming, not after buffering).
+pub(crate) async fn read_capped(
+    mut resp: reqwest::Response,
+    max: usize,
+) -> Result<Option<Bytes>, reqwest::Error> {
+    if resp.content_length().is_some_and(|n| n > max as u64) {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if body.len() + chunk.len() > max {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(Bytes::from(body)))
+}
+
 /// The shared state could not be built.
 #[derive(Debug, Error)]
 pub enum StateError {

@@ -20,7 +20,7 @@ use crate::config::Config;
 use crate::error::ApiError;
 
 /// Largest Overpass response we are willing to buffer.
-const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 /// Buildings and roads extracted from one Overpass response.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -348,16 +348,13 @@ impl OverpassClient {
                 })?;
             let status = resp.status();
             if status.is_success() {
-                if resp
-                    .content_length()
-                    .is_some_and(|n| n > MAX_RESPONSE_BYTES)
-                {
-                    return Err(ApiError::Upstream("map data response too large".into()));
-                }
-                let body = resp.bytes().await.map_err(|e| {
-                    tracing::warn!(error = %e.without_url(), "overpass body failed");
-                    ApiError::Upstream("map data download failed".into())
-                })?;
+                let body = crate::read_capped(resp, MAX_RESPONSE_BYTES)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e.without_url(), "overpass body failed");
+                        ApiError::Upstream("map data download failed".into())
+                    })?
+                    .ok_or_else(|| ApiError::Upstream("map data response too large".into()))?;
                 return parse_response(&body).map_err(|e| {
                     tracing::warn!(error = %e, "overpass response unusable");
                     ApiError::Upstream("map data provider returned an unusable response".into())

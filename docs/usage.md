@@ -128,7 +128,7 @@ Scene files are plain JSON:
 | `custom_models` | Optional list of models: `id`, `vendor`, `name`, `kind`, `hfov_deg`, `vfov_deg`, `resolution` as `[w, h]`, and optionally `ir_range_m`, `source`, `notes` |
 | `params` | Optional: `dori` (`Detect`, `Observe`, `Recognise`, `Identify`), `lighting` (`Day`, `Night`), `subject_height_m` |
 
-Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, and valid custom models. A bad file shows an error toast and leaves the current scene untouched.
+Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, and valid custom models (a spec-sheet `source` link, if present, must be an `https://` URL). A bad file shows an error toast and leaves the current scene untouched.
 
 ## Keyboard, mouse and touch
 

@@ -156,6 +156,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_script_links_in_custom_models() {
+        let json = r#"{"format":"observation-scene","version":1,"area":{"kind":"demo"},
+            "origin":{"lat":0.0,"lon":0.0},
+            "custom_models":[{"id":"evil","vendor":"","name":"x","kind":"Bullet",
+              "hfov_deg":90.0,"vfov_deg":50.0,"resolution":[1920,1080],
+              "source":"javascript:alert(document.domain)"}]}"#;
+        assert!(matches!(
+            SceneFile::from_json(json),
+            Err(SceneError::Model(_))
+        ));
+        let ok = json.replace("javascript:alert(document.domain)", "https://example.com");
+        assert_eq!(SceneFile::from_json(&ok).unwrap().custom_models.len(), 1);
+    }
+
+    #[test]
     fn missing_optional_fields_default() {
         let json = r#"{"format":"observation-scene","version":1,"area":{"kind":"demo"},"origin":{"lat":0.0,"lon":0.0}}"#;
         let s = SceneFile::from_json(json).unwrap();
