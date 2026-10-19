@@ -7,6 +7,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Color32, CornerRadius, FontId, Margin, Stroke, TextStyle};
+use observation_core::camera::CameraKind;
 
 /// Smallest supported viewport (CSS px). Below this the app shows a gate.
 pub const MIN_VIEWPORT: Vec2 = Vec2::new(768.0, 600.0);
@@ -59,6 +60,17 @@ pub struct WorldColors {
     pub aim_target: Color32,
 }
 
+/// Colour coding of the editing tools (banner, tool rail).
+#[derive(Debug, Clone, Copy)]
+pub struct ToolColors {
+    pub select: Color32,
+    pub place: Color32,
+    pub aim: Color32,
+    pub move_: Color32,
+    /// Text on any of the above.
+    pub on_tool: Color32,
+}
+
 #[derive(Debug, Clone, Copy, Resource)]
 pub struct Tokens {
     pub dark: bool,
@@ -75,8 +87,11 @@ pub struct Tokens {
     pub danger: Color32,
     pub warning: Color32,
     pub scrim: Color32,
-    /// Per-camera identity colours.
+    /// Quick picks offered for camera colours.
     pub camera_palette: [Color32; 8],
+    /// Default camera colour per type, in [`CameraKind::ALL`] order.
+    pub kind_colors: [Color32; 7],
+    pub tools: ToolColors,
     /// Overlap ramp: seen by 1, 2, 3, 4+ cameras.
     pub coverage_ramp: [Color32; 4],
     /// Bounding box colour in the map picker.
@@ -126,6 +141,26 @@ const CAMERA_PALETTE: [Color32; 8] = [
     Color32::from_rgb(0xFF, 0x9D, 0xA7),
 ];
 
+/// Doorbell, floodlight, spotlight, bullet, turret, dome, indoor. Kept clear of
+/// the yellow-to-purple coverage ramp so cones stand out from the overlay.
+const KIND_COLORS: [Color32; 7] = [
+    Color32::from_rgb(0x4E, 0x79, 0xA7),
+    Color32::from_rgb(0x59, 0xA1, 0x4F),
+    Color32::from_rgb(0xF2, 0x8E, 0x2B),
+    Color32::from_rgb(0xE1, 0x57, 0x59),
+    Color32::from_rgb(0x76, 0xB7, 0xB2),
+    Color32::from_rgb(0xB0, 0x7A, 0xA1),
+    Color32::from_rgb(0xFF, 0x9D, 0xA7),
+];
+
+const TOOL_COLORS: ToolColors = ToolColors {
+    select: Color32::from_rgb(0x3B, 0x5B, 0xDB),
+    place: Color32::from_rgb(0x2B, 0x8A, 0x3E),
+    aim: Color32::from_rgb(0xD9, 0x48, 0x0F),
+    move_: Color32::from_rgb(0x84, 0x3D, 0xC9),
+    on_tool: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+};
+
 const COVERAGE_RAMP: [Color32; 4] = [
     Color32::from_rgba_unmultiplied_const(0xF5, 0xC5, 0x42, 140),
     Color32::from_rgba_unmultiplied_const(0xF2, 0x8C, 0x28, 165),
@@ -150,6 +185,8 @@ impl Tokens {
             warning: Color32::from_rgb(0xB2, 0x6B, 0x00),
             scrim: Color32::from_rgba_unmultiplied_const(0x10, 0x14, 0x1A, 150),
             camera_palette: CAMERA_PALETTE,
+            kind_colors: KIND_COLORS,
+            tools: TOOL_COLORS,
             coverage_ramp: COVERAGE_RAMP,
             selection_box: Color32::from_rgb(0x3B, 0x5B, 0xDB),
             world: WorldColors {
@@ -183,6 +220,8 @@ impl Tokens {
             warning: Color32::from_rgb(0xF0, 0xB0, 0x4A),
             scrim: Color32::from_rgba_unmultiplied_const(0x00, 0x00, 0x00, 170),
             camera_palette: CAMERA_PALETTE,
+            kind_colors: KIND_COLORS,
+            tools: TOOL_COLORS,
             coverage_ramp: COVERAGE_RAMP,
             selection_box: Color32::from_rgb(0x7C, 0x95, 0xF2),
             world: WorldColors {
@@ -209,8 +248,21 @@ impl Tokens {
         }
     }
 
-    pub fn camera_color(&self, index: u8) -> Color32 {
-        self.camera_palette[index as usize % self.camera_palette.len()]
+    /// Colour coding for an editing tool.
+    pub fn tool_color(&self, tool: crate::state::Tool) -> Color32 {
+        use crate::state::Tool;
+        match tool {
+            Tool::Select => self.tools.select,
+            Tool::Place => self.tools.place,
+            Tool::Aim => self.tools.aim,
+            Tool::Move => self.tools.move_,
+        }
+    }
+
+    /// Default camera colour for a camera type.
+    pub fn kind_color(&self, kind: CameraKind) -> Color32 {
+        let i = CameraKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
+        self.kind_colors[i % self.kind_colors.len()]
     }
 
     /// Colour for a cell seen by `count` cameras (`count ≥ 1`).
@@ -313,6 +365,16 @@ pub fn texel_to_linear(c: [u8; 4]) -> [f32; 4] {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
         .to_linear()
         .to_f32_array()
+}
+
+/// A user-chosen camera colour (opaque sRGB bytes) as a token colour.
+pub fn from_rgb(c: [u8; 3]) -> Color32 {
+    Color32::from_rgb(c[0], c[1], c[2])
+}
+
+/// Opaque sRGB bytes of a token colour, for storing a user's choice.
+pub fn to_rgb(c: Color32) -> [u8; 3] {
+    [c.r(), c.g(), c.b()]
 }
 
 /// Straight-alpha RGBA bytes for writing into textures.

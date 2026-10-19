@@ -424,7 +424,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 yaw_deg: yaw.unwrap_or(0.0),
                 pitch_deg: kind.default_pitch_deg(),
                 roll_deg: 0.0,
-                color_index: 0,
+                color: None,
                 enabled: true,
             });
             ui.selected = Some(id);

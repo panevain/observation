@@ -132,6 +132,7 @@ fn paint_overlay(
     mut state: ResMut<CoverageState>,
     ui: Res<UiState>,
     scene: Res<Scene>,
+    models: Res<Models>,
     tokens: Res<Tokens>,
     overlay: Option<Res<Overlay>>,
     mut images: ResMut<Assets<Image>>,
@@ -150,7 +151,10 @@ fn paint_overlay(
         }
     }
     let mode = (ui.overlay, ui.show_facades);
-    if !state.paint && state.painted_mode == Some(mode) && !overlay.is_changed() {
+    // Per-camera colours can change without any visibility changing.
+    let recolor =
+        ui.overlay == OverlayMode::PerCamera && (scene.is_changed() || models.is_changed());
+    if !state.paint && !recolor && state.painted_mode == Some(mode) && !overlay.is_changed() {
         return;
     }
     let Some(counts) = &state.counts else { return };
@@ -189,7 +193,7 @@ fn paint_overlay(
             let Some(vis) = state.visibility(c.id) else {
                 continue;
             };
-            let mut col = texel(tokens.camera_color(c.color_index));
+            let mut col = texel(crate::cameras::camera_color(c, &models, &tokens));
             col[3] = 150;
             for &i in &vis.ground {
                 ground[i as usize] = col;

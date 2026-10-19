@@ -85,14 +85,16 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         for tool in Tool::ALL {
             let on = d.ui.tool == tool;
             let disabled = tool.needs_selection() && d.ui.selected.is_none();
+            let color = t.tool_color(tool);
             let text = RichText::new(tool.label())
                 .size(t.font.caption)
-                .color(if on { t.on_accent } else { t.text });
+                .strong()
+                .color(if on { t.tools.on_tool } else { t.text });
             let btn = egui::Button::new(text)
-                .fill(if on { t.accent } else { t.surface })
+                .fill(if on { color } else { t.surface })
                 .stroke(Stroke::new(
-                    t.stroke_width,
-                    if on { t.accent } else { t.border },
+                    t.stroke_width * if on { 2.0 } else { 1.0 },
+                    if on { color } else { t.border },
                 ))
                 .min_size(size);
             let resp = ui
