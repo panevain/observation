@@ -77,46 +77,51 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ---------------------------------------------------------------------------
-# Stage 3: builder
+# Stage 3a: server-build -- the native server binary (no Bevy, quick).
 # ---------------------------------------------------------------------------
-FROM chef AS builder
+FROM chef AS server-build
 
 COPY --from=planner /build/recipe.json recipe.json
-# Dependencies only, for exactly the profiles/targets built below.
 RUN cargo chef cook --release --locked -p observation-server --recipe-path recipe.json
-RUN cargo chef cook --profile wasm-release --target wasm32-unknown-unknown --locked \
-      -p observation-client --recipe-path recipe.json
 
 COPY . .
-
-# Client (Bevy -> wasm32) via trunk, reusing the cooked dependencies.
-# Output: /build/dist. Trunk's tool downloads (wasm-bindgen, wasm-opt) are cached.
-RUN --mount=type=cache,target=/root/.cache/trunk \
-    trunk build --release --locked
-
-# Server binary.
 RUN set -eux; \
     cargo build --release --locked -p observation-server; \
     mkdir -p /out/cache; \
     cp target/release/observation-server /out/observation-server
 
 # ---------------------------------------------------------------------------
+# Stage 3b: client-build -- Bevy -> wasm32 via trunk (the slow part).
+# Skipped by the `runtime-prebuilt` target below, which takes a dist/ built
+# elsewhere (CI's wasm job) through the `client-dist` named build context.
+# ---------------------------------------------------------------------------
+FROM chef AS client-build
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --profile wasm-release --target wasm32-unknown-unknown --locked \
+      -p observation-client --recipe-path recipe.json
+
+COPY . .
+# Output: /build/dist. Trunk's tool downloads (wasm-bindgen, wasm-opt) are cached.
+RUN --mount=type=cache,target=/root/.cache/trunk \
+    trunk build --release --locked
+
+# ---------------------------------------------------------------------------
 # Stage 4: runtime -- distroless, glibc, runs as nonroot (uid/gid 65532).
 #   Pinned by digest; refresh with:
 #   docker buildx imagetools inspect gcr.io/distroless/cc-debian12:nonroot
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS runtime-base
 
 LABEL org.opencontainers.image.title="observation" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 WORKDIR /app
-COPY --from=builder --chown=65532:65532 /out/observation-server /app/observation-server
-COPY --from=builder --chown=65532:65532 /build/dist /app/dist
+COPY --from=server-build --chown=65532:65532 /out/observation-server /app/observation-server
 # Writable tile/Overpass cache for the nonroot user (no shell in this image,
 # so the directory is created in the builder and copied across).
-COPY --from=builder --chown=65532:65532 /out/cache /var/cache/observation
+COPY --from=server-build --chown=65532:65532 /out/cache /var/cache/observation
 
 ENV OBS_BIND=0.0.0.0:8080 \
     OBS_STATIC_DIR=/app/dist \
@@ -129,3 +134,15 @@ USER 65532:65532
 # No HEALTHCHECK: the image has no shell or curl. Probe GET /healthz from the
 # orchestrator (Kubernetes httpGet, compose/ECS health checks, etc.).
 ENTRYPOINT ["/app/observation-server"]
+
+# ---------------------------------------------------------------------------
+# Targets. The last stage is the default, so a plain `docker build .` compiles
+# the client from source (used by releases, for hermetic provenance).
+#   --target runtime-prebuilt --build-context client-dist=<dir>
+# skips the wasm build and copies <dir> (a finished trunk dist/) instead.
+# ---------------------------------------------------------------------------
+FROM runtime-base AS runtime-prebuilt
+COPY --from=client-dist --chown=65532:65532 / /app/dist
+
+FROM runtime-base AS runtime
+COPY --from=client-build --chown=65532:65532 /build/dist /app/dist

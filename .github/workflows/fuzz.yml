@@ -52,6 +52,9 @@ jobs:
             cargo install --locked --version "${CARGO_FUZZ_VERSION}" cargo-fuzz
           fi
           cargo fuzz --version
+      - name: Lockfile is current
+        working-directory: fuzz
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Build targets
         working-directory: fuzz
         run: cargo fuzz build

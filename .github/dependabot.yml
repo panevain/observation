@@ -93,9 +93,25 @@ updates:
       prefix: "docker"
     ignore:
       # The builder image's Rust version must match rust-toolchain.toml (and
-      # Bevy's MSRV); bump both together, by hand. Patch/digest updates still flow.
+      # Bevy's MSRV); bump rust-toolchain.toml, Cargo.toml and the Dockerfile together, by
+      # hand (mise run sync checks they agree). Only digest updates flow.
       - dependency-name: rust
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
+
+  # Hash-pinned requirements for tools run from PyPI in CI (zizmor).
+  - package-ecosystem: pip
+    directory: /.github
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:15"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci"

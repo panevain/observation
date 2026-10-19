@@ -51,6 +51,7 @@ impl TileProxy {
         if let Some(c) = &cached
             && c.meta.expires_unix > unix_now()
         {
+            metrics::counter!(crate::metrics::TILE_CACHE, "result" => "hit").increment(1);
             return Ok(c.bytes.clone());
         }
         match self
@@ -58,6 +59,13 @@ impl TileProxy {
             .await
         {
             Ok(Upstream::Fresh(bytes, meta)) => {
+                // `refreshed`: an expired copy was replaced by a new body; `miss`: nothing cached.
+                let result = if cached.is_some() {
+                    "refreshed"
+                } else {
+                    "miss"
+                };
+                metrics::counter!(crate::metrics::TILE_CACHE, "result" => result).increment(1);
                 match self.cache.put_tile(id, &bytes, &meta).await {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, ?id, "could not cache tile"),
@@ -68,6 +76,8 @@ impl TileProxy {
                 let Some(c) = cached else {
                     return Err(ApiError::Upstream("unexpected 304 from tile server".into()));
                 };
+                metrics::counter!(crate::metrics::TILE_CACHE, "result" => "revalidated")
+                    .increment(1);
                 if let Err(e) = self.cache.update_tile_meta(id, &meta).await {
                     tracing::warn!(error = %e, ?id, "could not refresh tile metadata");
                 }
@@ -75,10 +85,15 @@ impl TileProxy {
             }
             Err(e) => match cached {
                 Some(c) => {
+                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "stale_served")
+                        .increment(1);
                     tracing::warn!(error = %e, ?id, "tile upstream failed, serving stale copy");
                     Ok(c.bytes)
                 }
-                None => Err(e),
+                None => {
+                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "error").increment(1);
+                    Err(e)
+                }
             },
         }
     }
