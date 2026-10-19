@@ -244,12 +244,10 @@ fn pointer(
         return;
     };
     let viewport = camera.logical_viewport_rect();
-    let viewport_origin = viewport.map_or(Vec2::ZERO, |r| r.min);
 
     let mut cast = |screen: Vec2| -> Option<Hit> {
-        let ray = camera
-            .viewport_to_world(cam_t, screen - viewport_origin)
-            .ok()?;
+        // Takes window coordinates: it maps the camera's viewport rect itself.
+        let ray = camera.viewport_to_world(cam_t, screen).ok()?;
         let filter = |e: Entity| buildings.contains(e) || grounds.contains(e) || bodies.contains(e);
         let settings = MeshRayCastSettings::default()
             .with_filter(&filter)
