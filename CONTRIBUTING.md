@@ -16,7 +16,7 @@ Dependabot targets `develop` (see `.github/dependabot.yml`).
 
 1. `git switch -c release/0.2.0 origin/develop`, then bump `version` in the root `Cargo.toml` (`[workspace.package]`) and run `cargo check` so `Cargo.lock` updates.
 2. Open a PR `release/0.2.0` → `main`. When it is green, merge it with a merge commit.
-3. Tag the merge commit on `main` (admins only, see the tag ruleset): `git tag -a v0.2.0 -m "v0.2.0" origin/main && git push origin v0.2.0`. The Release workflow publishes `ghcr.io/panevain/observation:0.2.0`, `:0.2` and `:latest` with provenance and an SBOM.
+3. Tag the merge commit on `main` (admins only, see the tag ruleset): `git tag -a v0.2.0 -m "v0.2.0" origin/main && git push origin v0.2.0`. The Release workflow publishes `ghcr.io/panevain/observation:0.2.0` and `:latest` with provenance and an SBOM.
 4. Open a PR `release/0.2.0` → `develop` to bring the version bump back, then delete the release branch.
 
 Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`.
@@ -25,9 +25,10 @@ Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`.
 
 | Push to | Image tags |
 | --- | --- |
-| `develop` | `edge`, `sha-<commit>` |
-| `main` | `main`, `sha-<commit>` |
-| tag `vX.Y.Z` | `X.Y.Z`, `X.Y`, `latest`, `sha-<commit>` |
+| `develop` | `devel` |
+| tag `vX.Y.Z` | `X.Y.Z`, `latest` |
+
+Every version tag is kept. The Prune images workflow (weekly, and after each Release) deletes any other tag, such as the old `edge`, `main`, `X.Y` and `sha-*` tags.
 
 ## Rules and required checks
 

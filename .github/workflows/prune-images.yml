@@ -1,0 +1,79 @@
+name: Prune images
+
+# Keeps `devel`, `latest` and every X.Y.Z tag of the container image and
+# deletes any other tagged version (old edge, main, X.Y and sha-* tags).
+#
+# Untagged versions are never touched: the SBOM and provenance attestations
+# are untagged children of a tagged image index, and deleting them breaks
+# `docker pull` and attestation verification.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what would be deleted without deleting it
+        type: boolean
+        default: true
+
+# Do not prune while a release is publishing.
+concurrency:
+  group: prune-images
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  PACKAGE: observation
+  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+)$'
+
+jobs:
+  prune:
+    name: prune image tags
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write # delete package versions
+    steps:
+      - name: Delete unwanted tagged versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          # Scheduled and workflow_run runs delete; manual runs default to a dry run.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          case "$(gh api "users/$OWNER" --jq .type)" in
+            Organization) base="orgs/$OWNER" ;;
+            *) base="users/$OWNER" ;;
+          esac
+          url="$base/packages/container/$PACKAGE/versions"
+
+          # id <TAB> comma-separated tags, only for versions that have a tag
+          # and none of whose tags is on the keep list.
+          doomed=$(gh api --paginate "$url?per_page=100" \
+            --jq '.[] | select((.metadata.container.tags | length) > 0) | [.id, (.metadata.container.tags | join(","))] | @tsv' |
+            while IFS=$'\t' read -r id tags; do
+              keep=false
+              IFS=, read -ra arr <<<"$tags"
+              for t in "${arr[@]}"; do
+                if [[ "$t" =~ $KEEP_REGEX ]]; then keep=true; fi
+              done
+              if [ "$keep" = false ]; then printf '%s\t%s\n' "$id" "$tags"; fi
+            done)
+
+          if [ -z "$doomed" ]; then
+            echo "Nothing to delete."
+            exit 0
+          fi
+          while IFS=$'\t' read -r id tags; do
+            if [ "$DRY_RUN" = true ]; then
+              echo "Would delete version $id (tags: $tags)"
+            else
+              echo "Deleting version $id (tags: $tags)"
+              gh api -X DELETE "$url/$id"
+            fi
+          done <<<"$doomed"
