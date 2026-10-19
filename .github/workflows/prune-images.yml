@@ -1,8 +1,13 @@
 name: Prune images
 
-# Keeps `devel`, `latest`, every X.Y.Z (or X.Y.Z-pre) tag and the sha256-*
-# attestation tags of the container image, and deletes any other tagged
-# version (old edge, main, X.Y and sha-* tags).
+# Keeps `devel`, `latest` and every X.Y.Z (or X.Y.Z-pre) tag of the container
+# image, and deletes any other tagged version (old edge, main, X.Y and sha-*
+# tags).
+#
+# `sha256-<digest>` tags are the registry's fallback for the build attestation
+# of image <digest>. They are kept while that image still exists and deleted
+# once it is gone (for example after `devel` moved on and the old image became
+# untagged and was removed), because nothing can pull or verify it any more.
 #
 # Untagged versions are never touched: the SBOM and provenance attestations
 # are untagged children of a tagged image index, and deleting them breaks
@@ -36,7 +41,8 @@ permissions: {}
 
 env:
   PACKAGE: observation
-  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|sha256-[0-9a-f]{64}(\.[a-z]+)?)$'
+  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+  ATTESTATION_REGEX: '^sha256-([0-9a-f]{64})(\.[a-z]+)?$'
 
 jobs:
   prune:
@@ -68,15 +74,23 @@ jobs:
           esac
           url="$base/packages/container/$PACKAGE/versions"
 
+          gh api --paginate "$url?per_page=100" --jq '.[]' | jq -s '.' >"$RUNNER_TEMP/versions.json"
+          # Version names are image digests (sha256:...).
+          names=$(jq -r '.[].name' "$RUNNER_TEMP/versions.json")
+
           # id <TAB> comma-separated tags, only for versions that have a tag
-          # and none of whose tags is on the keep list.
-          doomed=$(gh api --paginate "$url?per_page=100" \
-            --jq '.[] | select((.metadata.container.tags | length) > 0) | [.id, (.metadata.container.tags | join(","))] | @tsv' |
+          # and none of whose tags is on the keep list. An attestation tag is
+          # on the keep list only while the image it refers to still exists.
+          doomed=$(jq -r '.[] | select((.metadata.container.tags | length) > 0) | [.id, (.metadata.container.tags | join(","))] | @tsv' "$RUNNER_TEMP/versions.json" |
             while IFS=$'\t' read -r id tags; do
               keep=false
               IFS=, read -ra arr <<<"$tags"
               for t in "${arr[@]}"; do
-                if [[ "$t" =~ $KEEP_REGEX ]]; then keep=true; fi
+                if [[ "$t" =~ $KEEP_REGEX ]]; then
+                  keep=true
+                elif [[ "$t" =~ $ATTESTATION_REGEX ]] && grep -qxF "sha256:${BASH_REMATCH[1]}" <<<"$names"; then
+                  keep=true
+                fi
               done
               if [ "$keep" = false ]; then printf '%s\t%s\n' "$id" "$tags"; fi
             done)

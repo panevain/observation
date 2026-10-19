@@ -28,7 +28,7 @@ Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`.
 | `develop` | `devel` |
 | tag `vX.Y.Z` | `X.Y.Z`, `latest` |
 
-Every version tag is kept. The Prune images workflow (weekly, and after each Release) deletes any other tag, such as the old `edge`, `main`, `X.Y` and `sha-*` tags.
+Every version tag is kept. The Prune images workflow (weekly, and after each Release) deletes any other tag, such as the old `edge`, `main`, `X.Y` and `sha-*` tags. It also deletes `sha256-<digest>` attestation tags once the image they refer to is gone.
 
 ## Rules and required checks
 
