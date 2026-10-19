@@ -108,21 +108,25 @@ impl Cache {
 
     // ----- tiles -----------------------------------------------------------
 
-    fn tile_paths(&self, id: TileId) -> (PathBuf, PathBuf) {
-        let dir = self
-            .root
-            .join("tiles")
-            .join(id.z.to_string())
-            .join(id.x.to_string());
-        (
-            dir.join(format!("{}.png", id.y)),
-            dir.join(format!("{}.json", id.y)),
-        )
+    /// `tiles/<z>/<x>/<y>.{png,json}`. The relative part is digits and `/` by
+    /// construction; the `..` check (the same rule as [`is_safe_key`]) keeps the
+    /// path inside `tiles/` even if that ever changes, and lets path-injection
+    /// analysis see the guard.
+    fn tile_paths(&self, id: TileId) -> io::Result<(PathBuf, PathBuf)> {
+        let rel = format!("{}/{}/{}", id.z, id.x, id.y);
+        if rel.contains("..") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unsafe tile path",
+            ));
+        }
+        let base = self.root.join("tiles").join(rel);
+        Ok((base.with_extension("png"), base.with_extension("json")))
     }
 
     /// Reads a cached tile together with its metadata.
     pub async fn get_tile(&self, id: TileId) -> Option<CachedTile> {
-        let (png, json) = self.tile_paths(id);
+        let (png, json) = self.tile_paths(id).ok()?;
         let bytes = tokio::fs::read(&png).await.ok()?;
         let meta = tokio::fs::read(&json).await.ok()?;
         let meta = serde_json::from_slice(&meta).ok()?;
@@ -142,7 +146,7 @@ impl Cache {
             );
             return Ok(false);
         }
-        let (png, json) = self.tile_paths(id);
+        let (png, json) = self.tile_paths(id)?;
         let previous = tokio::fs::metadata(&png).await.map_or(0, |m| m.len());
         self.write_atomic(&png, bytes).await?;
         self.write_atomic(&json, &encode_meta(meta)?).await?;
@@ -159,7 +163,7 @@ impl Cache {
 
     /// Rewrites only the metadata of an already cached tile (after a 304).
     pub async fn update_tile_meta(&self, id: TileId, meta: &TileMeta) -> io::Result<()> {
-        let (_, json) = self.tile_paths(id);
+        let (_, json) = self.tile_paths(id)?;
         self.write_atomic(&json, &encode_meta(meta)?).await
     }
 
