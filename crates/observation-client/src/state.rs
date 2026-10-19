@@ -58,6 +58,16 @@ impl Tool {
         }
     }
 
+    /// Short instruction for the mode banner.
+    pub fn banner(self) -> &'static str {
+        match self {
+            Self::Select => "Click a camera to select it",
+            Self::Place => "Click a wall or the ground to place a camera",
+            Self::Aim => "Click where the selected camera should look",
+            Self::Move => "Click a wall or the ground to move the selected camera",
+        }
+    }
+
     pub fn needs_selection(self) -> bool {
         matches!(self, Self::Aim | Self::Move)
     }
@@ -203,10 +213,6 @@ impl Scene {
         if c.label.is_empty() {
             c.label = format!("Camera {}", c.id);
         }
-        let used: Vec<u8> = self.cameras.iter().map(|c| c.color_index).collect();
-        c.color_index = (0u8..8)
-            .find(|i| !used.contains(i))
-            .unwrap_or((c.id % 8) as u8);
         let id = c.id;
         self.cameras.push(c);
         self.touch();

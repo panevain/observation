@@ -49,12 +49,33 @@ pub fn bar(ui: &mut Ui, t: &Tokens, frac: f32, color: Color32) {
 
 /// Small filled colour swatch.
 pub fn swatch(ui: &mut Ui, t: &Tokens, color: Color32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(t.space.md, t.space.md), Sense::hover());
+    paint_swatch(ui, t, color, t.space.md, Sense::hover(), false)
+}
+
+/// A larger clickable swatch, outlined when `selected` or hovered.
+pub fn swatch_button(ui: &mut Ui, t: &Tokens, color: Color32, selected: bool) -> egui::Response {
+    paint_swatch(ui, t, color, t.space.lg, Sense::click(), selected)
+}
+
+fn paint_swatch(
+    ui: &mut Ui,
+    t: &Tokens,
+    color: Color32,
+    side: f32,
+    sense: Sense,
+    selected: bool,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(side, side), sense);
+    let stroke = if selected || (sense.senses_click() && resp.hovered()) {
+        Stroke::new(t.stroke_width * 2.0, t.text)
+    } else {
+        Stroke::new(t.stroke_width, t.border)
+    };
     ui.painter().rect(
         rect,
         egui::CornerRadius::same(t.radius.sm),
         color,
-        Stroke::new(t.stroke_width, t.border),
+        stroke,
         egui::StrokeKind::Inside,
     );
     resp

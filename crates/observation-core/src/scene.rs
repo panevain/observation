@@ -117,7 +117,7 @@ mod tests {
             yaw_deg: 180.0,
             pitch_deg: 0.0,
             roll_deg: 0.0,
-            color_index: 0,
+            color: Some([10, 20, 30]),
             enabled: true,
         });
         s
@@ -178,6 +178,17 @@ mod tests {
                 .as_deref(),
             Some("https://example.com")
         );
+    }
+
+    #[test]
+    fn legacy_color_index_is_ignored() {
+        let json = scene().to_json().replace(
+            "\"color\": [\n        10,\n        20,\n        30\n      ],",
+            "\"color_index\": 3,",
+        );
+        assert!(json.contains("color_index"), "{json}");
+        let s = SceneFile::from_json(&json).unwrap();
+        assert_eq!(s.cameras[0].color, None);
     }
 
     #[test]

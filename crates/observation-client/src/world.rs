@@ -3,21 +3,39 @@
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
-use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Scene, UiState};
+use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState};
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use observation_core::camera::CameraModel;
 use observation_core::coverage::StaticLayers;
+use observation_core::example::example_cameras;
 use observation_core::geo::{LatLon, Projection};
+use observation_core::scene::AreaRef;
 use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
 
 /// Extra ground drawn around the area so it doesn't float in the void, metres.
 const GROUND_MARGIN_M: f32 = 150.0;
 /// Upper bound on ground tiles per area.
 const MAX_GROUND_TILES: usize = 64;
+/// Models used, in turn, for the example cameras on the demo street: a mix of
+/// types and brands.
+const EXAMPLE_MODELS: [&str; 10] = [
+    "ring-wired-doorbell-pro",
+    "ring-floodlight-cam-wired-plus",
+    "google-nest-doorbell-battery",
+    "reolink-rlc-810a",
+    "arlo-pro-4",
+    "eufy-eufycam-s3-pro",
+    "ubiquiti-unifi-g5-dome",
+    "wyze-cam-floodlight-pro",
+    "tp-link-tapo-c320ws",
+    "blink-outdoor-4",
+];
+
 /// Height of the coverage overlay above the map tiles, metres. Layers closer
 /// than the depth buffer can resolve at range fight and flicker.
 const OVERLAY_Y_M: f32 = 0.08;
@@ -98,14 +116,21 @@ pub fn ground_quad(min: Vec2, max: Vec2, y: f32) -> Mesh {
     .with_inserted_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]))
 }
 
+/// Asset stores an area load writes to.
+#[derive(bevy::ecs::system::SystemParam)]
+struct AreaAssets<'w> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
+    tiles: ResMut<'w, Tiles>,
+}
+
 fn on_area_loaded(
     mut loaded: MessageReader<AreaLoaded>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut tiles: ResMut<Tiles>,
+    assets: AreaAssets,
     mut scene: ResMut<Scene>,
+    models: Res<Models>,
     mut ui: ResMut<UiState>,
     mut coverage: ResMut<CoverageState>,
     mut orbit: Query<&mut OrbitCamera>,
@@ -117,6 +142,12 @@ fn on_area_loaded(
     };
     let Ok(bundle) = &msg.result else { return };
     let bundle = bundle.clone();
+    let AreaAssets {
+        mut meshes,
+        mut materials,
+        mut images,
+        mut tiles,
+    } = assets;
 
     for e in &old {
         commands.entity(e).despawn();
@@ -254,6 +285,16 @@ fn on_area_loaded(
     if !msg.request.keep_cameras || scene.area != Some(area) {
         scene.cameras.clear();
         ui.selected = None;
+        if area == AreaRef::Demo {
+            // A fresh demo street comes with example cameras to explore.
+            let picks: Vec<&CameraModel> = EXAMPLE_MODELS
+                .iter()
+                .filter_map(|id| models.get(id))
+                .collect();
+            for c in example_cameras(&bundle, &picks, EXAMPLE_MODELS.len()) {
+                scene.add_camera(c);
+            }
+        }
     }
     scene.area = Some(area);
     scene.origin = bundle.origin;

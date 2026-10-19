@@ -2,14 +2,15 @@
 
 use super::UiData;
 use super::widgets::{
-    bar, danger, hint, primary, row, secondary, section, segmented, stat, swatch,
+    bar, danger, hint, primary, row, secondary, section, segmented, stat, swatch, swatch_button,
 };
+use crate::cameras::camera_color;
 use crate::state::{OverlayMode, Tool};
-use crate::theme::Tokens;
+use crate::theme::{Tokens, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
-    ASSUMED_IR_RANGE_M, CameraKind, CameraModel, DoriLevel, Lighting, forward_from_yaw_pitch,
-    is_https_url,
+    ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, DoriLevel, Lighting,
+    forward_from_yaw_pitch, is_https_url,
 };
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
@@ -20,8 +21,6 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
             ui.spacing_mut().item_spacing.y = t.space.sm;
             coverage_card(ui, d, &t);
             ui.separator();
-            analysis(ui, d, &t);
-            ui.separator();
             camera_list(ui, d, &t);
             if d.ui.selected.is_some() {
                 ui.separator();
@@ -29,6 +28,8 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
             }
             ui.separator();
             custom_model(ui, d, &t);
+            ui.separator();
+            analysis(ui, d, &t);
             ui.add_space(t.space.lg);
         });
 }
@@ -153,7 +154,15 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     for c in &d.scene.cameras {
         let selected = d.ui.selected == Some(c.id);
         ui.horizontal(|ui| {
-            swatch(ui, t, t.camera_color(c.color_index));
+            let mut on = c.enabled;
+            if ui
+                .checkbox(&mut on, "")
+                .on_hover_text("Include in coverage")
+                .changed()
+            {
+                toggle = Some((c.id, on));
+            }
+            swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
             let model = d
                 .models
                 .get(&c.model_id)
@@ -163,19 +172,10 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             } else {
                 t.text_muted
             });
-            if ui.selectable_label(selected, label).clicked() {
+            let row = egui::Button::selectable(selected, label).truncate();
+            if ui.add(row).on_hover_text(&model).clicked() {
                 d.ui.selected = if selected { None } else { Some(c.id) };
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut on = c.enabled;
-                if ui
-                    .checkbox(&mut on, "")
-                    .on_hover_text("Include in coverage")
-                    .changed()
-                {
-                    toggle = Some((c.id, on));
-                }
-            });
         });
     }
     if let Some((id, on)) = toggle
@@ -204,6 +204,7 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         &d.models.custom,
         &mut c.model_id,
     );
+    color_row(ui, d, t, &mut c);
 
     egui::Grid::new("cam-grid")
         .num_columns(2)
@@ -332,6 +333,35 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     }
 }
 
+/// Cone colour: a picker, quick swatches and a way back to the type default.
+fn color_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement) {
+    let kind = d.models.kind_of(&c.model_id);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Colour").color(t.text_muted));
+        let mut rgb = to_rgb(camera_color(&d.scene, c, &d.models, t));
+        if ui
+            .color_edit_button_srgb(&mut rgb)
+            .on_hover_text("Colour of the camera, its view cone and its per-camera overlay")
+            .changed()
+        {
+            c.color = Some(rgb);
+        }
+        for &p in &t.camera_palette {
+            if swatch_button(ui, t, p, c.color == Some(to_rgb(p))).clicked() {
+                c.color = Some(to_rgb(p));
+            }
+        }
+        if c.color.is_some()
+            && ui
+                .add(secondary(t, "Default"))
+                .on_hover_text(format!("Use the {} colour", kind.label().to_lowercase()))
+                .clicked()
+        {
+            c.color = None;
+        }
+    });
+}
+
 fn compass(yaw: f32) -> &'static str {
     const NAMES: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     NAMES[((yaw.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
@@ -349,21 +379,39 @@ fn model_combo(
         .chain(custom)
         .find(|m| m.id == *value)
         .map_or_else(|| value.clone(), CameraModel::display_name);
-    egui::ComboBox::from_id_salt(id)
+    let query_id = egui::Id::new((id, "model-search"));
+    let mut query: String = ui.data_mut(|m| m.get_temp(query_id)).unwrap_or_default();
+    let resp = egui::ComboBox::from_id_salt(id)
         .width(ui.available_width())
+        .height(360.0)
         .selected_text(current)
         .show_ui(ui, |ui| {
+            let search = ui.add(
+                TextEdit::singleline(&mut query)
+                    .hint_text("Search models…")
+                    .desired_width(f32::INFINITY),
+            );
+            // Typing always goes to the search box while the list is open, even
+            // after Enter took its focus, so keys never reach the shortcuts.
+            let entered = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if !search.has_focus() {
+                search.request_focus();
+            }
+            let mut first = None;
+            let mut any = false;
             for kind in CameraKind::ALL {
                 let items: Vec<&CameraModel> = catalog
                     .iter()
                     .chain(custom)
-                    .filter(|m| m.kind == kind)
+                    .filter(|m| m.kind == kind && matches_query(m, &query))
                     .collect();
                 if items.is_empty() {
                     continue;
                 }
+                any = true;
                 ui.label(RichText::new(kind.label()).small().strong());
                 for m in items {
+                    first.get_or_insert(m.id.clone());
                     ui.selectable_value(
                         value,
                         m.id.clone(),
@@ -371,7 +419,34 @@ fn model_combo(
                     );
                 }
             }
+            if !any {
+                ui.label(RichText::new("No matching models").weak());
+            }
+            // Enter picks the first match of a search (an empty one matches
+            // everything, so Enter alone changes nothing).
+            if entered
+                && !query.trim().is_empty()
+                && let Some(m) = first
+            {
+                *value = m;
+                ui.close();
+            }
         });
+    if resp.inner.is_none() {
+        // Closed: start the next search afresh.
+        query.clear();
+    }
+    ui.data_mut(|m| m.insert_temp(query_id, query));
+}
+
+/// Every whitespace-separated word of `query` appears in the model's vendor,
+/// name, type or id (case-insensitive).
+fn matches_query(m: &CameraModel, query: &str) -> bool {
+    let hay = format!("{} {} {} {}", m.vendor, m.name, m.kind.label(), m.id).to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|w| hay.contains(w))
 }
 
 /// Draft state for the custom-model form.

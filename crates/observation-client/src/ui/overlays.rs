@@ -1,8 +1,9 @@
 //! Floating overlays: viewport gate, toasts, loading card, help, chips.
 
 use super::UiData;
-use super::widgets::{hint, primary};
-use crate::state::{ToastKind, UiState};
+use super::widgets::{hint, primary, swatch};
+use crate::cameras::camera_color;
+use crate::state::{ToastKind, Tool, UiState};
 use crate::theme::{MIN_VIEWPORT, Tokens};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
 
@@ -33,30 +34,70 @@ pub fn viewport_gate(ctx: &egui::Context, t: &Tokens, w: f32, h: f32) {
         });
 }
 
-/// Small chips in the viewport corner: active tool and compass.
-pub fn viewport_chips(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
-    egui::Area::new(Id::new("chips"))
+/// Colour-coded banner across the top of the viewport: the active tool, what
+/// a click will do, and which camera is selected.
+pub fn mode_banner(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
+    let tool = d.ui.tool;
+    let fill = t.tool_color(tool);
+    let on = t.tools.on_tool;
+    let selected = d.ui.selected.and_then(|id| d.scene.camera(id));
+    let width = vp.width() - 2.0 * t.space.md;
+    egui::Area::new(Id::new("mode-banner"))
         .order(Order::Middle)
         .fixed_pos(vp.min + vec2(t.space.md, t.space.md))
         .interactable(false)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                chip(ui, t, &format!("Tool: {}", d.ui.tool.label()));
-                if let Some(c) = d.ui.selected.and_then(|id| d.scene.camera(id)) {
-                    chip(ui, t, &format!("Selected: {}", c.label));
-                }
-            });
+            egui::Frame::new()
+                .fill(fill)
+                .corner_radius(egui::CornerRadius::same(t.radius.md))
+                .inner_margin(egui::Margin::symmetric(t.space.lg as i8, t.space.sm as i8))
+                .show(ui, |ui| {
+                    // Fills the viewport's width and wraps rather than spilling over
+                    // the panels when the viewport is narrow.
+                    ui.set_width(width - 2.0 * t.space.lg);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!("{} mode", tool.label()).to_uppercase())
+                                .size(t.font.title)
+                                .strong()
+                                .color(on),
+                        );
+                        ui.label(RichText::new(tool.banner()).color(on));
+                        selection_chip(ui, t, d, selected);
+                        if tool != Tool::Select {
+                            ui.label(RichText::new("Esc to exit").size(t.font.caption).color(on));
+                        }
+                    });
+                });
         });
 }
 
-fn chip(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+/// What the banner says about the selection (or, for Place, the model).
+fn selection_chip(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    d: &UiData,
+    selected: Option<&observation_core::camera::CameraPlacement>,
+) {
     egui::Frame::new()
         .fill(t.surface_raised)
-        .stroke(Stroke::new(t.stroke_width, t.border))
         .corner_radius(egui::CornerRadius::same(t.radius.lg))
         .inner_margin(egui::Margin::symmetric(t.space.md as i8, t.space.xs as i8))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).size(t.font.caption));
+            ui.horizontal(|ui| {
+                if d.ui.tool == Tool::Place {
+                    let model = d
+                        .models
+                        .get(&d.ui.place_model)
+                        .map_or_else(|| d.ui.place_model.clone(), |m| m.display_name());
+                    ui.label(RichText::new(format!("New: {model}")).strong());
+                } else if let Some(c) = selected {
+                    swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
+                    ui.label(RichText::new(&c.label).strong());
+                } else {
+                    ui.label(RichText::new("No camera selected").color(t.text_muted));
+                }
+            });
         });
 }
 

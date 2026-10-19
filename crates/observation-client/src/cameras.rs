@@ -2,9 +2,10 @@
 
 use crate::coverage::cone_for;
 use crate::state::{Models, Scene, UiState};
-use crate::theme::{Tokens, to_bevy};
-use bevy::platform::collections::HashMap;
+use crate::theme::{Tokens, from_rgb, to_bevy, to_rgb};
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
+use bevy_egui::egui::Color32;
 use observation_core::camera::CameraPlacement;
 
 /// Marks the mesh entity representing a placed camera (by scene id).
@@ -17,7 +18,49 @@ struct BodyAssets {
     mesh: Handle<Mesh>,
     lens: Handle<Mesh>,
     lens_material: Handle<StandardMaterial>,
-    materials: Vec<Handle<StandardMaterial>>,
+    /// Body material per colour, created on first use.
+    materials: HashMap<[u8; 3], Handle<StandardMaterial>>,
+}
+
+impl BodyAssets {
+    fn material(
+        &mut self,
+        color: Color32,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Handle<StandardMaterial> {
+        self.materials
+            .entry(to_rgb(color))
+            .or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: to_bevy(color),
+                    perceptual_roughness: 0.5,
+                    ..default()
+                })
+            })
+            .clone()
+    }
+}
+
+/// A camera's colour: the user's choice, else a shade of its type's colour that
+/// depends on how many cameras of that type (without their own colour) come
+/// before it in `scene`.
+pub fn camera_color(
+    scene: &Scene,
+    c: &CameraPlacement,
+    models: &Models,
+    tokens: &Tokens,
+) -> Color32 {
+    if let Some(rgb) = c.color {
+        return from_rgb(rgb);
+    }
+    let kind = models.kind_of(&c.model_id);
+    let nth = scene
+        .cameras
+        .iter()
+        .take_while(|o| o.id != c.id)
+        .filter(|o| o.color.is_none() && models.kind_of(&o.model_id) == kind)
+        .count();
+    tokens.kind_shade(kind, nth)
 }
 
 pub struct CamerasPlugin;
@@ -43,17 +86,7 @@ fn setup_assets(
             perceptual_roughness: 0.3,
             ..default()
         }),
-        materials: tokens
-            .camera_palette
-            .iter()
-            .map(|c| {
-                materials.add(StandardMaterial {
-                    base_color: to_bevy(*c),
-                    perceptual_roughness: 0.5,
-                    ..default()
-                })
-            })
-            .collect(),
+        materials: HashMap::default(),
     });
 }
 
@@ -69,7 +102,10 @@ fn body_transform(c: &CameraPlacement) -> Transform {
 fn sync_bodies(
     mut commands: Commands,
     scene: Res<Scene>,
-    assets: Res<BodyAssets>,
+    models: Res<Models>,
+    tokens: Res<Tokens>,
+    mut assets: ResMut<BodyAssets>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut bodies: Query<(
         Entity,
         &CameraBody,
@@ -77,7 +113,7 @@ fn sync_bodies(
         &mut MeshMaterial3d<StandardMaterial>,
     )>,
 ) {
-    if !scene.is_changed() {
+    if !scene.is_changed() && !models.is_changed() {
         return;
     }
     let mut existing: HashMap<u32, Entity> = HashMap::default();
@@ -88,9 +124,9 @@ fn sync_bodies(
                 if *t != want {
                     *t = want;
                 }
-                let m = &assets.materials[c.color_index as usize % assets.materials.len()];
-                if mat.0 != *m {
-                    mat.0 = m.clone();
+                let m = assets.material(camera_color(&scene, c, &models, &tokens), &mut materials);
+                if mat.0 != m {
+                    mat.0 = m;
                 }
                 existing.insert(body.0, e);
             }
@@ -101,13 +137,12 @@ fn sync_bodies(
         if existing.contains_key(&c.id) {
             continue;
         }
+        let material = assets.material(camera_color(&scene, c, &models, &tokens), &mut materials);
         commands
             .spawn((
                 CameraBody(c.id),
                 Mesh3d(assets.mesh.clone()),
-                MeshMaterial3d(
-                    assets.materials[c.color_index as usize % assets.materials.len()].clone(),
-                ),
+                MeshMaterial3d(material),
                 body_transform(c),
             ))
             .with_children(|p| {
@@ -119,6 +154,14 @@ fn sync_bodies(
                 ));
             });
     }
+    // Drop materials no camera uses any more, such as the colours a drag
+    // across the colour picker passes through.
+    let used: HashSet<[u8; 3]> = scene
+        .cameras
+        .iter()
+        .map(|c| to_rgb(camera_color(&scene, c, &models, &tokens)))
+        .collect();
+    assets.materials.retain(|rgb, _| used.contains(rgb));
 }
 
 fn draw_frustums(
@@ -137,7 +180,7 @@ fn draw_frustums(
             continue;
         };
         let cone = cone_for(c, m, &scene.params);
-        let mut color = to_bevy(tokens.camera_color(c.color_index));
+        let mut color = to_bevy(camera_color(&scene, c, &models, &tokens));
         if !c.enabled {
             color = color.with_alpha(0.25);
         }

@@ -2,7 +2,7 @@
 
 Observation estimates how much of a street home surveillance cameras can see. You choose an area, place cameras on walls or poles, aim them, and read the coverage figures and colours. For how to run the app, see the [README](../README.md).
 
-On first run (no saved scene) the app loads the demo street and shows a "Getting started" card. It reopens from the `?` button or the `?` key.
+On first run (no saved scene) the app loads the demo street with ten example cameras and shows a "Getting started" card. It reopens from the `?` button or the `?` key.
 
 ## The screen
 
@@ -10,13 +10,13 @@ On first run (no saved scene) the app loads the demo street and shows a "Getting
 | --- | --- |
 | Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export** and **?** |
 | Tool rail (left) | Four tools: **Select**, **Place**, **Aim**, **Move**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. Chips at the top left show the active tool and the selected camera. Messages appear as toasts at the bottom |
-| Inspector (right, resizable) | Sections **Coverage**, **Analysis**, **Cameras**, **Selected camera** (only while a camera is selected) and **Custom model** (collapsed) |
+| 3D viewport | The street in 3D with the map draped on the ground. A colour-coded banner across the top shows the active mode (Select blue, Place green, Aim orange, Move purple), what a click will do, and the selected camera (or, in Place, the model being placed). Messages appear as toasts at the bottom |
+| Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
 | Status bar | A hint for the active tool, and the OpenStreetMap attribution link |
 
 ## Pick an area
 
-The demo street (a residential street in Juanita, Kirkland WA) is always one click away: **Demo street** in the top bar. It is built into the server and needs no map-data lookup.
+The demo street (a residential street in Juanita, Kirkland WA) is always one click away: **Demo street** in the top bar. It is built into the server and needs no map-data lookup, and it comes with ten example cameras of different makes and types, mounted on house fronts and facing the nearest street.
 
 To load another street:
 
@@ -28,17 +28,17 @@ To load another street:
 
 Loading shows "Loading buildings..." while the server fetches and prepares the data. A first request for a new place waits on the public map-data service and can be slow; repeat requests for the same box are served from the server's cache. If the map-data provider is busy you get a "busy, please retry shortly" message; wait a little and try again.
 
-Loading a new area, including **Demo street**, removes the cameras you placed, because cameras belong to an area. Autosave overwrites the stored scene within a couple of seconds, so use **Export** first if you want to keep it.
+Loading a new area, including **Demo street**, removes the cameras you placed, because cameras belong to an area (the demo street then gets its ten example cameras again). Autosave overwrites the stored scene within a couple of seconds, so use **Export** first if you want to keep it.
 
 ## Place cameras
 
-1. In the inspector, under **Cameras**, choose a model in **New camera model**. Models are grouped by type (Doorbell, Floodlight, Spotlight, Bullet, Turret, Dome, Indoor) and show their horizontal field of view. See the [camera catalogue](camera-catalog.md) for sources. The default is a generic 160 degree doorbell.
+1. In the inspector, under **Cameras**, choose a model in **New camera model**. Models are grouped by type (Doorbell, Floodlight, Spotlight, Bullet, Turret, Dome, Indoor) and show their horizontal field of view. Type in the search box at the top of the list to filter by maker, name or type (every word must match); **Enter** picks the first match of what you typed. See the [camera catalogue](camera-catalog.md) for sources. The default is a generic 160 degree doorbell.
 2. Press **Place camera...** or **P**.
 3. Click where the camera goes:
    - **A wall:** the camera is mounted 0.15 m in front of the wall, at the height you clicked, facing outward. Its tilt is the type's default (doorbell 0 degrees, indoor -10, others -20).
    - **The ground or a roof:** the camera goes on a pole at the model's default mount height above that point (doorbell 1.2 m, indoor 2.0 m, floodlight and spotlight 2.7 m, bullet, turret and dome 2.6 m). It faces north at first, and the tool switches to **Aim** so your next click points it.
    - **An existing camera:** selects it.
-4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the first free colour of eight.
+4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight orange, bullet red, turret teal, dome purple, indoor pink. Further cameras of the same type get lighter and darker shades of that colour, so each camera stays distinguishable.
 
 ## Aim and move
 
@@ -55,7 +55,8 @@ Select a camera (in the viewport or by clicking its name in the list) to open **
 | Field | Meaning |
 | --- | --- |
 | Name | Free text, up to 48 characters |
-| Model | Change the model without moving the camera |
+| Model | Change the model without moving the camera (searchable, as above) |
+| Colour | Colour of the camera body, its view cone and its per-camera overlay. Pick any colour or one of the quick swatches; **Default** returns to the colour for the camera's type |
 | Position (m) | **E** east, **S** south and **H** height above ground, in metres from the area centre. Height is limited to 0-60 m |
 | Heading | Compass bearing the camera faces, 0-360 degrees clockwise from north, with a compass label (N, NE, ...) |
 | Tilt | Elevation of the view axis, -90 to 90 degrees; negative looks down |
@@ -65,7 +66,7 @@ Select a camera (in the viewport or by clicking its name in the list) to open **
 | Modelled range | Read-only effective range for the current detail level and lighting (see below) |
 | Source | Link to the manufacturer's spec page, for catalogue models |
 
-Buttons: **Aim (A)**, **Move (M)**, **Duplicate** (a copy one metre east, with a new name and colour) and **Delete**. In the **Cameras** list, the checkbox next to each camera ("Include in coverage") disables it without deleting it; a disabled camera is greyed out and ignored by the statistics and overlays.
+Buttons: **Aim (A)**, **Move (M)**, **Duplicate** (a copy one metre east, with a new name) and **Delete**. In the **Cameras** list, the checkbox next to each camera ("Include in coverage") disables it without deleting it; a disabled camera is greyed out and ignored by the statistics and overlays.
 
 ## Read the coverage
 
@@ -86,7 +87,7 @@ What counts as "seen": a spot is seen when it is inside the camera's field of vi
 **Colours.** Switch with the **Overlap / Per camera** control (or **N**):
 
 - **Overlap:** a heat ramp by number of cameras that see a spot: 1 yellow, 2 orange, 3 red, 4 or more purple. The legend appears under the control.
-- **Per camera:** each camera in its own colour (the swatch next to its name). Where views overlap, the camera lower in the list is painted on top.
+- **Per camera:** each camera in its own colour (the swatch next to its name; see **Colour** above). Where views overlap, the camera lower in the list is painted on top.
 
 ## Analysis settings
 
@@ -109,7 +110,7 @@ A higher level shrinks each camera's range. The range for a level is `width_px /
 
 ## Custom models
 
-Open **Custom model** at the bottom of the inspector to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene. Models cannot be edited or removed in the app once added; edit an exported scene file and import it if you need to.
+Open **Custom model** (above Analysis in the inspector) to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene. Models cannot be edited or removed in the app once added; edit an exported scene file and import it if you need to.
 
 ## Save, export and import
 
@@ -124,7 +125,7 @@ Scene files are plain JSON:
 | `version` | `1`. Files with a newer version are refused |
 | `area` | `{"kind": "demo"}` or `{"kind": "osm", "bbox": {"south", "west", "north", "east"}}` |
 | `origin` | `{"lat", "lon"}` of the area centre that camera positions are relative to |
-| `cameras` | Optional list. Each has `id`, `label`, `model_id`, `position` as `[east, up, south]` in metres, `yaw_deg` (compass bearing), `pitch_deg`, `roll_deg`, `color_index` and `enabled` |
+| `cameras` | Optional list. Each has `id`, `label`, `model_id`, `position` as `[east, up, south]` in metres, `yaw_deg` (compass bearing), `pitch_deg`, `roll_deg`, `enabled`, and optionally `color` as `[r, g, b]` (0-255; absent means the default for the model's type). The `color_index` field of older files is ignored |
 | `custom_models` | Optional list of models: `id`, `vendor`, `name`, `kind`, `hfov_deg`, `vfov_deg`, `resolution` as `[w, h]`, and optionally `ir_range_m`, `source`, `notes` |
 | `params` | Optional: `dori` (`Detect`, `Observe`, `Recognise`, `Identify`), `lighting` (`Day`, `Night`), `subject_height_m` |
 

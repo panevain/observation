@@ -244,9 +244,11 @@ pub struct CameraPlacement {
     /// Rotation about the optical axis, degrees.
     #[serde(default)]
     pub roll_deg: f32,
-    /// Index into the UI's per-camera palette.
-    #[serde(default)]
-    pub color_index: u8,
+    /// Colour of the camera, its view cone and its per-camera overlay (sRGB).
+    /// `None` uses the default colour for the model's [`CameraKind`]. Files
+    /// from before this field carried a `color_index`, which is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -456,7 +458,7 @@ mod tests {
             yaw_deg: 0.0,
             pitch_deg: 0.0,
             roll_deg: 0.0,
-            color_index: 0,
+            color: None,
             enabled: true,
         };
         p.look_at(Vec3::new(10.0, 0.0, 0.0));
