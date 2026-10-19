@@ -59,6 +59,7 @@ fn main() {
         })
         .init_resource::<state::Scene>()
         .init_resource::<state::UiState>()
+        .init_resource::<state::UiLayout>()
         .add_plugins((
             net::NetPlugin,
             world::WorldPlugin,

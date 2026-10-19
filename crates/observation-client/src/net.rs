@@ -6,7 +6,7 @@
 use crate::state::{AreaLoaded, LoadArea, Loading, UiState};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::bundle::AreaBundle;
@@ -89,6 +89,8 @@ pub struct Tiles {
     tiles: HashMap<TileId, TileState>,
     in_flight: usize,
     queue: Vec<TileId>,
+    /// Tiles the 3D ground needs; the map picker never cancels these.
+    pinned: HashSet<TileId>,
 }
 
 /// Concurrent tile requests (the server limits upstream fetches too).
@@ -99,22 +101,32 @@ const MAX_TILES: usize = 400;
 impl Tiles {
     /// Returns the tile if loaded; queues it otherwise.
     pub fn get(&mut self, t: TileId) -> Option<Handle<Image>> {
+        if !self.tiles.contains_key(&t) {
+            self.tiles.insert(t, TileState::Pending);
+            self.queue.push(t);
+        }
+        self.ready(t)
+    }
+
+    /// Marks the tiles the 3D ground shows, replacing the previous set.
+    pub fn pin(&mut self, tiles: impl IntoIterator<Item = TileId>) {
+        self.pinned = tiles.into_iter().collect();
+    }
+
+    /// Returns the tile if loaded, without requesting it.
+    pub fn ready(&self, t: TileId) -> Option<Handle<Image>> {
         match self.tiles.get(&t) {
             Some(TileState::Ready(h)) => Some(h.clone()),
-            Some(_) => None,
-            None => {
-                self.tiles.insert(t, TileState::Pending);
-                self.queue.push(t);
-                None
-            }
+            _ => None,
         }
     }
 
-    /// Drops queued requests that are no longer wanted (e.g. after panning the map).
+    /// Drops queued requests that are no longer wanted (e.g. after panning the
+    /// map), except pinned ones.
     pub fn retain_queue(&mut self, keep: impl Fn(&TileId) -> bool) {
-        let tiles = &mut self.tiles;
+        let (tiles, pinned) = (&mut self.tiles, &self.pinned);
         self.queue.retain(|t| {
-            let k = keep(t);
+            let k = pinned.contains(t) || keep(t);
             if !k {
                 tiles.remove(t);
             }

@@ -6,6 +6,7 @@ use crate::net::Tiles;
 use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Scene, UiState};
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -17,6 +18,9 @@ use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
 const GROUND_MARGIN_M: f32 = 150.0;
 /// Upper bound on ground tiles per area.
 const MAX_GROUND_TILES: usize = 64;
+/// Height of the coverage overlay above the map tiles, metres. Layers closer
+/// than the depth buffer can resolve at range fight and flicker.
+const OVERLAY_Y_M: f32 = 0.08;
 
 /// Everything spawned for the current area (despawned on reload).
 #[derive(Component)]
@@ -30,6 +34,10 @@ pub struct GroundMesh;
 
 #[derive(Component)]
 struct GroundTile(TileId);
+
+/// The tile's map image has been applied.
+#[derive(Component)]
+struct TileTextured;
 
 #[derive(Component)]
 pub struct FacadeOverlay;
@@ -96,6 +104,7 @@ fn on_area_loaded(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut tiles: ResMut<Tiles>,
     mut scene: ResMut<Scene>,
     mut ui: ResMut<UiState>,
     mut coverage: ResMut<CoverageState>,
@@ -137,31 +146,37 @@ fn on_area_loaded(
         })),
     ));
 
-    // Base ground (also the pick target for ground clicks).
+    // Pick target for ground clicks. It is not drawn: the tiles below cover
+    // it, and two coplanar surfaces would fight in the depth buffer.
     let (gmin, gmax) = (grid.min - GROUND_MARGIN_M, grid.max() + GROUND_MARGIN_M);
     commands.spawn((
         AreaEntity,
         GroundMesh,
         Mesh3d(meshes.add(ground_quad(gmin, gmax, 0.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: to_bevy(tokens.world.ground),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
+        Visibility::Hidden,
     ));
 
-    // Map tiles draped on the ground (textures attach as they arrive).
+    // Map tiles draped on the ground: plain ground colour until the image
+    // arrives (or for good, if it fails).
+    let plain = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.ground),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
     let tile_bbox = bbox_of(&proj, gmin, gmax);
     let z = zoom_for_bbox(&tile_bbox, MAX_GROUND_TILES, 19);
-    for t in tiles_covering(&tile_bbox, z) {
+    let ground_tiles = tiles_covering(&tile_bbox, z);
+    tiles.pin(ground_tiles.iter().copied());
+    for t in ground_tiles {
         let b = t.bounds();
         let nw = world2(&proj, LatLon::new(b.north, b.west));
         let se = world2(&proj, LatLon::new(b.south, b.east));
         commands.spawn((
             AreaEntity,
             GroundTile(t),
-            Mesh3d(meshes.add(ground_quad(nw, se, 0.01))),
-            Visibility::Hidden,
+            Mesh3d(meshes.add(ground_quad(nw, se, 0.0))),
+            MeshMaterial3d(plain.clone()),
+            NotShadowCaster,
             Pickable::IGNORE,
         ));
     }
@@ -180,7 +195,7 @@ fn on_area_loaded(
     ));
     commands.spawn((
         AreaEntity,
-        Mesh3d(meshes.add(ground_quad(grid.min, grid.max(), 0.04))),
+        Mesh3d(meshes.add(ground_quad(grid.min, grid.max(), OVERLAY_Y_M))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(ground_image.clone()),
             alpha_mode: AlphaMode::Blend,
@@ -188,6 +203,7 @@ fn on_area_loaded(
             depth_bias: 10.0,
             ..default()
         })),
+        NotShadowCaster,
         Pickable::IGNORE,
     ));
 
@@ -225,6 +241,7 @@ fn on_area_loaded(
             depth_bias: 10.0,
             ..default()
         })),
+        NotShadowCaster,
         Pickable::IGNORE,
     ));
     commands.insert_resource(Overlay {
@@ -264,22 +281,21 @@ fn on_area_loaded(
 }
 
 fn apply_ground_tiles(
-    mut q: Query<(Entity, &GroundTile, &mut Visibility), Without<MeshMaterial3d<StandardMaterial>>>,
+    q: Query<(Entity, &GroundTile), Without<TileTextured>>,
     mut tiles: ResMut<Tiles>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
-    for (e, tile, mut vis) in &mut q {
+    for (e, tile) in &q {
         if let Some(img) = tiles.get(tile.0) {
-            commands
-                .entity(e)
-                .insert(MeshMaterial3d(materials.add(StandardMaterial {
+            commands.entity(e).insert((
+                TileTextured,
+                MeshMaterial3d(materials.add(StandardMaterial {
                     base_color_texture: Some(img),
                     perceptual_roughness: 1.0,
-                    depth_bias: 5.0,
                     ..default()
-                })));
-            *vis = Visibility::Inherited;
+                })),
+            ));
         }
     }
 }

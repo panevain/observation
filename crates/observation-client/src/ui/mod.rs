@@ -59,6 +59,7 @@ pub struct UiData<'w> {
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
     pub config: Res<'w, crate::net::ServerConfig>,
+    pub layout: ResMut<'w, crate::state::UiLayout>,
 }
 
 fn draw_ui(
@@ -70,7 +71,7 @@ fn draw_ui(
     mut persist: MessageWriter<PersistAction>,
 ) -> Result {
     // Register tile textures with egui before borrowing the context.
-    let tile_ids = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
+    let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
         contexts.add_image(EguiTextureHandle::Weak(h.id()))
     });
     let ctx = contexts.ctx_mut()?.clone();
@@ -78,6 +79,8 @@ fn draw_ui(
 
     let small = window.width() < MIN_VIEWPORT.x || window.height() < MIN_VIEWPORT.y;
     if small {
+        // The gate covers everything: no pointer position belongs to the scene.
+        d.layout.viewport = Some(Rect::default());
         overlays::viewport_gate(&ctx, &t, window.width(), window.height());
         return Ok(());
     }
@@ -157,6 +160,12 @@ fn draw_ui(
         egui::pos2(left, top),
         egui::pos2(window.width() - right, window.height() - bottom),
     );
+    d.layout.viewport = Some(Rect::new(
+        viewport_rect.min.x,
+        viewport_rect.min.y,
+        viewport_rect.max.x,
+        viewport_rect.max.y,
+    ));
 
     overlays::viewport_chips(&ctx, &t, viewport_rect, &d);
     overlays::toasts(&ctx, &t, viewport_rect, &d.ui);
@@ -171,7 +180,7 @@ fn draw_ui(
             &ctx,
             &t,
             &mut d.picker,
-            &tile_ids,
+            &tile_draws,
             &d.config.tile_attribution,
             &mut d.ui.map_open,
         )
