@@ -125,8 +125,8 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=security-image
-          cache-to: type=gha,scope=security-image,mode=max
+          cache-from: type=gha,scope=image
+          cache-to: type=gha,scope=image,mode=max
 
       - name: Trivy image scan
         run: |

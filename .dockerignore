@@ -5,8 +5,9 @@ dist
 cache
 node_modules
 
-# VCS / CI / editor
+# VCS / CI / editor / agent worktrees
 .git
+.claude
 .github
 .gitignore
 .dockerignore

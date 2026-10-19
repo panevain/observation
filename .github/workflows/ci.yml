@@ -209,8 +209,8 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=ci-image
-          cache-to: type=gha,scope=ci-image,mode=max
+          cache-from: type=gha,scope=image
+          cache-to: type=gha,scope=image,mode=max
       - name: Smoke test
         run: |
           set -euo pipefail
