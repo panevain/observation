@@ -116,13 +116,19 @@ pub fn ground_quad(min: Vec2, max: Vec2, y: f32) -> Mesh {
     .with_inserted_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]))
 }
 
+/// Asset stores an area load writes to.
+#[derive(bevy::ecs::system::SystemParam)]
+struct AreaAssets<'w> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
+    tiles: ResMut<'w, Tiles>,
+}
+
 fn on_area_loaded(
     mut loaded: MessageReader<AreaLoaded>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut tiles: ResMut<Tiles>,
+    assets: AreaAssets,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
     mut ui: ResMut<UiState>,
@@ -136,6 +142,12 @@ fn on_area_loaded(
     };
     let Ok(bundle) = &msg.result else { return };
     let bundle = bundle.clone();
+    let AreaAssets {
+        mut meshes,
+        mut materials,
+        mut images,
+        mut tiles,
+    } = assets;
 
     for e in &old {
         commands.entity(e).despawn();
