@@ -2,6 +2,8 @@
 resolver = "3"
 members = ["crates/observation-core", "crates/observation-server", "crates/observation-client"]
 default-members = ["crates/observation-core", "crates/observation-server"]
+# Fuzz targets are a separate nightly-only workspace (see fuzz/README.md).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

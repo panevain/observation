@@ -33,6 +33,28 @@ updates:
       cargo-minor-patch:
         update-types: [minor, patch]
 
+  # Fuzz targets (separate workspace with its own lockfile; see fuzz/README.md).
+  - package-ecosystem: cargo
+    directory: /fuzz
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:40"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "fuzz"
+    ignore:
+      # Same rule as the main workspace: glam moves with Bevy.
+      - dependency-name: glam
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      fuzz-deps:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     # Git-flow: dependency updates integrate via develop.

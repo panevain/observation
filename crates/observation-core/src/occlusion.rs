@@ -4,7 +4,10 @@
 use crate::building::Footprint;
 use glam::{Vec2, Vec3};
 
+/// Preferred grid cell size, metres.
 const CELL_M: f32 = 8.0;
+/// Upper bound on grid cells per axis; larger extents use bigger cells.
+const MAX_CELLS_PER_AXIS: f32 = 512.0;
 
 #[derive(Debug, Clone)]
 struct Prism {
@@ -89,6 +92,7 @@ fn segment_param(a: Vec2, d: Vec2, p: Vec2, q: Vec2) -> Option<f32> {
 pub struct Occluders {
     prisms: Vec<Prism>,
     origin: Vec2,
+    cell: f32,
     w: i32,
     h: i32,
     cells: Vec<Vec<u32>>,
@@ -99,6 +103,16 @@ impl Occluders {
         let prisms: Vec<Prism> = footprints
             .into_iter()
             .filter(|f| f.outer.len() >= 3)
+            // Non-finite input can't form a solid; skip it rather than poison the grid.
+            .filter(|f| {
+                f.outer
+                    .iter()
+                    .chain(f.holes.iter().flatten())
+                    .flatten()
+                    .all(|v| v.is_finite())
+                    && f.min_height_m.is_finite()
+                    && f.height_m.is_finite()
+            })
             .map(|f| Prism {
                 rings: std::iter::once(&f.outer)
                     .chain(f.holes.iter())
@@ -116,8 +130,12 @@ impl Occluders {
         if prisms.is_empty() {
             (lo, hi) = (Vec2::ZERO, Vec2::ONE);
         }
-        let w = (((hi.x - lo.x) / CELL_M).floor() as i32 + 1).max(1);
-        let h = (((hi.y - lo.y) / CELL_M).floor() as i32 + 1).max(1);
+        // Bound the grid size for absurd extents (bad data) by growing the cells.
+        let extent = (hi - lo).max_element().min(f32::MAX);
+        let cell = CELL_M.max(extent / MAX_CELLS_PER_AXIS);
+        let dims =
+            |len: f32| ((len / cell).floor() + 1.0).clamp(1.0, MAX_CELLS_PER_AXIS + 1.0) as i32;
+        let (w, h) = (dims(hi.x - lo.x), dims(hi.y - lo.y));
         let mut cells = vec![Vec::new(); (w * h) as usize];
         for (i, p) in prisms.iter().enumerate() {
             let (mut plo, mut phi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
@@ -125,8 +143,8 @@ impl Occluders {
                 plo = plo.min(*q);
                 phi = phi.max(*q);
             }
-            let c0 = ((plo - lo) / CELL_M).floor().as_ivec2();
-            let c1 = ((phi - lo) / CELL_M).floor().as_ivec2();
+            let c0 = ((plo - lo) / cell).floor().as_ivec2();
+            let c1 = ((phi - lo) / cell).floor().as_ivec2();
             for cz in c0.y.max(0)..=c1.y.min(h - 1) {
                 for cx in c0.x.max(0)..=c1.x.min(w - 1) {
                     cells[(cz * w + cx) as usize].push(i as u32);
@@ -136,6 +154,7 @@ impl Occluders {
         Self {
             prisms,
             origin: lo,
+            cell,
             w,
             h,
             cells,
@@ -152,7 +171,7 @@ impl Occluders {
 
     /// Whether `xz` is inside any building footprint.
     pub fn inside_any(&self, xz: Vec2) -> bool {
-        let c = ((xz - self.origin) / CELL_M).floor().as_ivec2();
+        let c = ((xz - self.origin) / self.cell).floor().as_ivec2();
         if c.x < 0 || c.y < 0 || c.x >= self.w || c.y >= self.h {
             return false;
         }
@@ -180,7 +199,7 @@ impl Occluders {
 
     /// Amanatides–Woo traversal of grid cells touched by segment `a → b`.
     fn walk_cells(&self, a: Vec2, b: Vec2, mut visit: impl FnMut(usize) -> bool) {
-        let (pa, pb) = ((a - self.origin) / CELL_M, (b - self.origin) / CELL_M);
+        let (pa, pb) = ((a - self.origin) / self.cell, (b - self.origin) / self.cell);
         let d = pb - pa;
         // Clip the segment to the grid rectangle.
         let (mut t0, mut t1) = (0.0f32, 1.0f32);
@@ -320,6 +339,24 @@ mod tests {
             !occ.segment_blocked(Vec3::new(-50.0, 1.0, 0.0), Vec3::new(-40.0, 1.0, 0.0)),
             "outside grid"
         );
+    }
+
+    #[test]
+    fn extreme_and_non_finite_footprints_are_safe() {
+        // Found by the coverage_geometry fuzz target: a huge extent overflowed
+        // the grid dimensions.
+        let huge = boxfp(-3.0e38, -3.0e38, 3.0e38, 3.0e38, 5.0);
+        let nan = Footprint {
+            outer: vec![[0.0, 0.0], [f32::NAN, 1.0], [1.0, 1.0]],
+            ..boxfp(0.0, 0.0, 1.0, 1.0, 5.0)
+        };
+        let normal = boxfp(10.0, -5.0, 20.0, 5.0, 6.0);
+        let occ = Occluders::new(&[huge, nan, normal]);
+        assert_eq!(occ.len(), 2, "non-finite footprint skipped");
+        // The absurd box only has to be harmless; the real one must still occlude.
+        let _ = occ.inside_any(Vec2::new(f32::NAN, 0.0));
+        let _ = occ.inside_any(Vec2::new(1.0e38, -1.0e38));
+        assert!(occ.segment_blocked(Vec3::new(0.0, 2.0, 0.0), Vec3::new(30.0, 1.0, 0.0)));
     }
 
     #[test]

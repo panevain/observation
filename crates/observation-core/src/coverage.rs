@@ -116,6 +116,11 @@ impl FacadeCell {
 }
 
 /// Splits every wall into roughly `cell_m`-sized patches.
+/// Caps on patches per wall: real walls are far smaller, and absurd input
+/// (bad data, fuzzing) gets coarser patches instead of unbounded allocation.
+const MAX_FACADE_COLS: f32 = 256.0;
+const MAX_FACADE_ROWS: f32 = 128.0;
+
 pub fn facade_cells<'a>(
     footprints: impl IntoIterator<Item = &'a Footprint>,
     cell_m: f32,
@@ -123,7 +128,10 @@ pub fn facade_cells<'a>(
     let mut out = Vec::new();
     for fp in footprints {
         let (y0, y1) = (fp.min_height_m, fp.height_m);
-        let rows = ((y1 - y0) / cell_m).ceil().max(1.0) as usize;
+        if !(y1 - y0).is_finite() {
+            continue;
+        }
+        let rows = ((y1 - y0) / cell_m).ceil().clamp(1.0, MAX_FACADE_ROWS) as usize;
         let rings = std::iter::once((clean_ring(&fp.outer), false))
             .chain(fp.holes.iter().map(|h| (clean_ring(h), true)));
         for (ring, is_hole) in rings {
@@ -138,12 +146,12 @@ pub fn facade_cells<'a>(
                 );
                 let d = b - a;
                 let len = d.length();
-                if len < 0.2 {
+                if !len.is_finite() || len < 0.2 {
                     continue;
                 }
                 let n2 = Vec2::new(d.y, -d.x) * (sign / len);
                 let normal = Vec3::new(n2.x, 0.0, n2.y);
-                let cols = (len / cell_m).ceil().max(1.0) as usize;
+                let cols = (len / cell_m).ceil().clamp(1.0, MAX_FACADE_COLS) as usize;
                 // Orient corners so that (bl → br) runs left-to-right seen from outside.
                 for c in 0..cols {
                     let (s0, s1) = (c as f32 / cols as f32, (c + 1) as f32 / cols as f32);
@@ -419,6 +427,25 @@ mod tests {
         };
         let grid = GroundGrid::covering(Vec2::new(-50.0, -50.0), Vec2::new(50.0, 50.0), 1.0);
         StaticLayers::from_parts(grid, &[&house], &[road], 1.0)
+    }
+
+    #[test]
+    fn absurd_walls_have_bounded_patches() {
+        // Found by the coverage_geometry fuzz target: a 4e18 m wall tried to
+        // allocate gigabytes of 1 m façade patches.
+        let fp = Footprint {
+            outer: vec![[0.0, 0.0], [4.0e18, 0.0], [0.0, 1.0]],
+            holes: vec![],
+            min_height_m: 0.0,
+            height_m: 1.0e30,
+        };
+        let cells = facade_cells([&fp], 1.0);
+        assert!(cells.len() <= 3 * (MAX_FACADE_COLS * MAX_FACADE_ROWS) as usize);
+        let nan = Footprint {
+            height_m: f32::NAN,
+            ..fp
+        };
+        assert!(facade_cells([&nan], 1.0).is_empty());
     }
 
     #[test]
