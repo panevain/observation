@@ -9,6 +9,7 @@ use futures_util::FutureExt;
 use futures_util::future::{BoxFuture, Shared};
 use observation_core::bundle::build_bundle;
 use observation_core::geo::BBox;
+use tracing::Instrument;
 
 use crate::cache::Cache;
 use crate::error::ApiError;
@@ -43,6 +44,7 @@ impl BundleService {
     pub async fn get(self: &Arc<Self>, bbox: BBox) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
         if let Some((bytes, true)) = self.cache.get_bundle(&key).await {
+            metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
         self.flight(key, bbox).await
@@ -60,14 +62,19 @@ impl BundleService {
         let task_key = key.clone();
         // Spawned while holding the lock: the task's own clean-up below cannot
         // run before the entry has been inserted.
-        let handle = tokio::spawn(async move {
-            let result = this.produce(&task_key, bbox).await;
-            this.in_flight
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&task_key);
-            result
-        });
+        // The first caller's request span rides along, so upstream warnings carry its request id
+        // (waiters that joined the flight share it).
+        let handle = tokio::spawn(
+            async move {
+                let result = this.produce(&task_key, bbox).await;
+                this.in_flight
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&task_key);
+                result
+            }
+            .instrument(tracing::Span::current()),
+        );
         let shared = async move {
             handle
                 .await
@@ -84,15 +91,19 @@ impl BundleService {
     async fn produce(&self, key: &str, bbox: BBox) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
         if let Some((bytes, true)) = self.cache.get_bundle(key).await {
+            metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
         let data = match self.overpass.fetch(&bbox).await {
             Ok(d) => d,
             Err(e) => {
                 if let Some((stale, _)) = self.cache.get_bundle(key).await {
+                    metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "stale_served")
+                        .increment(1);
                     tracing::warn!(key, error = %e, "serving expired bundle because upstream failed");
                     return Ok(stale);
                 }
+                metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "error").increment(1);
                 return Err(e);
             }
         };
@@ -107,6 +118,7 @@ impl BundleService {
             generated,
         );
         let bytes = Bytes::from(bundle.encode());
+        metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);
         if let Err(e) = self.cache.put_bundle(key, &bytes).await {
             tracing::warn!(key, error = %e, "could not cache bundle");
         }

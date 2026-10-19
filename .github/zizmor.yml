@@ -1,0 +1,15 @@
+# zizmor configuration (see .github/workflows/security.yml).
+rules:
+  cache-poisoning:
+    ignore:
+      # ci.yml publishes nothing but a 14-day artifact: images and tags come from release.yml,
+      # which uses its own cache scope. rust-cache only saves from main and develop (save-if).
+      # mise-action and the Docker GHA cache can also save from pull requests, but GitHub scopes
+      # those caches to the PR ref, so they cannot reach the default branch. Revisit if a
+      # publish or deploy step is ever added to ci.yml.
+      - ci.yml
+  dangerous-triggers:
+    ignore:
+      # workflow_run fires only after our own Release workflow, checks out no PR code, and
+      # needs no secrets beyond GITHUB_TOKEN with packages: write.
+      - prune-images.yml

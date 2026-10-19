@@ -22,6 +22,12 @@ pub enum ConfigError {
     Bind(String),
     #[error("OBS_BUNDLE_TTL_DAYS `{0}` is not a non-negative number")]
     Ttl(String),
+    #[error("OBS_METRICS_BIND `{0}` is not a socket address like 127.0.0.1:9090")]
+    MetricsBind(String),
+    #[error("OBS_METRICS_BIND `{0}` must differ from OBS_BIND")]
+    MetricsBindSame(String),
+    #[error("OBS_LOG_FORMAT `{0}` is not `text` or `json`")]
+    LogFormat(String),
 }
 
 /// Server configuration.
@@ -53,6 +59,25 @@ pub struct Config {
     pub overpass_cooldown: Duration,
     /// Per-request timeout of the whole HTTP stack.
     pub request_timeout: Duration,
+    /// Where to serve Prometheus metrics (`OBS_METRICS_BIND`); `None` disables them.
+    pub metrics_bind: Option<SocketAddr>,
+    /// Log output format (`OBS_LOG_FORMAT`).
+    pub log_format: LogFormat,
+}
+
+/// Whether two listen addresses would collide: same port and the same IP, or either
+/// one a wildcard (`0.0.0.0` / `::`).
+fn overlaps(a: SocketAddr, b: SocketAddr) -> bool {
+    a.port() == b.port() && (a.ip() == b.ip() || a.ip().is_unspecified() || b.ip().is_unspecified())
+}
+
+/// How tracing events are written (to stdout).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogFormat {
+    /// Human-readable lines.
+    Text,
+    /// One JSON object per event, for log pipelines.
+    Json,
 }
 
 impl Config {
@@ -71,7 +96,7 @@ impl Config {
         let or = |k: &str, d: &str| get(k).unwrap_or_else(|| d.to_owned());
 
         let bind_raw = or("OBS_BIND", "0.0.0.0:8080");
-        let bind = bind_raw.parse().map_err(|_| ConfigError::Bind(bind_raw))?;
+        let bind: SocketAddr = bind_raw.parse().map_err(|_| ConfigError::Bind(bind_raw))?;
         let ttl_days = match get("OBS_BUNDLE_TTL_DAYS") {
             None => 7.0,
             Some(raw) => raw
@@ -80,8 +105,21 @@ impl Config {
                 .filter(|d| d.is_finite() && *d >= 0.0)
                 .ok_or(ConfigError::Ttl(raw))?,
         };
+        let metrics_bind = get("OBS_METRICS_BIND")
+            .map(|raw| raw.parse().map_err(|_| ConfigError::MetricsBind(raw)))
+            .transpose()?;
+        if metrics_bind.is_some_and(|m| overlaps(m, bind)) {
+            return Err(ConfigError::MetricsBindSame(bind.to_string()));
+        }
+        let log_format = match get("OBS_LOG_FORMAT").as_deref() {
+            None | Some("text") => LogFormat::Text,
+            Some("json") => LogFormat::Json,
+            Some(other) => return Err(ConfigError::LogFormat(other.to_owned())),
+        };
         Ok(Self {
             bind,
+            metrics_bind,
+            log_format,
             static_dir: or("OBS_STATIC_DIR", "dist").into(),
             cache_dir: or("OBS_CACHE_DIR", "cache").into(),
             contact: or("OBS_CONTACT", DEFAULT_CONTACT),
@@ -109,6 +147,8 @@ impl Config {
             overpass_retry_wait: Duration::from_secs(2),
             overpass_cooldown: Duration::from_secs(30),
             request_timeout: Duration::from_secs(60),
+            metrics_bind: None,
+            log_format: LogFormat::Text,
         }
     }
 
@@ -154,6 +194,53 @@ mod tests {
             .map(|(k, v)| ((*k).into(), (*v).into()))
             .collect();
         move |k| m.get(k).cloned()
+    }
+
+    #[test]
+    fn observability_settings() {
+        let c = Config::from_lookup(lookup(&[])).unwrap();
+        assert_eq!(c.metrics_bind, None);
+        assert_eq!(c.log_format, LogFormat::Text);
+
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_METRICS_BIND", "127.0.0.1:9090"),
+            ("OBS_LOG_FORMAT", "json"),
+        ]))
+        .unwrap();
+        assert_eq!(c.metrics_bind.map(|a| a.port()), Some(9090));
+        assert_eq!(c.log_format, LogFormat::Json);
+
+        assert_eq!(
+            Config::from_lookup(lookup(&[("OBS_METRICS_BIND", "nope")])).unwrap_err(),
+            ConfigError::MetricsBind("nope".into())
+        );
+        assert_eq!(
+            Config::from_lookup(lookup(&[
+                ("OBS_BIND", "127.0.0.1:9090"),
+                ("OBS_METRICS_BIND", "127.0.0.1:9090"),
+            ]))
+            .unwrap_err(),
+            ConfigError::MetricsBindSame("127.0.0.1:9090".into())
+        );
+        // A wildcard on the same port collides with a specific address.
+        assert!(
+            Config::from_lookup(lookup(&[
+                ("OBS_BIND", "127.0.0.1:9090"),
+                ("OBS_METRICS_BIND", "0.0.0.0:9090"),
+            ]))
+            .is_err()
+        );
+        assert!(
+            Config::from_lookup(lookup(&[
+                ("OBS_BIND", "127.0.0.1:9090"),
+                ("OBS_METRICS_BIND", "127.0.0.1:9091"),
+            ]))
+            .is_ok()
+        );
+        assert_eq!(
+            Config::from_lookup(lookup(&[("OBS_LOG_FORMAT", "xml")])).unwrap_err(),
+            ConfigError::LogFormat("xml".into())
+        );
     }
 
     #[test]
