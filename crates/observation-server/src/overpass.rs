@@ -1,8 +1,11 @@
 //! Overpass API client and `out geom` JSON parsing.
 //!
 //! The client is deliberately polite: one request in flight at a time, a
-//! descriptive `User-Agent`, at most one short inline retry on 429/504, then a
-//! cool-down during which new fetches fail fast with a 503.
+//! descriptive `User-Agent`, and a bounded retry. A transient failure (connection
+//! error, timeout, 429, 502-504) moves on to the next configured interpreter, or
+//! retries a lone interpreter once after a short pause. An interpreter that
+//! answers 429 or 504 then rests for a cool-down; while every interpreter rests,
+//! new fetches fail fast with a 503.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -272,17 +275,54 @@ fn point_in_ring(p: LatLon, ring: &[LatLon]) -> bool {
 
 // ----- client ----------------------------------------------------------------
 
+/// Why one Overpass attempt failed, when it is worth trying again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transient {
+    /// Connection error (including a connect timeout), 502 or 503.
+    Failed,
+    /// No answer in time, or Overpass reported that the query timed out.
+    TimedOut,
+    /// 429 or 504: the interpreter is overloaded; it rests for a cool-down.
+    Busy,
+}
+
+impl Transient {
+    fn of(e: &reqwest::Error) -> Self {
+        // A connect timeout means the host was never reached, not that it was slow.
+        if e.is_timeout() && !e.is_connect() {
+            Self::TimedOut
+        } else {
+            Self::Failed
+        }
+    }
+}
+
+/// How one attempt failed.
+#[derive(Debug)]
+enum AttemptError {
+    Retry(Transient),
+    /// Not worth retrying (other statuses, oversized or unusable bodies).
+    Fatal(ApiError),
+}
+
 /// Rate-limited Overpass client.
 #[derive(Debug)]
 pub struct OverpassClient {
     client: reqwest::Client,
-    url: String,
+    /// Interpreters tried in order; transient failures move on to the next one.
+    urls: Vec<String>,
     in_flight: Semaphore,
     /// Requests waiting for `in_flight`; bounded so distinct boxes can't build a backlog.
     waiting: std::sync::atomic::AtomicUsize,
-    cooldown_until: Mutex<Option<Instant>>,
+    /// Per interpreter: no requests to it until then, after it answered 429 or 504.
+    cooldown_until: Mutex<Vec<Option<Instant>>>,
     retry_wait: Duration,
     cooldown: Duration,
+    /// Longest single attempt.
+    attempt_timeout: Duration,
+    /// Longest whole fetch, queueing included, so that retries stop before the
+    /// HTTP request they serve times out.
+    budget: Duration,
 }
 
 /// Most Overpass requests allowed to queue behind the one in flight.
@@ -298,16 +338,23 @@ impl Drop for WaitGuard<'_> {
 }
 
 impl OverpassClient {
-    /// `client` must already carry the project `User-Agent` and timeout.
+    /// `client` must already carry the project `User-Agent`.
     pub fn new(client: reqwest::Client, config: &Config) -> Self {
+        let mut urls = config.overpass_urls.clone();
+        if urls.is_empty() {
+            urls.push(crate::config::DEFAULT_OVERPASS_URL.to_owned());
+        }
         Self {
             client,
-            url: config.overpass_url.clone(),
+            cooldown_until: Mutex::new(vec![None; urls.len()]),
+            urls,
             in_flight: Semaphore::new(1),
             waiting: std::sync::atomic::AtomicUsize::new(0),
-            cooldown_until: Mutex::new(None),
             retry_wait: config.overpass_retry_wait,
             cooldown: config.overpass_cooldown,
+            attempt_timeout: config.overpass_timeout,
+            // Leave a tenth of the request's time to build and send the reply.
+            budget: config.request_timeout.mul_f64(0.9),
         }
     }
 
@@ -324,6 +371,7 @@ impl OverpassClient {
     }
 
     async fn fetch_inner(&self, bbox: &BBox) -> Result<OsmData, ApiError> {
+        let deadline = Instant::now() + self.budget;
         self.check_cooldown()?;
         let guard = WaitGuard(&self.waiting);
         if self
@@ -345,76 +393,160 @@ impl OverpassClient {
         self.check_cooldown()?;
 
         let query = build_query(bbox);
-        let mut retried = false;
-        loop {
-            let resp = self
-                .client
-                .post(&self.url)
-                .form(&[("data", query.as_str())])
-                .send()
+        // Every interpreter once, in order; a lone one gets a second try, since a
+        // public instance's load balancer often answers a retry from another backend.
+        let plan: Vec<usize> = if self.urls.len() == 1 {
+            vec![0, 0]
+        } else {
+            (0..self.urls.len()).collect()
+        };
+        // Too little time left for an attempt to be worth starting.
+        let min_attempt = self.attempt_timeout / 10;
+        let mut last = None;
+        for (i, &endpoint) in plan.iter().enumerate() {
+            if self.cooling(endpoint).is_some() {
+                continue;
+            }
+            if last.is_some() {
+                tokio::time::sleep(self.retry_wait).await;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left < min_attempt {
+                last = Some(Transient::TimedOut);
+                break;
+            }
+            match self
+                .attempt(endpoint, &query, left.min(self.attempt_timeout))
                 .await
-                .map_err(|e| {
-                    tracing::warn!(error = %e.without_url(), "overpass request failed");
-                    ApiError::Upstream("could not reach the map data provider".into())
-                })?;
-            let status = resp.status();
-            if status.is_success() {
-                let body = crate::read_capped(resp, MAX_RESPONSE_BYTES)
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(error = %e.without_url(), "overpass body failed");
-                        ApiError::Upstream("map data download failed".into())
-                    })?
-                    .ok_or_else(|| {
-                        tracing::warn!(max = MAX_RESPONSE_BYTES, "overpass body too large");
-                        ApiError::Upstream("map data response too large".into())
-                    })?;
-                return parse_response(&body).map_err(|e| {
-                    tracing::warn!(error = %e, "overpass response unusable");
-                    ApiError::Upstream("map data provider returned an unusable response".into())
-                });
-            }
-            if matches!(
-                status,
-                StatusCode::TOO_MANY_REQUESTS | StatusCode::GATEWAY_TIMEOUT
-            ) {
-                if !retried {
-                    retried = true;
-                    tracing::warn!(%status, "overpass busy, retrying once");
-                    tokio::time::sleep(self.retry_wait).await;
-                    continue;
+            {
+                Ok(data) => return Ok(data),
+                Err(AttemptError::Fatal(e)) => return Err(e),
+                Err(AttemptError::Retry(t)) => {
+                    // A busy interpreter rests, unless this fetch is about to retry it.
+                    if t == Transient::Busy && !plan[i + 1..].contains(&endpoint) {
+                        self.start_cooldown(endpoint);
+                    }
+                    last = Some(t);
                 }
-                self.start_cooldown();
-                return Err(ApiError::RateLimited {
-                    retry_after_secs: self.cooldown.as_secs().max(1),
-                });
             }
-            tracing::warn!(%status, "overpass returned an error status");
-            return Err(ApiError::Upstream(format!(
-                "map data provider returned {}",
-                status.as_u16()
-            )));
         }
+        Err(match last {
+            Some(Transient::TimedOut) => ApiError::UpstreamTimeout(
+                "the map data provider took too long to answer, please retry shortly".into(),
+            ),
+            Some(Transient::Failed) => {
+                ApiError::Upstream("could not reach the map data provider".into())
+            }
+            // Busy, or every interpreter started cooling down while we queued.
+            Some(Transient::Busy) | None => {
+                self.check_cooldown()
+                    .err()
+                    .unwrap_or(ApiError::RateLimited {
+                        retry_after_secs: self.cooldown.as_secs().max(1),
+                    })
+            }
+        })
     }
 
+    /// One request to one interpreter, logged once if it fails.
+    async fn attempt(
+        &self,
+        endpoint: usize,
+        query: &str,
+        timeout: Duration,
+    ) -> Result<OsmData, AttemptError> {
+        let resp = self
+            .client
+            .post(&self.urls[endpoint])
+            .timeout(timeout)
+            .form(&[("data", query)])
+            .send()
+            .await
+            .map_err(|e| {
+                let t = Transient::of(&e);
+                tracing::warn!(endpoint, error = %e.without_url(), "overpass request failed");
+                AttemptError::Retry(t)
+            })?;
+        let status = resp.status();
+        if !status.is_success() {
+            tracing::warn!(endpoint, %status, "overpass returned an error status");
+            return Err(match status {
+                StatusCode::TOO_MANY_REQUESTS | StatusCode::GATEWAY_TIMEOUT => {
+                    AttemptError::Retry(Transient::Busy)
+                }
+                StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE => {
+                    AttemptError::Retry(Transient::Failed)
+                }
+                _ => AttemptError::Fatal(ApiError::Upstream(format!(
+                    "map data provider returned {}",
+                    status.as_u16()
+                ))),
+            });
+        }
+        let body = crate::read_capped(resp, MAX_RESPONSE_BYTES)
+            .await
+            .map_err(|e| {
+                let t = Transient::of(&e);
+                tracing::warn!(endpoint, error = %e.without_url(), "overpass body failed");
+                AttemptError::Retry(t)
+            })?
+            .ok_or_else(|| {
+                tracing::warn!(
+                    endpoint,
+                    max = MAX_RESPONSE_BYTES,
+                    "overpass body too large"
+                );
+                AttemptError::Fatal(ApiError::Upstream("map data response too large".into()))
+            })?;
+        parse_response(&body).map_err(|e| {
+            tracing::warn!(endpoint, error = %e, "overpass response unusable");
+            match e {
+                // The query ran out of time on a loaded server: another may manage.
+                ParseError::Remark(r) if r.contains("timed out") => {
+                    AttemptError::Retry(Transient::TimedOut)
+                }
+                // Out of memory and the like: the same query fails the same way.
+                ParseError::Remark(_) => AttemptError::Fatal(ApiError::Upstream(
+                    "the map data provider could not run the query".into(),
+                )),
+                ParseError::Json(_) => AttemptError::Fatal(ApiError::Upstream(
+                    "map data provider returned an unusable response".into(),
+                )),
+            }
+        })
+    }
+
+    /// Time left on `endpoint`'s cool-down, if any.
+    fn cooling(&self, endpoint: usize) -> Option<Duration> {
+        let until = self
+            .cooldown_until
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[endpoint];
+        until
+            .map(|t| t.saturating_duration_since(Instant::now()))
+            .filter(|left| !left.is_zero())
+    }
+
+    /// Fails fast while every interpreter is cooling down.
     fn check_cooldown(&self) -> Result<(), ApiError> {
-        let until = *self
-            .cooldown_until
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match until.map(|t| t.saturating_duration_since(Instant::now())) {
-            Some(left) if !left.is_zero() => Err(ApiError::RateLimited {
-                retry_after_secs: left.as_secs_f64().ceil().max(1.0) as u64,
+        let left = (0..self.urls.len()).map(|e| self.cooling(e));
+        match left.collect::<Option<Vec<Duration>>>() {
+            Some(left) => Err(ApiError::RateLimited {
+                retry_after_secs: left
+                    .iter()
+                    .min()
+                    .map_or(1.0, Duration::as_secs_f64)
+                    .ceil()
+                    .max(1.0) as u64,
             }),
-            _ => Ok(()),
+            None => Ok(()),
         }
     }
 
-    fn start_cooldown(&self) {
-        *self
-            .cooldown_until
+    fn start_cooldown(&self, endpoint: usize) {
+        self.cooldown_until
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[endpoint] =
             Some(Instant::now() + self.cooldown);
     }
 }
@@ -425,6 +557,18 @@ mod tests {
 
     fn pts(v: &[(f64, f64)]) -> Vec<LatLon> {
         v.iter().map(|&(a, b)| LatLon::new(a, b)).collect()
+    }
+
+    #[test]
+    fn an_empty_interpreter_list_falls_back_to_the_default() {
+        let mut config = Config::for_tests("cache", "dist", "http://127.0.0.1:9/", "http://t/");
+        config.overpass_urls.clear();
+        let client = OverpassClient::new(reqwest::Client::new(), &config);
+        assert_eq!(
+            client.urls,
+            vec![crate::config::DEFAULT_OVERPASS_URL.to_owned()]
+        );
+        assert_eq!(client.cooldown_until.lock().unwrap().len(), 1);
     }
 
     #[test]
