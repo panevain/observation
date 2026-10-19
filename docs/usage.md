@@ -10,7 +10,7 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 | --- | --- |
 | Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export** and **?** |
 | Tool rail (left) | Five tools: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. A colour-coded banner across the top shows the active mode (Select blue, Place green, Aim orange, Move purple), what a click will do, and the selected camera (or, in Place, the model being placed). Messages appear as toasts at the bottom |
+| 3D viewport | The street in 3D with the map draped on the ground. A colour-coded banner across the top shows the active mode (Select blue, Place green, Aim orange, Move purple, Region teal), what a click will do, and the selected camera (or, in Place, the model being placed). Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
 | Status bar | A hint for the active tool, and the OpenStreetMap attribution link |
 
@@ -80,7 +80,7 @@ The **Coverage** section updates as soon as you change anything.
 
 Below the bar, the square metres behind the street figure are shown, plus "open ground seen": all visible ground that is not under a building, which includes the street.
 
-**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again, or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. The region is drawn as a teal outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only cells whose centre lies inside the outline. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
+**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a teal outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
 
 What counts as "street": every mapped road, service road (including driveways) and footpath, drawn as a band of its estimated width (about 14 m for a motorway down to 2 m for a footpath; the `width` and `lanes` tags are used when present), excluding anything under a building. Other way types, such as tracks, are ignored. Footpaths and service lanes therefore count towards the street figure.
 
@@ -132,7 +132,7 @@ Scene files are plain JSON:
 | `params` | Optional: `dori` (`Detect`, `Observe`, `Recognise`, `Identify`), `lighting` (`Day`, `Night`), `subject_height_m` |
 | `region` | Optional: `points` (corners as `[east, south]` in metres, at most 256) and `enabled` |
 
-Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, a region of at most 256 finite corners within 10,000, subject height 0-10 m, and valid custom models. A spec-sheet `source` link that is not a plain `https://` URL is removed from the model rather than failing the import. A bad file shows an error toast and leaves the current scene untouched.
+Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, and valid custom models. A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and a region with more than 256 corners or corners beyond 10,000 m is removed from the scene, rather than failing the import. A bad file shows an error toast and leaves the current scene untouched.
 
 ## Keyboard, mouse and touch
 

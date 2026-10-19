@@ -115,6 +115,8 @@ pub struct UiState {
     pub region_draft: Vec<[f32; 2]>,
     /// Ground point under the pointer while drawing a region.
     pub region_hover: Option<[f32; 2]>,
+    /// How close to the first corner a click closes the region, metres.
+    pub region_snap_m: f32,
 }
 
 impl Default for UiState {
@@ -132,6 +134,7 @@ impl Default for UiState {
             toasts: Vec::new(),
             region_draft: Vec::new(),
             region_hover: None,
+            region_snap_m: 1.0,
         }
     }
 }

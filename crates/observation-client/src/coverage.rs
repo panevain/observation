@@ -10,7 +10,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::{
-    CoverageCounts, CoverageParams, CoverageStats, Region, RegionMask, Visibility as CellVisibility,
+    CoverageCounts, CoverageParams, CoverageStats, RegionMask, Visibility as CellVisibility,
 };
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
@@ -26,8 +26,11 @@ pub struct CoverageState {
     painted_mode: Option<(OverlayMode, bool)>,
     /// Hash of the camera colours last painted in per-camera mode.
     painted_colors: u64,
-    /// The active region and its cells, if the figures are limited to one.
-    region: Option<(Region, RegionMask)>,
+    /// The region's corners and cells, kept while the region is turned off so
+    /// turning it back on needs no recomputation.
+    region: Option<(Vec<[f32; 2]>, RegionMask)>,
+    /// Whether the figures were last computed inside the region.
+    region_on: bool,
 }
 
 impl CoverageState {
@@ -142,13 +145,18 @@ fn update_coverage(
         }
         changed = true;
     }
-    let wanted = scene.region.as_ref().filter(|r| r.is_active());
-    if state.region.as_ref().map(|(r, _)| r) != wanted {
-        state.region = wanted.map(|r| (r.clone(), RegionMask::new(layers, r)));
+    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
+    if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
+        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
+        changed = true;
+    }
+    let on = usable.is_some_and(|r| r.enabled);
+    if on != state.region_on {
+        state.region_on = on;
         changed = true;
     }
     if changed || state.painted_mode.is_none() {
-        let mask = state.region.as_ref().map(|(_, m)| m);
+        let mask = state.region.as_ref().filter(|_| on).map(|(_, m)| m);
         state.stats = CoverageStats::compute_in(layers, counts, mask);
         state.paint = true;
     }
@@ -279,8 +287,13 @@ fn draw_region(
     gizmos.linestrip(draft.iter().chain(&ui.region_hover).map(|p| at(*p)), color);
     let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for (i, p) in draft.iter().enumerate() {
-        // The first corner is drawn larger once clicking it would close the region.
-        let radius = if i == 0 && draft.len() >= 3 { 0.9 } else { 0.4 };
+        // Once clicking it would close the region, the first corner shows
+        // the whole area a click closes it from.
+        let radius = if i == 0 && draft.len() >= 3 {
+            ui.region_snap_m
+        } else {
+            0.4
+        };
         gizmos.circle(Isometry3d::new(at(*p), flat), radius, color);
     }
 }

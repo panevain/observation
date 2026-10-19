@@ -91,10 +91,12 @@ impl SceneFile {
                 return Err(SceneError::Invalid("camera position/orientation"));
             }
         }
-        if let Some(r) = &scene.region
-            && (r.points.len() > MAX_REGION_POINTS || !r.points.iter().all(|p| finite(p)))
-        {
-            return Err(SceneError::Invalid("region"));
+        // Drop an unusable region rather than the whole scene: losing the
+        // outline is a small price, losing every camera with it is not.
+        if scene.region.as_ref().is_some_and(|r| {
+            r.points.len() > MAX_REGION_POINTS || !r.points.iter().all(|p| finite(p))
+        }) {
+            scene.region = None;
         }
         if !(0.0..=10.0).contains(&scene.params.subject_height_m) {
             return Err(SceneError::Invalid("subject height"));
@@ -210,17 +212,17 @@ mod tests {
         assert_eq!(SceneFile::from_json(&s.to_json()).unwrap(), s);
         assert!(!scene().to_json().contains("region"), "omitted when absent");
 
+        // A bad region is dropped; the cameras survive.
         let mut bad = s.clone();
         bad.region = Some(Region {
             points: vec![[0.0, 0.0]; MAX_REGION_POINTS + 1],
             enabled: true,
         });
-        assert!(matches!(
-            SceneFile::from_json(&bad.to_json()),
-            Err(SceneError::Invalid("region"))
-        ));
+        let loaded = SceneFile::from_json(&bad.to_json()).unwrap();
+        assert_eq!((loaded.region, loaded.cameras.len()), (None, 1));
         let far = s.to_json().replace("10.0", "1e9");
-        assert!(SceneFile::from_json(&far).is_err());
+        let loaded = SceneFile::from_json(&far).unwrap();
+        assert_eq!((loaded.region, loaded.cameras.len()), (None, 1));
     }
 
     #[test]

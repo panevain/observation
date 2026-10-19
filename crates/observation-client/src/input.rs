@@ -1,7 +1,7 @@
 //! Orbit camera, pointer/touch handling and tool actions.
 
 use crate::cameras::CameraBody;
-use crate::state::{MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
+use crate::state::{Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
 use crate::world::{BuildingMesh, GroundMesh};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
@@ -244,6 +244,7 @@ struct Targets<'w, 's> {
     buildings: Query<'w, 's, (), With<BuildingMesh>>,
     grounds: Query<'w, 's, (), With<GroundMesh>>,
     bodies: Query<'w, 's, &'static CameraBody>,
+    area: Option<Res<'w, Area>>,
 }
 
 fn pointer(
@@ -270,6 +271,7 @@ fn pointer(
         buildings,
         grounds,
         bodies,
+        area,
     } = targets;
     let Ok((camera, cam_t, mut orbit)) = cam.single_mut() else {
         return;
@@ -373,9 +375,14 @@ fn pointer(
     } else {
         let hover = pos
             .filter(|_| !over_ui)
-            .and_then(|p| ground_point(camera, cam_t, p));
+            .and_then(|p| ground_point(camera, cam_t, p))
+            .map(|p| clamp_to_area(p, area.as_deref()));
         if ui.region_hover != hover {
             ui.region_hover = hover;
+        }
+        let snap = region_snap_m(orbit.distance);
+        if ui.region_snap_m != snap {
+            ui.region_snap_m = snap;
         }
     }
 
@@ -425,7 +432,7 @@ fn pointer(
         {
             if ui.tool == Tool::Region {
                 if let Some(p) = ground_point(camera, cam_t, pos) {
-                    region_click(&mut ui, &mut scene, p, orbit.distance);
+                    region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
                 }
             } else {
                 let hit = cast(pos);
@@ -447,39 +454,63 @@ fn ground_point(camera: &Camera, cam_t: &GlobalTransform, window_pos: Vec2) -> O
     Some([p.x, p.z])
 }
 
+/// How close to the first corner a click closes the region, metres: it grows
+/// with the zoom so the corner stays easy to hit, and is drawn around it.
+pub fn region_snap_m(view_distance: f32) -> f32 {
+    (view_distance * 0.02).clamp(1.0, 10.0)
+}
+
 /// Adds a region corner, or closes the region when the first corner is clicked.
-fn region_click(ui: &mut UiState, scene: &mut Scene, p: [f32; 2], view_distance: f32) {
-    // "On the first corner" scales with the zoom so it is easy to hit.
-    let snap = (view_distance * 0.02).max(1.0);
+fn region_click(ui: &mut UiState, scene: &mut Scene, p: [f32; 2]) {
     let closes = ui.region_draft.len() >= 3
-        && ui
-            .region_draft
-            .first()
-            .is_some_and(|f| Vec2::from_array(*f).distance(Vec2::from_array(p)) <= snap);
+        && ui.region_draft.first().is_some_and(|f| {
+            Vec2::from_array(*f).distance(Vec2::from_array(p)) <= ui.region_snap_m
+        });
     if closes {
         finish_region(ui, scene);
     } else if ui.region_draft.len() < MAX_REGION_POINTS {
         ui.region_draft.push(p);
+    } else {
+        ui.error(format!(
+            "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
+        ));
     }
 }
 
-/// Turns the draft into the scene's region.
+/// Turns the draft into the scene's region (nothing to do without corners).
 fn finish_region(ui: &mut UiState, scene: &mut Scene) {
+    if ui.region_draft.is_empty() {
+        return;
+    }
     let region = Region {
         points: std::mem::take(&mut ui.region_draft),
         enabled: true,
     };
-    if region.is_closed() {
-        ui.info(format!(
-            "Coverage now counts only the {:.0} m² region",
-            region.area_m2()
-        ));
-        scene.region = Some(region);
-        scene.touch();
-        ui.tool = Tool::Select;
-    } else {
-        ui.region_draft = region.points;
-        ui.error("A region needs at least three corners");
+    match region.problem() {
+        None => {
+            ui.info(format!(
+                "Coverage now counts only the {:.0} m² region",
+                region.area_m2()
+            ));
+            scene.region = Some(region);
+            scene.touch();
+            ui.tool = Tool::Select;
+        }
+        Some(problem) => {
+            ui.region_draft = region.points;
+            ui.error(problem.message());
+        }
+    }
+}
+
+/// Keeps a region corner on the loaded area, so a click near the horizon
+/// cannot put one kilometres away.
+fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
+    match area {
+        Some(a) => Vec2::from_array(p)
+            .clamp(a.layers.grid.min, a.layers.grid.max())
+            .to_array(),
+        None => p,
     }
 }
 
