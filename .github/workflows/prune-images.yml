@@ -1,8 +1,14 @@
 name: Prune images
 
-# Keeps `devel`, `latest`, every X.Y.Z (or X.Y.Z-pre) tag and the sha256-*
-# attestation tags of the container image, and deletes any other tagged
-# version (old edge, main, X.Y and sha-* tags).
+# Keeps `devel`, `latest` and every X.Y.Z (or X.Y.Z-pre) tag of the container
+# image, and deletes any other tagged version (old edge, main, X.Y and sha-*
+# tags).
+#
+# `sha256-<digest>` tags are the registry's fallback for the build attestation
+# of image <digest>. They are kept while the registry can still serve that
+# image (including as an untagged version) and deleted only when the registry
+# answers 404 for it, because nothing can pull or verify it any more. Any other
+# answer (error, no registry token) keeps the tag.
 #
 # Untagged versions are never touched: the SBOM and provenance attestations
 # are untagged children of a tagged image index, and deleting them breaks
@@ -36,7 +42,8 @@ permissions: {}
 
 env:
   PACKAGE: observation
-  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|sha256-[0-9a-f]{64}(\.[a-z]+)?)$'
+  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+  ATTESTATION_REGEX: '^sha256-([0-9a-f]{64})(\.[a-z]+)?$'
 
 jobs:
   prune:
@@ -68,15 +75,37 @@ jobs:
           esac
           url="$base/packages/container/$PACKAGE/versions"
 
+          gh api --paginate "$url?per_page=100" --jq '.[]' | jq -s '.' >"$RUNNER_TEMP/versions.json"
+          # Anonymous-style pull token for the registry; empty on failure, in
+          # which case no attestation tag is ever treated as orphaned.
+          reg_token=$(curl -fsS -u "$OWNER:$GH_TOKEN" \
+            "https://ghcr.io/token?scope=repository:${OWNER,,}/$PACKAGE:pull" | jq -r '.token // empty' || true)
+
+          # True only when the registry says 404 for the image with this digest.
+          image_gone() {
+            [ -n "$reg_token" ] || return 1
+            local code
+            code=$(curl -s -o /dev/null -I -w '%{http_code}' \
+              -H "Authorization: Bearer $reg_token" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/${OWNER,,}/$PACKAGE/manifests/sha256:$1" || true)
+            [ "$code" = 404 ]
+          }
+
           # id <TAB> comma-separated tags, only for versions that have a tag
-          # and none of whose tags is on the keep list.
-          doomed=$(gh api --paginate "$url?per_page=100" \
-            --jq '.[] | select((.metadata.container.tags | length) > 0) | [.id, (.metadata.container.tags | join(","))] | @tsv' |
+          # and none of whose tags is on the keep list. An attestation tag is
+          # on the keep list unless the image it refers to is gone.
+          doomed=$(jq -r '.[] | select((.metadata.container.tags | length) > 0) | [.id, (.metadata.container.tags | join(","))] | @tsv' "$RUNNER_TEMP/versions.json" |
             while IFS=$'\t' read -r id tags; do
               keep=false
               IFS=, read -ra arr <<<"$tags"
               for t in "${arr[@]}"; do
-                if [[ "$t" =~ $KEEP_REGEX ]]; then keep=true; fi
+                if [[ "$t" =~ $KEEP_REGEX ]]; then
+                  keep=true
+                elif [[ "$t" =~ $ATTESTATION_REGEX ]]; then
+                  digest=${BASH_REMATCH[1]}
+                  if ! image_gone "$digest"; then keep=true; fi
+                fi
               done
               if [ "$keep" = false ]; then printf '%s\t%s\n' "$id" "$tags"; fi
             done)
