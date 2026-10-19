@@ -152,14 +152,15 @@ pub fn app(state: AppState) -> Router {
     };
     let request_id = HeaderName::from_static("x-request-id");
     // Layers added last are outermost: request id > trace > security headers >
-    // compression > timeout > metrics.
+    // compression > metrics > timeout. Metrics sit outside the timeout so timed-out
+    // requests are counted too.
     routes::router(state)
-        .layer(axum::middleware::from_fn(metrics::track))
         .layer(RequestBodyLimitLayer::new(16 * 1024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             timeout,
         ))
+        .layer(axum::middleware::from_fn(metrics::track))
         .layer(CompressionLayer::new())
         .layer(sec(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(sec(

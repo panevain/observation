@@ -115,12 +115,15 @@ impl FacadeCell {
     }
 }
 
-/// Splits every wall into roughly `cell_m`-sized patches.
 /// Caps on patches per wall: real walls are far smaller, and absurd input
 /// (bad data, fuzzing) gets coarser patches instead of unbounded allocation.
 const MAX_FACADE_COLS: f32 = 256.0;
+/// See `MAX_FACADE_COLS`.
 const MAX_FACADE_ROWS: f32 = 128.0;
 
+/// Splits every wall into roughly `cell_m`-sized patches, at most
+/// [`MAX_FACADE_COLS`] along and [`MAX_FACADE_ROWS`] up a wall (so walls longer
+/// than 256 cells or taller than 128 cells get coarser patches).
 pub fn facade_cells<'a>(
     footprints: impl IntoIterator<Item = &'a Footprint>,
     cell_m: f32,

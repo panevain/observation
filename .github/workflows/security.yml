@@ -56,10 +56,10 @@ jobs:
       # Offline: no GitHub token, so online-only audits are skipped rather than failing.
       - name: zizmor
         run: |
-          status=0
-          zizmor --offline --format sarif .github/workflows > zizmor.sarif || status=$?
-          zizmor --offline .github/workflows || true # readable copy in the job log
-          exit "${status}"
+          # SARIF output exits 0 even with findings, so it is written first for code scanning
+          # and the plain run below is the one that fails the job.
+          zizmor --offline --format sarif --no-exit-codes .github/workflows > zizmor.sarif
+          zizmor --offline .github/workflows
       - name: Upload SARIF
         if: ${{ !cancelled() && hashFiles('zizmor.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
@@ -167,8 +167,8 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=image
-          cache-to: type=gha,scope=image,mode=max
+          cache-from: type=gha,scope=image-prebuilt
+          cache-to: type=gha,scope=image-prebuilt,mode=max
 
       - name: Trivy image scan
         run: |

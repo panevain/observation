@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: develop
-          persist-credentials: true # needed to push the release branch below
+          persist-credentials: false # the token is added to the push below only
       - name: Install toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal --no-self-update
       - name: Bump version, lockfile and changelog
@@ -49,7 +49,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "${branch}"
           git commit -am "release: ${VERSION}"
-          git push origin "${branch}"
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          echo "::add-mask::${auth}"
+          git -c "http.https://github.com/.extraheader=Authorization: Basic ${auth}" \
+            push origin "${branch}"
           gh pr create --base main --head "${branch}" \
             --title "release: ${VERSION}" \
             --body "Release ${VERSION}. Merge with a merge commit, then tag \`main\` as described in CONTRIBUTING.md. Checks do not start automatically on pull requests opened with GITHUB_TOKEN; push any follow-up commit to the branch (for example the dated changelog edit) to run them."
