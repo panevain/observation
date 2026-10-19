@@ -288,7 +288,7 @@ All eight workflows set `permissions: {}` at the top and grant each job only wha
 | `codeql.yml` | push and pull request to `main` and `develop`, weekly | CodeQL for `rust` and for the workflows themselves (`actions`) |
 | `scorecard.yml` | push to whichever of `main`/`develop` is the default branch, weekly, branch-protection changes, manual | OpenSSF Scorecard, results published and uploaded to code scanning |
 | `release.yml` | push to `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `devel` from `develop`, the version tag and `latest` from `v*` tags; SLSA provenance (`mode=max`), an SBOM, and a GitHub build-provenance attestation |
-| `prune-images.yml` | weekly, after each Release run, manual (dry run by default) | Deletes tagged image versions whose tags are not `devel`, `latest` or `X.Y.Z`, and `sha256-<digest>` attestation tags whose image no longer exists; untagged versions are never deleted |
+| `prune-images.yml` | weekly, after each Release run, manual (dry run by default) | Deletes tagged image versions whose tags are not `devel`, `latest` or `X.Y.Z`, and `sha256-<digest>` attestation tags whose image the registry no longer serves; untagged versions are never deleted |
 | `fuzz.yml` | pull requests, push to `develop`, nightly, manual | cargo-fuzz (libFuzzer) on the untrusted-input parsers and coverage geometry: 30 s per target on PRs, 10 min nightly; crashing inputs uploaded as an artifact. See [fuzz/README.md](../fuzz/README.md) |
 | `branch-policy.yml` | pull requests | Fails PRs into `main` unless they come from a same-repo `release/*` or `hotfix/*` branch (git-flow) |
 
