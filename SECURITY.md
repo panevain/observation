@@ -76,16 +76,23 @@ Every change is checked automatically (see `.github/workflows/`):
 - **cargo-audit** (`rustsec/audit-check`): daily scan of `Cargo.lock`; on the
   scheduled run it opens or updates a GitHub issue per new advisory so that
   remediation is tracked.
-- **Trivy** (pinned, checksum-verified binary): scans the built container image
-  and the repository (dependencies, Dockerfile misconfiguration, secrets); fails
+- **Trivy** (pinned, checksum-verified binary): scans the container image's
+  operating system packages and server binary (built with a stub static client,
+  which Trivy does not inspect) and the repository (dependencies, Dockerfile misconfiguration, secrets); fails
   on fixable CRITICAL or HIGH findings and uploads SARIF to code scanning.
+- **zizmor** audits the GitHub Actions workflows (offline, hash-pinned install);
+  findings fail the check and are uploaded to code scanning.
 - **CodeQL** for Rust and GitHub Actions workflows.
 - **OpenSSF Scorecard**, published weekly and on branch-protection changes.
 - **Dependabot** for Cargo, GitHub Actions and Docker updates (version and
   security updates). All GitHub Actions are pinned to full commit SHAs.
 - **Release provenance**: images pushed to GHCR carry SLSA build provenance and
-  an SBOM, and are attested with GitHub artifact attestations. Verify with:
+  an SBOM, are signed keylessly with cosign, and are attested with GitHub artifact
+  attestations. Verify with:
 
   ```sh
   gh attestation verify oci://ghcr.io/panevain/observation:<tag> --repo panevain/observation
+  cosign verify ghcr.io/panevain/observation:<tag> \
+    --certificate-identity-regexp '^https://github.com/panevain/observation/\.github/workflows/release\.yml@' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
   ```
