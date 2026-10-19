@@ -84,14 +84,14 @@ Read from the environment at start-up; empty values count as unset; invalid `OBS
 
 ### Observability
 
-Every response carries an `x-request-id` header (taken from the request if the client or a proxy sent one, otherwise a UUID). Request tracing stays at `DEBUG`, so no access log is written by default (see the privacy table); the id is on those `DEBUG` lines (`RUST_LOG=tower_http=debug`), so a reported id can be matched to them. With `OBS_METRICS_BIND` set, `GET /metrics` on that address serves Prometheus text:
+Every response carries an `x-request-id` header (taken from the request if the client or a proxy sent one, otherwise a UUID). Request tracing stays at `DEBUG`, so no access log is written by default (see the privacy table); the id is on the request span, which is `DEBUG` under the `tower_http` target (`RUST_LOG=tower_http=debug`), and upstream warnings from a bundle fetch carry the id of the request that started it. With `OBS_METRICS_BIND` set, `GET /metrics` on that address serves Prometheus text:
 
 | Metric | Labels | Meaning |
 | --- | --- | --- |
-| `observation_http_requests_total` | `method`, `route`, `status` | Requests by matched route pattern, never the raw path; methods outside the standard set are labelled `other`. Timed-out requests (408) are included |
+| `observation_http_requests_total` | `method`, `route`, `status` | Requests by matched route pattern, never the raw path; methods outside the standard set are labelled `other`. Timed-out requests (408) are included, and requests the client abandons are counted with `status="cancelled"`. The request counter and histogram exist only when `OBS_METRICS_BIND` is set |
 | `observation_http_request_duration_seconds` | `method`, `route` | Latency histogram (buckets from 5 ms to 60 s) |
 | `observation_bundle_cache_total` | `result`: `hit`, `built`, `stale_served`, `error` | `hit` is per request served from a fresh file. The others are per upstream refresh, which concurrent requests for the same area share |
-| `observation_tile_cache_total` | `result`: `hit`, `miss`, `revalidated`, `stale_served` | Tile cache outcomes |
+| `observation_tile_cache_total` | `result`: `hit`, `miss` (nothing cached), `refreshed` (expired copy replaced), `revalidated` (304), `stale_served`, `error` (upstream failed, no copy) | Tile cache outcomes, one per request |
 | `observation_overpass_fetches_total` | `outcome`: `ok`, `error`, `rate_limited` | Upstream Overpass fetches |
 
 Fixed in code (not configurable): tile minimum freshness 7 days, tile cache cap 512 MiB, at most 4 concurrent upstream tile fetches, Overpass retry pause 2 s and cooldown 30 s, Overpass client timeout 40 s, tile client timeout 20 s, whole-request timeout 60 s, request body limit 16 KiB. The container sets `OBS_BIND=0.0.0.0:8080`, `OBS_STATIC_DIR=/app/dist` and `OBS_CACHE_DIR=/var/cache/observation`. The cache directory is not a volume; mount one there (writable by uid 65532) to keep it across container runs.
@@ -365,6 +365,9 @@ Upstream services see the server's IP address and the server's `User-Agent`. The
 | Trivy | `ghcr.io/aquasecurity/trivy-db`, `mirror.gcr.io/aquasec/trivy-db` and `trivy-checks` | Downloads of the vulnerability database and rules | Required for scanning |
 | `docker/build-push-action` | GitHub only | A build summary and a `.dockerbuild` build-record artifact on the workflow run | Left on: both stay on GitHub (`DOCKER_BUILD_SUMMARY` and `DOCKER_BUILD_RECORD_UPLOAD` default to true and can be set to false) |
 | OpenSSF Scorecard (`scorecard.yml`) | `api.scorecard.dev` | The Scorecard results for this repository, signed with the workflow's OIDC token | Left on (`publish_results: true`): it feeds the README badge and makes the results public. Set it to `false` to keep results inside GitHub code scanning, at the cost of the badge |
+| cosign 3.0.2 (`release.yml`) | Sigstore: Fulcio (certificate), Rekor (public transparency log), the TUF root CDN | The image digest and the workflow's OIDC identity, which Rekor publishes with the repository and workflow name | Required for signing; this is what makes the signature verifiable. Remove the signing step to stop it |
+| zizmor 1.31.1 (`security.yml`) | None | Nothing: run with `--offline`, so it makes no GitHub API calls | Off by flag, not by default; keep `--offline` |
+| cargo-nextest, cargo-llvm-cov | `get.nexte.st` and `github.com` for the pinned download only | Plain downloads, checksum-verified | No telemetry. Neither runs a self-update check in CI (`cargo nextest self update` is only run by hand) |
 | CodeQL, `upload-sarif`, Dependabot, cache and artifact actions, `rustsec/audit-check` | GitHub only (plus the RustSec advisory database for cargo-deny and cargo-audit) | Results, caches, advisory lookups | Required for the checks |
 
 The README badges are images fetched by whoever views the README on GitHub (from `github.com` and `api.scorecard.dev`); they are not part of the app.

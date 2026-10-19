@@ -124,6 +124,9 @@ jobs:
 
   coverage:
     name: coverage (informational)
+    # Not a required check, and a second instrumented build of the test suite: skip it on
+    # pull requests and keep it for the long-lived branches.
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

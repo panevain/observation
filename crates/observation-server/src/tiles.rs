@@ -59,7 +59,13 @@ impl TileProxy {
             .await
         {
             Ok(Upstream::Fresh(bytes, meta)) => {
-                metrics::counter!(crate::metrics::TILE_CACHE, "result" => "miss").increment(1);
+                // `refreshed`: an expired copy was replaced by a new body; `miss`: nothing cached.
+                let result = if cached.is_some() {
+                    "refreshed"
+                } else {
+                    "miss"
+                };
+                metrics::counter!(crate::metrics::TILE_CACHE, "result" => result).increment(1);
                 match self.cache.put_tile(id, &bytes, &meta).await {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, ?id, "could not cache tile"),
@@ -84,7 +90,10 @@ impl TileProxy {
                     tracing::warn!(error = %e, ?id, "tile upstream failed, serving stale copy");
                     Ok(c.bytes)
                 }
-                None => Err(e),
+                None => {
+                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "error").increment(1);
+                    Err(e)
+                }
             },
         }
     }

@@ -1,13 +1,11 @@
 //! Prometheus metrics: HTTP request middleware and an optional exporter.
 //!
 //! Instrumentation uses the `metrics` facade, which does nothing until a
-//! recorder is installed, and [`track`] skips its work until then, so tests and
-//! library users pay nothing. The binary
+//! recorder is installed, and [`crate::app`] adds the request middleware only when
+//! `OBS_METRICS_BIND` is set, so tests and library users pay nothing. The binary
 //! installs the Prometheus recorder only when `OBS_METRICS_BIND` is set and
 //! serves it on that separate address, keeping `/metrics` off the public port.
 
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use axum::Router;
@@ -24,7 +22,8 @@ pub const HTTP_DURATION: &str = "observation_http_request_duration_seconds";
 /// Bundle cache outcomes: `hit` per request served from a fresh file; `built`,
 /// `stale_served` and `error` per upstream refresh, which concurrent requests share.
 pub const BUNDLE_CACHE: &str = "observation_bundle_cache_total";
-/// Tile lookups: `result` is `hit`, `miss`, `revalidated` or `stale_served`.
+/// Tile lookups: `result` is `hit`, `miss` (nothing cached), `refreshed` (expired copy
+/// replaced), `revalidated` (304), `stale_served` or `error` (upstream failed, no copy).
 pub const TILE_CACHE: &str = "observation_tile_cache_total";
 /// Overpass fetches: `outcome` is `ok`, `error` or `rate_limited` (including our own cooldown).
 pub const OVERPASS_FETCH: &str = "observation_overpass_fetches_total";
@@ -34,26 +33,16 @@ const DURATION_BUCKETS: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
 ];
 
-/// Set once a recorder is installed; until then [`track`] does no work.
-static ENABLED: AtomicBool = AtomicBool::new(false);
-
 /// Installs the global Prometheus recorder and returns the render handle.
 /// Latency is exported as a real histogram (aggregatable across replicas).
 pub fn install() -> Result<PrometheusHandle, BuildError> {
-    let handle = PrometheusBuilder::new()
+    PrometheusBuilder::new()
         .set_buckets_for_metric(Matcher::Full(HTTP_DURATION.to_owned()), DURATION_BUCKETS)?
-        .install_recorder()?;
-    ENABLED.store(true, Ordering::Relaxed);
-    Ok(handle)
+        .install_recorder()
 }
 
-/// Binds the metrics address. Done by the caller before [`serve`] so that a
-/// busy port stops start-up instead of failing in a background task.
-pub async fn bind(addr: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
-    tokio::net::TcpListener::bind(addr).await
-}
-
-/// Serves `GET /metrics` on `listener` until the process exits.
+/// Serves `GET /metrics` on `listener` until the process exits. The caller binds the
+/// listener first so that a busy port stops start-up instead of failing in a background task.
 pub async fn serve(
     listener: tokio::net::TcpListener,
     handle: PrometheusHandle,
@@ -90,25 +79,42 @@ fn method_label(m: &axum::http::Method) -> &'static str {
     }
 }
 
+/// Records a request when dropped: with its status once the response is ready, or as
+/// `cancelled` if the future is dropped first (the client went away or the connection
+/// closed), so abandoned requests still show up in the counts and latency.
+struct RequestRecord {
+    method: &'static str,
+    route: String,
+    start: Instant,
+    status: Option<String>,
+}
+
+impl Drop for RequestRecord {
+    fn drop(&mut self) {
+        let status = self.status.take().unwrap_or_else(|| "cancelled".to_owned());
+        let route = std::mem::take(&mut self.route);
+        metrics::histogram!(HTTP_DURATION, "method" => self.method, "route" => route.clone())
+            .record(self.start.elapsed().as_secs_f64());
+        metrics::counter!(HTTP_REQUESTS, "method" => self.method, "route" => route, "status" => status)
+            .increment(1);
+    }
+}
+
 /// Middleware counting requests and timing them. The route label is the
 /// matched pattern (`/api/tiles/{z}/{x}/{y}`), never the raw path, so label
-/// cardinality stays bounded.
+/// cardinality stays bounded. [`crate::app`] adds it only when metrics are enabled.
 pub async fn track(req: Request, next: Next) -> Response {
-    if !ENABLED.load(Ordering::Relaxed) {
-        return next.run(req).await;
-    }
-    let method = method_label(req.method());
-    let route = req
-        .extensions()
-        .get::<MatchedPath>()
-        .map_or_else(|| "unmatched".to_owned(), |p| p.as_str().to_owned());
-    let start = Instant::now();
+    let mut record = RequestRecord {
+        method: method_label(req.method()),
+        route: req
+            .extensions()
+            .get::<MatchedPath>()
+            .map_or_else(|| "unmatched".to_owned(), |p| p.as_str().to_owned()),
+        start: Instant::now(),
+        status: None,
+    };
     let resp = next.run(req).await;
-    let status = resp.status().as_u16().to_string();
-    metrics::histogram!(HTTP_DURATION, "method" => method, "route" => route.clone())
-        .record(start.elapsed().as_secs_f64());
-    metrics::counter!(HTTP_REQUESTS, "method" => method, "route" => route, "status" => status)
-        .increment(1);
+    record.status = Some(resp.status().as_u16().to_string());
     resp
 }
 
@@ -131,7 +137,6 @@ mod tests {
     // A current-thread runtime keeps the thread-local recorder in place across awaits.
     #[tokio::test]
     async fn timed_out_requests_are_counted() {
-        ENABLED.store(true, Ordering::Relaxed);
         let recorder = PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
         let _guard = metrics::set_default_local_recorder(&recorder);
@@ -159,6 +164,29 @@ mod tests {
         let text = handle.render();
         assert!(
             text.contains(r#"route="/slow""#) && text.contains(r#"status="408""#),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandoned_requests_are_counted() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        let app = Router::new()
+            .route("/hang", get(std::future::pending::<&'static str>))
+            .layer(axum::middleware::from_fn(track));
+        // The client gives up: the request future is dropped before a response exists.
+        let _ = tokio::time::timeout(
+            Duration::from_millis(20),
+            app.oneshot(Request::get("/hang").body(Body::empty()).unwrap()),
+        )
+        .await;
+
+        let text = handle.render();
+        assert!(
+            text.contains(r#"route="/hang""#) && text.contains(r#"status="cancelled""#),
             "{text}"
         );
     }

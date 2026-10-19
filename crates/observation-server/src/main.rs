@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(addr) = config.metrics_bind {
         let handle = observation_server::metrics::install()?;
-        let listener = observation_server::metrics::bind(addr)
+        let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|e| format!("could not bind OBS_METRICS_BIND {addr}: {e}"))?;
         tokio::spawn(async move {

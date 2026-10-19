@@ -65,6 +65,12 @@ pub struct Config {
     pub log_format: LogFormat,
 }
 
+/// Whether two listen addresses would collide: same port and the same IP, or either
+/// one a wildcard (`0.0.0.0` / `::`).
+fn overlaps(a: SocketAddr, b: SocketAddr) -> bool {
+    a.port() == b.port() && (a.ip() == b.ip() || a.ip().is_unspecified() || b.ip().is_unspecified())
+}
+
 /// How tracing events are written (to stdout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
@@ -102,7 +108,7 @@ impl Config {
         let metrics_bind = get("OBS_METRICS_BIND")
             .map(|raw| raw.parse().map_err(|_| ConfigError::MetricsBind(raw)))
             .transpose()?;
-        if metrics_bind == Some(bind) {
+        if metrics_bind.is_some_and(|m| overlaps(m, bind)) {
             return Err(ConfigError::MetricsBindSame(bind.to_string()));
         }
         let log_format = match get("OBS_LOG_FORMAT").as_deref() {
@@ -215,6 +221,21 @@ mod tests {
             ]))
             .unwrap_err(),
             ConfigError::MetricsBindSame("127.0.0.1:9090".into())
+        );
+        // A wildcard on the same port collides with a specific address.
+        assert!(
+            Config::from_lookup(lookup(&[
+                ("OBS_BIND", "127.0.0.1:9090"),
+                ("OBS_METRICS_BIND", "0.0.0.0:9090"),
+            ]))
+            .is_err()
+        );
+        assert!(
+            Config::from_lookup(lookup(&[
+                ("OBS_BIND", "127.0.0.1:9090"),
+                ("OBS_METRICS_BIND", "127.0.0.1:9091"),
+            ]))
+            .is_ok()
         );
         assert_eq!(
             Config::from_lookup(lookup(&[("OBS_LOG_FORMAT", "xml")])).unwrap_err(),

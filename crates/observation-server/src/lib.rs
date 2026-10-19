@@ -151,6 +151,7 @@ pub fn app(state: AppState) -> Router {
         SetResponseHeaderLayer::overriding(name, HeaderValue::from_static(value))
     };
     let request_id = HeaderName::from_static("x-request-id");
+    let metrics_on = state.config().metrics_bind.is_some();
     // Layers added last are outermost: request id > trace > security headers >
     // compression > metrics > timeout. Metrics sit outside the timeout so timed-out
     // requests are counted too.
@@ -160,7 +161,15 @@ pub fn app(state: AppState) -> Router {
             StatusCode::REQUEST_TIMEOUT,
             timeout,
         ))
-        .layer(axum::middleware::from_fn(metrics::track))
+        .layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                if metrics_on {
+                    metrics::track(req, next).await
+                } else {
+                    next.run(req).await
+                }
+            },
+        ))
         .layer(CompressionLayer::new())
         .layer(sec(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(sec(
@@ -185,7 +194,10 @@ pub fn app(state: AppState) -> Router {
                     .get("x-request-id")
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("-");
-                tracing::info_span!(
+                // DEBUG under tower_http's target, like TraceLayer's own events, so
+                // `RUST_LOG=tower_http=debug` shows the id and the default level logs none.
+                tracing::debug_span!(
+                    target: "tower_http::trace::make_span",
                     "request",
                     method = %req.method(),
                     uri = %req.uri().path(),
