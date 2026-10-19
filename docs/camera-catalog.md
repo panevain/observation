@@ -6,13 +6,12 @@
 home-surveillance cameras that users can place on a street map. Each entry carries
 the few optics numbers needed to draw a coverage footprint: field of view,
 main-stream resolution and night-vision range. There is one RON file per manufacturer
-(`generic.ron` for the archetypes), each a bare list of models. The files are embedded
-in the client (listed in `src/main.rs`) and parsed with
+(`generic.ron` for the archetypes), each a bare list of models. Every `.ron` file under
+the directory (subfolders included) is found by the client's `build.rs`, embedded, and parsed with
 `observation_core::camera::Catalog::from_ron_parts`, which sorts by kind, vendor and
 name and validates ids,
 FOV, resolution and IR ranges and rejects duplicate ids. The integration test
-`crates/observation-core/tests/catalog.rs` checks the shipped files and that each is
-embedded in `main.rs`.
+`crates/observation-core/tests/catalog.rs` checks the shipped files.
 
 Three vendor-neutral archetypes (`generic-doorbell-160`, `generic-floodlight-130`,
 `generic-bullet-90`) have an empty vendor and no source. They hold mid-market values
@@ -88,7 +87,7 @@ range = width_px / (2 * ppm * tan(hfov / 2))      capped at 100 m
 1. Find the manufacturer's spec page and read FOV, main-stream resolution and
    night-vision range from it.
 2. Add the entry to the manufacturer's file (create `catalog/<vendor>.ron` and
-   register it in `src/main.rs` for a new manufacturer), with a unique kebab-case
+   for a new manufacturer; no registration needed), with a unique kebab-case
    `id` of the form `vendor-product-name`.
 3. Update the table below so that it matches the RON.
 4. Run `cargo test -p observation-core --test catalog`.

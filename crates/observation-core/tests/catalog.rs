@@ -6,21 +6,8 @@ fn shipped_catalog_is_valid() {
         env!("CARGO_MANIFEST_DIR"),
         "/../observation-client/assets/catalog"
     );
-    let main_rs = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../observation-client/src/main.rs"
-    ))
-    .unwrap();
     let mut parts = Vec::new();
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-        assert!(
-            main_rs.contains(&format!("assets/catalog/{name}")),
-            "{name} is not embedded in observation-client/src/main.rs"
-        );
-        parts.push(std::fs::read_to_string(&path).unwrap());
-    }
+    collect(std::path::Path::new(dir), &mut parts);
     let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
     let cat = Catalog::from_ron_parts(&parts).expect("catalog parses and validates");
     assert!(cat.models.len() >= 12);
@@ -33,6 +20,17 @@ fn shipped_catalog_is_valid() {
                 "{} needs a source",
                 m.id
             );
+        }
+    }
+}
+
+fn collect(dir: &std::path::Path, out: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect(&path, out);
+        } else if path.extension().is_some_and(|e| e == "ron") {
+            out.push(std::fs::read_to_string(&path).unwrap());
         }
     }
 }

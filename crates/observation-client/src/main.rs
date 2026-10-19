@@ -19,21 +19,11 @@ use bevy::window::{PresentMode, WindowPlugin};
 use bevy_egui::EguiPlugin;
 use observation_core::camera::Catalog;
 
-/// Curated camera catalog, one file per manufacturer, embedded at build time.
-/// A new file in `assets/catalog/` must be added here.
-const CATALOG_RON: &[&str] = &[
-    include_str!("../assets/catalog/generic.ron"),
-    include_str!("../assets/catalog/blink.ron"),
-    include_str!("../assets/catalog/google.ron"),
-    include_str!("../assets/catalog/reolink.ron"),
-    include_str!("../assets/catalog/ring.ron"),
-    include_str!("../assets/catalog/tp-link.ron"),
-    include_str!("../assets/catalog/ubiquiti.ron"),
-    include_str!("../assets/catalog/wyze.ron"),
-];
+// Curated camera catalog: every `.ron` file under `assets/catalog/`, discovered by build.rs.
+include!(concat!(env!("OUT_DIR"), "/catalog_files.rs"));
 
 fn main() {
-    let catalog = match Catalog::from_ron_parts(CATALOG_RON) {
+    let catalog = match Catalog::from_ron_parts(CATALOG_FILES) {
         Ok(c) => c,
         Err(e) => {
             // The catalog is validated in CI; fall back to an empty list rather than crash.
