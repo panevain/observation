@@ -1,12 +1,15 @@
 name: Scorecard
 
 on:
-  # Scorecard only analyses the default branch (develop under git-flow).
+  # Scorecard only analyses (and publishes for) the repository's default
+  # branch. Listen on both long-lived branches and let the job skip whichever
+  # one isn't the default, so the badge keeps working if the default changes.
   push:
-    branches: [develop]
+    branches: [main, develop]
   schedule:
     - cron: "23 6 * * 3"
   branch_protection_rule:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,6 +20,9 @@ permissions: {}
 jobs:
   analysis:
     name: Scorecard analysis
+    # Scheduled, branch-protection and manual runs use the default branch;
+    # pushes only count when they land on it.
+    if: github.event_name != 'push' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
