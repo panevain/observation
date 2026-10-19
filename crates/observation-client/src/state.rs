@@ -278,6 +278,27 @@ pub struct AreaLoaded {
     pub result: Result<AreaBundle, String>,
 }
 
+/// Where the docked panels left room for the 3D view (logical px), written by
+/// the UI every frame. The panels are drawn into egui's background layer, which
+/// egui never reports as "pointer over egui", so this is the one place that
+/// knows which pointer positions belong to the UI.
+#[derive(Debug, Default, Resource)]
+pub struct UiLayout {
+    /// `None` until the first frame is laid out; empty while the small-screen gate is up.
+    pub viewport: Option<Rect>,
+}
+
+impl UiLayout {
+    /// egui's panel resize handles reach this far into the viewport.
+    const EDGE_PX: f32 = 6.0;
+
+    /// The pointer at `p` is over a panel (or a panel's resize handle).
+    pub fn is_ui(&self, p: Vec2) -> bool {
+        self.viewport
+            .is_some_and(|r| !r.inflate(-Self::EDGE_PX).contains(p))
+    }
+}
+
 /// Network/area loading progress shown in the UI.
 #[derive(Debug, Default, Resource)]
 pub struct Loading {

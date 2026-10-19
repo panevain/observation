@@ -104,6 +104,7 @@ fn on_area_loaded(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut tiles: ResMut<Tiles>,
     mut scene: ResMut<Scene>,
     mut ui: ResMut<UiState>,
     mut coverage: ResMut<CoverageState>,
@@ -164,7 +165,9 @@ fn on_area_loaded(
     });
     let tile_bbox = bbox_of(&proj, gmin, gmax);
     let z = zoom_for_bbox(&tile_bbox, MAX_GROUND_TILES, 19);
-    for t in tiles_covering(&tile_bbox, z) {
+    let ground_tiles = tiles_covering(&tile_bbox, z);
+    tiles.pin(ground_tiles.iter().copied());
+    for t in ground_tiles {
         let b = t.bounds();
         let nw = world2(&proj, LatLon::new(b.north, b.west));
         let se = world2(&proj, LatLon::new(b.south, b.east));
