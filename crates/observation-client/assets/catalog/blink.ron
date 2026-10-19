@@ -1,0 +1,15 @@
+// Blink. Format and source policy: docs/camera-catalog.md.
+[
+    (
+        id: "blink-video-doorbell",
+        vendor: "Blink",
+        name: "Video Doorbell",
+        kind: Doorbell,
+        hfov_deg: 135.0,
+        vfov_deg: 80.0,
+        resolution: (1920, 1080),
+        ir_range_m: None,
+        source: Some("https://support.blinkforhome.com/en_US/blink-video-doorbell-technical-specifications"),
+        notes: Some("1080p HD; 850 nm IR LED but no range published"),
+    ),
+]

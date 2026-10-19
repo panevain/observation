@@ -1,0 +1,40 @@
+// Vendor-neutral archetypes (no source). Format and source policy: docs/camera-catalog.md.
+// Last verified: 2026-10.
+[
+    (
+        id: "generic-doorbell-160",
+        vendor: "",
+        name: "Generic doorbell (160°)",
+        kind: Doorbell,
+        hfov_deg: 160.0,
+        vfov_deg: 120.0,
+        resolution: (1920, 1440),
+        ir_range_m: Some(5.0),
+        source: None,
+        notes: Some("Generic archetype"),
+    ),
+    (
+        id: "generic-floodlight-130",
+        vendor: "",
+        name: "Generic floodlight (130°)",
+        kind: Floodlight,
+        hfov_deg: 130.0,
+        vfov_deg: 75.0,
+        resolution: (1920, 1080),
+        ir_range_m: Some(9.0),
+        source: None,
+        notes: Some("Generic archetype"),
+    ),
+    (
+        id: "generic-bullet-90",
+        vendor: "",
+        name: "Generic bullet (90°)",
+        kind: Bullet,
+        hfov_deg: 90.0,
+        vfov_deg: 50.0,
+        resolution: (2560, 1440),
+        ir_range_m: Some(25.0),
+        source: None,
+        notes: Some("Generic archetype"),
+    ),
+]

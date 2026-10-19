@@ -2,13 +2,17 @@
 
 ## Purpose
 
-`crates/observation-client/assets/catalog.ron` is the curated list of consumer
+`crates/observation-client/assets/catalog/` is the curated list of consumer
 home-surveillance cameras that users can place on a street map. Each entry carries
 the few optics numbers needed to draw a coverage footprint: field of view,
-main-stream resolution and night-vision range. The file is embedded in the client
-and parsed with `observation_core::camera::Catalog::from_ron`, which validates ids,
+main-stream resolution and night-vision range. There is one RON file per manufacturer
+(`generic.ron` for the archetypes), each a bare list of models. The files are embedded
+in the client (listed in `src/main.rs`) and parsed with
+`observation_core::camera::Catalog::from_ron_parts`, which sorts by kind, vendor and
+name and validates ids,
 FOV, resolution and IR ranges and rejects duplicate ids. The integration test
-`crates/observation-core/tests/catalog.rs` checks the shipped file.
+`crates/observation-core/tests/catalog.rs` checks the shipped files and that each is
+embedded in `main.rs`.
 
 Three vendor-neutral archetypes (`generic-doorbell-160`, `generic-floodlight-130`,
 `generic-bullet-90`) have an empty vendor and no source. They hold mid-market values
@@ -29,7 +33,7 @@ for cameras that are not in the list.
 | `source` | `Option<string>` | `https://` link to the manufacturer spec, tech-specs or support page. Required for every model with a vendor. |
 | `notes` | `Option<string>` | Short caveats: derived values, lens variants, conflicting figures. |
 
-The file is sorted by kind (enum order), then vendor, then name.
+Models are sorted by kind (enum order), then vendor, then name when loaded.
 
 ## How effective range is derived
 
@@ -76,18 +80,19 @@ range = width_px / (2 * ppm * tan(hfov / 2))      capped at 100 m
 - If the pages disagree on a value, use the manufacturer's spec sheet and mention
   the conflict in `notes`. If the value cannot be verified, leave the model out.
 - Do not use a night-vision figure from a retailer. Use `None` instead.
-- The header comment of `catalog.ron` records the last-verified month. Update it
+- The header comment of `generic.ron` records the last-verified month. Update it
   whenever you re-check entries.
 
 ### Adding or updating a model
 
 1. Find the manufacturer's spec page and read FOV, main-stream resolution and
    night-vision range from it.
-2. Add the entry in sorted position (kind, vendor, name), with a unique kebab-case
+2. Add the entry to the manufacturer's file (create `catalog/<vendor>.ron` and
+   register it in `src/main.rs` for a new manufacturer), with a unique kebab-case
    `id` of the form `vendor-product-name`.
 3. Update the table below so that it matches the RON.
 4. Run `cargo test -p observation-core --test catalog`.
-5. Bump the "Last verified" month in the RON header if you re-checked other entries.
+5. Bump the "Last verified" month in the `generic.ron` header if you re-checked other entries.
 
 PR checklist:
 
@@ -96,7 +101,7 @@ PR checklist:
 - [ ] feet converted to metres, 1 decimal
 - [ ] derived values say "derived from diagonal" in `notes`
 - [ ] lens or SKU variant named in `notes` where the page lists several
-- [ ] entry sorted by kind, vendor, name; `id` unique and kebab-case
+- [ ] entry in the right manufacturer file; `id` unique and kebab-case
 - [ ] this document's table updated
 - [ ] catalog test passes
 

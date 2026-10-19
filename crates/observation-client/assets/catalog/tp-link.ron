@@ -1,0 +1,27 @@
+// TP-Link. Format and source policy: docs/camera-catalog.md.
+[
+    (
+        id: "tp-link-tapo-d230s1",
+        vendor: "TP-Link",
+        name: "Tapo D230S1",
+        kind: Doorbell,
+        hfov_deg: 135.0,
+        vfov_deg: 102.8,
+        resolution: (2560, 1920),
+        ir_range_m: Some(7.6),
+        source: Some("https://tp-link.com/ar/products/details/Tapo-D230S1.html"),
+        notes: Some("Spec sheet: 166° diagonal, 135° H, 102.8° V (marketing says 160° diagonal). IR 25 ft"),
+    ),
+    (
+        id: "tp-link-tapo-c320ws",
+        vendor: "TP-Link",
+        name: "Tapo C320WS",
+        kind: Bullet,
+        hfov_deg: 97.0,
+        vfov_deg: 54.0,
+        resolution: (2560, 1440),
+        ir_range_m: Some(29.9),
+        source: Some("https://tp-link.com/us/products/details/Tapo-C320WS.html"),
+        notes: Some("Spec sheet: 113° diagonal, 97° H, 54° V; IR 98 ft"),
+    ),
+]
