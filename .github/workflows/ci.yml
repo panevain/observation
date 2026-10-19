@@ -31,7 +31,11 @@ jobs:
           persist-credentials: false
       - name: Install toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal --no-self-update
-      - run: cargo fmt --all --check
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.13
+          install: false
+      - run: mise run fmt
 
   clippy-native:
     name: clippy (native workspace)
@@ -49,7 +53,11 @@ jobs:
         with:
           shared-key: native
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
-      - run: cargo clippy --locked --workspace --exclude observation-client --all-targets -- -D warnings
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.13
+          install: false
+      - run: mise run clippy-native
 
   clippy-wasm:
     name: clippy (wasm client)
@@ -67,7 +75,11 @@ jobs:
         with:
           shared-key: wasm-clippy
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
-      - run: cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.13
+          install: false
+      - run: mise run clippy-wasm
 
   test:
     name: test
@@ -91,15 +103,11 @@ jobs:
         with:
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
-      - name: Test (core + server)
-        run: cargo test --locked --workspace --exclude observation-client
-      - name: Test (client, native unit tests)
-        run: |
-          if [ -f crates/observation-client/src/lib.rs ]; then
-            cargo test --locked -p observation-client --lib
-          else
-            echo "observation-client has no library target; skipping."
-          fi
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.13
+          install: false
+      - run: mise run test
 
   tokens:
     name: design tokens
@@ -111,7 +119,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: scripts/check-design-tokens.sh
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.13
+          install: false
+      - run: mise run tokens
 
   wasm:
     name: wasm (trunk build)
@@ -119,13 +131,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    env:
-      TRUNK_VERSION: "0.21.14"
-      # sha256 of trunk-x86_64-unknown-linux-gnu.tar.gz, from
-      # https://github.com/trunk-rs/trunk/releases/tag/v0.21.14
-      TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
-      # Trunk otherwise queries the crates.io API for a newer trunk release.
-      TRUNK_SKIP_VERSION_CHECK: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,24 +141,19 @@ jobs:
         with:
           shared-key: wasm-release
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
-      - name: Install trunk (pinned, checksum-verified)
-        run: |
-          set -euo pipefail
-          archive="trunk-x86_64-unknown-linux-gnu.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
-            "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/${archive}"
-          echo "${TRUNK_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
-          mkdir -p "${RUNNER_TEMP}/trunk-bin"
-          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/trunk-bin" trunk
-          echo "${RUNNER_TEMP}/trunk-bin" >> "${GITHUB_PATH}"
+      # trunk comes from mise.toml, checksum-verified via mise.lock.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.13
+          install: true
       - name: Install brotli (for the size report)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends brotli
-      - name: trunk build --release
+      - name: Build (release)
         run: |
-          trunk --version
-          trunk build --release --locked
+          mise exec -- trunk --version
+          mise run build
       - name: Wasm size report
         run: |
           set -euo pipefail

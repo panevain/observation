@@ -25,14 +25,22 @@ Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to O
 
 ### From source
 
-You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (run `rustup toolchain install` in the repository to get it, with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14.
+You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (run `rustup toolchain install` in the repository to get it, with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14. [mise](https://mise.jdx.dev) installs trunk and provides the tasks below:
+
+```sh
+mise install                          # trunk, checksum-verified via mise.lock
+cp mise.local.toml.example mise.local.toml   # then set OBS_CONTACT (gitignored)
+mise run serve                        # dev-build the client -> dist/, then run the server
+```
+
+Without mise, run the underlying commands directly:
 
 ```sh
 trunk build --release                 # client -> dist/
 cargo run --release -p observation-server
 ```
 
-The server listens on `0.0.0.0:8080` and serves the `dist/` directory relative to the working directory by default (`OBS_STATIC_DIR`), so run it from the repository root. For local use, add `OBS_BIND=127.0.0.1:8080` and `OBS_CONTACT=you@example.com`. Cached map data goes to `cache/` (`OBS_CACHE_DIR`).
+The server listens on `0.0.0.0:8080` and serves the `dist/` directory relative to the working directory by default (`OBS_STATIC_DIR`), so run it from the repository root. For local use, add `OBS_BIND=127.0.0.1:8080` and `OBS_CONTACT=you@example.com` (with mise, put them in `mise.local.toml`). Cached map data goes to `cache/` (`OBS_CACHE_DIR`).
 
 Dev loop: the server reads `dist/` from disk on every request, so after the first build you can rerun `trunk build` and refresh the browser without restarting the server. `trunk serve` has no API proxy configured, so use the server to test anything that loads map data. The demo street needs no network except for map tile images. Server and core crates build natively with plain `cargo` (the client is excluded from the default workspace members).
 

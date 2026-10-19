@@ -59,15 +59,14 @@ If you rename a job, update the rulesets in the same PR and re-import them, or m
 
 ## Before opening a PR
 
-Run what CI runs:
+Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 
 ```sh
-cargo fmt --all --check
-cargo clippy --workspace --exclude observation-client --all-targets -- -D warnings
-cargo clippy -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings
-cargo test --workspace --exclude observation-client
-scripts/check-design-tokens.sh
+mise run check     # fmt, clippy (native + wasm), tests, design tokens
+mise run build     # release wasm build, as the CI wasm job does
 cargo deny check   # if installed
 ```
+
+Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml). The Docker job has no mise task.
 
 Keep colours, spacing and other UI constants in `crates/observation-client/src/theme.rs` (the design-token check fails otherwise). See [docs/design.md](docs/design.md) for architecture and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
