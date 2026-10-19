@@ -112,7 +112,7 @@ A higher level shrinks each camera's range. The range for a level is `width_px /
 
 ## Custom models
 
-Open **Custom model** at the bottom of the inspector to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene. Models cannot be edited or removed in the app once added; edit an exported scene file and import it if you need to.
+Open **Custom model** (above Analysis in the inspector) to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene. Models cannot be edited or removed in the app once added; edit an exported scene file and import it if you need to.
 
 ## Save, export and import
 
