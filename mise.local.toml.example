@@ -4,3 +4,5 @@
 OBS_CONTACT = "CHANGE-ME@example.com"
 # The server binds 0.0.0.0:8080 by default. Uncomment to listen on loopback only.
 # OBS_BIND = "127.0.0.1:8080"
+# Overpass interpreters, tried in order when one fails or times out (at most 4).
+# OBS_OVERPASS_URL = "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter"

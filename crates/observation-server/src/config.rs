@@ -10,6 +10,8 @@ use thiserror::Error;
 pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 /// Default Overpass interpreter endpoint.
 pub const DEFAULT_OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
+/// Most Overpass endpoints accepted in `OBS_OVERPASS_URL`.
+pub const MAX_OVERPASS_URLS: usize = 4;
 /// Default attribution string shown by the client and embedded in bundles.
 pub const DEFAULT_ATTRIBUTION: &str = "© OpenStreetMap contributors";
 /// Default contact URL placed in the `User-Agent`.
@@ -22,6 +24,10 @@ pub enum ConfigError {
     Bind(String),
     #[error("OBS_BUNDLE_TTL_DAYS `{0}` is not a non-negative number")]
     Ttl(String),
+    #[error("OBS_OVERPASS_URL lists more than {MAX_OVERPASS_URLS} endpoints")]
+    OverpassUrls,
+    #[error("OBS_OVERPASS_URL entry `{0}` is not an http(s) URL")]
+    OverpassUrl(String),
     #[error("OBS_METRICS_BIND `{0}` is not a socket address like 127.0.0.1:9090")]
     MetricsBind(String),
     #[error("OBS_METRICS_BIND `{0}` must differ from OBS_BIND")]
@@ -41,8 +47,8 @@ pub struct Config {
     pub cache_dir: PathBuf,
     /// Contact URL for the `User-Agent` (`OBS_CONTACT`).
     pub contact: String,
-    /// Overpass interpreter URL (`OBS_OVERPASS_URL`).
-    pub overpass_url: String,
+    /// Overpass interpreter URLs, tried in order (`OBS_OVERPASS_URL`, comma-separated).
+    pub overpass_urls: Vec<String>,
     /// Upstream tile URL template (`OBS_TILE_URL`).
     pub tile_url: String,
     /// Attribution text (`OBS_TILE_ATTRIBUTION`).
@@ -53,8 +59,10 @@ pub struct Config {
     pub tile_min_ttl: Duration,
     /// Tiles are no longer written once the tile cache exceeds this size.
     pub tile_cache_cap_bytes: u64,
-    /// Pause before the single inline retry after an Overpass 429/504.
+    /// Pause before retrying Overpass after a busy or failed attempt.
     pub overpass_retry_wait: Duration,
+    /// Time allowed for one Overpass attempt (the query itself asks for 25 s).
+    pub overpass_timeout: Duration,
     /// How long new Overpass fetches fail fast after we were rate limited.
     pub overpass_cooldown: Duration,
     /// Per-request timeout of the whole HTTP stack.
@@ -105,6 +113,24 @@ impl Config {
                 .filter(|d| d.is_finite() && *d >= 0.0)
                 .ok_or(ConfigError::Ttl(raw))?,
         };
+        let mut overpass_urls: Vec<String> = or("OBS_OVERPASS_URL", DEFAULT_OVERPASS_URL)
+            .split(',')
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if overpass_urls.len() > MAX_OVERPASS_URLS {
+            return Err(ConfigError::OverpassUrls);
+        }
+        if overpass_urls.is_empty() {
+            overpass_urls.push(DEFAULT_OVERPASS_URL.to_owned());
+        }
+        if let Some(bad) = overpass_urls.iter().find(|u| {
+            !reqwest::Url::parse(u)
+                .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+        }) {
+            return Err(ConfigError::OverpassUrl(bad.clone()));
+        }
         let metrics_bind = get("OBS_METRICS_BIND")
             .map(|raw| raw.parse().map_err(|_| ConfigError::MetricsBind(raw)))
             .transpose()?;
@@ -123,7 +149,7 @@ impl Config {
             static_dir: or("OBS_STATIC_DIR", "dist").into(),
             cache_dir: or("OBS_CACHE_DIR", "cache").into(),
             contact: or("OBS_CONTACT", DEFAULT_CONTACT),
-            overpass_url: or("OBS_OVERPASS_URL", DEFAULT_OVERPASS_URL),
+            overpass_urls,
             tile_url: or("OBS_TILE_URL", DEFAULT_TILE_URL),
             attribution: or("OBS_TILE_ATTRIBUTION", DEFAULT_ATTRIBUTION),
             bundle_ttl: Duration::from_secs_f64(ttl_days * 86_400.0),
@@ -138,15 +164,17 @@ impl Config {
             static_dir: "dist".into(),
             cache_dir: "cache".into(),
             contact: DEFAULT_CONTACT.into(),
-            overpass_url: DEFAULT_OVERPASS_URL.into(),
+            overpass_urls: vec![DEFAULT_OVERPASS_URL.into()],
             tile_url: DEFAULT_TILE_URL.into(),
             attribution: DEFAULT_ATTRIBUTION.into(),
             bundle_ttl: Duration::from_secs(7 * 86_400),
             tile_min_ttl: Duration::from_secs(7 * 86_400),
             tile_cache_cap_bytes: 512 * 1024 * 1024,
             overpass_retry_wait: Duration::from_secs(2),
+            overpass_timeout: Duration::from_secs(35),
             overpass_cooldown: Duration::from_secs(30),
-            request_timeout: Duration::from_secs(60),
+            // Two Overpass attempts and the pause between them.
+            request_timeout: Duration::from_secs(80),
             metrics_bind: None,
             log_format: LogFormat::Text,
         }
@@ -163,10 +191,11 @@ impl Config {
         Self {
             cache_dir: cache_dir.into(),
             static_dir: static_dir.into(),
-            overpass_url: overpass_url.into(),
+            overpass_urls: vec![overpass_url.into()],
             tile_url: tile_url.into(),
             tile_min_ttl: Duration::ZERO,
             overpass_retry_wait: Duration::from_millis(50),
+            overpass_timeout: Duration::from_secs(5),
             overpass_cooldown: Duration::from_secs(30),
             request_timeout: Duration::from_secs(20),
             ..Self::defaults()
@@ -260,6 +289,20 @@ mod tests {
         assert_eq!(c.bind.port(), 9);
         assert_eq!(c.bundle_ttl, Duration::from_secs(86_400));
         assert_eq!(c.cache_dir, PathBuf::from("cache"));
+        assert_eq!(c.overpass_urls, vec![DEFAULT_OVERPASS_URL.to_owned()]);
+
+        let c = Config::from_lookup(lookup(&[(
+            "OBS_OVERPASS_URL",
+            "https://a.example/api/interpreter, ,https://b.example/api/interpreter",
+        )]))
+        .unwrap();
+        assert_eq!(
+            c.overpass_urls,
+            vec![
+                "https://a.example/api/interpreter".to_owned(),
+                "https://b.example/api/interpreter".to_owned()
+            ]
+        );
     }
 
     #[test]
@@ -271,6 +314,18 @@ mod tests {
         assert!(matches!(
             Config::from_lookup(lookup(&[("OBS_BUNDLE_TTL_DAYS", "-1")])),
             Err(ConfigError::Ttl(_))
+        ));
+        assert!(matches!(
+            Config::from_lookup(lookup(&[("OBS_OVERPASS_URL", "a,b,c,d,e")])),
+            Err(ConfigError::OverpassUrls)
+        ));
+        // A missing scheme is caught at startup, not as a failed request later.
+        assert!(matches!(
+            Config::from_lookup(lookup(&[(
+                "OBS_OVERPASS_URL",
+                "overpass.example/api/interpreter,https://overpass-api.de/api/interpreter"
+            )])),
+            Err(ConfigError::OverpassUrl(u)) if u == "overpass.example/api/interpreter"
         ));
     }
 }

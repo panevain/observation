@@ -28,9 +28,9 @@ pub const TILE_CACHE: &str = "observation_tile_cache_total";
 /// Overpass fetches: `outcome` is `ok`, `error` or `rate_limited` (including our own cooldown).
 pub const OVERPASS_FETCH: &str = "observation_overpass_fetches_total";
 
-/// Latency bucket upper bounds in seconds; the request timeout is 60 s.
+/// Latency bucket upper bounds in seconds; the request timeout is 80 s.
 const DURATION_BUCKETS: &[f64] = &[
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 80.0,
 ];
 
 /// Installs the global Prometheus recorder and returns the render handle.
