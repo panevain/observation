@@ -259,6 +259,18 @@ impl Tokens {
         }
     }
 
+    /// Default colour of the `nth` camera (from 0) of a type without a colour
+    /// of its own: the type's colour, then lighter and darker shades of it, so
+    /// cameras of one type can still be told apart.
+    pub fn kind_shade(&self, kind: CameraKind, nth: usize) -> Color32 {
+        const SHADES: [f32; 5] = [0.0, 0.35, -0.3, 0.6, -0.5];
+        let base = self.kind_color(kind);
+        match SHADES[nth % SHADES.len()] {
+            s if s >= 0.0 => base.lerp_to_gamma(Color32::WHITE, s),
+            s => base.lerp_to_gamma(Color32::BLACK, -s),
+        }
+    }
+
     /// Default camera colour for a camera type.
     pub fn kind_color(&self, kind: CameraKind) -> Color32 {
         let i = CameraKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);

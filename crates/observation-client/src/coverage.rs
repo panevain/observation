@@ -4,7 +4,7 @@
 //! that affects it, so moving one camera only recomputes that camera.
 
 use crate::state::{Area, Models, OverlayMode, Scene, UiState};
-use crate::theme::Tokens;
+use crate::theme::{Tokens, rgba};
 use crate::world::{CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -24,6 +24,8 @@ pub struct CoverageState {
     pub ranges: HashMap<u32, f32>,
     paint: bool,
     painted_mode: Option<(OverlayMode, bool)>,
+    /// Hash of the camera colours last painted in per-camera mode.
+    painted_colors: u64,
 }
 
 impl CoverageState {
@@ -151,9 +153,20 @@ fn paint_overlay(
         }
     }
     let mode = (ui.overlay, ui.show_facades);
-    // Per-camera colours can change without any visibility changing.
-    let recolor =
-        ui.overlay == OverlayMode::PerCamera && (scene.is_changed() || models.is_changed());
+    // Per-camera colours can change without any visibility changing; repaint
+    // only when one actually did.
+    let colors =
+        if ui.overlay == OverlayMode::PerCamera && (scene.is_changed() || models.is_changed()) {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for c in &scene.cameras {
+                let color = crate::cameras::camera_color(&scene, c, &models, &tokens);
+                (c.id, rgba(color)).hash(&mut h);
+            }
+            h.finish()
+        } else {
+            state.painted_colors
+        };
+    let recolor = colors != state.painted_colors;
     if !state.paint && !recolor && state.painted_mode == Some(mode) && !overlay.is_changed() {
         return;
     }
@@ -193,7 +206,7 @@ fn paint_overlay(
             let Some(vis) = state.visibility(c.id) else {
                 continue;
             };
-            let mut col = texel(crate::cameras::camera_color(c, &models, &tokens));
+            let mut col = texel(crate::cameras::camera_color(&scene, c, &models, &tokens));
             col[3] = 150;
             for &i in &vis.ground {
                 ground[i as usize] = col;
@@ -206,4 +219,5 @@ fn paint_overlay(
     write_overlay(&overlay, &mut images, &mut meshes, &ground, &facade);
     state.paint = false;
     state.painted_mode = Some(mode);
+    state.painted_colors = colors;
 }

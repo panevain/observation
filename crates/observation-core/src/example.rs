@@ -2,8 +2,9 @@
 //! installations on house fronts, each facing the nearest street.
 
 use crate::building::{clean_ring, signed_area2};
-use crate::bundle::AreaBundle;
+use crate::bundle::{AreaBundle, FOOT_WAYS};
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
+use crate::coverage::closest_on_segment;
 use crate::occlusion::Occluders;
 use glam::{Vec2, Vec3};
 
@@ -18,8 +19,8 @@ const STREET_DISTANCE_M: (f32, f32) = (2.0, 30.0);
 /// is too small to fit them all.
 const SPACING_M: f32 = 30.0;
 
-/// Ways people walk or cycle on rather than drive past houses.
-const MINOR_WAYS: [&str; 5] = ["footway", "path", "cycleway", "steps", "pedestrian"];
+/// A camera must sit at least this far below the roof of its building, metres.
+const BELOW_ROOF_M: f32 = 0.5;
 
 /// A wall facing a street.
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +31,8 @@ struct Candidate {
     normal: Vec2,
     /// Closest point on a street, `[x, z]`.
     street: Vec2,
+    /// Roof height of the building, metres.
+    roof_m: f32,
 }
 
 /// Up to `count` example placements on house fronts that face a street,
@@ -59,9 +62,9 @@ pub fn example_cameras(
             })
             .collect()
     };
-    let mut streets = segments(&|h| !MINOR_WAYS.contains(&h) && h != "service");
+    let mut streets = segments(&|h| !FOOT_WAYS.contains(&h) && h != "service");
     if streets.is_empty() {
-        streets = segments(&|h| !MINOR_WAYS.contains(&h));
+        streets = segments(&|h| !FOOT_WAYS.contains(&h));
     }
     if streets.is_empty() {
         return Vec::new();
@@ -103,13 +106,15 @@ pub fn example_cameras(
             {
                 continue;
             }
-            // The camera must see the street point it faces.
-            let eye = mount_point(at, normal, 2.0);
-            let target = Vec3::new(street.x, 1.0, street.y);
-            if occluders.segment_blocked(eye, target) {
-                continue;
-            }
-            candidates.push((dist, Candidate { at, normal, street }));
+            candidates.push((
+                dist,
+                Candidate {
+                    at,
+                    normal,
+                    street,
+                    roof_m: fp.height_m,
+                },
+            ));
         }
     }
     // Closest to the street first; ties broken by position so the result is
@@ -120,26 +125,35 @@ pub fn example_cameras(
             .then(a.at.y.total_cmp(&b.at.y))
     });
 
-    let mut picked: Vec<Candidate> = Vec::new();
+    // Each slot cycles through `models`; a wall suits the slot's model if the
+    // camera fits under the roof and sees the street point it faces from its
+    // own mount height.
+    let suits = |c: &Candidate, model: &CameraModel| {
+        let h = model.kind.default_mount_height_m();
+        let eye = mount_point(c.at, c.normal, h);
+        c.roof_m >= h + BELOW_ROOF_M
+            && !occluders.segment_blocked(eye, Vec3::new(c.street.x, 1.0, c.street.y))
+    };
+    let mut picked: Vec<(Candidate, &CameraModel)> = Vec::new();
     for spacing in [SPACING_M, SPACING_M / 2.0, 0.0] {
         for (_, c) in &candidates {
             if picked.len() == count {
                 break;
             }
-            if picked
-                .iter()
-                .all(|p| p.at.distance(c.at) > spacing.max(1.0))
+            let model = models[picked.len() % models.len()];
+            if suits(c, model)
+                && picked
+                    .iter()
+                    .all(|(p, _)| p.at.distance(c.at) > spacing.max(1.0))
             {
-                picked.push(*c);
+                picked.push((*c, model));
             }
         }
     }
 
     picked
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let model = models[i % models.len()];
+        .map(|(c, model)| {
             let kind = model.kind;
             let eye = mount_point(c.at, c.normal, kind.default_mount_height_m());
             let facing = (c.street - c.at).normalize_or(c.normal);
@@ -163,16 +177,6 @@ pub fn example_cameras(
 fn mount_point(at: Vec2, normal: Vec2, height: f32) -> Vec3 {
     let p = at + normal * WALL_OFFSET_M;
     Vec3::new(p.x, height, p.y)
-}
-
-fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
-    let ab = b - a;
-    let t = if ab.length_squared() < 1e-12 {
-        0.0
-    } else {
-        ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-    };
-    a + ab * t
 }
 
 #[cfg(test)]
@@ -265,6 +269,19 @@ mod tests {
         }
         // Deterministic.
         assert_eq!(cams, example_cameras(&b, &[&door, &flood], 10));
+    }
+
+    #[test]
+    fn cameras_stay_under_the_roof() {
+        let mut b = street();
+        // Every house becomes a 2.4 m shed: too low for a floodlight at 2.7 m.
+        for building in &mut b.buildings {
+            building.footprint.height_m = 2.4;
+        }
+        let flood = model("flood", CameraKind::Floodlight);
+        assert!(example_cameras(&b, &[&flood], 10).is_empty());
+        let door = model("door", CameraKind::Doorbell);
+        assert_eq!(example_cameras(&b, &[&door], 10).len(), 10);
     }
 
     #[test]

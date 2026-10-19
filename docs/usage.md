@@ -32,13 +32,13 @@ Loading a new area, including **Demo street**, removes the cameras you placed, b
 
 ## Place cameras
 
-1. In the inspector, under **Cameras**, choose a model in **New camera model**. Models are grouped by type (Doorbell, Floodlight, Spotlight, Bullet, Turret, Dome, Indoor) and show their horizontal field of view. Type in the search box at the top of the list to filter by maker, name or type (every word must match); **Enter** picks the first match. See the [camera catalogue](camera-catalog.md) for sources. The default is a generic 160 degree doorbell.
+1. In the inspector, under **Cameras**, choose a model in **New camera model**. Models are grouped by type (Doorbell, Floodlight, Spotlight, Bullet, Turret, Dome, Indoor) and show their horizontal field of view. Type in the search box at the top of the list to filter by maker, name or type (every word must match); **Enter** picks the first match of what you typed. See the [camera catalogue](camera-catalog.md) for sources. The default is a generic 160 degree doorbell.
 2. Press **Place camera...** or **P**.
 3. Click where the camera goes:
    - **A wall:** the camera is mounted 0.15 m in front of the wall, at the height you clicked, facing outward. Its tilt is the type's default (doorbell 0 degrees, indoor -10, others -20).
    - **The ground or a roof:** the camera goes on a pole at the model's default mount height above that point (doorbell 1.2 m, indoor 2.0 m, floodlight and spotlight 2.7 m, bullet, turret and dome 2.6 m). It faces north at first, and the tool switches to **Aim** so your next click points it.
    - **An existing camera:** selects it.
-4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight orange, bullet red, turret teal, dome purple, indoor pink.
+4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight orange, bullet red, turret teal, dome purple, indoor pink. Further cameras of the same type get lighter and darker shades of that colour, so each camera stays distinguishable.
 
 ## Aim and move
 
