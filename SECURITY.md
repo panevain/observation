@@ -2,9 +2,10 @@
 
 ## Supported versions
 
-Only the `main` branch (and the container image published from it,
-`ghcr.io/panevain/observation:edge`) receives security fixes. Tagged releases
-(`v*`) are snapshots of `main`; please upgrade to the latest one.
+Only the `main` branch (and the container image published from its releases,
+`ghcr.io/panevain/observation:latest`) receives security fixes. Tagged releases
+(`v*`) are snapshots of `main`; please upgrade to the latest one. The
+`:devel` image tracks `develop` and is for testing only.
 
 | Version | Supported |
 | ------- | --------- |

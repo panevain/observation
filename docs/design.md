@@ -279,7 +279,7 @@ The scene is serialised with `SceneFile` (`format: "observation-scene"`, `versio
 
 ### Workflows
 
-All seven workflows set `permissions: {}` at the top and grant each job only what it needs. Every action is pinned to a full commit SHA, and checkouts use `persist-credentials: false`.
+All eight workflows set `permissions: {}` at the top and grant each job only what it needs. Every action is pinned to a full commit SHA, and checkouts use `persist-credentials: false`.
 
 | Workflow | Triggers | What it does |
 | --- | --- | --- |
@@ -287,8 +287,8 @@ All seven workflows set `permissions: {}` at the top and grant each job only wha
 | `security.yml` | push to `main` and `develop`, pull requests, daily, manual | `cargo-deny` (advisories, bans, licences, sources); `cargo-audit`, which on the scheduled run opens issues for new advisories; Trivy filesystem scan (vulnerabilities, Dockerfile misconfiguration, secrets) and image scan, failing on fixable critical or high findings and uploading SARIF |
 | `codeql.yml` | push and pull request to `main` and `develop`, weekly | CodeQL for `rust` and for the workflows themselves (`actions`) |
 | `scorecard.yml` | push to whichever of `main`/`develop` is the default branch, weekly, branch-protection changes, manual | OpenSSF Scorecard, results published and uploaded to code scanning |
-| `release.yml` | push to `main` and `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `edge` from `develop`, `main` from `main`, semver tags and `latest` from `v*` tags, plus the full commit SHA; SLSA provenance (`mode=max`), an SBOM, and a GitHub build-provenance attestation |
-
+| `release.yml` | push to `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `devel` from `develop`, the version tag and `latest` from `v*` tags; SLSA provenance (`mode=max`), an SBOM, and a GitHub build-provenance attestation |
+| `prune-images.yml` | weekly, after each Release run, manual (dry run by default) | Deletes tagged image versions whose tags are not `devel`, `latest` or `X.Y.Z`; untagged versions (attestations) are never deleted |
 | `fuzz.yml` | pull requests, push to `develop`, nightly, manual | cargo-fuzz (libFuzzer) on the untrusted-input parsers and coverage geometry: 30 s per target on PRs, 10 min nightly; crashing inputs uploaded as an artifact. See [fuzz/README.md](../fuzz/README.md) |
 | `branch-policy.yml` | pull requests | Fails PRs into `main` unless they come from a same-repo `release/*` or `hotfix/*` branch (git-flow) |
 
