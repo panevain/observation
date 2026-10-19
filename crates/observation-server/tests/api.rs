@@ -447,6 +447,30 @@ async fn upstream_failures_are_502_and_not_cached() {
 }
 
 #[tokio::test]
+async fn endless_overpass_bodies_are_cut_off() {
+    // Same as the tile case, against the 32 MiB Overpass cap (no `Content-Length`).
+    let router = Router::new().route(
+        "/api/interpreter",
+        post(|| async {
+            Body::from_stream(futures_util::stream::repeat_with(|| {
+                Ok::<_, std::io::Error>(Bytes::from(vec![b' '; 64 * 1024]))
+            }))
+        }),
+    );
+    let addr = spawn(router).await;
+    let h = harness(
+        &format!("http://{addr}/api/interpreter"),
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+    );
+    let (status, _, _) =
+        tokio::time::timeout(Duration::from_secs(10), get_uri(&h.app, &area_uri()))
+            .await
+            .expect("oversized body is rejected while streaming");
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(!h.cache.path().join("bundles").exists());
+}
+
+#[tokio::test]
 async fn expired_bundle_is_served_when_upstream_fails() {
     let (mock, url) = spawn_overpass().await;
     let h = harness_with(
@@ -564,6 +588,35 @@ async fn upstream_tiles_must_be_png() {
         &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
     );
     let (status, _, _) = get_uri(&h.app, "/api/tiles/1/0/0.png").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(!h.cache.path().join("tiles").exists());
+}
+
+#[tokio::test]
+async fn endless_tile_bodies_are_cut_off() {
+    // A chunked body that never ends: buffering it whole would only stop at the
+    // client timeout (and after eating memory); the streaming cap stops at 2 MiB.
+    let router = Router::new().route(
+        "/{z}/{x}/{y}",
+        get(|| async {
+            let first = futures_util::stream::once(async { Ok(Bytes::from_static(PNG)) });
+            let rest = futures_util::stream::repeat_with(|| {
+                Ok::<_, std::io::Error>(Bytes::from(vec![0u8; 64 * 1024]))
+            });
+            Body::from_stream(futures_util::StreamExt::chain(first, rest))
+        }),
+    );
+    let addr = spawn(router).await;
+    let h = harness(
+        "http://127.0.0.1:9/o",
+        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
+    );
+    let (status, _, _) = tokio::time::timeout(
+        Duration::from_secs(10),
+        get_uri(&h.app, "/api/tiles/1/0/0.png"),
+    )
+    .await
+    .expect("oversized body is rejected while streaming");
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(!h.cache.path().join("tiles").exists());
 }

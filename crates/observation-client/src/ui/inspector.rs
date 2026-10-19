@@ -9,6 +9,7 @@ use crate::theme::Tokens;
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
     ASSUMED_IR_RANGE_M, CameraKind, CameraModel, DoriLevel, Lighting, forward_from_yaw_pitch,
+    is_https_url,
 };
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
@@ -295,7 +296,8 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                         ui.label(format!("{r:.1} m"));
                     });
                 }
-                if let Some(src) = &m.source {
+                // Validated on load too; never hand a non-https link to the browser.
+                if let Some(src) = m.source.as_deref().filter(|s| is_https_url(s)) {
                     row(ui, t, "Source", |ui| {
                         ui.hyperlink_to("spec sheet", src);
                     });

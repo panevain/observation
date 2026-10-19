@@ -122,11 +122,17 @@ impl TileProxy {
         match status {
             StatusCode::OK => {
                 let meta = new_meta(resp.headers(), None);
-                let body = resp.bytes().await.map_err(|e| {
-                    tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
-                    ApiError::Upstream("tile download failed".into())
-                })?;
-                if body.len() > MAX_TILE_BYTES || !body.starts_with(PNG_MAGIC) {
+                let body = crate::read_capped(resp, MAX_TILE_BYTES)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
+                        ApiError::Upstream("tile download failed".into())
+                    })?
+                    .ok_or_else(|| {
+                        tracing::warn!(max = MAX_TILE_BYTES, ?id, "tile body too large");
+                        ApiError::Upstream("tile server returned a tile that is too large".into())
+                    })?;
+                if !body.starts_with(PNG_MAGIC) {
                     return Err(ApiError::Upstream(
                         "tile server returned something that is not a PNG".into(),
                     ));
@@ -183,7 +189,8 @@ fn expiry_unix(headers: &HeaderMap, min_ttl: Duration) -> u64 {
             )
         })
         .unwrap_or(0);
-    now + upstream_ttl.max(min_ttl.as_secs())
+    // `max-age` is upstream input and parses up to `u64::MAX`.
+    now.saturating_add(upstream_ttl.max(min_ttl.as_secs()))
 }
 
 /// Extracts `max-age=N` (seconds) from a `Cache-Control` value.
@@ -254,5 +261,12 @@ mod tests {
         );
         assert!(expiry_unix(&h, week) > unix_now() + 365 * 86_400);
         assert!(expiry_unix(&HeaderMap::new(), Duration::ZERO) <= unix_now() + 1);
+
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("max-age=18446744073709551615"),
+        );
+        assert_eq!(expiry_unix(&h, week), u64::MAX, "huge max-age saturates");
     }
 }

@@ -154,8 +154,35 @@ impl CameraModel {
         if self.ir_range_m.is_some_and(|r| !(0.0..=200.0).contains(&r)) {
             return bad("ir range out of range");
         }
+        // The UI opens `source` as a link, and imported scene files carry their
+        // own custom models: anything but a plain https URL (`javascript:`,
+        // `data:`, ...) would run in or navigate away from the app's origin.
+        if self.source.as_deref().is_some_and(|s| !is_https_url(s)) {
+            return bad("source must be an https:// URL");
+        }
         Ok(())
     }
+}
+
+/// Longest `source` URL accepted.
+const MAX_SOURCE_LEN: usize = 2048;
+
+/// An absolute `https://` URL with a non-empty host, no user info (so
+/// `https://trusted.example@evil.example` cannot pose as another site) and no
+/// whitespace or control characters.
+pub fn is_https_url(s: &str) -> bool {
+    if s.len() > MAX_SOURCE_LEN || s.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Some((scheme, rest)) = s.split_at_checked(8) else {
+        return false;
+    };
+    // Browsers end the authority at `/`, `\`, `?` or `#`.
+    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or_default();
+    scheme.eq_ignore_ascii_case("https://")
+        && !authority.is_empty()
+        && !authority.starts_with(':')
+        && !authority.contains('@')
 }
 
 /// DORI (EN 62676-4) pixel-density thresholds.
@@ -379,6 +406,44 @@ mod tests {
             Catalog::from_ron(&dup),
             Err(CatalogError::Duplicate(_))
         ));
+    }
+
+    #[test]
+    fn source_must_be_https() {
+        let with = |s: &str| CameraModel {
+            source: Some(s.to_owned()),
+            ..model()
+        };
+        assert!(with("https://example.com/spec.pdf").validate().is_ok());
+        assert!(with("HTTPS://example.com").validate().is_ok());
+        assert!(with("https://example.com:8443/a?b=c#d").validate().is_ok());
+        for bad in [
+            "javascript:alert(document.domain)",
+            "JavaScript:alert(1)",
+            " https://example.com",
+            "https://exa mple.com",
+            "https://example.com/\njavascript:x",
+            "data:text/html,<script>alert(1)</script>",
+            "http://example.com",
+            "//example.com",
+            "https://",
+            "https:///path",
+            "HTTPS:///path",
+            "https://?q",
+            "https://#f",
+            "https://:443/",
+            "https://\\evil.example",
+            "https://ring.com@evil.example/spec",
+            "https://@evil.example",
+            "",
+        ] {
+            assert!(with(bad).validate().is_err(), "{bad:?}");
+        }
+        assert!(
+            with(&format!("https://e.com/{}", "a".repeat(3000)))
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]
