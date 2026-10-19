@@ -1,13 +1,18 @@
 # syntax=docker/dockerfile:1.7
 
 # ---------------------------------------------------------------------------
-# Stage 1: builder
+# Stage 1: chef -- toolchain, trunk and cargo-chef (rarely changes).
 #   * Rust 1.97.1 on Debian 12 (bookworm) -- must match rust-toolchain.toml.
 #   * Pinned by digest (multi-arch index); the tag is kept for readability.
 #     Refresh with: docker buildx imagetools inspect rust:1.97.1-slim-bookworm
 #     (Dependabot's docker ecosystem bumps both tag and digest.)
+#
+# Layer caching strategy: dependencies are compiled from a cargo-chef recipe
+# (only Cargo.toml/Cargo.lock data), so the expensive Bevy/axum dependency
+# build is a regular image layer that the GHA layer cache keeps until the
+# dependency graph changes. Source-only changes rebuild just our crates.
 # ---------------------------------------------------------------------------
-FROM rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS builder
+FROM rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS chef
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -17,9 +22,10 @@ ARG TRUNK_VERSION=0.21.14
 # *.tar.gz.sha256 files) and cross-checked against a locally computed hash.
 ARG TRUNK_SHA256_AMD64=f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
 ARG TRUNK_SHA256_ARM64=b1d8e60e454f7fc182d9a4d95d1506ffbae947d8ba90f8f6f02da93b60f980f9
+ARG CARGO_CHEF_VERSION=0.1.78
 
 # TRUNK_SKIP_VERSION_CHECK: trunk would otherwise query the crates.io API for a
-# newer trunk release on every build (builder stage only; not in the runtime image).
+# newer trunk release on every build (builder stages only; not in the runtime image).
 ENV CARGO_TERM_COLOR=always \
     CARGO_INCREMENTAL=0 \
     TRUNK_SKIP_VERSION_CHECK=true
@@ -56,26 +62,46 @@ RUN rustup toolchain install --profile minimal --no-self-update \
     && rustup target add wasm32-unknown-unknown \
     && rustc --version && cargo --version
 
+# cargo-chef, pinned and built from crates.io with its own lockfile.
+RUN cargo install --locked --version "${CARGO_CHEF_VERSION}" cargo-chef \
+    && rm -rf /usr/local/cargo/registry \
+    && cargo chef --version
+
+# ---------------------------------------------------------------------------
+# Stage 2: planner -- reduce the workspace to a dependency recipe.
+# The recipe only changes when manifests or Cargo.lock change, so the cook
+# layers below stay cached across source-only commits.
+# ---------------------------------------------------------------------------
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---------------------------------------------------------------------------
+# Stage 3: builder
+# ---------------------------------------------------------------------------
+FROM chef AS builder
+
+COPY --from=planner /build/recipe.json recipe.json
+# Dependencies only, for exactly the profiles/targets built below.
+RUN cargo chef cook --release --locked -p observation-server --recipe-path recipe.json
+RUN cargo chef cook --profile wasm-release --target wasm32-unknown-unknown --locked \
+      -p observation-client --recipe-path recipe.json
+
 COPY . .
 
-# Client (Bevy -> wasm32) via trunk. Output: /build/dist
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/build/target \
-    --mount=type=cache,target=/root/.cache/trunk \
+# Client (Bevy -> wasm32) via trunk, reusing the cooked dependencies.
+# Output: /build/dist. Trunk's tool downloads (wasm-bindgen, wasm-opt) are cached.
+RUN --mount=type=cache,target=/root/.cache/trunk \
     trunk build --release --locked
 
-# Server binary. The target dir is a cache mount, so copy the artifact out.
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/build/target \
-    set -eux; \
+# Server binary.
+RUN set -eux; \
     cargo build --release --locked -p observation-server; \
     mkdir -p /out/cache; \
     cp target/release/observation-server /out/observation-server
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime -- distroless, glibc, runs as nonroot (uid/gid 65532).
+# Stage 4: runtime -- distroless, glibc, runs as nonroot (uid/gid 65532).
 #   Pinned by digest; refresh with:
 #   docker buildx imagetools inspect gcr.io/distroless/cc-debian12:nonroot
 # ---------------------------------------------------------------------------
