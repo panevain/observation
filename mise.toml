@@ -8,7 +8,10 @@
 # gitignored; copy mise.local.toml.example to start.
 
 [settings]
-# Take the Rust version from rust-toolchain.toml instead of repeating it here.
+# Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
+# needs a [[tools.rust]] entry for that version, because `mise install --locked` (used in CI)
+# rejects any resolved tool that is missing from the lock; bump it with the toolchain
+# (`mise lock`).
 idiomatic_version_file_enable_tools = ["rust"]
 
 [tools]
