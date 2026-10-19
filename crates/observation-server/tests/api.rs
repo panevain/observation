@@ -38,6 +38,10 @@ struct MockOverpass {
     delay_ms: AtomicU64,
     /// Statuses to answer with (front first) before serving the fixture.
     script: Mutex<VecDeque<u16>>,
+    /// 200 bodies to answer with (front first), after `script`.
+    bodies: Mutex<VecDeque<&'static str>>,
+    /// Answer every request with this status, overriding the above.
+    always: AtomicU64,
     user_agents: Mutex<Vec<String>>,
     queries: Mutex<Vec<String>>,
 }
@@ -59,10 +63,12 @@ async fn overpass_handler(
         .unwrap()
         .push(form.get("data").cloned().unwrap_or_default());
     tokio::time::sleep(Duration::from_millis(m.delay_ms.load(Ordering::SeqCst))).await;
+    let always = m.always.load(Ordering::SeqCst);
     let scripted = m.script.lock().unwrap().pop_front();
-    match scripted {
+    let body = m.bodies.lock().unwrap().pop_front().unwrap_or(FIXTURE);
+    match scripted.or((always != 0).then_some(always as u16)) {
         Some(code) => (StatusCode::from_u16(code).unwrap(), "upstream says no").into_response(),
-        None => ([(header::CONTENT_TYPE, "application/json")], FIXTURE).into_response(),
+        None => ([(header::CONTENT_TYPE, "application/json")], body).into_response(),
     }
 }
 
@@ -479,6 +485,95 @@ async fn overpass_timeouts_are_504() {
     assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     assert!(json(&body)["error"].as_str().unwrap().contains("too long"));
     assert_eq!(mock.hits.load(Ordering::SeqCst), 2, "retried once");
+}
+
+#[tokio::test]
+async fn overpass_remarks_retry_only_timeouts() {
+    let (mock, url) = spawn_overpass().await;
+    let timed_out =
+        r#"{"elements":[],"remark":"runtime error: Query timed out in \"query\" at line 3"}"#;
+    mock.bodies.lock().unwrap().extend([timed_out, timed_out]);
+    let h = harness(&url, "http://127.0.0.1:9/{z}/{x}/{y}.png");
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(mock.hits.load(Ordering::SeqCst), 2, "a timeout is retried");
+
+    // Running out of memory would happen again: no retry, and not a "timeout".
+    let oom = r#"{"elements":[],"remark":"runtime error: Query run out of memory using about 2048 MB of RAM."}"#;
+    mock.bodies.lock().unwrap().push_back(oom);
+    let (status, _, body) =
+        get_uri(&h.app, "/api/area?bbox=47.7000,-122.2000,47.7020,-122.1970").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(!json(&body)["error"].as_str().unwrap().contains("too long"));
+    assert_eq!(mock.hits.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn a_busy_interpreter_rests_while_others_serve() {
+    let (busy, busy_url) = spawn_overpass().await;
+    busy.always.store(429, Ordering::SeqCst);
+    let (up, up_url) = spawn_overpass().await;
+    let h = harness_with(
+        &busy_url,
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        tempfile::tempdir().unwrap(),
+        |c| c.overpass_urls.push(up_url),
+    );
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::OK);
+    // The next miss skips the interpreter that said 429.
+    let (status, _, _) =
+        get_uri(&h.app, "/api/area?bbox=47.7000,-122.2000,47.7020,-122.1970").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(busy.hits.load(Ordering::SeqCst), 1);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn busy_then_failed_is_502_and_the_busy_one_still_rests() {
+    let (busy, busy_url) = spawn_overpass().await;
+    busy.always.store(429, Ordering::SeqCst);
+    let (down, down_url) = spawn_overpass().await;
+    down.script.lock().unwrap().push_back(502);
+    let h = harness_with(
+        &busy_url,
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        tempfile::tempdir().unwrap(),
+        |c| c.overpass_urls.push(down_url),
+    );
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(busy.hits.load(Ordering::SeqCst), 1);
+    assert_eq!(down.hits.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn retries_stop_before_the_request_times_out() {
+    // Four slow interpreters would need 4 × 600 ms; the request allows 1 s.
+    let mut urls = Vec::new();
+    for _ in 0..4 {
+        let (mock, url) = spawn_overpass().await;
+        mock.delay_ms.store(2_000, Ordering::SeqCst);
+        urls.push(url);
+    }
+    let h = harness_with(
+        &urls[0],
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        tempfile::tempdir().unwrap(),
+        |c| {
+            c.overpass_urls = urls.clone();
+            c.overpass_timeout = Duration::from_millis(600);
+            c.request_timeout = Duration::from_secs(1);
+        },
+    );
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(
+        status,
+        StatusCode::GATEWAY_TIMEOUT,
+        "not the 408 of the request timeout"
+    );
 }
 
 #[tokio::test]

@@ -26,6 +26,8 @@ pub enum ConfigError {
     Ttl(String),
     #[error("OBS_OVERPASS_URL lists more than {MAX_OVERPASS_URLS} endpoints")]
     OverpassUrls,
+    #[error("OBS_OVERPASS_URL entry `{0}` is not an http(s) URL")]
+    OverpassUrl(String),
 }
 
 /// Server configuration.
@@ -97,6 +99,12 @@ impl Config {
         }
         if overpass_urls.is_empty() {
             overpass_urls.push(DEFAULT_OVERPASS_URL.to_owned());
+        }
+        if let Some(bad) = overpass_urls.iter().find(|u| {
+            !reqwest::Url::parse(u)
+                .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+        }) {
+            return Err(ConfigError::OverpassUrl(bad.clone()));
         }
         Ok(Self {
             bind,
@@ -223,6 +231,14 @@ mod tests {
         assert!(matches!(
             Config::from_lookup(lookup(&[("OBS_OVERPASS_URL", "a,b,c,d,e")])),
             Err(ConfigError::OverpassUrls)
+        ));
+        // A missing scheme is caught at startup, not as a failed request later.
+        assert!(matches!(
+            Config::from_lookup(lookup(&[(
+                "OBS_OVERPASS_URL",
+                "overpass.example/api/interpreter,https://overpass-api.de/api/interpreter"
+            )])),
+            Err(ConfigError::OverpassUrl(u)) if u == "overpass.example/api/interpreter"
         ));
     }
 }
