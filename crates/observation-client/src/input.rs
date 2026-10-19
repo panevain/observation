@@ -1,7 +1,7 @@
 //! Orbit camera, pointer/touch handling and tool actions.
 
 use crate::cameras::CameraBody;
-use crate::state::{MOUNT_OFFSET_M, Models, Scene, Tool, UiState};
+use crate::state::{MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
 use crate::world::{BuildingMesh, GroundMesh};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
@@ -15,8 +15,11 @@ const CLICK_SLOP_PX: f32 = 5.0;
 const MIN_DISTANCE: f32 = 8.0;
 const MAX_DISTANCE: f32 = 1200.0;
 const ORBIT_SPEED: f32 = 0.006;
-/// Near clip distance, metres. Well inside [`MIN_DISTANCE`].
-const NEAR_PLANE_M: f32 = 1.0;
+/// Near clip distance, metres. WebGL remaps depth to [-1, 1], which costs most
+/// of the precision of reverse-Z, so the near plane is kept as far out as the
+/// view allows: up to 1 m, which keeps the ground layers apart at range, and
+/// down to 0.1 m when the camera is low enough that 1 m would clip the ground.
+const NEAR_PLANE_M: std::ops::RangeInclusive<f32> = 0.1..=1.0;
 
 /// Spherical orbit around a focus point.
 #[derive(Debug, Component)]
@@ -41,6 +44,13 @@ impl Default for OrbitCamera {
 }
 
 impl OrbitCamera {
+    /// Half the camera's height above the ground, within [`NEAR_PLANE_M`]: the
+    /// ground at the bottom of the frame is never closer than the height.
+    fn near_plane(&self) -> f32 {
+        let height = self.focus.y - self.distance * self.pitch.sin();
+        (height * 0.5).clamp(*NEAR_PLANE_M.start(), *NEAR_PLANE_M.end())
+    }
+
     fn transform(&self) -> Transform {
         let rot = Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0);
         let pos = self.focus + rot * Vec3::new(0.0, 0.0, self.distance);
@@ -69,6 +79,9 @@ struct PointerState {
     gesture: Gesture,
     last_touch_mid: Option<Vec2>,
     last_touch_dist: Option<f32>,
+    /// Whether the current two-finger gesture started on the UI; decided
+    /// once when it starts so it cannot change hands half-way.
+    pinch_on_ui: Option<bool>,
     /// Touch id driving a one-finger gesture.
     touch_id: Option<u64>,
     last_pos: Option<Vec2>,
@@ -90,10 +103,8 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     // unlike the default, needs no LUT assets (and their zstd decoder).
     commands.spawn((
         Camera3d::default(),
-        // WebGL remaps depth to [-1, 1], which costs most of the precision of
-        // reverse-Z; a 1 m near plane keeps the ground layers apart at range.
         Projection::Perspective(PerspectiveProjection {
-            near: NEAR_PLANE_M,
+            near: orbit.near_plane(),
             ..default()
         }),
         bevy::core_pipeline::tonemapping::Tonemapping::KhronosPbrNeutral,
@@ -125,9 +136,17 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     ));
 }
 
-fn apply_orbit(mut q: Query<(&OrbitCamera, &mut Transform), Changed<OrbitCamera>>) {
-    for (o, mut t) in &mut q {
+fn apply_orbit(
+    mut q: Query<(&OrbitCamera, &mut Transform, &mut Projection), Changed<OrbitCamera>>,
+) {
+    for (o, mut t, mut proj) in &mut q {
         *t = o.transform();
+        if let Projection::Perspective(p) = &mut *proj {
+            let near = o.near_plane();
+            if p.near != near {
+                p.near = near;
+            }
+        }
     }
 }
 
@@ -206,6 +225,7 @@ struct RawInput<'w> {
     scroll: Res<'w, AccumulatedMouseScroll>,
     touches: Res<'w, Touches>,
     wants: Res<'w, EguiWantsInput>,
+    layout: Res<'w, UiLayout>,
 }
 
 /// Entities the tools can hit.
@@ -234,6 +254,7 @@ fn pointer(
         scroll,
         touches,
         wants,
+        layout,
     } = input;
     let Targets {
         buildings,
@@ -243,7 +264,6 @@ fn pointer(
     let Ok((camera, cam_t, mut orbit)) = cam.single_mut() else {
         return;
     };
-    let viewport = camera.logical_viewport_rect();
 
     let mut cast = |screen: Vec2| -> Option<Hit> {
         // Takes window coordinates: it maps the camera's viewport rect itself.
@@ -273,9 +293,11 @@ fn pointer(
         let (a, b) = (active[0].position(), active[1].position());
         let mid = (a + b) / 2.0;
         let dist = a.distance(b);
-        let on_ui = wants.wants_any_pointer_input() || viewport.is_some_and(|r| !r.contains(mid));
-        if st.last_touch_mid.is_none() && on_ui {
-            // A pinch that starts on a panel scrolls the panel, not the map.
+        // A pinch with either finger on a panel belongs to the panel.
+        let on_ui = *st.pinch_on_ui.get_or_insert_with(|| {
+            wants.wants_any_pointer_input() || layout.is_ui(a) || layout.is_ui(b)
+        });
+        if on_ui {
             st.gesture = Gesture::None;
             st.touch_id = None;
             return;
@@ -294,6 +316,7 @@ fn pointer(
     }
     st.last_touch_mid = None;
     st.last_touch_dist = None;
+    st.pinch_on_ui = None;
 
     // --- Unified single pointer (mouse or one finger).
     let (pos, just_pressed, pressed, just_released, button) = if let Some(t) = active.first() {
@@ -321,10 +344,7 @@ fn pointer(
     };
     st.last_pos = pos;
 
-    // The docked panels are not egui areas, so egui does not report the pointer
-    // as over them: anything outside the 3D viewport belongs to the UI.
-    let over_ui = wants.wants_any_pointer_input()
-        || pos.is_some_and(|p| viewport.is_some_and(|r| !r.contains(p)));
+    let over_ui = wants.wants_any_pointer_input() || pos.is_some_and(|p| layout.is_ui(p));
 
     // Scroll zoom.
     if !over_ui && scroll.delta.y != 0.0 {
