@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use observation_core::bundle::AreaBundle;
 use observation_core::camera::{CameraKind, CameraModel, CameraPlacement, Catalog};
-use observation_core::coverage::{CoverageParams, StaticLayers};
+use observation_core::coverage::{CoverageParams, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::scene::{AreaRef, SceneFile};
 
@@ -22,10 +22,18 @@ pub enum Tool {
     Place,
     Aim,
     Move,
+    /// Draw the coverage region.
+    Region,
 }
 
 impl Tool {
-    pub const ALL: [Self; 4] = [Self::Select, Self::Place, Self::Aim, Self::Move];
+    pub const ALL: [Self; 5] = [
+        Self::Select,
+        Self::Place,
+        Self::Aim,
+        Self::Move,
+        Self::Region,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -33,6 +41,7 @@ impl Tool {
             Self::Place => "Place",
             Self::Aim => "Aim",
             Self::Move => "Move",
+            Self::Region => "Region",
         }
     }
 
@@ -42,6 +51,7 @@ impl Tool {
             Self::Place => "P",
             Self::Aim => "A",
             Self::Move => "M",
+            Self::Region => "R",
         }
     }
 
@@ -55,6 +65,9 @@ impl Tool {
             }
             Self::Aim => "Click or drag on the scene to point the selected camera",
             Self::Move => "Click or drag on a wall or the ground to move the selected camera",
+            Self::Region => {
+                "Click to add corners · click the first corner or press Enter to finish · Backspace undoes a corner"
+            }
         }
     }
 
@@ -65,6 +78,7 @@ impl Tool {
             Self::Place => "Click a wall or the ground to place a camera",
             Self::Aim => "Click where the selected camera should look",
             Self::Move => "Click a wall or the ground to move the selected camera",
+            Self::Region => "Click corners of the area to measure, then the first corner",
         }
     }
 
@@ -97,6 +111,12 @@ pub struct UiState {
     pub help_open: bool,
     pub custom_model_open: bool,
     pub toasts: Vec<Toast>,
+    /// Corners placed so far with the Region tool, world `[x, z]`.
+    pub region_draft: Vec<[f32; 2]>,
+    /// Ground point under the pointer while drawing a region.
+    pub region_hover: Option<[f32; 2]>,
+    /// How close to the first corner a click closes the region, metres.
+    pub region_snap_m: f32,
 }
 
 impl Default for UiState {
@@ -112,6 +132,9 @@ impl Default for UiState {
             help_open: false,
             custom_model_open: false,
             toasts: Vec::new(),
+            region_draft: Vec::new(),
+            region_hover: None,
+            region_snap_m: 1.0,
         }
     }
 }
@@ -175,6 +198,8 @@ pub struct Scene {
     pub origin: LatLon,
     pub cameras: Vec<CameraPlacement>,
     pub params: CoverageParams,
+    /// Area the coverage figures can be limited to.
+    pub region: Option<Region>,
     next_id: u32,
     /// Bumped on every change; drives sync, coverage and autosave.
     pub revision: u64,
@@ -187,6 +212,7 @@ impl Default for Scene {
             origin: LatLon::new(0.0, 0.0),
             cameras: Vec::new(),
             params: CoverageParams::default(),
+            region: None,
             next_id: 1,
             revision: 0,
         }
@@ -229,6 +255,7 @@ impl Scene {
         let mut file = SceneFile::new(area, self.origin);
         file.cameras = self.cameras.clone();
         file.params = self.params;
+        file.region = self.region.clone();
         file.custom_models = models.custom.clone();
         Some(file)
     }
@@ -240,6 +267,7 @@ impl Scene {
         self.next_id = file.cameras.iter().map(|c| c.id).max().unwrap_or(0) + 1;
         self.cameras = file.cameras;
         self.params = file.params;
+        self.region = file.region;
         models.custom = file.custom_models;
         self.touch();
     }

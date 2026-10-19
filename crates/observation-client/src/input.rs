@@ -1,7 +1,7 @@
 //! Orbit camera, pointer/touch handling and tool actions.
 
 use crate::cameras::CameraBody;
-use crate::state::{MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
+use crate::state::{Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
 use crate::world::{BuildingMesh, GroundMesh};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
 use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
+use observation_core::coverage::{MAX_REGION_POINTS, Region};
 
 /// Pixels a press may travel and still count as a click/tap.
 const CLICK_SLOP_PX: f32 = 5.0;
@@ -165,6 +166,7 @@ fn keyboard(
         (KeyCode::KeyP, Tool::Place),
         (KeyCode::KeyA, Tool::Aim),
         (KeyCode::KeyM, Tool::Move),
+        (KeyCode::KeyR, Tool::Region),
     ] {
         if keys.just_pressed(key) {
             ui.tool = tool;
@@ -178,7 +180,15 @@ fn keyboard(
         ui.map_open = false;
         ui.help_open = false;
     }
-    if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
+    if ui.tool == Tool::Region {
+        // Drawing a region: Enter closes it, Backspace undoes a corner.
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
+            finish_region(&mut ui, &mut scene);
+        }
+        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
+            ui.region_draft.pop();
+        }
+    } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
         && let Some(id) = ui.selected.take()
     {
         scene.remove_camera(id);
@@ -234,6 +244,7 @@ struct Targets<'w, 's> {
     buildings: Query<'w, 's, (), With<BuildingMesh>>,
     grounds: Query<'w, 's, (), With<GroundMesh>>,
     bodies: Query<'w, 's, &'static CameraBody>,
+    area: Option<Res<'w, Area>>,
 }
 
 fn pointer(
@@ -260,6 +271,7 @@ fn pointer(
         buildings,
         grounds,
         bodies,
+        area,
     } = targets;
     let Ok((camera, cam_t, mut orbit)) = cam.single_mut() else {
         return;
@@ -355,6 +367,25 @@ fn pointer(
         orbit.distance = (orbit.distance * (1.0 - lines * 0.1)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
+    if ui.tool != Tool::Region {
+        if !ui.region_draft.is_empty() || ui.region_hover.is_some() {
+            ui.region_draft.clear();
+            ui.region_hover = None;
+        }
+    } else {
+        let hover = pos
+            .filter(|_| !over_ui)
+            .and_then(|p| ground_point(camera, cam_t, p))
+            .map(|p| clamp_to_area(p, area.as_deref()));
+        if ui.region_hover != hover {
+            ui.region_hover = hover;
+        }
+        let snap = region_snap_m(orbit.distance);
+        if ui.region_snap_m != snap {
+            ui.region_snap_m = snap;
+        }
+    }
+
     let Some(pos) = pos else { return };
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
 
@@ -399,10 +430,87 @@ fn pointer(
             ..
         } = st.gesture
         {
-            let hit = cast(pos);
-            click(&mut ui, &mut scene, &models, hit);
+            if ui.tool == Tool::Region {
+                if let Some(p) = ground_point(camera, cam_t, pos) {
+                    region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
+                }
+            } else {
+                let hit = cast(pos);
+                click(&mut ui, &mut scene, &models, hit);
+            }
         }
         st.gesture = Gesture::None;
+    }
+}
+
+/// Where the pointer's ray meets the ground plane, world `[x, z]`.
+fn ground_point(camera: &Camera, cam_t: &GlobalTransform, window_pos: Vec2) -> Option<[f32; 2]> {
+    let ray = camera.viewport_to_world(cam_t, window_pos).ok()?;
+    let dy = ray.direction.y;
+    if dy > -1e-4 {
+        return None;
+    }
+    let p = ray.origin + *ray.direction * (-ray.origin.y / dy);
+    Some([p.x, p.z])
+}
+
+/// How close to the first corner a click closes the region, metres: it grows
+/// with the zoom so the corner stays easy to hit, and is drawn around it.
+pub fn region_snap_m(view_distance: f32) -> f32 {
+    (view_distance * 0.02).clamp(1.0, 10.0)
+}
+
+/// Adds a region corner, or closes the region when the first corner is clicked.
+fn region_click(ui: &mut UiState, scene: &mut Scene, p: [f32; 2]) {
+    let closes = ui.region_draft.len() >= 3
+        && ui.region_draft.first().is_some_and(|f| {
+            Vec2::from_array(*f).distance(Vec2::from_array(p)) <= ui.region_snap_m
+        });
+    if closes {
+        finish_region(ui, scene);
+    } else if ui.region_draft.len() < MAX_REGION_POINTS {
+        ui.region_draft.push(p);
+    } else {
+        ui.error(format!(
+            "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
+        ));
+    }
+}
+
+/// Turns the draft into the scene's region (nothing to do without corners).
+fn finish_region(ui: &mut UiState, scene: &mut Scene) {
+    if ui.region_draft.is_empty() {
+        return;
+    }
+    let region = Region {
+        points: std::mem::take(&mut ui.region_draft),
+        enabled: true,
+    };
+    match region.problem() {
+        None => {
+            ui.info(format!(
+                "Coverage now counts only the {:.0} m² region",
+                region.area_m2()
+            ));
+            scene.region = Some(region);
+            scene.touch();
+            ui.tool = Tool::Select;
+        }
+        Some(problem) => {
+            ui.region_draft = region.points;
+            ui.error(problem.message());
+        }
+    }
+}
+
+/// Keeps a region corner on the loaded area, so a click near the horizon
+/// cannot put one kilometres away.
+fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
+    match area {
+        Some(a) => Vec2::from_array(p)
+            .clamp(a.layers.grid.min, a.layers.grid.max())
+            .to_array(),
+        None => p,
     }
 }
 
@@ -452,6 +560,8 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 ui.info("Click where the new camera should point");
             }
         }
+        // Handled by `region_click`.
+        Tool::Region => {}
         Tool::Aim | Tool::Move => {
             if ui.selected.is_none()
                 && let Some(Hit {

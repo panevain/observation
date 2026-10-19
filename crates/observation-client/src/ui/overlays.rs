@@ -91,6 +91,14 @@ fn selection_chip(
                         .get(&d.ui.place_model)
                         .map_or_else(|| d.ui.place_model.clone(), |m| m.display_name());
                     ui.label(RichText::new(format!("New: {model}")).strong());
+                } else if d.ui.tool == Tool::Region {
+                    let n = d.ui.region_draft.len();
+                    let text = match n {
+                        0 => "No corners yet".to_owned(),
+                        1 => "1 corner".to_owned(),
+                        n => format!("{n} corners"),
+                    };
+                    ui.label(RichText::new(text).strong());
                 } else if let Some(c) = selected {
                     swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
                     ui.label(RichText::new(&c.label).strong());
@@ -173,6 +181,7 @@ pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {
             egui::Grid::new("keys").num_columns(2).spacing([t.space.lg, t.space.xs]).show(ui, |ui| {
                 for (k, v) in [
                     ("V / P / A / M", "Select / Place / Aim / Move tool"),
+                    ("R", "Draw a region to limit the coverage figures to"),
                     ("Drag", "Orbit (or aim/move with those tools)"),
                     ("Right-drag · Shift-drag", "Pan"),
                     ("Scroll · pinch", "Zoom"),

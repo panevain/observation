@@ -35,7 +35,16 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
 }
 
 fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    section(ui, t, "Coverage");
+    let in_region = d.scene.region.as_ref().is_some_and(|r| r.is_active());
+    section(
+        ui,
+        t,
+        if in_region {
+            "Coverage inside region"
+        } else {
+            "Coverage"
+        },
+    );
     let s = d.coverage.stats;
     if d.scene.cameras.is_empty() {
         hint(
@@ -64,6 +73,7 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
         ),
     );
+    region_controls(ui, d, t);
     ui.add_space(t.space.xs);
     segmented(
         ui,
@@ -87,6 +97,42 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             hint(ui, t, "cameras");
         });
     }
+}
+
+/// Draw, toggle, redraw or clear the region the figures are limited to.
+fn region_controls(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    ui.horizontal_wrapped(|ui| {
+        let Some(r) = &d.scene.region else {
+            if ui
+                .add(secondary(t, "Draw region…"))
+                .on_hover_text("Limit the figures to an area you outline on the ground (R)")
+                .clicked()
+            {
+                d.ui.tool = Tool::Region;
+            }
+            return;
+        };
+        let mut on = r.enabled;
+        let label = format!("Only inside region ({:.0} m²)", r.area_m2());
+        let toggled = ui
+            .checkbox(&mut on, label)
+            .on_hover_text("Count only the street and walls inside the outlined area")
+            .changed();
+        if ui
+            .add(secondary(t, "Redraw"))
+            .on_hover_text("Outline a new region (R)")
+            .clicked()
+        {
+            d.ui.tool = Tool::Region;
+        }
+        if ui.add(secondary(t, "Clear")).clicked() {
+            d.scene.region = None;
+            d.scene.touch();
+        } else if toggled && let Some(r) = &mut d.scene.region {
+            r.enabled = on;
+            d.scene.touch();
+        }
+    });
 }
 
 fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {

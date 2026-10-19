@@ -3,14 +3,14 @@
 //! Each camera's visibility is cached under a key derived from everything
 //! that affects it, so moving one camera only recomputes that camera.
 
-use crate::state::{Area, Models, OverlayMode, Scene, UiState};
-use crate::theme::{Tokens, rgba};
+use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState};
+use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::{
-    CoverageCounts, CoverageParams, CoverageStats, Visibility as CellVisibility,
+    CoverageCounts, CoverageParams, CoverageStats, RegionMask, Visibility as CellVisibility,
 };
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
@@ -26,6 +26,11 @@ pub struct CoverageState {
     painted_mode: Option<(OverlayMode, bool)>,
     /// Hash of the camera colours last painted in per-camera mode.
     painted_colors: u64,
+    /// The region's corners and cells, kept while the region is turned off so
+    /// turning it back on needs no recomputation.
+    region: Option<(Vec<[f32; 2]>, RegionMask)>,
+    /// Whether the figures were last computed inside the region.
+    region_on: bool,
 }
 
 impl CoverageState {
@@ -39,7 +44,23 @@ pub struct CoveragePlugin;
 impl Plugin for CoveragePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CoverageState>()
-            .add_systems(Update, (update_coverage, paint_overlay).chain());
+            .insert_gizmo_config(
+                RegionGizmos,
+                GizmoConfig {
+                    line: GizmoLineConfig {
+                        width: 4.0,
+                        joints: GizmoLineJoint::Round(4),
+                        ..default()
+                    },
+                    // Drawn over buildings so the whole outline stays visible.
+                    depth_bias: -1.0,
+                    ..default()
+                },
+            )
+            .add_systems(
+                Update,
+                (update_coverage, paint_overlay, draw_region).chain(),
+            );
     }
 }
 
@@ -124,8 +145,19 @@ fn update_coverage(
         }
         changed = true;
     }
+    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
+    if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
+        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
+        changed = true;
+    }
+    let on = usable.is_some_and(|r| r.enabled);
+    if on != state.region_on {
+        state.region_on = on;
+        changed = true;
+    }
     if changed || state.painted_mode.is_none() {
-        state.stats = CoverageStats::compute(layers, counts);
+        let mask = state.region.as_ref().filter(|_| on).map(|(_, m)| m);
+        state.stats = CoverageStats::compute_in(layers, counts, mask);
         state.paint = true;
     }
 }
@@ -220,4 +252,48 @@ fn paint_overlay(
     state.paint = false;
     state.painted_mode = Some(mode);
     state.painted_colors = colors;
+}
+
+/// Height of the region outline above the ground, metres.
+const REGION_Y_M: f32 = 0.15;
+
+/// Gizmo group for the region outline: thicker than the view cones.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct RegionGizmos;
+
+/// The region outline, and the region being drawn.
+fn draw_region(
+    mut gizmos: Gizmos<RegionGizmos>,
+    scene: Res<Scene>,
+    ui: Res<UiState>,
+    tokens: Res<Tokens>,
+) {
+    let color = to_bevy(tokens.tools.region);
+    let at = |p: [f32; 2]| Vec3::new(p[0], REGION_Y_M, p[1]);
+    if let Some(r) = &scene.region
+        && ui.region_draft.is_empty()
+    {
+        let c = if r.is_active() {
+            color
+        } else {
+            color.with_alpha(0.35)
+        };
+        gizmos.linestrip(r.points.iter().chain(r.points.first()).map(|p| at(*p)), c);
+    }
+    if ui.tool != Tool::Region {
+        return;
+    }
+    let draft = &ui.region_draft;
+    gizmos.linestrip(draft.iter().chain(&ui.region_hover).map(|p| at(*p)), color);
+    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    for (i, p) in draft.iter().enumerate() {
+        // Once clicking it would close the region, the first corner shows
+        // the whole area a click closes it from.
+        let radius = if i == 0 && draft.len() >= 3 {
+            ui.region_snap_m
+        } else {
+            0.4
+        };
+        gizmos.circle(Isometry3d::new(at(*p), flat), radius, color);
+    }
 }
