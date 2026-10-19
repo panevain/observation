@@ -19,6 +19,9 @@ pub enum ApiError {
     /// An upstream provider (Overpass, tile server) failed (502).
     #[error("{0}")]
     Upstream(String),
+    /// An upstream provider did not answer in time (504).
+    #[error("{0}")]
+    UpstreamTimeout(String),
     /// An upstream provider is rate limiting us, or we are cooling down (503).
     #[error("the map data provider is busy, please retry shortly")]
     RateLimited {
@@ -37,6 +40,7 @@ impl ApiError {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
+            Self::UpstreamTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::RateLimited { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
