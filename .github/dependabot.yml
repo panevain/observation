@@ -9,6 +9,8 @@ version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
+    # Git-flow: dependency updates integrate via develop.
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -33,6 +35,8 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    # Git-flow: dependency updates integrate via develop.
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -51,6 +55,8 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    # Git-flow: dependency updates integrate via develop.
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday

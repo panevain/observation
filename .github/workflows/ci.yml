@@ -1,7 +1,10 @@
 name: CI
 
+# Git-flow: long-lived and release branches build on push; feature work is
+# covered by its pull_request run (no duplicate push runs).
 on:
   push:
+    branches: [main, develop, "release/**", "hotfix/**"]
   pull_request:
 
 concurrency:
@@ -45,7 +48,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
       - run: cargo clippy --locked --workspace --exclude observation-client --all-targets -- -D warnings
 
   clippy-wasm:
@@ -63,7 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: wasm-clippy
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
       - run: cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   test:
@@ -87,7 +90,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: test
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
       - name: Test (core + server)
         run: cargo test --locked --workspace --exclude observation-client
       - name: Test (client, native unit tests)
@@ -132,7 +135,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: wasm-release
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
       - name: Install trunk (pinned, checksum-verified)
         run: |
           set -euo pipefail

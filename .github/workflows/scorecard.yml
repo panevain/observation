@@ -1,8 +1,9 @@
 name: Scorecard
 
 on:
+  # Scorecard only analyses the default branch (develop under git-flow).
   push:
-    branches: [main]
+    branches: [develop]
   schedule:
     - cron: "23 6 * * 3"
   branch_protection_rule:

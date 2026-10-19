@@ -1,0 +1,48 @@
+name: Branch policy
+
+# Enforces the git-flow source/target rules on pull requests. Required by the
+# main and develop rulesets (.github/rulesets/).
+#   main    <- release/*, hotfix/*
+#   develop <- anything (feature/*, bugfix/*, dependabot/*, release/*, hotfix/*, back-merges from main)
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  policy:
+    name: branch policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check source branch for target
+        env:
+          # Branch names are untrusted input: pass via env, never interpolate.
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          printf 'PR: %s -> %s (same repo: %s)\n' "$HEAD" "$BASE" "$SAME_REPO"
+          case "$BASE" in
+            main)
+              case "$HEAD" in
+                release/*|hotfix/*) ;;
+                *)
+                  echo "::error::Only release/* and hotfix/* branches may be merged into main (git-flow). Target develop instead."
+                  exit 1
+                  ;;
+              esac
+              if [ "$SAME_REPO" != "true" ]; then
+                echo "::error::release/* and hotfix/* PRs into main must come from this repository, not a fork."
+                exit 1
+              fi
+              ;;
+            *) ;;
+          esac
+          echo "Branch policy satisfied."
