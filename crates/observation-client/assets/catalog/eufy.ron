@@ -1,0 +1,15 @@
+// eufy. Format and source policy: docs/camera-catalog.md.
+[
+    (
+        id: "eufy-eufycam-s3-pro",
+        vendor: "eufy",
+        name: "eufyCam S3 Pro",
+        kind: Bullet,
+        hfov_deg: 112.0,
+        vfov_deg: 60.0,
+        resolution: (3840, 2160),
+        ir_range_m: Some(7.6),
+        source: Some("https://service.eufy.com/product-description/a08J1000000Y9SUIA0"),
+        notes: Some("Spec page: 135 deg diagonal with 112 deg horizontal and 60 deg vertical, used as published; 4K; MaxColor Vision 25 ft"),
+    ),
+]
