@@ -18,15 +18,6 @@ impl TileId {
         (z <= MAX_ZOOM && x < n && y < n).then_some(Self { z, x, y })
     }
 
-    /// The tile one zoom level up that contains this one.
-    pub fn parent(&self) -> Option<Self> {
-        (self.z > 0).then(|| Self {
-            z: self.z - 1,
-            x: self.x / 2,
-            y: self.y / 2,
-        })
-    }
-
     /// The four tiles one zoom level down, row-major from the north-west.
     pub fn children(&self) -> Option<[Self; 4]> {
         (self.z < MAX_ZOOM).then(|| {
@@ -43,7 +34,8 @@ impl TileId {
     /// `[left, top, right, bottom]` fractions of the ancestor.
     pub fn within_ancestor(&self, levels: u8) -> Option<(Self, [f32; 4])> {
         let up = self.z.checked_sub(levels)?;
-        let n = 1u32 << levels;
+        // The fields are public, so `z` (and with it `levels`) can exceed 31.
+        let n = 1u32.checked_shl(u32::from(levels))?;
         let a = Self {
             z: up,
             x: self.x >> levels,
@@ -153,9 +145,12 @@ mod tests {
     #[test]
     fn family() {
         let t = TileId::new(17, 21_000, 45_001).unwrap();
-        assert_eq!(t.parent(), TileId::new(16, 10_500, 22_500));
-        assert!(t.children().unwrap().iter().all(|c| c.parent() == Some(t)));
-        assert_eq!(TileId::new(0, 0, 0).unwrap().parent(), None);
+        let kids = t.children().unwrap();
+        assert!(
+            kids.iter()
+                .all(|c| c.within_ancestor(1).map(|(a, _)| a) == Some(t))
+        );
+        assert_eq!(kids[3].within_ancestor(1).unwrap().1, [0.5, 0.5, 1.0, 1.0]);
         assert_eq!(TileId::new(19, 0, 0).unwrap().children(), None);
         // x = 21000 = 4·5250 + 0, y = 45001 = 4·11250 + 1.
         let (a, f) = t.within_ancestor(2).unwrap();
@@ -163,6 +158,9 @@ mod tests {
         assert_eq!(f, [0.0, 0.25, 0.25, 0.5]);
         assert_eq!(t.within_ancestor(0), Some((t, [0.0, 0.0, 1.0, 1.0])));
         assert_eq!(t.within_ancestor(18), None);
+        // Out-of-range zooms built through the public fields don't overflow.
+        let deep = TileId { z: 40, x: 0, y: 0 };
+        assert_eq!(deep.within_ancestor(35), None);
     }
 
     #[test]

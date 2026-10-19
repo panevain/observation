@@ -5,7 +5,6 @@ use crate::net::Tiles;
 use crate::theme::{IMAGE_TINT, Tokens};
 use bevy::asset::Handle;
 use bevy::image::Image;
-use bevy::platform::collections::HashMap;
 use bevy::prelude::Resource;
 use bevy_egui::egui::{
     self, Align2, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, vec2,
@@ -151,6 +150,7 @@ fn problem(b: &BBox) -> Option<String> {
 /// Part of an image drawn into part of a tile's square, both as `0..1` fractions.
 #[derive(Debug, Clone, Copy)]
 pub struct TileDraw {
+    tile: TileId,
     texture: egui::TextureId,
     /// Where in the tile's square to draw.
     dest: Rect,
@@ -158,16 +158,21 @@ pub struct TileDraw {
     uv: Rect,
 }
 
+/// `[left, top, right, bottom]` fractions as a rect.
+fn frac_rect([l, t, r, b]: [f32; 4]) -> Rect {
+    Rect::from_min_max(Pos2::new(l, t), Pos2::new(r, b))
+}
+
 /// Requests the tiles the dialog will draw this frame and returns what to draw
-/// for each. A tile that is still loading is filled from a loaded ancestor
-/// (stretched) and any loaded children, so zooming shows a blurry map rather
-/// than an empty canvas.
+/// for each, in drawing order. A tile that is still loading is filled from a
+/// loaded ancestor (stretched) and any loaded children, so zooming shows a
+/// blurry map rather than an empty canvas.
 pub fn register_tiles(
     p: &mut MapPicker,
     tiles: &mut Tiles,
     mut add_image: impl FnMut(&Handle<Image>) -> egui::TextureId,
-) -> HashMap<TileId, Vec<TileDraw>> {
-    let mut out = HashMap::default();
+) -> Vec<TileDraw> {
+    let mut out = Vec::new();
     if !p.visible {
         return out;
     }
@@ -175,39 +180,37 @@ pub fn register_tiles(
     let view = View::new(p, rect);
     let wanted = view.visible_tiles();
     tiles.retain_queue(|t| t.z != view.z || wanted.contains(t));
-    let unit = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-    for t in wanted {
-        let mut draws = Vec::new();
-        if let Some(h) = tiles.get(t) {
-            draws.push(TileDraw {
+    let unit = frac_rect([0.0, 0.0, 1.0, 1.0]);
+    for tile in wanted {
+        if let Some(h) = tiles.get(tile) {
+            out.push(TileDraw {
+                tile,
                 texture: add_image(&h),
                 dest: unit,
                 uv: unit,
             });
-        } else {
-            let ancestor = (1..=MAX_OVERZOOM)
-                .filter_map(|up| t.within_ancestor(up))
-                .find_map(|(a, f)| Some((tiles.ready(a)?, f)));
-            if let Some((h, [l, top, r, b])) = ancestor {
-                draws.push(TileDraw {
+            continue;
+        }
+        let ancestor = (1..=MAX_OVERZOOM)
+            .filter_map(|up| tile.within_ancestor(up))
+            .find_map(|(a, f)| Some((tiles.ready(a)?, f)));
+        if let Some((h, f)) = ancestor {
+            out.push(TileDraw {
+                tile,
+                texture: add_image(&h),
+                dest: unit,
+                uv: frac_rect(f),
+            });
+        }
+        for c in tile.children().into_iter().flatten() {
+            if let (Some(h), Some((_, f))) = (tiles.ready(c), c.within_ancestor(1)) {
+                out.push(TileDraw {
+                    tile,
                     texture: add_image(&h),
-                    dest: unit,
-                    uv: Rect::from_min_max(Pos2::new(l, top), Pos2::new(r, b)),
+                    dest: frac_rect(f),
+                    uv: unit,
                 });
             }
-            for (i, c) in t.children().into_iter().flatten().enumerate() {
-                if let Some(h) = tiles.ready(c) {
-                    let min = Pos2::new((i % 2) as f32 * 0.5, (i / 2) as f32 * 0.5);
-                    draws.push(TileDraw {
-                        texture: add_image(&h),
-                        dest: Rect::from_min_size(min, Vec2::splat(0.5)),
-                        uv: unit,
-                    });
-                }
-            }
-        }
-        if !draws.is_empty() {
-            out.insert(t, draws);
         }
     }
     out
@@ -218,7 +221,7 @@ pub fn window(
     ctx: &egui::Context,
     t: &Tokens,
     p: &mut MapPicker,
-    tile_draws: &HashMap<TileId, Vec<TileDraw>>,
+    tile_draws: &[TileDraw],
     attribution: &str,
     open: &mut bool,
 ) -> Option<BBox> {
@@ -280,16 +283,14 @@ pub fn window(
             for tile in view.visible_tiles() {
                 let nw = view.screen_of(tile.nw());
                 let tr = Rect::from_min_size(nw, vec2(ts, ts));
-                match tile_draws.get(&tile) {
-                    Some(draws) => {
-                        for d in draws {
-                            let dest = Rect::from_min_max(tr.lerp_inside(d.dest.min.to_vec2()), tr.lerp_inside(d.dest.max.to_vec2()));
-                            painter.image(d.texture, dest, d.uv, IMAGE_TINT);
-                        }
-                    }
-                    None => {
-                        painter.rect_stroke(tr, 0.0, Stroke::new(t.stroke_width, t.border), StrokeKind::Inside);
-                    }
+                let mut drawn = false;
+                for d in tile_draws.iter().filter(|d| d.tile == tile) {
+                    let dest = Rect::from_min_max(tr.lerp_inside(d.dest.min.to_vec2()), tr.lerp_inside(d.dest.max.to_vec2()));
+                    painter.image(d.texture, dest, d.uv, IMAGE_TINT);
+                    drawn = true;
+                }
+                if !drawn {
+                    painter.rect_stroke(tr, 0.0, Stroke::new(t.stroke_width, t.border), StrokeKind::Inside);
                 }
             }
 
