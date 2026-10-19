@@ -1,0 +1,27 @@
+// Reolink. Format and source policy: docs/camera-catalog.md.
+[
+    (
+        id: "reolink-video-doorbell-wifi",
+        vendor: "Reolink",
+        name: "Video Doorbell WiFi",
+        kind: Doorbell,
+        hfov_deg: 135.0,
+        vfov_deg: 100.0,
+        resolution: (2560, 1920),
+        ir_range_m: None,
+        source: Some("https://reolink.com/product/reolink-video-doorbell-wifi/"),
+        notes: Some("5 MP 4:3; IR LEDs fitted but no range published"),
+    ),
+    (
+        id: "reolink-rlc-810a",
+        vendor: "Reolink",
+        name: "RLC-810A",
+        kind: Bullet,
+        hfov_deg: 87.0,
+        vfov_deg: 44.0,
+        resolution: (3840, 2160),
+        ir_range_m: Some(30.0),
+        source: Some("https://reolink.com/product/rlc-810a/"),
+        notes: Some("4.0 mm lens variant (2.8 mm: 101x55; 6.0 mm: 53x33); 8 MP, 18x 850 nm IR LEDs"),
+    ),
+]

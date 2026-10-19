@@ -319,6 +319,29 @@ impl Catalog {
         Ok(cat)
     }
 
+    /// Parses per-vendor RON files (each a bare list of models) into one validated
+    /// catalog, ordered by kind, then vendor, then name.
+    pub fn from_ron_parts(parts: &[&str]) -> Result<Self, CatalogError> {
+        let mut models = Vec::new();
+        for part in parts {
+            let list: Vec<CameraModel> =
+                ron::from_str(part).map_err(|e| CatalogError::Parse(e.to_string()))?;
+            models.extend(list);
+        }
+        let kind_rank = |k: CameraKind| CameraKind::ALL.iter().position(|a| *a == k);
+        models.sort_by(|a, b| {
+            (kind_rank(a.kind), &a.vendor, &a.name).cmp(&(kind_rank(b.kind), &b.vendor, &b.name))
+        });
+        let mut seen = std::collections::HashSet::new();
+        for m in &models {
+            m.validate()?;
+            if !seen.insert(m.id.as_str()) {
+                return Err(CatalogError::Duplicate(m.id.clone()));
+            }
+        }
+        Ok(Self { version: 1, models })
+    }
+
     pub fn get(&self, id: &str) -> Option<&CameraModel> {
         self.models.iter().find(|m| m.id == id)
     }

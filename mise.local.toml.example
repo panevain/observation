@@ -1,0 +1,6 @@
+# Copy to mise.local.toml (gitignored) and edit.
+[env]
+# Goes into the User-Agent sent to OpenStreetMap services: set a real contact.
+OBS_CONTACT = "CHANGE-ME@example.com"
+# The server binds 0.0.0.0:8080 by default. Uncomment to listen on loopback only.
+# OBS_BIND = "127.0.0.1:8080"

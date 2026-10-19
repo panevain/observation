@@ -1,0 +1,63 @@
+# Dev tooling and tasks: https://mise.jdx.dev
+# CI runs these same tasks (.github/workflows/ci.yml), so `mise run check` matches it.
+# Rust itself comes from rust-toolchain.toml (rustup), not from mise.
+# Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
+# gitignored; copy mise.local.toml.example to start.
+
+[tools]
+# mise.lock records the release checksums. Keep the version in sync with
+# TRUNK_VERSION in the Dockerfile.
+"github:trunk-rs/trunk" = "0.21.14"
+
+[env]
+# trunk would otherwise query the crates.io API for a newer release on every build.
+TRUNK_SKIP_VERSION_CHECK = "true"
+
+[tasks.fmt]
+description = "cargo fmt --check"
+run = "cargo fmt --all --check"
+
+[tasks.clippy-native]
+description = "Clippy on the native workspace"
+run = "cargo clippy --locked --workspace --exclude observation-client --all-targets -- -D warnings"
+
+[tasks.clippy-wasm]
+description = "Clippy on the wasm client"
+run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
+
+[tasks.test]
+description = "Unit tests (core + server, then client if it has a lib target)"
+run = '''
+cargo test --locked --workspace --exclude observation-client
+if [ -f crates/observation-client/src/lib.rs ]; then
+  cargo test --locked -p observation-client --lib
+else
+  echo "observation-client has no library target; skipping."
+fi
+'''
+
+[tasks.tokens]
+description = "Design-token guard (no colour literals outside theme.rs)"
+run = "scripts/check-design-tokens.sh"
+
+[tasks.build]
+description = "Release-build the wasm client into dist/ (as CI does)"
+run = "trunk build --release --locked"
+
+[tasks."build:dev"]
+description = "Fast unoptimised wasm client build into dist/"
+run = "trunk build --locked"
+
+[tasks.serve]
+description = "Dev-build the client, then run the server from the repo root"
+depends = ["build:dev"]
+run = "cargo run --locked -p observation-server"
+
+[tasks."serve:release"]
+description = "Release-build the client, then run the server"
+depends = ["build"]
+run = "cargo run --locked --release -p observation-server"
+
+[tasks.check]
+description = "fmt, clippy, tests and design tokens (the non-Docker CI checks; build is separate)"
+depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens"]

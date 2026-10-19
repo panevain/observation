@@ -1,0 +1,15 @@
+// Ubiquiti. Format and source policy: docs/camera-catalog.md.
+[
+    (
+        id: "ubiquiti-unifi-g5-bullet",
+        vendor: "Ubiquiti",
+        name: "UniFi G5 Bullet",
+        kind: Bullet,
+        hfov_deg: 84.4,
+        vfov_deg: 45.4,
+        resolution: (2688, 1512),
+        ir_range_m: Some(9.0),
+        source: Some("https://techspecs.ui.com/unifi/cameras-nvrs/uvc-g5-bullet"),
+        notes: Some("Spec sheet: 99.8° diagonal; 4 MP; IR 30 ft"),
+    ),
+]
