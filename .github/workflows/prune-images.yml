@@ -1,17 +1,24 @@
 name: Prune images
 
-# Keeps `devel`, `latest` and every X.Y.Z tag of the container image and
-# deletes any other tagged version (old edge, main, X.Y and sha-* tags).
+# Keeps `devel`, `latest`, every X.Y.Z (or X.Y.Z-pre) tag and the sha256-*
+# attestation tags of the container image, and deletes any other tagged
+# version (old edge, main, X.Y and sha-* tags).
 #
 # Untagged versions are never touched: the SBOM and provenance attestations
 # are untagged children of a tagged image index, and deleting them breaks
-# `docker pull` and attestation verification.
+# `docker pull` and attestation verification. Superseded `devel` builds
+# therefore stay as untagged versions.
+#
+# Scheduled and workflow_run runs only delete when the repository variable
+# PRUNE_IMAGES is `true`; otherwise they log what they would delete. Run it
+# manually once and check the list before setting the variable.
 on:
   schedule:
     - cron: "17 4 * * 1"
   workflow_run:
     workflows: [Release]
     types: [completed]
+    # (successful runs only, see the job condition)
   workflow_dispatch:
     inputs:
       dry_run:
@@ -19,7 +26,8 @@ on:
         type: boolean
         default: true
 
-# Do not prune while a release is publishing.
+# Serialises prune runs; the job also refuses to run while a Release is in
+# progress.
 concurrency:
   group: prune-images
   cancel-in-progress: false
@@ -28,24 +36,32 @@ permissions: {}
 
 env:
   PACKAGE: observation
-  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+)$'
+  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|sha256-[0-9a-f]{64}(\.[a-z]+)?)$'
 
 jobs:
   prune:
     name: prune image tags
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     permissions:
       packages: write # delete package versions
+      actions: read # list in-progress Release runs
     steps:
       - name: Delete unwanted tagged versions
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
-          # Scheduled and workflow_run runs delete; manual runs default to a dry run.
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || (github.event_name != 'workflow_dispatch' && vars.PRUNE_IMAGES != 'true') }}
         run: |
           set -euo pipefail
+          busy=$(gh run list --repo "$REPO" --workflow release.yml --json status \
+            --jq '[.[] | select(.status != "completed")] | length')
+          if [ "$busy" != 0 ]; then
+            echo "A Release run is in progress; skipping."
+            exit 0
+          fi
           case "$(gh api "users/$OWNER" --jq .type)" in
             Organization) base="orgs/$OWNER" ;;
             *) base="users/$OWNER" ;;
@@ -69,11 +85,13 @@ jobs:
             echo "Nothing to delete."
             exit 0
           fi
+          failed=0
           while IFS=$'\t' read -r id tags; do
             if [ "$DRY_RUN" = true ]; then
               echo "Would delete version $id (tags: $tags)"
             else
               echo "Deleting version $id (tags: $tags)"
-              gh api -X DELETE "$url/$id"
+              gh api -X DELETE "$url/$id" || { echo "::warning::could not delete version $id"; failed=1; }
             fi
           done <<<"$doomed"
+          exit "$failed"
