@@ -1,10 +1,14 @@
 # Dev tooling and tasks: https://mise.jdx.dev
 # CI runs these same tasks (.github/workflows/ci.yml), so `mise run check` matches it.
-# Rust itself comes from rust-toolchain.toml (rustup), not from mise.
+# mise installs rustup and the Rust toolchain; rust-toolchain.toml stays the source of
+# truth for plain rustup users, CI and the Dockerfile.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start.
 
 [tools]
+# Installed via rustup (into ~/.rustup and ~/.cargo). Keep in sync with
+# rust-toolchain.toml.
+rust = { version = "1.97.1", profile = "minimal", components = "rustfmt,clippy", targets = "wasm32-unknown-unknown" }
 # mise.lock records the release checksums. Keep the version in sync with
 # TRUNK_VERSION in the Dockerfile.
 "github:trunk-rs/trunk" = "0.21.14"
