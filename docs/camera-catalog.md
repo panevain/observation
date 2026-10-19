@@ -86,8 +86,8 @@ range = width_px / (2 * ppm * tan(hfov / 2))      capped at 100 m
 
 1. Find the manufacturer's spec page and read FOV, main-stream resolution and
    night-vision range from it.
-2. Add the entry to the manufacturer's file (create `catalog/<vendor>.ron` and
-   for a new manufacturer; no registration needed), with a unique kebab-case
+2. Add the entry to the manufacturer's file (for a new manufacturer, create
+   `catalog/<vendor>.ron`; no registration is needed), with a unique kebab-case
    `id` of the form `vendor-product-name`.
 3. Update the table below so that it matches the RON.
 4. Run `cargo test -p observation-core --test catalog`.
