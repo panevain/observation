@@ -1,0 +1,27 @@
+// Wyze. Format and source policy: docs/camera-catalog.md.
+[
+    (
+        id: "wyze-video-doorbell-pro",
+        vendor: "Wyze",
+        name: "Video Doorbell Pro",
+        kind: Doorbell,
+        hfov_deg: 150.0,
+        vfov_deg: 150.0,
+        resolution: (1440, 1440),
+        ir_range_m: None,
+        source: Some("https://www.wyze.com/products/wyze-video-doorbell-pro/specs"),
+        notes: Some("6x 850 nm IR LEDs; no range published"),
+    ),
+    (
+        id: "wyze-cam-floodlight-pro",
+        vendor: "Wyze",
+        name: "Cam Floodlight Pro",
+        kind: Floodlight,
+        hfov_deg: 170.0,
+        vfov_deg: 95.0,
+        resolution: (2560, 1440),
+        ir_range_m: None,
+        source: Some("https://www.wyze.com/products/wyze-cam-floodlight-pro/specs"),
+        notes: Some("Spec: 180° diagonal, 170° H, 95° V; 12x 850 nm IR LEDs, no range published"),
+    ),
+]
