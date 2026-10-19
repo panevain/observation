@@ -428,6 +428,60 @@ async fn overpass_gateway_timeout_is_retried_once() {
 }
 
 #[tokio::test]
+async fn overpass_bad_gateway_is_retried() {
+    let (mock, url) = spawn_overpass().await;
+    mock.script.lock().unwrap().extend([502]);
+    let h = harness(&url, "http://127.0.0.1:9/{z}/{x}/{y}.png");
+    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(AreaBundle::decode(&body).is_ok());
+    assert_eq!(mock.hits.load(Ordering::SeqCst), 2);
+
+    // Two failures in a row are a 502, and no cool-down starts.
+    mock.script.lock().unwrap().extend([503, 502]);
+    let other = "/api/area?bbox=47.7000,-122.2000,47.7020,-122.1970";
+    let (status, _, body) = get_uri(&h.app, other).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(json(&body)["error"].is_string());
+    let (status, _, _) = get_uri(&h.app, other).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn overpass_fails_over_to_the_next_endpoint() {
+    let (down, down_url) = spawn_overpass().await;
+    down.script.lock().unwrap().extend([502, 502, 502]);
+    let (up, up_url) = spawn_overpass().await;
+    let h = harness_with(
+        &down_url,
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        tempfile::tempdir().unwrap(),
+        |c| c.overpass_urls.push(up_url),
+    );
+    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(AreaBundle::decode(&body).is_ok());
+    assert_eq!(down.hits.load(Ordering::SeqCst), 1, "each endpoint once");
+    assert_eq!(up.hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn overpass_timeouts_are_504() {
+    let (mock, url) = spawn_overpass().await;
+    mock.delay_ms.store(1_000, Ordering::SeqCst);
+    let h = harness_with(
+        &url,
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        tempfile::tempdir().unwrap(),
+        |c| c.overpass_timeout = Duration::from_millis(200),
+    );
+    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+    assert!(json(&body)["error"].as_str().unwrap().contains("too long"));
+    assert_eq!(mock.hits.load(Ordering::SeqCst), 2, "retried once");
+}
+
+#[tokio::test]
 async fn upstream_failures_are_502_and_not_cached() {
     let (mock, url) = spawn_overpass().await;
     mock.script.lock().unwrap().push_back(500);

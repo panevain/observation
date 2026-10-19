@@ -84,7 +84,7 @@ impl AppState {
         let user_agent = config.user_agent();
         let overpass_client = reqwest::Client::builder()
             .user_agent(&user_agent)
-            .timeout(Duration::from_secs(40))
+            .timeout(config.overpass_timeout)
             .connect_timeout(Duration::from_secs(10))
             .build()?;
         let tile_client = reqwest::Client::builder()
