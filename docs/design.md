@@ -66,7 +66,7 @@ Errors are JSON `{"error": "..."}`: 400 bad request, 404, 502 upstream failure, 
 
 ### Configuration
 
-Read from the environment at start-up; empty values count as unset; invalid `OBS_BIND`, `OBS_BUNDLE_TTL_DAYS`, `OBS_METRICS_BIND` or `OBS_LOG_FORMAT` stop the server with an error.
+Read from the environment at start-up; empty values count as unset; invalid `OBS_BIND`, `OBS_BUNDLE_TTL_DAYS`, `OBS_METRICS_BIND` (or one equal to `OBS_BIND`) or `OBS_LOG_FORMAT`, and an address that cannot be bound, stop the server with an error.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -84,13 +84,13 @@ Read from the environment at start-up; empty values count as unset; invalid `OBS
 
 ### Observability
 
-Every response carries an `x-request-id` header (taken from the request if the client or a proxy sent one, otherwise a UUID), and request log lines include it. With `OBS_METRICS_BIND` set, `GET /metrics` on that address serves Prometheus text:
+Every response carries an `x-request-id` header (taken from the request if the client or a proxy sent one, otherwise a UUID). Request tracing stays at `DEBUG`, so no access log is written by default (see the privacy table); the id is on those `DEBUG` lines (`RUST_LOG=tower_http=debug`), so a reported id can be matched to them. With `OBS_METRICS_BIND` set, `GET /metrics` on that address serves Prometheus text:
 
 | Metric | Labels | Meaning |
 | --- | --- | --- |
 | `observation_http_requests_total` | `method`, `route`, `status` | Requests by matched route pattern, never the raw path; methods outside the standard set are labelled `other`. Timed-out requests (408) are included |
 | `observation_http_request_duration_seconds` | `method`, `route` | Latency histogram (buckets from 5 ms to 60 s) |
-| `observation_bundle_cache_total` | `result`: `hit`, `miss`, `stale_served` | Bundle cache outcomes |
+| `observation_bundle_cache_total` | `result`: `hit`, `built`, `stale_served`, `error` | `hit` is per request served from a fresh file. The others are per upstream refresh, which concurrent requests for the same area share |
 | `observation_tile_cache_total` | `result`: `hit`, `miss`, `revalidated`, `stale_served` | Tile cache outcomes |
 | `observation_overpass_fetches_total` | `outcome`: `ok`, `error`, `rate_limited` | Upstream Overpass fetches |
 
@@ -297,13 +297,14 @@ All eleven workflows set `permissions: {}` at the top and grant each job only wh
 
 | Workflow | Triggers | What it does |
 | --- | --- | --- |
-| `ci.yml` | push to `main`, `develop`, `release/**`, `hotfix/**`; every pull request | `cargo fmt --check`; clippy with `-D warnings` for the native workspace and, separately, the client for `wasm32-unknown-unknown`; tests (cargo-nextest, plus doctests); the design-token guard and the toolchain version sync check; an informational coverage run (cargo-llvm-cov); a release `trunk build` with a size report and `dist/` artifact; a Docker build with a smoke test built from that `dist/` (Dockerfile target `runtime-prebuilt`, so Bevy is compiled once); `image-full.yml` builds the default target (client compiled in the image, as Release does) when the Dockerfile or build inputs change, and weekly (image runs as 65532, `/healthz` answers, `dist/index.html` is present) |
+| `ci.yml` | push to `main`, `develop`, `release/**`, `hotfix/**`; every pull request | `cargo fmt --check`; clippy with `-D warnings` for the native workspace and, separately, the client for `wasm32-unknown-unknown`; tests (cargo-nextest, plus doctests); the design-token guard and the toolchain version sync check; an informational coverage run (cargo-llvm-cov); a release `trunk build` with a size report and `dist/` artifact; a Docker build with a smoke test built from that `dist/` (Dockerfile target `runtime-prebuilt`, so Bevy is compiled once; the image runs as 65532, `/healthz` answers and `dist/index.html` is present) |
 | `security.yml` | push to `main` and `develop`, pull requests, daily, manual | `cargo-deny` (advisories, bans, licences, sources); zizmor over the workflows (SARIF to code scanning, config in `.github/zizmor.yml`); `cargo-audit`, which on the scheduled run opens issues for new advisories; Trivy filesystem scan (vulnerabilities, Dockerfile misconfiguration, secrets) and image scan, failing on fixable critical or high findings and uploading SARIF (the image scan uses a stub `dist/`, since Trivy does not inspect the static client) |
 | `codeql.yml` | push and pull request to `main` and `develop`, weekly | CodeQL for `rust` and for the workflows themselves (`actions`) |
 | `scorecard.yml` | push to whichever of `main`/`develop` is the default branch, weekly, branch-protection changes, manual | OpenSSF Scorecard, results published and uploaded to code scanning |
 | `release.yml` | push to `develop`, tags `v*` | Builds and pushes `ghcr.io/panevain/observation`: `devel` from `develop`, the version tag and `latest` from `v*` tags; SLSA provenance (`mode=max`), an SBOM, a keyless cosign signature and a GitHub build-provenance attestation; the client is compiled inside the image build, not taken from CI, so provenance covers everything |
 | `prune-images.yml` | weekly, after each Release run, manual (dry run by default) | Deletes tagged image versions whose tags are not `devel`, `latest` or `X.Y.Z`, and `sha256-<digest>` attestation tags whose image the registry no longer serves; untagged versions are never deleted |
 | `fuzz.yml` | pull requests, push to `develop`, nightly, manual | cargo-fuzz (libFuzzer) on the untrusted-input parsers and coverage geometry: 30 s per target on PRs, 10 min nightly; crashing inputs uploaded as an artifact. See [fuzz/README.md](../fuzz/README.md) |
+| `image-full.yml` | pull requests touching the Dockerfile or build inputs, weekly, manual | Builds the default Dockerfile target, with the client compiled inside the image as Release does, and runs the same smoke test as the CI docker job. Not a required check |
 | `treemap.yml` | tags `v*`, manual | Runs `scripts/wasm-size-report.sh` (a separate fat-LTO build) and opens a PR to `develop` when `docs/images/wasm-bundle-treemap.svg` changed |
 | `release-prep.yml` | manual | Starts a release: creates `release/<version>` from `develop`, bumps the version and `Cargo.lock`, dates the changelog, opens the PR into `main` |
 | `branch-policy.yml` | pull requests | Fails PRs into `main` unless they come from a same-repo `release/*` or `hotfix/*` branch (git-flow) |

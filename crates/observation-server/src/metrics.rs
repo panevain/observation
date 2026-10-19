@@ -1,11 +1,13 @@
 //! Prometheus metrics: HTTP request middleware and an optional exporter.
 //!
 //! Instrumentation uses the `metrics` facade, which does nothing until a
-//! recorder is installed, so tests and library users pay nothing. The binary
+//! recorder is installed, and [`track`] skips its work until then, so tests and
+//! library users pay nothing. The binary
 //! installs the Prometheus recorder only when `OBS_METRICS_BIND` is set and
 //! serves it on that separate address, keeping `/metrics` off the public port.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use axum::Router;
@@ -19,7 +21,8 @@ use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder, Promet
 pub const HTTP_REQUESTS: &str = "observation_http_requests_total";
 /// Request latency in seconds, labelled by method and matched route.
 pub const HTTP_DURATION: &str = "observation_http_request_duration_seconds";
-/// Bundle lookups: `result` is `hit`, `miss` or `stale_served`.
+/// Bundle cache outcomes: `hit` per request served from a fresh file; `built`,
+/// `stale_served` and `error` per upstream refresh, which concurrent requests share.
 pub const BUNDLE_CACHE: &str = "observation_bundle_cache_total";
 /// Tile lookups: `result` is `hit`, `miss`, `revalidated` or `stale_served`.
 pub const TILE_CACHE: &str = "observation_tile_cache_total";
@@ -31,17 +34,30 @@ const DURATION_BUCKETS: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
 ];
 
+/// Set once a recorder is installed; until then [`track`] does no work.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
 /// Installs the global Prometheus recorder and returns the render handle.
 /// Latency is exported as a real histogram (aggregatable across replicas).
 pub fn install() -> Result<PrometheusHandle, BuildError> {
-    PrometheusBuilder::new()
+    let handle = PrometheusBuilder::new()
         .set_buckets_for_metric(Matcher::Full(HTTP_DURATION.to_owned()), DURATION_BUCKETS)?
-        .install_recorder()
+        .install_recorder()?;
+    ENABLED.store(true, Ordering::Relaxed);
+    Ok(handle)
 }
 
-/// Serves `GET /metrics` on `addr` until the process exits.
-pub async fn serve(addr: SocketAddr, handle: PrometheusHandle) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+/// Binds the metrics address. Done by the caller before [`serve`] so that a
+/// busy port stops start-up instead of failing in a background task.
+pub async fn bind(addr: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+    tokio::net::TcpListener::bind(addr).await
+}
+
+/// Serves `GET /metrics` on `listener` until the process exits.
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    handle: PrometheusHandle,
+) -> std::io::Result<()> {
     tracing::info!(addr = %listener.local_addr()?, "serving metrics");
     // `install_recorder` does not run upkeep, which drains histogram buffers.
     let upkeep = handle.clone();
@@ -78,6 +94,9 @@ fn method_label(m: &axum::http::Method) -> &'static str {
 /// matched pattern (`/api/tiles/{z}/{x}/{y}`), never the raw path, so label
 /// cardinality stays bounded.
 pub async fn track(req: Request, next: Next) -> Response {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return next.run(req).await;
+    }
     let method = method_label(req.method());
     let route = req
         .extensions()
@@ -112,6 +131,7 @@ mod tests {
     // A current-thread runtime keeps the thread-local recorder in place across awaits.
     #[tokio::test]
     async fn timed_out_requests_are_counted() {
+        ENABLED.store(true, Ordering::Relaxed);
         let recorder = PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
         let _guard = metrics::set_default_local_recorder(&recorder);

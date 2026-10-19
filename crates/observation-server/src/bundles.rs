@@ -46,7 +46,6 @@ impl BundleService {
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
-        metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "miss").increment(1);
         self.flight(key, bbox).await
     }
 
@@ -86,6 +85,7 @@ impl BundleService {
     async fn produce(&self, key: &str, bbox: BBox) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
         if let Some((bytes, true)) = self.cache.get_bundle(key).await {
+            metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
         let data = match self.overpass.fetch(&bbox).await {
@@ -97,6 +97,7 @@ impl BundleService {
                     tracing::warn!(key, error = %e, "serving expired bundle because upstream failed");
                     return Ok(stale);
                 }
+                metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "error").increment(1);
                 return Err(e);
             }
         };
@@ -111,6 +112,7 @@ impl BundleService {
             generated,
         );
         let bytes = Bytes::from(bundle.encode());
+        metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);
         if let Err(e) = self.cache.put_bundle(key, &bytes).await {
             tracing::warn!(key, error = %e, "could not cache bundle");
         }

@@ -24,6 +24,8 @@ pub enum ConfigError {
     Ttl(String),
     #[error("OBS_METRICS_BIND `{0}` is not a socket address like 127.0.0.1:9090")]
     MetricsBind(String),
+    #[error("OBS_METRICS_BIND `{0}` must differ from OBS_BIND")]
+    MetricsBindSame(String),
     #[error("OBS_LOG_FORMAT `{0}` is not `text` or `json`")]
     LogFormat(String),
 }
@@ -63,7 +65,7 @@ pub struct Config {
     pub log_format: LogFormat,
 }
 
-/// How tracing events are written to stderr.
+/// How tracing events are written (to stdout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
     /// Human-readable lines.
@@ -88,7 +90,7 @@ impl Config {
         let or = |k: &str, d: &str| get(k).unwrap_or_else(|| d.to_owned());
 
         let bind_raw = or("OBS_BIND", "0.0.0.0:8080");
-        let bind = bind_raw.parse().map_err(|_| ConfigError::Bind(bind_raw))?;
+        let bind: SocketAddr = bind_raw.parse().map_err(|_| ConfigError::Bind(bind_raw))?;
         let ttl_days = match get("OBS_BUNDLE_TTL_DAYS") {
             None => 7.0,
             Some(raw) => raw
@@ -100,6 +102,9 @@ impl Config {
         let metrics_bind = get("OBS_METRICS_BIND")
             .map(|raw| raw.parse().map_err(|_| ConfigError::MetricsBind(raw)))
             .transpose()?;
+        if metrics_bind == Some(bind) {
+            return Err(ConfigError::MetricsBindSame(bind.to_string()));
+        }
         let log_format = match get("OBS_LOG_FORMAT").as_deref() {
             None | Some("text") => LogFormat::Text,
             Some("json") => LogFormat::Json,
@@ -202,6 +207,14 @@ mod tests {
         assert_eq!(
             Config::from_lookup(lookup(&[("OBS_METRICS_BIND", "nope")])).unwrap_err(),
             ConfigError::MetricsBind("nope".into())
+        );
+        assert_eq!(
+            Config::from_lookup(lookup(&[
+                ("OBS_BIND", "127.0.0.1:9090"),
+                ("OBS_METRICS_BIND", "127.0.0.1:9090"),
+            ]))
+            .unwrap_err(),
+            ConfigError::MetricsBindSame("127.0.0.1:9090".into())
         );
         assert_eq!(
             Config::from_lookup(lookup(&[("OBS_LOG_FORMAT", "xml")])).unwrap_err(),

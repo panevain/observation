@@ -17,8 +17,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(addr) = config.metrics_bind {
         let handle = observation_server::metrics::install()?;
+        let listener = observation_server::metrics::bind(addr)
+            .await
+            .map_err(|e| format!("could not bind OBS_METRICS_BIND {addr}: {e}"))?;
         tokio::spawn(async move {
-            if let Err(e) = observation_server::metrics::serve(addr, handle).await {
+            if let Err(e) = observation_server::metrics::serve(listener, handle).await {
                 tracing::error!(error = %e, "metrics server stopped");
             }
         });
@@ -29,7 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = config.bind;
     let state = AppState::new(config)?;
 
-    let listener = tokio::net::TcpListener::bind(bind).await?;
+    let listener = tokio::net::TcpListener::bind(bind)
+        .await
+        .map_err(|e| format!("could not bind OBS_BIND {bind}: {e}"))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
     axum::serve(listener, app(state))
         .with_graceful_shutdown(shutdown_signal())

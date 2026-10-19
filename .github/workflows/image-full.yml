@@ -7,7 +7,9 @@ name: Image (full build)
 on:
   pull_request:
     paths:
+      - .github/workflows/image-full.yml
       - Dockerfile
+      - scripts/smoke-test-image.sh
       - .dockerignore
       - rust-toolchain.toml
       - Trunk.toml
@@ -43,6 +45,9 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: observation:full
           # Reads Release's cache; never writes it.
           cache-from: type=gha,scope=image
+      - name: Smoke test
+        run: scripts/smoke-test-image.sh observation:full

@@ -2,8 +2,11 @@
 rules:
   cache-poisoning:
     ignore:
-      # Caches are only written from main and develop (save-if in each rust-cache step), never
-      # from pull requests, and the release image is built from a clean Docker cache scope.
+      # ci.yml publishes nothing but a 14-day artifact: images and tags come from release.yml,
+      # which uses its own cache scope. rust-cache only saves from main and develop (save-if).
+      # mise-action and the Docker GHA cache can also save from pull requests, but GitHub scopes
+      # those caches to the PR ref, so they cannot reach the default branch. Revisit if a
+      # publish or deploy step is ever added to ci.yml.
       - ci.yml
   dangerous-triggers:
     ignore:

@@ -5,15 +5,16 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-first() { grep -Eom1 "$1" "$2" | head -n1; }
+# First match of an extended regex in a file; empty (not a failure) when absent.
+first() { grep -Eom1 "$1" "$2" | head -n1 || true; }
 
 rust="$(first '^channel *= *"[^"]+"' rust-toolchain.toml | sed -E 's/.*"([^"]+)"/\1/')"
 trunk="$(first '"github:trunk-rs/trunk" *= *"[^"]+"' mise.toml | sed -E 's/.*= *"([^"]+)"/\1/')"
 [[ -n "$rust" && -n "$trunk" ]] || { echo "could not read pinned versions" >&2; exit 1; }
 
 fail=0
-check() { # label actual
-  if [[ "$2" != "$1" ]]; then echo "mismatch: $3 has '$2', expected '$1'" >&2; fail=1; fi
+check() { # expected actual label
+  if [[ "$2" != "$1" ]]; then echo "mismatch: $3 has '${2:-<nothing>}', expected '$1'" >&2; fail=1; fi
 }
 
 check "$rust" "$(first '^rust-version *= *"[^"]+"' Cargo.toml | sed -E 's/.*"([^"]+)"/\1/')" "Cargo.toml rust-version"

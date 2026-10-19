@@ -18,7 +18,7 @@ Dependabot targets `develop` (see `.github/dependabot.yml`).
 
 1. Run the **Prepare release** workflow (Actions → Prepare release → version `0.2.0`). It creates `release/0.2.0` from `develop`, bumps `version` in the root `Cargo.toml`, updates `Cargo.lock`, dates the `CHANGELOG.md` entry and opens the PR into `main`. By hand: `git switch -c release/0.2.0 origin/develop`, make the same edits, and open the PR. Checks do not start on a PR created by the workflow's `GITHUB_TOKEN`; push a follow-up commit to the branch to start them.
 2. Review the PR `release/0.2.0` → `main`. When it is green, merge it with a merge commit.
-3. Tag the merge commit on `main` (admins only, see the tag ruleset): `git tag -a v0.2.0 -m "v0.2.0" origin/main && git push origin v0.2.0`. The Release workflow publishes `ghcr.io/panevain/observation:0.2.0` and `:latest` with a cosign signature, provenance and an SBOM, and the Treemap workflow opens a PR to refresh the bundle-size chart.
+3. Tag the merge commit on `main` (admins only, see the tag ruleset): `git tag -a v0.2.0 -m "v0.2.0" origin/main && git push origin v0.2.0`. The Release workflow publishes `ghcr.io/panevain/observation:0.2.0` and `:latest` with a cosign signature, provenance and an SBOM, and the Treemap workflow opens a PR to `develop` to refresh the bundle-size chart (push a follow-up commit to that branch to start its checks, as for the release PR). Both workflows need Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
 4. Open a PR `release/0.2.0` → `develop` to bring the version bump back, then delete the release branch.
 
 Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`.
