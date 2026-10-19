@@ -354,7 +354,10 @@ impl OverpassClient {
                         tracing::warn!(error = %e.without_url(), "overpass body failed");
                         ApiError::Upstream("map data download failed".into())
                     })?
-                    .ok_or_else(|| ApiError::Upstream("map data response too large".into()))?;
+                    .ok_or_else(|| {
+                        tracing::warn!(max = MAX_RESPONSE_BYTES, "overpass body too large");
+                        ApiError::Upstream("map data response too large".into())
+                    })?;
                 return parse_response(&body).map_err(|e| {
                     tracing::warn!(error = %e, "overpass response unusable");
                     ApiError::Upstream("map data provider returned an unusable response".into())

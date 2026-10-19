@@ -1,6 +1,6 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
-use crate::camera::{CameraModel, CameraPlacement};
+use crate::camera::{CameraModel, CameraPlacement, is_https_url};
 use crate::coverage::CoverageParams;
 use crate::geo::{BBox, LatLon};
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,7 @@ impl SceneFile {
     }
 
     pub fn from_json(s: &str) -> Result<Self, SceneError> {
-        let scene: Self = serde_json::from_str(s)?;
+        let mut scene: Self = serde_json::from_str(s)?;
         if scene.format != SCENE_FORMAT {
             return Err(SceneError::Format);
         }
@@ -90,7 +90,13 @@ impl SceneFile {
         if !(0.0..=10.0).contains(&scene.params.subject_height_m) {
             return Err(SceneError::Invalid("subject height"));
         }
-        for m in &scene.custom_models {
+        for m in &mut scene.custom_models {
+            // Drop a non-https spec-sheet link rather than the whole scene: a
+            // planted `javascript:` link is neutralised, and a scene autosaved
+            // before links were checked still restores (losing only the link).
+            if m.source.as_deref().is_some_and(|s| !is_https_url(s)) {
+                m.source = None;
+            }
             m.validate()?;
         }
         Ok(scene)
@@ -156,18 +162,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_script_links_in_custom_models() {
+    fn drops_script_links_from_custom_models() {
         let json = r#"{"format":"observation-scene","version":1,"area":{"kind":"demo"},
             "origin":{"lat":0.0,"lon":0.0},
             "custom_models":[{"id":"evil","vendor":"","name":"x","kind":"Bullet",
               "hfov_deg":90.0,"vfov_deg":50.0,"resolution":[1920,1080],
               "source":"javascript:alert(document.domain)"}]}"#;
-        assert!(matches!(
-            SceneFile::from_json(json),
-            Err(SceneError::Model(_))
-        ));
+        let s = SceneFile::from_json(json).unwrap();
+        assert_eq!(s.custom_models.len(), 1, "the model survives");
+        assert_eq!(s.custom_models[0].source, None, "the link does not");
         let ok = json.replace("javascript:alert(document.domain)", "https://example.com");
-        assert_eq!(SceneFile::from_json(&ok).unwrap().custom_models.len(), 1);
+        assert_eq!(
+            SceneFile::from_json(&ok).unwrap().custom_models[0]
+                .source
+                .as_deref(),
+            Some("https://example.com")
+        );
     }
 
     #[test]

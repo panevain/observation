@@ -43,10 +43,12 @@ pub(crate) async fn read_capped(
     mut resp: reqwest::Response,
     max: usize,
 ) -> Result<Option<Bytes>, reqwest::Error> {
-    if resp.content_length().is_some_and(|n| n > max as u64) {
+    let declared = resp.content_length();
+    if declared.is_some_and(|n| n > max as u64) {
         return Ok(None);
     }
-    let mut body = Vec::new();
+    // At most `max` here, so the cast cannot truncate.
+    let mut body = Vec::with_capacity(declared.map_or(0, |n| n as usize));
     while let Some(chunk) = resp.chunk().await? {
         if body.len() + chunk.len() > max {
             return Ok(None);
@@ -171,4 +173,25 @@ pub fn app(state: AppState) -> Router {
             CONTENT_SECURITY_POLICY,
         ))
         .layer(TraceLayer::new_for_http())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(len: usize) -> reqwest::Response {
+        reqwest::Response::from(axum::http::Response::new(reqwest::Body::from(vec![
+            7u8;
+            len
+        ])))
+    }
+
+    #[tokio::test]
+    async fn read_capped_boundary() {
+        let body = read_capped(response(16), 16).await.unwrap();
+        assert_eq!(body.map(|b| b.len()), Some(16), "exactly `max` is accepted");
+        assert!(read_capped(response(0), 16).await.unwrap().is_some());
+        // Declared length over the cap: refused before reading.
+        assert!(read_capped(response(17), 16).await.unwrap().is_none());
+    }
 }
