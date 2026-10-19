@@ -1,0 +1,3 @@
+# Copy to mise.local.toml (gitignored) and set a real contact.
+[env]
+OBS_CONTACT = "you@example.com"

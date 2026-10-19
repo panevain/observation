@@ -1,0 +1,29 @@
+# Dev tooling and tasks: https://mise.jdx.dev
+# Rust itself comes from rust-toolchain.toml (rustup), not from mise.
+# Machine-specific settings (OBS_CONTACT) go in mise.local.toml, which is gitignored;
+# copy mise.local.toml.example to start.
+
+[tools]
+"github:trunk-rs/trunk" = "0.21.14" # keep in sync with TRUNK_VERSION in the Dockerfile
+
+[env]
+OBS_BIND = "127.0.0.1:8080"
+
+[tasks.build]
+description = "Build the wasm client into dist/"
+run = "trunk build --release --locked"
+
+[tasks.serve]
+description = "Build the client, then run the server from the repo root"
+depends = ["build"]
+run = "cargo run --locked -p observation-server"
+
+[tasks.check]
+description = "Run the same checks as CI (fmt, clippy, tests)"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --locked --workspace --exclude observation-client --all-targets -- -D warnings",
+  "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings",
+  "cargo test --locked --workspace --exclude observation-client",
+  "cargo test --locked -p observation-client --lib",
+]
