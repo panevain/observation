@@ -15,6 +15,8 @@ const CLICK_SLOP_PX: f32 = 5.0;
 const MIN_DISTANCE: f32 = 8.0;
 const MAX_DISTANCE: f32 = 1200.0;
 const ORBIT_SPEED: f32 = 0.006;
+/// Near clip distance, metres. Well inside [`MIN_DISTANCE`].
+const NEAR_PLANE_M: f32 = 1.0;
 
 /// Spherical orbit around a focus point.
 #[derive(Debug, Component)]
@@ -88,6 +90,12 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     // unlike the default, needs no LUT assets (and their zstd decoder).
     commands.spawn((
         Camera3d::default(),
+        // WebGL remaps depth to [-1, 1], which costs most of the precision of
+        // reverse-Z; a 1 m near plane keeps the ground layers apart at range.
+        Projection::Perspective(PerspectiveProjection {
+            near: NEAR_PLANE_M,
+            ..default()
+        }),
         bevy::core_pipeline::tonemapping::Tonemapping::KhronosPbrNeutral,
         Msaa::Sample4,
         orbit.transform(),
@@ -235,8 +243,8 @@ fn pointer(
     let Ok((camera, cam_t, mut orbit)) = cam.single_mut() else {
         return;
     };
-    let over_ui = wants.wants_any_pointer_input();
-    let viewport_origin = camera.logical_viewport_rect().map_or(Vec2::ZERO, |r| r.min);
+    let viewport = camera.logical_viewport_rect();
+    let viewport_origin = viewport.map_or(Vec2::ZERO, |r| r.min);
 
     let mut cast = |screen: Vec2| -> Option<Hit> {
         let ray = camera
@@ -267,6 +275,13 @@ fn pointer(
         let (a, b) = (active[0].position(), active[1].position());
         let mid = (a + b) / 2.0;
         let dist = a.distance(b);
+        let on_ui = wants.wants_any_pointer_input() || viewport.is_some_and(|r| !r.contains(mid));
+        if st.last_touch_mid.is_none() && on_ui {
+            // A pinch that starts on a panel scrolls the panel, not the map.
+            st.gesture = Gesture::None;
+            st.touch_id = None;
+            return;
+        }
         if let (Some(lm), Some(ld)) = (st.last_touch_mid, st.last_touch_dist) {
             pan(&mut orbit, mid - lm, window.height());
             if dist > 1.0 {
@@ -307,6 +322,11 @@ fn pointer(
         _ => motion.delta,
     };
     st.last_pos = pos;
+
+    // The docked panels are not egui areas, so egui does not report the pointer
+    // as over them: anything outside the 3D viewport belongs to the UI.
+    let over_ui = wants.wants_any_pointer_input()
+        || pos.is_some_and(|p| viewport.is_some_and(|r| !r.contains(p)));
 
     // Scroll zoom.
     if !over_ui && scroll.delta.y != 0.0 {

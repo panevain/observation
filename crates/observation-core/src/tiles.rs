@@ -18,6 +18,42 @@ impl TileId {
         (z <= MAX_ZOOM && x < n && y < n).then_some(Self { z, x, y })
     }
 
+    /// The tile one zoom level up that contains this one.
+    pub fn parent(&self) -> Option<Self> {
+        (self.z > 0).then(|| Self {
+            z: self.z - 1,
+            x: self.x / 2,
+            y: self.y / 2,
+        })
+    }
+
+    /// The four tiles one zoom level down, row-major from the north-west.
+    pub fn children(&self) -> Option<[Self; 4]> {
+        (self.z < MAX_ZOOM).then(|| {
+            let (z, x, y) = (self.z + 1, self.x * 2, self.y * 2);
+            [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| Self {
+                z,
+                x: x + dx,
+                y: y + dy,
+            })
+        })
+    }
+
+    /// Where this tile sits inside its ancestor `levels` zooms up, as
+    /// `[left, top, right, bottom]` fractions of the ancestor.
+    pub fn within_ancestor(&self, levels: u8) -> Option<(Self, [f32; 4])> {
+        let up = self.z.checked_sub(levels)?;
+        let n = 1u32 << levels;
+        let a = Self {
+            z: up,
+            x: self.x >> levels,
+            y: self.y >> levels,
+        };
+        let (fx, fy) = ((self.x % n) as f32, (self.y % n) as f32);
+        let k = n as f32;
+        Some((a, [fx / k, fy / k, (fx + 1.0) / k, (fy + 1.0) / k]))
+    }
+
     /// North-west corner of the tile.
     pub fn nw(&self) -> LatLon {
         LatLon::new(
@@ -112,6 +148,21 @@ mod tests {
         assert!((lon_to_x(b.west, 18) - 130_000.0).abs() < 1e-6);
         assert!((lat_to_y(b.north, 18) - 87_000.0).abs() < 1e-6);
         assert!(TileId::new(2, 4, 0).is_none());
+    }
+
+    #[test]
+    fn family() {
+        let t = TileId::new(17, 21_000, 45_001).unwrap();
+        assert_eq!(t.parent(), TileId::new(16, 10_500, 22_500));
+        assert!(t.children().unwrap().iter().all(|c| c.parent() == Some(t)));
+        assert_eq!(TileId::new(0, 0, 0).unwrap().parent(), None);
+        assert_eq!(TileId::new(19, 0, 0).unwrap().children(), None);
+        // x = 21000 = 4·5250 + 0, y = 45001 = 4·11250 + 1.
+        let (a, f) = t.within_ancestor(2).unwrap();
+        assert_eq!(a, TileId::new(15, 5_250, 11_250).unwrap());
+        assert_eq!(f, [0.0, 0.25, 0.25, 0.5]);
+        assert_eq!(t.within_ancestor(0), Some((t, [0.0, 0.0, 1.0, 1.0])));
+        assert_eq!(t.within_ancestor(18), None);
     }
 
     #[test]

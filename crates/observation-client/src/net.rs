@@ -110,6 +110,14 @@ impl Tiles {
         }
     }
 
+    /// Returns the tile if loaded, without requesting it.
+    pub fn ready(&self, t: TileId) -> Option<Handle<Image>> {
+        match self.tiles.get(&t) {
+            Some(TileState::Ready(h)) => Some(h.clone()),
+            _ => None,
+        }
+    }
+
     /// Drops queued requests that are no longer wanted (e.g. after panning the map).
     pub fn retain_queue(&mut self, keep: impl Fn(&TileId) -> bool) {
         let tiles = &mut self.tiles;

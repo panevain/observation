@@ -70,7 +70,7 @@ fn draw_ui(
     mut persist: MessageWriter<PersistAction>,
 ) -> Result {
     // Register tile textures with egui before borrowing the context.
-    let tile_ids = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
+    let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
         contexts.add_image(EguiTextureHandle::Weak(h.id()))
     });
     let ctx = contexts.ctx_mut()?.clone();
@@ -171,7 +171,7 @@ fn draw_ui(
             &ctx,
             &t,
             &mut d.picker,
-            &tile_ids,
+            &tile_draws,
             &d.config.tile_attribution,
             &mut d.ui.map_open,
         )
