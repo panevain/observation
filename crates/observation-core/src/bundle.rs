@@ -105,6 +105,9 @@ pub struct OsmRoad {
     pub points: Vec<LatLon>,
 }
 
+/// `highway=*` values for ways people walk or cycle on rather than drive.
+pub const FOOT_WAYS: [&str; 5] = ["footway", "path", "pedestrian", "cycleway", "steps"];
+
 /// Estimated carriageway width from OSM `highway`, `lanes` and `width` tags.
 /// Returns `None` for highway types that are not part of the street surface.
 pub fn road_width_m(highway: &str, lanes: Option<&str>, width: Option<&str>) -> Option<f32> {
@@ -116,7 +119,7 @@ pub fn road_width_m(highway: &str, lanes: Option<&str>, width: Option<&str>) -> 
         "residential" | "unclassified" => 6.0,
         "living_street" => 5.0,
         "service" => 4.0,
-        "footway" | "path" | "pedestrian" | "cycleway" | "steps" => 2.0,
+        h if FOOT_WAYS.contains(&h) => 2.0,
         "motorway_link" | "trunk_link" | "primary_link" | "secondary_link" | "tertiary_link" => 6.0,
         _ => return None,
     };

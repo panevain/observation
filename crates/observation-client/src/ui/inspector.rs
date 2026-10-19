@@ -2,12 +2,12 @@
 
 use super::UiData;
 use super::widgets::{
-    bar, danger, hint, primary, row, secondary, section, segmented, stat, swatch,
+    bar, danger, hint, primary, row, secondary, section, segmented, stat, swatch, swatch_button,
 };
 use crate::cameras::camera_color;
 use crate::state::{OverlayMode, Tool};
 use crate::theme::{Tokens, to_rgb};
-use bevy_egui::egui::{self, Color32, DragValue, RichText, ScrollArea, TextEdit};
+use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
     ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, DoriLevel, Lighting,
     forward_from_yaw_pitch, is_https_url,
@@ -208,7 +208,7 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             {
                 toggle = Some((c.id, on));
             }
-            swatch(ui, t, camera_color(c, &d.models, t));
+            swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
             let model = d
                 .models
                 .get(&c.model_id)
@@ -384,7 +384,7 @@ fn color_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement)
     let kind = d.models.kind_of(&c.model_id);
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new("Colour").color(t.text_muted));
-        let mut rgb = to_rgb(camera_color(c, &d.models, t));
+        let mut rgb = to_rgb(camera_color(&d.scene, c, &d.models, t));
         if ui
             .color_edit_button_srgb(&mut rgb)
             .on_hover_text("Colour of the camera, its view cone and its per-camera overlay")
@@ -408,24 +408,6 @@ fn color_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement)
     });
 }
 
-fn swatch_button(ui: &mut egui::Ui, t: &Tokens, color: Color32, on: bool) -> egui::Response {
-    let size = egui::vec2(t.space.lg, t.space.lg);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let stroke = if on || resp.hovered() {
-        egui::Stroke::new(t.stroke_width * 2.0, t.text)
-    } else {
-        egui::Stroke::new(t.stroke_width, t.border)
-    };
-    ui.painter().rect(
-        rect,
-        egui::CornerRadius::same(t.radius.sm),
-        color,
-        stroke,
-        egui::StrokeKind::Inside,
-    );
-    resp
-}
-
 fn compass(yaw: f32) -> &'static str {
     const NAMES: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     NAMES[((yaw.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
@@ -444,9 +426,7 @@ fn model_combo(
         .find(|m| m.id == *value)
         .map_or_else(|| value.clone(), CameraModel::display_name);
     let query_id = egui::Id::new((id, "model-search"));
-    // (search text, whether the popup was open last frame)
-    let (mut query, mut was_open): (String, bool) =
-        ui.data_mut(|m| m.get_temp(query_id)).unwrap_or_default();
+    let mut query: String = ui.data_mut(|m| m.get_temp(query_id)).unwrap_or_default();
     let resp = egui::ComboBox::from_id_salt(id)
         .width(ui.available_width())
         .height(360.0)
@@ -457,10 +437,11 @@ fn model_combo(
                     .hint_text("Search models…")
                     .desired_width(f32::INFINITY),
             );
-            if !was_open {
-                // Type straight away after opening.
+            // Typing always goes to the search box while the list is open, even
+            // after Enter took its focus, so keys never reach the shortcuts.
+            let entered = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if !search.has_focus() {
                 search.request_focus();
-                was_open = true;
             }
             let mut first = None;
             let mut any = false;
@@ -487,9 +468,10 @@ fn model_combo(
             if !any {
                 ui.label(RichText::new("No matching models").weak());
             }
-            // Enter picks the first match.
-            if search.lost_focus()
-                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            // Enter picks the first match of a search (an empty one matches
+            // everything, so Enter alone changes nothing).
+            if entered
+                && !query.trim().is_empty()
                 && let Some(m) = first
             {
                 *value = m;
@@ -499,9 +481,8 @@ fn model_combo(
     if resp.inner.is_none() {
         // Closed: start the next search afresh.
         query.clear();
-        was_open = false;
     }
-    ui.data_mut(|m| m.insert_temp(query_id, (query, was_open)));
+    ui.data_mut(|m| m.insert_temp(query_id, query));
 }
 
 /// Every whitespace-separated word of `query` appears in the model's vendor,

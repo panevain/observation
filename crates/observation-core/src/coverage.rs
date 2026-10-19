@@ -368,13 +368,18 @@ impl StaticLayers {
 }
 
 fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    p.distance(closest_on_segment(p, a, b))
+}
+
+/// The point of segment `a`–`b` closest to `p`.
+pub fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
     let ab = b - a;
     let t = if ab.length_squared() < 1e-12 {
         0.0
     } else {
         ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
     };
-    p.distance(a + ab * t)
+    a + ab * t
 }
 
 /// Cells seen by one camera (sorted, unique indices).

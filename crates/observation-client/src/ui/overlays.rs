@@ -52,8 +52,10 @@ pub fn mode_banner(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) 
                 .corner_radius(egui::CornerRadius::same(t.radius.md))
                 .inner_margin(egui::Margin::symmetric(t.space.lg as i8, t.space.sm as i8))
                 .show(ui, |ui| {
+                    // Fills the viewport's width and wraps rather than spilling over
+                    // the panels when the viewport is narrow.
                     ui.set_width(width - 2.0 * t.space.lg);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(
                             RichText::new(format!("{} mode", tool.label()).to_uppercase())
                                 .size(t.font.title)
@@ -63,14 +65,7 @@ pub fn mode_banner(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) 
                         ui.label(RichText::new(tool.banner()).color(on));
                         selection_chip(ui, t, d, selected);
                         if tool != Tool::Select {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        RichText::new("Esc to exit").size(t.font.caption).color(on),
-                                    );
-                                },
-                            );
+                            ui.label(RichText::new("Esc to exit").size(t.font.caption).color(on));
                         }
                     });
                 });
@@ -105,7 +100,7 @@ fn selection_chip(
                     };
                     ui.label(RichText::new(text).strong());
                 } else if let Some(c) = selected {
-                    swatch(ui, t, camera_color(c, &d.models, t));
+                    swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
                     ui.label(RichText::new(&c.label).strong());
                 } else {
                     ui.label(RichText::new("No camera selected").color(t.text_muted));

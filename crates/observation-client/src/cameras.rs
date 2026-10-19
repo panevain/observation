@@ -3,7 +3,7 @@
 use crate::coverage::cone_for;
 use crate::state::{Models, Scene, UiState};
 use crate::theme::{Tokens, from_rgb, to_bevy, to_rgb};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy_egui::egui::Color32;
 use observation_core::camera::CameraPlacement;
@@ -41,11 +41,26 @@ impl BodyAssets {
     }
 }
 
-/// A camera's colour: the user's choice, else the default for its type.
-pub fn camera_color(c: &CameraPlacement, models: &Models, tokens: &Tokens) -> Color32 {
-    c.color
-        .map(from_rgb)
-        .unwrap_or_else(|| tokens.kind_color(models.kind_of(&c.model_id)))
+/// A camera's colour: the user's choice, else a shade of its type's colour that
+/// depends on how many cameras of that type (without their own colour) come
+/// before it in `scene`.
+pub fn camera_color(
+    scene: &Scene,
+    c: &CameraPlacement,
+    models: &Models,
+    tokens: &Tokens,
+) -> Color32 {
+    if let Some(rgb) = c.color {
+        return from_rgb(rgb);
+    }
+    let kind = models.kind_of(&c.model_id);
+    let nth = scene
+        .cameras
+        .iter()
+        .take_while(|o| o.id != c.id)
+        .filter(|o| o.color.is_none() && models.kind_of(&o.model_id) == kind)
+        .count();
+    tokens.kind_shade(kind, nth)
 }
 
 pub struct CamerasPlugin;
@@ -109,7 +124,7 @@ fn sync_bodies(
                 if *t != want {
                     *t = want;
                 }
-                let m = assets.material(camera_color(c, &models, &tokens), &mut materials);
+                let m = assets.material(camera_color(&scene, c, &models, &tokens), &mut materials);
                 if mat.0 != m {
                     mat.0 = m;
                 }
@@ -122,7 +137,7 @@ fn sync_bodies(
         if existing.contains_key(&c.id) {
             continue;
         }
-        let material = assets.material(camera_color(c, &models, &tokens), &mut materials);
+        let material = assets.material(camera_color(&scene, c, &models, &tokens), &mut materials);
         commands
             .spawn((
                 CameraBody(c.id),
@@ -139,6 +154,14 @@ fn sync_bodies(
                 ));
             });
     }
+    // Drop materials no camera uses any more, such as the colours a drag
+    // across the colour picker passes through.
+    let used: HashSet<[u8; 3]> = scene
+        .cameras
+        .iter()
+        .map(|c| to_rgb(camera_color(&scene, c, &models, &tokens)))
+        .collect();
+    assets.materials.retain(|rgb, _| used.contains(rgb));
 }
 
 fn draw_frustums(
@@ -157,7 +180,7 @@ fn draw_frustums(
             continue;
         };
         let cone = cone_for(c, m, &scene.params);
-        let mut color = to_bevy(camera_color(c, &models, &tokens));
+        let mut color = to_bevy(camera_color(&scene, c, &models, &tokens));
         if !c.enabled {
             color = color.with_alpha(0.25);
         }
