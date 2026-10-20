@@ -69,18 +69,6 @@ pub struct WorldColors {
     pub region: Color32,
 }
 
-/// Colour coding of the editing tools (banner, tool rail).
-#[derive(Debug, Clone, Copy)]
-pub struct ToolColors {
-    pub select: Color32,
-    pub place: Color32,
-    pub aim: Color32,
-    pub move_: Color32,
-    pub region: Color32,
-    /// Text on any of the above.
-    pub on_tool: Color32,
-}
-
 #[derive(Debug, Clone, Copy, Resource)]
 pub struct Tokens {
     pub dark: bool,
@@ -110,7 +98,6 @@ pub struct Tokens {
     /// Default camera colour per type, in [`CameraKind::ALL`] order. Cool and
     /// neutral hues only: the warm band belongs to the coverage ramp.
     pub kind_colors: [Color32; 7],
-    pub tools: ToolColors,
     /// Overlap ramp: seen by 1, 2, 3, 4+ cameras.
     pub coverage_ramp: [Color32; 4],
     /// Bounding box colour in the map picker.
@@ -188,16 +175,6 @@ const KIND_COLORS_DARK: [Color32; 7] = [
     Color32::from_rgb(0x7D, 0x87, 0x96),
 ];
 
-/// Darkened so white banner text clears 4.5:1 on every tool colour.
-const TOOL_COLORS: ToolColors = ToolColors {
-    select: Color32::from_rgb(0x3B, 0x5B, 0xDB),
-    place: Color32::from_rgb(0x23, 0x7A, 0x35),
-    aim: Color32::from_rgb(0xC2, 0x41, 0x0C),
-    move_: Color32::from_rgb(0x7F, 0x37, 0xC0),
-    region: Color32::from_rgb(0x0A, 0x74, 0x88),
-    on_tool: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-};
-
 const COVERAGE_RAMP: [Color32; 4] = [
     Color32::from_rgba_unmultiplied_const(0xF5, 0xC5, 0x42, 140),
     Color32::from_rgba_unmultiplied_const(0xF2, 0x8C, 0x28, 165),
@@ -226,7 +203,6 @@ impl Tokens {
             scrim: Color32::from_rgba_unmultiplied_const(0x10, 0x14, 0x1A, 150),
             camera_palette: CAMERA_PALETTE,
             kind_colors: KIND_COLORS_LIGHT,
-            tools: TOOL_COLORS,
             coverage_ramp: COVERAGE_RAMP,
             selection_box: Color32::from_rgb(0x3B, 0x5B, 0xDB),
             world: WorldColors {
@@ -266,7 +242,6 @@ impl Tokens {
             scrim: Color32::from_rgba_unmultiplied_const(0x00, 0x00, 0x00, 170),
             camera_palette: CAMERA_PALETTE,
             kind_colors: KIND_COLORS_DARK,
-            tools: TOOL_COLORS,
             coverage_ramp: COVERAGE_RAMP,
             selection_box: Color32::from_rgb(0x7C, 0x95, 0xF2),
             world: WorldColors {
@@ -292,18 +267,6 @@ impl Tokens {
             Self::dark()
         } else {
             Self::light()
-        }
-    }
-
-    /// Colour coding for an editing tool.
-    pub fn tool_color(&self, tool: crate::state::Tool) -> Color32 {
-        use crate::state::Tool;
-        match tool {
-            Tool::Select => self.tools.select,
-            Tool::Place => self.tools.place,
-            Tool::Aim => self.tools.aim,
-            Tool::Move => self.tools.move_,
-            Tool::Region => self.tools.region,
         }
     }
 

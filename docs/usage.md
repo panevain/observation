@@ -9,8 +9,8 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 | Region | What is in it |
 | --- | --- |
 | Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, remembered in this browser) and **?** |
-| Tool rail (left) | Five tools: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. A colour-coded banner across the top shows the active mode (Select blue, Place green, Aim orange, Move purple, Region teal), what a click will do, and the selected camera (or, in Place, the model being placed). Messages appear as toasts at the bottom |
+| Tool rail (left) | Five tools, each an icon with its name; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
+| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, or in Region the corners so far). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move and a cell cursor for Region. Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
 | Status bar | A hint for the active tool, and the OpenStreetMap attribution link |
 

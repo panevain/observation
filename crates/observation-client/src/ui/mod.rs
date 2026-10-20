@@ -182,7 +182,8 @@ fn draw_ui(
         viewport_rect.max.y,
     ));
 
-    overlays::mode_banner(&ctx, &t, viewport_rect, &d);
+    overlays::mode_pill(&ctx, &t, viewport_rect, &d);
+    overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
     overlays::toasts(&ctx, &t, viewport_rect, &d.ui);
     if d.loading.area.is_some() {
         overlays::loading(&ctx, &t, viewport_rect);

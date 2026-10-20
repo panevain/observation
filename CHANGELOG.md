@@ -14,7 +14,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - `image-full.yml` builds the in-image client path before release, and a `zizmor (workflow audit)` check (required in the rulesets: re-import them).
 - Treemap workflow that refreshes the bundle-size chart for each release tag.
 - `cargo-nextest` and `cargo-llvm-cov` support (`mise run coverage`), and a zizmor audit of the workflows.
-- A colour-coded mode banner across the top of the 3D view (Select, Place, Aim, Move, Region) with the selected camera or the model being placed.
+- A mode pill at the top left of the 3D view (Select, Place, Aim, Move, Region) with what a click does and the selected camera or the model being placed; the pointer changes with the tool, and the tool rail has icons.
 - Search in the camera model lists.
 - Per-camera colours: each type has a default colour (further cameras of a type get lighter and darker shades), and any camera's colour can be changed.
 - The demo street starts with ten example cameras.
@@ -31,7 +31,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - The Analysis section is last in the inspector.
 - Scene files store a camera's colour as an optional `color` (`[r, g, b]`); the old `color_index` is ignored.
 - Camera type colours are now cool and neutral (doorbell blue, floodlight green, spotlight sky blue, bullet indigo, turret teal, dome violet, indoor slate) so cones never match a step of the yellow-to-purple coverage ramp; a type gets two extra shades before they repeat. Saved per-camera colours are unchanged.
-- The selection and aim markers are white over a dark casing, and the region outline is dark, so none of them reads as a camera or coverage colour. Tool colours are darker so banner text meets 4.5:1 contrast.
+- The selection and aim markers are white over a dark casing, and the region outline is dark, so none of them reads as a camera or coverage colour.
 - Flatter widget style: buttons show hover and press by fill instead of an outline, input fields have a 3:1 edge, corners are smaller (4/6/8 px) and floating cards and menus have a shadow.
 
 ### Fixed

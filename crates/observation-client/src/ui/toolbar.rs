@@ -1,7 +1,7 @@
 //! Top bar, tool rail and status bar.
 
 use super::UiData;
-use super::widgets::{hint, secondary};
+use super::widgets::{hint, rail_button, secondary};
 use crate::icons;
 use crate::persist::PersistAction;
 use crate::state::{LoadArea, Tool};
@@ -88,27 +88,25 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         for tool in Tool::ALL {
             let on = d.ui.tool == tool;
             let disabled = tool.needs_selection() && d.ui.selected.is_none();
-            let color = t.tool_color(tool);
-            let text = RichText::new(tool.label())
-                .size(t.font.caption)
-                .strong()
-                .color(if on { t.tools.on_tool } else { t.text });
-            let btn = egui::Button::new(text)
-                .fill(if on { color } else { t.surface })
-                .stroke(Stroke::new(
-                    t.stroke_width * if on { 2.0 } else { 1.0 },
-                    if on { color } else { t.border },
-                ))
-                .min_size(size);
-            let resp = ui
-                .add_enabled(!disabled, btn)
-                .on_hover_text(format!(
-                    "{} ({})\n{}",
+            // The active tool is the one accent-filled button, with the filled
+            // icon, so the mode never depends on hue alone.
+            let glyph = icons::tool(tool);
+            let icon = if on {
+                icons::fill::rich(glyph)
+            } else {
+                RichText::new(glyph)
+            };
+            let tip = if disabled {
+                format!(
+                    "{} ({})\nSelect a camera first",
                     tool.label(),
-                    tool.shortcut(),
-                    tool.hint()
-                ))
-                .on_disabled_hover_text("Select a camera first");
+                    tool.shortcut()
+                )
+            } else {
+                format!("{} ({})\n{}", tool.label(), tool.shortcut(), tool.hint())
+            };
+            let resp =
+                rail_button(ui, &t, icon, tool.label(), size, on, !disabled).on_hover_text(tip);
             if resp.clicked() {
                 d.ui.tool = tool;
             }

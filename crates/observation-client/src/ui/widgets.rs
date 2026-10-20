@@ -140,3 +140,63 @@ pub fn row(ui: &mut Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut Ui)) {
     add(ui);
     ui.end_row();
 }
+
+/// A tool-rail button: icon over a caption, centred. `on` fills it with the
+/// accent and uses the filled icon weight.
+pub fn rail_button(
+    ui: &mut Ui,
+    t: &Tokens,
+    icon: RichText,
+    label: &str,
+    size: egui::Vec2,
+    on: bool,
+    enabled: bool,
+) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let fill = if on {
+        t.accent
+    } else if enabled && resp.hovered() {
+        t.hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    let fg = match (on, enabled) {
+        (true, _) => t.on_accent,
+        (false, true) => t.text,
+        (false, false) => t.text_muted.gamma_multiply(0.6),
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::CornerRadius::same(t.radius.md), fill);
+    let icon = egui::WidgetText::from(icon.size(t.font.title + 2.0).color(fg)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::FontSelection::Default,
+    );
+    let caption = egui::WidgetText::from(RichText::new(label).size(t.font.caption).color(fg))
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            rect.width() - 2.0,
+            egui::FontSelection::Default,
+        );
+    let gap = 2.0;
+    let total = icon.size().y + gap + caption.size().y;
+    let top = rect.center().y - total / 2.0;
+    let icon_pos = egui::pos2(rect.center().x - icon.size().x / 2.0, top);
+    let caption_pos = egui::pos2(
+        rect.center().x - caption.size().x / 2.0,
+        top + icon.size().y + gap,
+    );
+    painter.galley(icon_pos, icon, fg);
+    painter.galley(caption_pos, caption, fg);
+    resp
+}

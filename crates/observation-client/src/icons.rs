@@ -3,6 +3,7 @@
 //! Regular glyphs render inline in any label. Fill glyphs (the active tool)
 //! need [`fill::rich`].
 
+use crate::state::Tool;
 use bevy_egui::egui::FontDefinitions;
 use observation_core::camera::CameraKind;
 
@@ -21,6 +22,7 @@ egui_phosphor::subset! {
     }
 }
 
+pub use set::fill;
 pub use set::regular::*;
 
 /// Registers both icon fonts. Call after the text fonts are in place: the
@@ -28,6 +30,17 @@ pub use set::regular::*;
 pub fn install(fonts: &mut FontDefinitions) {
     set::regular::add_to_fonts(fonts);
     set::fill::add_as_family(fonts);
+}
+
+/// Glyph for an editing tool (the same codepoint in both weights).
+pub fn tool(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Select => CURSOR,
+        Tool::Place => MAP_PIN_PLUS,
+        Tool::Aim => CROSSHAIR,
+        Tool::Move => ARROWS_OUT_CARDINAL,
+        Tool::Region => POLYGON,
+    }
 }
 
 /// Glyph shown next to a camera of this type.

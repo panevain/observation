@@ -71,7 +71,7 @@ impl Tool {
         }
     }
 
-    /// Short instruction for the mode banner.
+    /// Short instruction for the mode pill.
     pub fn banner(self) -> &'static str {
         match self {
             Self::Select => "Click a camera to select it",

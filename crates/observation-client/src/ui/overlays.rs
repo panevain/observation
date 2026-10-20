@@ -3,8 +3,9 @@
 use super::UiData;
 use super::widgets::{hint, primary, swatch};
 use crate::cameras::camera_color;
+use crate::icons;
 use crate::state::{ToastKind, Tool, UiState};
-use crate::theme::{MIN_VIEWPORT, Tokens};
+use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
 
 /// Full-screen block for viewports below the supported minimum.
@@ -34,45 +35,82 @@ pub fn viewport_gate(ctx: &egui::Context, t: &Tokens, w: f32, h: f32) {
         });
 }
 
-/// Colour-coded banner across the top of the viewport: the active tool, what
-/// a click will do, and which camera is selected.
-pub fn mode_banner(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
+/// A compact pill at the top left of the viewport: the active tool, what a
+/// click will do, and which camera is selected. Neutral, so it never competes
+/// with the coverage and camera colours; the rail and the cursor carry the
+/// mode too.
+pub fn mode_pill(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
     let tool = d.ui.tool;
-    let fill = t.tool_color(tool);
-    let on = t.tools.on_tool;
     let selected = d.ui.selected.and_then(|id| d.scene.camera(id));
-    let width = vp.width() - 2.0 * t.space.md;
-    egui::Area::new(Id::new("mode-banner"))
+    let max_width = vp.width() - 2.0 * t.space.md;
+    egui::Area::new(Id::new("mode-pill"))
         .order(Order::Middle)
         .fixed_pos(vp.min + vec2(t.space.md, t.space.md))
         .interactable(false)
         .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(fill)
-                .corner_radius(egui::CornerRadius::same(t.radius.md))
-                .inner_margin(egui::Margin::symmetric(t.space.lg as i8, t.space.sm as i8))
+            t.card()
+                .corner_radius(egui::CornerRadius::same(t.radius.lg))
+                .inner_margin(egui::Margin::symmetric(t.space.md as i8, t.space.xs as i8))
                 .show(ui, |ui| {
-                    // Fills the viewport's width and wraps rather than spilling over
-                    // the panels when the viewport is narrow.
-                    ui.set_width(width - 2.0 * t.space.lg);
+                    ui.set_max_width(max_width - 2.0 * t.space.md);
                     ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = t.space.sm;
                         ui.label(
-                            RichText::new(format!("{} mode", tool.label()).to_uppercase())
+                            icons::fill::rich(icons::tool(tool))
                                 .size(t.font.title)
-                                .strong()
-                                .color(on),
+                                .color(t.accent),
                         );
-                        ui.label(RichText::new(tool.banner()).color(on));
+                        ui.label(
+                            RichText::new(tool.label())
+                                .family(strong_family())
+                                .color(t.text),
+                        );
+                        ui.label(RichText::new(tool.banner()).color(t.text_muted));
                         selection_chip(ui, t, d, selected);
                         if tool != Tool::Select {
-                            ui.label(RichText::new("Esc to exit").size(t.font.caption).color(on));
+                            keycap(ui, t, "Esc");
                         }
                     });
                 });
         });
 }
 
-/// What the banner says about the selection (or, for Place, the model).
+/// A key name drawn as a keycap.
+pub fn keycap(ui: &mut egui::Ui, t: &Tokens, key: &str) {
+    egui::Frame::new()
+        .fill(t.surface_sunken)
+        .stroke(Stroke::new(t.stroke_width, t.border))
+        .corner_radius(egui::CornerRadius::same(t.radius.sm))
+        .inner_margin(egui::Margin::symmetric(t.space.xs as i8, 0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(key)
+                    .size(t.font.caption)
+                    .monospace()
+                    .color(t.text_muted),
+            );
+        });
+}
+
+/// Cursor over the 3D view for each tool, so the mode shows where the click
+/// lands.
+pub fn tool_cursor(ctx: &egui::Context, vp: egui::Rect, tool: Tool) {
+    let over_view = ctx
+        .pointer_hover_pos()
+        .is_some_and(|p| vp.contains(p) && !ctx.is_pointer_over_egui());
+    if !over_view {
+        return;
+    }
+    ctx.set_cursor_icon(match tool {
+        Tool::Select => egui::CursorIcon::Default,
+        Tool::Place => egui::CursorIcon::Copy,
+        Tool::Aim => egui::CursorIcon::Crosshair,
+        Tool::Move => egui::CursorIcon::Move,
+        Tool::Region => egui::CursorIcon::Cell,
+    });
+}
+
+/// What the pill says about the selection (or, for Place, the model).
 fn selection_chip(
     ui: &mut egui::Ui,
     t: &Tokens,
@@ -80,9 +118,9 @@ fn selection_chip(
     selected: Option<&observation_core::camera::CameraPlacement>,
 ) {
     egui::Frame::new()
-        .fill(t.surface_raised)
-        .corner_radius(egui::CornerRadius::same(t.radius.lg))
-        .inner_margin(egui::Margin::symmetric(t.space.md as i8, t.space.xs as i8))
+        .fill(t.surface_sunken)
+        .corner_radius(egui::CornerRadius::same(t.radius.md))
+        .inner_margin(egui::Margin::symmetric(t.space.sm as i8, 0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if d.ui.tool == Tool::Place {
