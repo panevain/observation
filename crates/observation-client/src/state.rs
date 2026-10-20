@@ -251,11 +251,19 @@ impl UiState {
         self.push_toast(ToastKind::Info, text.into(), Some(action), 8.0);
     }
 
-    /// Errors stay until dismissed, so they are never missed.
+    /// A passing problem with what the user just did (a refused click, an
+    /// invalid form): shown for a while, then gone.
     pub fn error(&mut self, text: impl Into<String>) {
+        self.push_toast(ToastKind::Error, text.into(), None, 8.0);
+    }
+
+    /// A failure that loses or blocks work (a load, an import, a restore):
+    /// stays until dismissed, so it is never missed.
+    pub fn error_sticky(&mut self, text: impl Into<String>) {
         self.push_toast(ToastKind::Error, text.into(), None, f32::INFINITY);
     }
 
+    /// A sticky error with a button (Retry).
     pub fn error_with(&mut self, text: impl Into<String>, action: ToastAction) {
         self.push_toast(ToastKind::Error, text.into(), Some(action), f32::INFINITY);
     }
@@ -267,6 +275,8 @@ impl UiState {
             self.toasts
                 .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
         }
+        // The same message again replaces the old one instead of piling up.
+        self.toasts.retain(|t| t.kind != kind || t.text != text);
         self.toasts.push(Toast {
             kind,
             text,
@@ -384,8 +394,10 @@ impl Scene {
         self.cameras = s.cameras.clone();
         self.params = s.params;
         self.region = s.region.clone();
-        // `next_id` only grows, so an id is never handed out twice, even
-        // after undoing the camera that had it.
+        // Never hand out an id the restored cameras already use (an import
+        // resets `next_id`, so undoing past one can bring back higher ids).
+        let max = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
+        self.next_id = self.next_id.max(max + 1);
         models.custom = s.custom_models.clone();
         self.touch();
     }

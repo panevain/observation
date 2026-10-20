@@ -149,6 +149,19 @@ const CAMERA_PALETTE: [Color32; 8] = [
     Color32::from_rgb(0x00, 0x9E, 0x73),
 ];
 
+/// As [`CAMERA_PALETTE`], with the same lifted indigo and slate as
+/// [`KIND_COLORS_DARK`].
+const CAMERA_PALETTE_DARK: [Color32; 8] = [
+    Color32::from_rgb(0x00, 0x72, 0xB2),
+    Color32::from_rgb(0x1B, 0x7F, 0x3B),
+    Color32::from_rgb(0x56, 0xB4, 0xE9),
+    Color32::from_rgb(0x55, 0x58, 0xD6),
+    Color32::from_rgb(0x14, 0xB8, 0xA6),
+    Color32::from_rgb(0x8B, 0x7C, 0xF6),
+    Color32::from_rgb(0x7D, 0x87, 0x96),
+    Color32::from_rgb(0x00, 0x9E, 0x73),
+];
+
 /// Doorbell blue, floodlight green, spotlight sky, bullet indigo, turret teal,
 /// dome violet, indoor slate. Cool and neutral hues so they never read as a
 /// step of the yellow-to-purple coverage ramp; each type also has an icon, so
@@ -240,7 +253,7 @@ impl Tokens {
             danger: Color32::from_rgb(0xF0, 0x6A, 0x6A),
             warning: Color32::from_rgb(0xF0, 0xB0, 0x4A),
             scrim: Color32::from_rgba_unmultiplied_const(0x00, 0x00, 0x00, 170),
-            camera_palette: CAMERA_PALETTE,
+            camera_palette: CAMERA_PALETTE_DARK,
             kind_colors: KIND_COLORS_DARK,
             coverage_ramp: COVERAGE_RAMP,
             selection_box: Color32::from_rgb(0x7C, 0x95, 0xF2),

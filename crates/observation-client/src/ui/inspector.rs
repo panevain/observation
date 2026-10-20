@@ -51,6 +51,10 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let s = d.coverage.stats;
     if d.scene.cameras.is_empty() {
         empty_state(ui, d, t);
+        // A region drawn earlier can still be switched off or cleared.
+        if d.scene.region.is_some() {
+            region_controls(ui, d, t);
+        }
         return;
     }
     ui.columns(3, |c| {
@@ -202,9 +206,10 @@ fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         ui.add(
             DragValue::new(&mut p.subject_height_m)
                 .range(0.0..=2.5)
-                .speed(0.05)
+                .speed(drag_speed(ui, 0.05))
                 .suffix(" m"),
-        );
+        )
+        .on_hover_text(NUMBER_TIP);
         for (label, h) in [("Ground", 0.0), ("Torso", 1.0), ("Face", 1.6)] {
             if ui.add(secondary(t, label)).clicked() {
                 p.subject_height_m = h;
@@ -499,7 +504,7 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                             .suffix("°")
                             .max_decimals(1),
                     )
-                    .on_hover_text("Negative looks down");
+                    .on_hover_text(format!("Negative looks down. {NUMBER_TIP}"));
                 });
                 row(ui, t, "Roll", |ui| {
                     ui.add(
@@ -769,27 +774,48 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                     ui.add(
                         DragValue::new(&mut m.hfov_deg)
                             .range(10.0..=180.0)
+                            .speed(drag_speed(ui, 1.0))
                             .suffix("°"),
-                    );
+                    )
+                    .on_hover_text(NUMBER_TIP);
                 });
                 row(ui, t, "Vertical FOV", |ui| {
                     ui.add(
                         DragValue::new(&mut m.vfov_deg)
                             .range(10.0..=180.0)
+                            .speed(drag_speed(ui, 1.0))
                             .suffix("°"),
-                    );
+                    )
+                    .on_hover_text(NUMBER_TIP);
                 });
                 row(ui, t, "Resolution", |ui| {
                     ui.horizontal(|ui| {
-                        ui.add(DragValue::new(&mut m.resolution[0]).range(160..=8192));
+                        let speed = drag_speed(ui, 1.0);
+                        ui.add(
+                            DragValue::new(&mut m.resolution[0])
+                                .range(160..=8192)
+                                .speed(speed),
+                        )
+                        .on_hover_text(NUMBER_TIP);
                         ui.label("×");
-                        ui.add(DragValue::new(&mut m.resolution[1]).range(120..=8192));
+                        ui.add(
+                            DragValue::new(&mut m.resolution[1])
+                                .range(120..=8192)
+                                .speed(speed),
+                        )
+                        .on_hover_text(NUMBER_TIP);
                     });
                 });
                 row(ui, t, "IR range", |ui| {
                     let mut r = m.ir_range_m.unwrap_or(0.0);
                     if ui
-                        .add(DragValue::new(&mut r).range(0.0..=60.0).suffix(" m"))
+                        .add(
+                            DragValue::new(&mut r)
+                                .range(0.0..=60.0)
+                                .speed(drag_speed(ui, 1.0))
+                                .suffix(" m"),
+                        )
+                        .on_hover_text(NUMBER_TIP)
                         .changed()
                     {
                         m.ir_range_m = Some(r);

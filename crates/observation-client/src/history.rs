@@ -6,7 +6,9 @@
 //! Undoing across an area change reloads that area and keeps the restored
 //! cameras.
 
-use crate::state::{LoadArea, Loading, Models, Scene, Snapshot, ToastAction, UiState};
+use crate::state::{LoadArea, Loading, Models, Scene, Snapshot, ToastAction, Tool, UiState};
+use bevy::input::ButtonState;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy_egui::input::EguiWantsInput;
@@ -61,26 +63,39 @@ impl Plugin for HistoryPlugin {
 
 /// Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y redo. Text fields keep
 /// their own undo while focused.
-fn shortcuts(keys: Res<ButtonInput<KeyCode>>, wants: Res<EguiWantsInput>, mut ui: ResMut<UiState>) {
+///
+/// Reads key events by their logical key, so the shortcuts follow the key
+/// labels on any layout (Z and Y swap places on QWERTZ), and every press
+/// counts: macOS browsers send no key-up for keys pressed with Cmd held, so
+/// the Z key's pressed state cannot be trusted there.
+fn shortcuts(
+    mut events: MessageReader<KeyboardInput>,
+    keys: Res<ButtonInput<KeyCode>>,
+    wants: Res<EguiWantsInput>,
+    mut ui: ResMut<UiState>,
+) {
     if wants.wants_any_keyboard_input() {
+        events.clear();
         return;
     }
     // Held now, or let go this very frame (a quick chord on a slow frame).
     let held = |k: [KeyCode; 2]| keys.any_pressed(k) || keys.any_just_released(k);
     let command = held([KeyCode::ControlLeft, KeyCode::ControlRight])
         || held([KeyCode::SuperLeft, KeyCode::SuperRight]);
-    if !command {
-        return;
-    }
     let shift = held([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    if keys.just_pressed(KeyCode::KeyZ) {
-        ui.history_request = Some(if shift {
-            HistoryOp::Redo
-        } else {
-            HistoryOp::Undo
-        });
-    } else if keys.just_pressed(KeyCode::KeyY) {
-        ui.history_request = Some(HistoryOp::Redo);
+    for e in events.read() {
+        if !command || e.state != ButtonState::Pressed {
+            continue;
+        }
+        let Key::Character(c) = &e.logical_key else {
+            continue;
+        };
+        match c.to_lowercase().as_str() {
+            "z" if shift => ui.history_request = Some(HistoryOp::Redo),
+            "z" => ui.history_request = Some(HistoryOp::Undo),
+            "y" => ui.history_request = Some(HistoryOp::Redo),
+            _ => {}
+        }
     }
 }
 
@@ -97,74 +112,91 @@ fn record(
     mut load: MessageWriter<LoadArea>,
 ) {
     let h = &mut *history;
-    if let Some(op) = ui.history_request.take() {
-        let (from, to) = match op {
-            HistoryOp::Undo => (&mut h.undo, &mut h.redo),
-            HistoryOp::Redo => (&mut h.redo, &mut h.undo),
-        };
-        if let (Some(target), Some(current)) = (from.pop(), h.last.take()) {
-            let verb = match op {
-                HistoryOp::Undo => "Undid",
-                HistoryOp::Redo => "Redid",
-            };
-            let what = match op {
-                HistoryOp::Undo => describe(&target, &current),
-                HistoryOp::Redo => describe(&current, &target),
-            };
-            // Any offered Undo now points at a different step.
-            ui.toasts
-                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
-            ui.info(format!("{verb}: {what}"));
-            if target.area != current.area
-                && let Some(area) = target.area
-            {
-                load.write(LoadArea {
-                    area,
-                    keep_cameras: true,
-                });
-            }
-            to.push(current);
-            scene.restore(&target, &mut models);
-            if ui.selected.is_some_and(|id| scene.camera(id).is_none()) {
-                ui.selected = None;
-            }
-            h.last = Some(target);
+    // An edit in progress (a drag, a focused text field) or an area in
+    // flight: neither record nor jump, or the half-done edit would be lost.
+    let busy = mouse.get_pressed().next().is_some()
+        || touches.iter().next().is_some()
+        || wants.wants_any_keyboard_input()
+        || loading.area.is_some();
+    if busy {
+        ui.history_request = None;
+        // The first snapshot can be taken mid-load: the start-up restore must
+        // be undoable to if the user replaces it before its area arrives.
+        if h.last.is_none() && scene.area.is_some() {
+            h.last = Some(scene.snapshot(&models));
             h.last_revision = scene.revision;
         }
         return;
     }
 
-    if scene.revision == h.last_revision {
-        return;
+    // Record a settled edit before any jump, so it is part of the history.
+    if scene.revision != h.last_revision && scene.area.is_some() {
+        let now = scene.snapshot(&models);
+        h.last_revision = scene.revision;
+        match h.last.take() {
+            None => h.last = Some(now),
+            Some(last) if last == now => h.last = Some(last),
+            Some(last) => {
+                // An offered Undo belongs to the step before this one.
+                ui.toasts
+                    .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+                if let Some(text) = destructive(&last, &now) {
+                    ui.info_with(text, ToastAction::Undo);
+                }
+                h.undo.push(last);
+                if h.undo.len() > MAX_STEPS {
+                    h.undo.remove(0);
+                }
+                h.redo.clear();
+                h.last = Some(now);
+            }
+        }
     }
-    // Wait for the edit to settle: nothing held, no text field focused, no
-    // area in flight.
-    let busy = mouse.get_pressed().next().is_some()
-        || touches.iter().next().is_some()
-        || wants.wants_any_keyboard_input()
-        || loading.area.is_some();
-    if busy || scene.area.is_none() {
-        return;
-    }
-    let now = scene.snapshot(&models);
-    h.last_revision = scene.revision;
-    let Some(last) = h.last.take() else {
-        h.last = Some(now);
+
+    let Some(op) = ui.history_request.take() else {
         return;
     };
-    if last == now {
-        h.last = Some(last);
+    let (from, to) = match op {
+        HistoryOp::Undo => (&mut h.undo, &mut h.redo),
+        HistoryOp::Redo => (&mut h.redo, &mut h.undo),
+    };
+    // Check both before taking either: an empty stack must not drop `last`.
+    if from.is_empty() || h.last.is_none() {
         return;
     }
-    if let Some(text) = destructive(&last, &now) {
-        ui.info_with(text, ToastAction::Undo);
+    let (Some(target), Some(current)) = (from.pop(), h.last.take()) else {
+        return;
+    };
+    let (verb, what) = match op {
+        HistoryOp::Undo => ("Undid", describe(&target, &current)),
+        HistoryOp::Redo => ("Redid", describe(&current, &target)),
+    };
+    // Any offered Undo now points at a different step.
+    ui.toasts
+        .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+    ui.info(format!("{verb}: {what}"));
+    if target.area != current.area
+        && let Some(area) = target.area
+    {
+        load.write(LoadArea {
+            area,
+            keep_cameras: true,
+        });
     }
-    h.undo.push(last);
-    if h.undo.len() > MAX_STEPS {
-        h.undo.remove(0);
+    to.push(current);
+    scene.restore(&target, &mut models);
+    // UI state that pointed into the old document.
+    if ui.selected.is_some_and(|id| scene.camera(id).is_none()) {
+        ui.selected = None;
     }
-    h.redo.clear();
-    h.last = Some(now);
+    if ui.selected.is_none() && ui.tool.needs_selection() {
+        ui.tool = Tool::Select;
+    }
+    if models.get(&ui.place_model).is_none() {
+        ui.place_model = UiState::default().place_model;
+    }
+    h.last = Some(target);
+    h.last_revision = scene.revision;
 }
 
 /// A step that removes work worth offering an Undo for, described.

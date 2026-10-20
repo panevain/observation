@@ -89,7 +89,7 @@ fn restore(
             });
         }
         Some(Err(e)) => {
-            ui.error(format!(
+            ui.error_sticky(format!(
                 "Saved scene could not be restored ({e}); starting fresh"
             ));
             load.write(LoadArea::demo());
@@ -167,7 +167,7 @@ fn receive_imports(
                 });
                 ui.info(format!("Imported scene with {n} camera(s)"));
             }
-            Err(e) => ui.error(format!("Import failed: {e}")),
+            Err(e) => ui.error_sticky(format!("Import failed: {e}")),
         }
     }
 }

@@ -222,7 +222,8 @@ fn draw_ui(
     }
     if let Some(area) = d.loading.area {
         let elapsed = d.ui.now - d.loading.started;
-        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed) {
+        let cancellable = d.loading.request.as_ref().is_some_and(|r| !r.keep_cameras);
+        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed, cancellable) {
             Some(overlays::LoadingChoice::Cancel) => {
                 // The reply, when it comes, is ignored as superseded.
                 d.loading.area = None;

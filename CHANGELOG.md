@@ -26,7 +26,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Hovering a camera's row highlights it in the 3D view, and hovering a camera in the view highlights its row.
 - A compass dial for a camera's heading, with its field of view drawn as a wedge; Ctrl (or Cmd) makes number fields drag ten times faster (Shift already slows them).
 - Undo and redo (top-bar arrows, Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y) for camera edits, deletes, the region, analysis settings, custom models, imports and area changes; a drag or typed name is one step. Deleting cameras or loading an area over them shows a message with an Undo button.
-- Errors stay on screen until dismissed, and a failed area load has a Retry button.
+- Failed area loads, imports and restores stay on screen until dismissed, and a failed area load has a Retry button; a repeated message replaces the earlier copy.
 - The loading card shows how long the request has taken, explains slow first loads, and offers Cancel and Use demo street instead.
 - A "No cameras yet" empty state with a Place camera button replaces the 0% figures.
 - The status bar shows whether the autosave reached browser storage (Saved, or Not saved with a hint to export).

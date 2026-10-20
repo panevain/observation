@@ -279,12 +279,16 @@ pub enum LoadingChoice {
 /// The loading card: what is being fetched, for how long, and a way out.
 /// A first request for a new place waits on the public Overpass service,
 /// which can take most of a minute, so after a few seconds it says so.
+/// `cancellable` is false for reloads that keep the document's cameras (a
+/// restore, an import, an undo across areas): the document already belongs to
+/// the incoming area, so stopping would leave it on the wrong map.
 pub fn loading(
     ctx: &egui::Context,
     t: &Tokens,
     vp: egui::Rect,
     area: AreaRef,
     elapsed: f64,
+    cancellable: bool,
 ) -> Option<LoadingChoice> {
     let mut choice = None;
     egui::Area::new(Id::new("loading"))
@@ -327,7 +331,7 @@ pub fn loading(
                 ).wrap());
                 ui.add_space(t.space.sm);
                 ui.horizontal(|ui| {
-                    if ui.add(secondary(t, "Cancel")).clicked() {
+                    if cancellable && ui.add(secondary(t, "Cancel")).clicked() {
                         choice = Some(LoadingChoice::Cancel);
                     }
                     if area != AreaRef::Demo
