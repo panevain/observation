@@ -432,10 +432,10 @@ impl OverpassClient {
         }
         Err(match last {
             Some(Transient::TimedOut) => ApiError::UpstreamTimeout(
-                "the map data provider took too long to answer, please retry shortly".into(),
+                "the map data provider took too long to answer; try again shortly, or draw a smaller area".into(),
             ),
             Some(Transient::Failed) => {
-                ApiError::Upstream("could not reach the map data provider".into())
+                ApiError::Upstream("could not reach the map data provider; try again shortly".into())
             }
             // Busy, or every interpreter started cooling down while we queued.
             Some(Transient::Busy) | None => {
@@ -478,7 +478,7 @@ impl OverpassClient {
                     AttemptError::Retry(Transient::Failed)
                 }
                 _ => AttemptError::Fatal(ApiError::Upstream(format!(
-                    "map data provider returned {}",
+                    "the map data provider answered with an error (HTTP {})",
                     status.as_u16()
                 ))),
             });
@@ -496,7 +496,10 @@ impl OverpassClient {
                     max = MAX_RESPONSE_BYTES,
                     "overpass body too large"
                 );
-                AttemptError::Fatal(ApiError::Upstream("map data response too large".into()))
+                AttemptError::Fatal(ApiError::Upstream(
+                    "this area has more map data than the server accepts; draw a smaller area"
+                        .into(),
+                ))
             })?;
         parse_response(&body).map_err(|e| {
             tracing::warn!(endpoint, error = %e, "overpass response unusable");
@@ -507,10 +510,10 @@ impl OverpassClient {
                 }
                 // Out of memory and the like: the same query fails the same way.
                 ParseError::Remark(_) => AttemptError::Fatal(ApiError::Upstream(
-                    "the map data provider could not run the query".into(),
+                    "the map data provider could not process this area; try a smaller area".into(),
                 )),
                 ParseError::Json(_) => AttemptError::Fatal(ApiError::Upstream(
-                    "map data provider returned an unusable response".into(),
+                    "the map data provider sent a reply the server could not read; try again shortly".into(),
                 )),
             }
         })

@@ -289,6 +289,17 @@ async fn bad_bboxes_are_400() {
 }
 
 #[tokio::test]
+async fn oversized_box_error_names_the_size_and_the_limit() {
+    let h = offline();
+    // About 11 km wide and tall.
+    let (status, _, body) = get_uri(&h.app, "/api/area?bbox=47.0,-122.3,47.1,-122.2").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let msg = json(&body)["error"].as_str().unwrap().to_owned();
+    assert!(msg.contains("wide") && msg.contains("tall"), "{msg}");
+    assert!(msg.contains("20 to 500 m"), "{msg}");
+}
+
+#[tokio::test]
 async fn demo_is_a_decodable_bundle() {
     let h = offline();
     let (status, headers, body) = get_uri(&h.app, "/api/demo").await;
@@ -406,7 +417,8 @@ async fn overpass_rate_limit_gives_503_then_fails_fast() {
     let (status, headers, body) = get_uri(&h.app, &area_uri()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(headers[header::RETRY_AFTER], "30");
-    assert!(json(&body)["error"].is_string());
+    let msg = json(&body)["error"].as_str().unwrap().to_owned();
+    assert!(msg.contains("busy") && msg.contains("30 s"), "{msg}");
     assert_eq!(
         mock.hits.load(Ordering::SeqCst),
         2,

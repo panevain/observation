@@ -53,6 +53,8 @@ pub async fn area(
 
 /// `GET /api/demo`: the fixture bundle built at startup.
 pub async fn demo(State(state): State<AppState>) -> Result<Response, ApiError> {
-    let bytes = state.demo().cloned().ok_or(ApiError::NotFound)?;
+    let bytes = state.demo().cloned().ok_or(ApiError::NotFound(
+        "the demo street is not available on this server",
+    ))?;
     Ok(bundle_response(bytes, "public, max-age=3600"))
 }

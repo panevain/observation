@@ -131,10 +131,10 @@ impl CameraModel {
 
     /// Basic sanity checks for catalog and custom entries.
     pub fn validate(&self) -> Result<(), CatalogError> {
-        let bad = |why: &str| {
+        let bad = |why: String| {
             Err(CatalogError::Invalid {
                 id: self.id.clone(),
-                why: why.to_owned(),
+                why,
             })
         };
         if self.id.is_empty()
@@ -143,22 +143,31 @@ impl CameraModel {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         {
-            return bad("id must be non-empty kebab-case");
+            return bad("the id must be lowercase letters, digits and dashes".to_owned());
         }
-        if !(1.0..=360.0).contains(&self.hfov_deg) || !(1.0..=360.0).contains(&self.vfov_deg) {
-            return bad("fov out of range");
+        for (what, fov) in [("horizontal", self.hfov_deg), ("vertical", self.vfov_deg)] {
+            if !(1.0..=360.0).contains(&fov) {
+                return bad(format!(
+                    "{what} field of view is {fov}°, but must be 1° to 360°"
+                ));
+            }
         }
         if self.resolution[0] < 16 || self.resolution[1] < 16 {
-            return bad("resolution too small");
+            let [w, h] = self.resolution;
+            return bad(format!(
+                "resolution {w} × {h} is too small; each side needs at least 16 px"
+            ));
         }
-        if self.ir_range_m.is_some_and(|r| !(0.0..=200.0).contains(&r)) {
-            return bad("ir range out of range");
+        if let Some(r) = self.ir_range_m.filter(|r| !(0.0..=200.0).contains(r)) {
+            return bad(format!("IR range is {r} m, but must be 0 to 200 m"));
         }
         // The UI opens `source` as a link, and imported scene files carry their
         // own custom models: anything but a plain https URL (`javascript:`,
         // `data:`, ...) would run in or navigate away from the app's origin.
         if self.source.as_deref().is_some_and(|s| !is_https_url(s)) {
-            return bad("source must be an https:// URL");
+            return bad(
+                "the source link must be an https:// URL without spaces or a user name".to_owned(),
+            );
         }
         Ok(())
     }
@@ -294,7 +303,7 @@ pub fn yaw_pitch_from_forward(v: Vec3) -> Option<(f32, f32)> {
 pub enum CatalogError {
     #[error("catalog parse error: {0}")]
     Parse(String),
-    #[error("invalid model `{id}`: {why}")]
+    #[error("model `{id}`: {why}")]
     Invalid { id: String, why: String },
     #[error("duplicate model id `{0}`")]
     Duplicate(String),

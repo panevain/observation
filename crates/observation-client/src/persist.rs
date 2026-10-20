@@ -16,8 +16,9 @@ const AUTOSAVE_INTERVAL: f32 = 1.5;
 pub struct Persist {
     last_saved: String,
     timer: f32,
-    import_tx: Sender<String>,
-    import_rx: Receiver<String>,
+    /// The text of a picked file, or why it could not be read.
+    import_tx: Sender<Result<String, String>>,
+    import_rx: Receiver<Result<String, String>>,
 }
 
 impl Default for Persist {
@@ -67,8 +68,10 @@ pub fn load_font() -> UiFont {
 
 fn save_font(font: Res<UiFont>) {
     // Not worth a warning: the font just reverts on the next visit.
-    if !font.is_added() && !storage_set(FONT_KEY, font.key()) {
-        bevy::log::warn!("could not store the font choice");
+    if !font.is_added()
+        && let Err(why) = storage_set(FONT_KEY, font.key())
+    {
+        bevy::log::warn!("could not store the font choice: {why:?}");
     }
 }
 
@@ -90,7 +93,7 @@ fn restore(
         }
         Some(Err(e)) => {
             ui.error_sticky(format!(
-                "Saved scene could not be restored ({e}); starting fresh"
+                "Your saved scene could not be restored: {e}. Starting with the demo street instead"
             ));
             load.write(LoadArea::demo());
         }
@@ -119,12 +122,15 @@ fn autosave(
     };
     let json = file.to_json();
     if json != p.last_saved {
-        if storage_set(STORAGE_KEY, &json) {
-            ui.save = SaveState::Saved(real.elapsed_secs_f64());
-            p.last_saved = json;
-        } else {
-            // Leave `last_saved` alone so the next check tries again.
-            ui.save = SaveState::Failed;
+        match storage_set(STORAGE_KEY, &json) {
+            Ok(()) => {
+                ui.save = SaveState::Saved(real.elapsed_secs_f64());
+                p.last_saved = json;
+            }
+            Err(why) => {
+                // Leave `last_saved` alone so the next check tries again.
+                ui.save = SaveState::Failed(why);
+            }
         }
     }
 }
@@ -139,8 +145,12 @@ fn handle_actions(
     for a in actions.read() {
         match a {
             PersistAction::Export => match scene.to_file(&models) {
-                Some(file) => download("observation-scene.json", &file.to_json()),
-                None => ui.error("Nothing to export yet"),
+                Some(file) => {
+                    if let Err(e) = download("observation-scene.json", &file.to_json()) {
+                        ui.error(format!("Could not export the scene: {e}"));
+                    }
+                }
+                None => ui.error("Nothing to export yet; wait for an area to finish loading"),
             },
             PersistAction::Import => pick_file(p.import_tx.clone()),
         }
@@ -154,7 +164,14 @@ fn receive_imports(
     mut ui: ResMut<UiState>,
     mut load: MessageWriter<LoadArea>,
 ) {
-    for text in p.import_rx.try_iter() {
+    for picked in p.import_rx.try_iter() {
+        let text = match picked {
+            Ok(text) => text,
+            Err(e) => {
+                ui.error_sticky(format!("Import failed: could not read the file: {e}"));
+                continue;
+            }
+        };
         match SceneFile::from_json(&text) {
             Ok(file) => {
                 let area = file.area;
@@ -174,6 +191,8 @@ fn receive_imports(
 
 #[cfg(target_arch = "wasm32")]
 mod web {
+    use crate::net::js_cause;
+    use crate::state::SaveFailure;
     use crossbeam_channel::Sender;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
@@ -186,45 +205,68 @@ mod web {
         storage()?.get_item(key).ok().flatten()
     }
 
-    /// Whether the value was stored. Quota and privacy errors are non-fatal:
-    /// the status bar says so and the user can still export.
-    pub fn storage_set(key: &str, value: &str) -> bool {
-        storage().is_some_and(|s| s.set_item(key, value).is_ok())
+    /// Whether the value was stored, and if not why. Quota and privacy errors
+    /// are non-fatal: the status bar says so and the user can still export.
+    pub fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
+        let window = web_sys::window().ok_or(SaveFailure::Unavailable)?;
+        // Reading `localStorage` itself throws when site data is blocked.
+        let storage = match window.local_storage() {
+            Ok(Some(s)) => s,
+            Ok(None) => return Err(SaveFailure::Unavailable),
+            Err(_) => return Err(SaveFailure::Blocked),
+        };
+        storage.set_item(key, value).map_err(|e| {
+            let name = js_sys::Reflect::get(&e, &"name".into())
+                .ok()
+                .and_then(|n| n.as_string());
+            match name.as_deref() {
+                Some("QuotaExceededError" | "NS_ERROR_DOM_QUOTA_REACHED") => SaveFailure::Full,
+                _ => SaveFailure::Blocked,
+            }
+        })
     }
 
-    pub fn download(name: &str, text: &str) {
-        let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
-            return;
-        };
+    pub fn download(name: &str, text: &str) -> Result<(), String> {
+        let doc = web_sys::window()
+            .and_then(|w| w.document())
+            .ok_or("the browser gave the app no page to download from")?;
         let parts = js_sys::Array::of1(&JsValue::from_str(text));
         let opts = web_sys::BlobPropertyBag::new();
         opts.set_type("application/json");
-        let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts) else {
-            return;
-        };
-        let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
-            return;
-        };
-        if let Ok(a) = doc
+        let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts)
+            .map_err(|e| format!("could not prepare the file ({})", js_cause(&e)))?;
+        let url = web_sys::Url::create_object_url_with_blob(&blob)
+            .map_err(|e| format!("could not prepare the download ({})", js_cause(&e)))?;
+        let a = doc
             .create_element("a")
             .map(|e| e.unchecked_into::<web_sys::HtmlAnchorElement>())
-        {
-            a.set_href(&url);
-            a.set_download(name);
-            a.click();
-        }
+            .map_err(|e| format!("could not start the download ({})", js_cause(&e)))?;
+        a.set_href(&url);
+        a.set_download(name);
+        a.click();
         let _ = web_sys::Url::revoke_object_url(&url);
+        Ok(())
     }
 
-    pub fn pick_file(tx: Sender<String>) {
+    pub fn pick_file(tx: Sender<Result<String, String>>) {
         let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+            let _ = tx.send(Err(
+                "the browser gave the app no page to ask from".to_owned()
+            ));
             return;
         };
-        let Ok(input) = doc
+        let input = match doc
             .create_element("input")
             .map(|e| e.unchecked_into::<web_sys::HtmlInputElement>())
-        else {
-            return;
+        {
+            Ok(input) => input,
+            Err(e) => {
+                let _ = tx.send(Err(format!(
+                    "could not open the file picker ({})",
+                    js_cause(&e)
+                )));
+                return;
+            }
         };
         input.set_type("file");
         input.set_accept(".json,application/json");
@@ -234,11 +276,11 @@ mod web {
                 return;
             };
             wasm_bindgen_futures::spawn_local(async move {
-                if let Ok(v) = wasm_bindgen_futures::JsFuture::from(file.text()).await
-                    && let Some(s) = v.as_string()
-                {
-                    let _ = tx.send(s);
-                }
+                let read = match wasm_bindgen_futures::JsFuture::from(file.text()).await {
+                    Ok(v) => v.as_string().ok_or_else(|| "it is not text".to_owned()),
+                    Err(e) => Err(js_cause(&e)),
+                };
+                let _ = tx.send(read);
             });
         });
         input.set_onchange(Some(on_change.unchecked_ref()));
@@ -248,20 +290,19 @@ mod web {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod web {
+    use crate::state::SaveFailure;
     use crossbeam_channel::Sender;
 
     pub fn storage_get(_: &str) -> Option<String> {
         None
     }
-    pub fn storage_set(_: &str, _: &str) -> bool {
-        true
+    pub fn storage_set(_: &str, _: &str) -> Result<(), SaveFailure> {
+        Ok(())
     }
-    pub fn download(name: &str, text: &str) {
-        if let Err(e) = std::fs::write(name, text) {
-            bevy::log::error!("export failed: {e}");
-        }
+    pub fn download(name: &str, text: &str) -> Result<(), String> {
+        std::fs::write(name, text).map_err(|e| format!("could not write {name} ({e})"))
     }
-    pub fn pick_file(_: Sender<String>) {}
+    pub fn pick_file(_: Sender<Result<String, String>>) {}
 }
 
 use web::{download, pick_file, storage_get, storage_set};

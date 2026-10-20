@@ -33,6 +33,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Changed
 
+- Error messages say what went wrong and what to do next: failed area loads tell offline from a down server, a server error or damaged data; storage, import and export failures give the browser's reason (the status bar tooltip says why the autosave failed); scene, bundle, camera-model and bounding-box errors name the field and the allowed range; the server's replies name the limit (for example the size of a too-large box) and never include internal details.
 - Image tags: releases publish only `devel`, `X.Y.Z` and `latest`. The old `edge`, `main`, `X.Y` and `sha-*` tags are no longer pushed and are removed by the Prune images workflow once `PRUNE_IMAGES=true`; pin deployments to a version tag.
 - The CI Docker job reuses the wasm job's `dist/` instead of compiling the client again.
 - `rust-toolchain.toml` is the only place that sets the Rust version for mise users; `mise run sync` checks the remaining copies.

@@ -65,7 +65,7 @@ pub enum RegionProblem {
 impl RegionProblem {
     pub fn message(self) -> &'static str {
         match self {
-            Self::TooFewCorners => "A region needs at least three corners",
+            Self::TooFewCorners => "A region needs at least three corners; click to add more",
             Self::NoArea => "The corners lie on one line, so the region has no area",
             Self::SelfIntersecting => {
                 "The outline crosses itself; place the corners in order around the area"

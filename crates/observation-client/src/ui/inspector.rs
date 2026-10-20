@@ -12,8 +12,8 @@ use crate::state::{OverlayMode, Tool};
 use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
-    ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, DoriLevel, Lighting,
-    forward_from_yaw_pitch, is_https_url,
+    ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, CatalogError, DoriLevel,
+    Lighting, forward_from_yaw_pitch, is_https_url,
 };
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
@@ -845,7 +845,11 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                     d.models.custom.push(model);
                     d.scene.touch();
                 }
-                Err(e) => d.ui.error(e.to_string()),
+                // The generated id means nothing to the user; the reason does.
+                Err(CatalogError::Invalid { why, .. }) => {
+                    d.ui.error(format!("Cannot add this model: {why}"));
+                }
+                Err(e) => d.ui.error(format!("Cannot add this model: {e}")),
             }
         }
     });

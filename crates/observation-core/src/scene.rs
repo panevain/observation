@@ -41,14 +41,16 @@ pub struct SceneFile {
 pub enum SceneError {
     #[error("not a valid scene file: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("not an Observation scene file")]
-    Format,
-    #[error("scene version {0} is newer than this app supports ({SCENE_VERSION})")]
+    #[error("not an Observation scene file (its format is `{0}`, not `{SCENE_FORMAT}`)")]
+    Format(String),
+    #[error(
+        "scene version {0} is newer than this app reads (up to {SCENE_VERSION}); reload the page to update the app"
+    )]
     TooNew(u32),
-    #[error("invalid custom model: {0}")]
+    #[error("a custom model in the file is invalid: {0}")]
     Model(#[from] crate::camera::CatalogError),
     #[error("scene has invalid values: {0}")]
-    Invalid(&'static str),
+    Invalid(String),
 }
 
 /// Limits that keep a hostile or corrupt file from exhausting memory/CPU.
@@ -77,18 +79,38 @@ impl SceneFile {
     pub fn from_json(s: &str) -> Result<Self, SceneError> {
         let mut scene: Self = serde_json::from_str(s)?;
         if scene.format != SCENE_FORMAT {
-            return Err(SceneError::Format);
+            // Cut short: the value comes from the file and may be huge.
+            let found: String = scene.format.chars().take(40).collect();
+            return Err(SceneError::Format(found));
         }
         if scene.version > SCENE_VERSION {
             return Err(SceneError::TooNew(scene.version));
         }
-        if scene.cameras.len() > MAX_CAMERAS || scene.custom_models.len() > MAX_CUSTOM_MODELS {
-            return Err(SceneError::Invalid("too many cameras or models"));
+        if scene.cameras.len() > MAX_CAMERAS {
+            return Err(SceneError::Invalid(format!(
+                "{} cameras, but at most {MAX_CAMERAS} are supported",
+                scene.cameras.len()
+            )));
+        }
+        if scene.custom_models.len() > MAX_CUSTOM_MODELS {
+            return Err(SceneError::Invalid(format!(
+                "{} custom models, but at most {MAX_CUSTOM_MODELS} are supported",
+                scene.custom_models.len()
+            )));
         }
         let finite = |v: &[f32]| v.iter().all(|x| x.is_finite() && x.abs() < 10_000.0);
-        for c in &scene.cameras {
-            if !finite(&c.position) || !finite(&[c.yaw_deg, c.pitch_deg, c.roll_deg]) {
-                return Err(SceneError::Invalid("camera position/orientation"));
+        for (i, c) in scene.cameras.iter().enumerate() {
+            if !finite(&c.position) {
+                return Err(SceneError::Invalid(format!(
+                    "camera {} has a position that is not a number or lies beyond 10 000 m",
+                    i + 1
+                )));
+            }
+            if !finite(&[c.yaw_deg, c.pitch_deg, c.roll_deg]) {
+                return Err(SceneError::Invalid(format!(
+                    "camera {} has an angle that is not a number or lies beyond 10 000°",
+                    i + 1
+                )));
             }
         }
         // Drop an unusable region rather than the whole scene: losing the
@@ -98,8 +120,11 @@ impl SceneFile {
         }) {
             scene.region = None;
         }
-        if !(0.0..=10.0).contains(&scene.params.subject_height_m) {
-            return Err(SceneError::Invalid("subject height"));
+        let height = scene.params.subject_height_m;
+        if !(0.0..=10.0).contains(&height) {
+            return Err(SceneError::Invalid(format!(
+                "subject height is {height} m, but must be 0 to 10 m"
+            )));
         }
         for m in &mut scene.custom_models {
             // Drop a non-https spec-sheet link rather than the whole scene: a
@@ -157,7 +182,7 @@ mod tests {
         s.format = "other".into();
         assert!(matches!(
             SceneFile::from_json(&s.to_json()),
-            Err(SceneError::Format)
+            Err(SceneError::Format(_))
         ));
         let mut s = scene();
         s.version = 99;
@@ -166,10 +191,9 @@ mod tests {
             Err(SceneError::TooNew(99))
         ));
         let json = scene().to_json().replace("1.2", "1e9");
-        assert!(matches!(
-            SceneFile::from_json(&json),
-            Err(SceneError::Invalid(_))
-        ));
+        let err = SceneFile::from_json(&json).unwrap_err();
+        assert!(matches!(err, SceneError::Invalid(_)), "{err}");
+        assert!(err.to_string().contains("camera 1"), "{err}");
     }
 
     #[test]

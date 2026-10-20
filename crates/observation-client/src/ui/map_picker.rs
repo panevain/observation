@@ -139,9 +139,13 @@ impl MapPicker {
 fn problem(b: &BBox) -> Option<String> {
     let (w, h) = (b.width_m(), b.height_m());
     if w > MAX_BBOX_SIDE_M || h > MAX_BBOX_SIDE_M {
-        Some(format!("Too large: sides must be ≤ {MAX_BBOX_SIDE_M:.0} m"))
+        Some(format!(
+            "Too large: {w:.0} × {h:.0} m, but sides must be ≤ {MAX_BBOX_SIDE_M:.0} m"
+        ))
     } else if w < MIN_BBOX_SIDE_M || h < MIN_BBOX_SIDE_M {
-        Some(format!("Too small: sides must be ≥ {MIN_BBOX_SIDE_M:.0} m"))
+        Some(format!(
+            "Too small: {w:.0} × {h:.0} m, but sides must be ≥ {MIN_BBOX_SIDE_M:.0} m"
+        ))
     } else {
         None
     }

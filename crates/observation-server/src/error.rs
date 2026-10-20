@@ -14,8 +14,8 @@ pub enum ApiError {
     #[error("{0}")]
     BadRequest(String),
     /// Unknown resource (404).
-    #[error("not found")]
-    NotFound,
+    #[error("{0}")]
+    NotFound(&'static str),
     /// An upstream provider (Overpass, tile server) failed (502).
     #[error("{0}")]
     Upstream(String),
@@ -23,13 +23,13 @@ pub enum ApiError {
     #[error("{0}")]
     UpstreamTimeout(String),
     /// An upstream provider is rate limiting us, or we are cooling down (503).
-    #[error("the map data provider is busy, please retry shortly")]
+    #[error("the map provider is busy; try again in about {retry_after_secs} s")]
     RateLimited {
         /// Value for the `retry-after` header, seconds.
         retry_after_secs: u64,
     },
     /// Unexpected local failure (500). The detail is logged, never sent.
-    #[error("internal error")]
+    #[error("the server hit an unexpected problem; please try again")]
     Internal(String),
 }
 
@@ -38,7 +38,7 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::RateLimited { .. } => StatusCode::SERVICE_UNAVAILABLE,

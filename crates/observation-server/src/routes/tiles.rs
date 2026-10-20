@@ -20,7 +20,7 @@ pub async fn tile(
     Path((z, x, y)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let id = parse_tile(&z, &x, &y).ok_or(ApiError::NotFound)?;
+    let id = parse_tile(&z, &x, &y).ok_or(ApiError::NotFound("not a valid map tile address"))?;
     let bytes = state.tiles().get(id, headers.get(header::REFERER)).await?;
     Ok((
         [

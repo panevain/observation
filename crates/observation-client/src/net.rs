@@ -205,8 +205,10 @@ fn drain_replies(
                 } else {
                     continue; // superseded or cancelled
                 }
-                let result =
-                    res.and_then(|bytes| AreaBundle::decode(&bytes).map_err(|e| e.to_string()));
+                let result = res.and_then(|bytes| {
+                    AreaBundle::decode(&bytes)
+                        .map_err(|e| format!("{e}; reload the page and try again"))
+                });
                 if let Err(e) = &result {
                     ui.error_with(
                         format!("Could not load area: {e}"),
@@ -242,6 +244,40 @@ fn drain_replies(
     }
 }
 
+/// What a failed HTTP reply means to the user: the server's own `error` text
+/// when it sent one, else a description of the status (proxies and the request
+/// timeout answer without one).
+#[cfg(target_arch = "wasm32")]
+fn http_failure(status: u16, body: &str) -> String {
+    let from_server = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
+        .filter(|m| !m.is_empty());
+    from_server.unwrap_or_else(|| match status {
+        404 => "the server does not have this (HTTP 404); the app may be out of date, so reload the page".to_owned(),
+        408 | 504 => format!("the server took too long to answer (HTTP {status}); try again shortly"),
+        502 | 503 => format!("the server is unavailable right now (HTTP {status}); try again shortly"),
+        500..=599 => format!("the server had a problem (HTTP {status}); try again shortly"),
+        _ => format!("the server refused the request (HTTP {status})"),
+    })
+}
+
+/// The message of a JavaScript exception (`TypeError: Failed to fetch`, a
+/// `DOMException`, ...), or a placeholder when it carries none.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn js_cause(e: &wasm_bindgen::JsValue) -> String {
+    use wasm_bindgen::JsCast;
+    let msg = match e.dyn_ref::<js_sys::Error>() {
+        Some(err) => String::from(err.message()),
+        None => e.as_string().unwrap_or_default(),
+    };
+    if msg.is_empty() {
+        "no details from the browser".to_owned()
+    } else {
+        msg
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn spawn_fetch(url: String, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
     use wasm_bindgen::JsCast;
@@ -249,27 +285,40 @@ fn spawn_fetch(url: String, done: impl FnOnce(Result<Vec<u8>, String>) + 'static
 
     wasm_bindgen_futures::spawn_local(async move {
         let result = async {
-            let window = web_sys::window().ok_or("no window")?;
+            let window = web_sys::window()
+                .ok_or("the browser gave the app no window to make requests from")?;
+            // A rejected fetch means no HTTP reply at all: offline, DNS, a dead
+            // server, or a blocked connection.
             let resp: web_sys::Response = JsFuture::from(window.fetch_with_str(&url))
                 .await
-                .map_err(|_| "network error".to_owned())?
+                .map_err(|e| {
+                    format!(
+                        "the server did not answer (you may be offline, or it may be down): {}",
+                        js_cause(&e)
+                    )
+                })?
                 .dyn_into()
-                .map_err(|_| "bad response".to_owned())?;
+                .map_err(|_| "the browser returned something other than a response".to_owned())?;
             if !resp.ok() {
-                let body = JsFuture::from(resp.text().map_err(|_| "bad body")?)
-                    .await
-                    .ok()
-                    .and_then(|v| v.as_string())
-                    .unwrap_or_default();
-                let msg = serde_json::from_str::<serde_json::Value>(&body)
-                    .ok()
-                    .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
-                    .unwrap_or_else(|| format!("HTTP {}", resp.status()));
-                return Err(msg);
+                let body = match resp.text() {
+                    Ok(text) => JsFuture::from(text)
+                        .await
+                        .ok()
+                        .and_then(|v| v.as_string())
+                        .unwrap_or_default(),
+                    Err(_) => String::new(),
+                };
+                return Err(http_failure(resp.status(), &body));
             }
-            let buf = JsFuture::from(resp.array_buffer().map_err(|_| "bad body")?)
+            let read_err = |e: wasm_bindgen::JsValue| {
+                format!(
+                    "the connection dropped while the reply was downloading: {}",
+                    js_cause(&e)
+                )
+            };
+            let buf = JsFuture::from(resp.array_buffer().map_err(read_err)?)
                 .await
-                .map_err(|_| "read failed".to_owned())?;
+                .map_err(read_err)?;
             Ok(js_sys::Uint8Array::new(&buf).to_vec())
         }
         .await

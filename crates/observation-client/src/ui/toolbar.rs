@@ -278,11 +278,14 @@ fn save_status(ui: &mut egui::Ui, d: &UiData) {
                 format!("Saved in this browser {when}. Use Export to keep a copy elsewhere."),
             )
         }
-        SaveState::Failed => (
+        SaveState::Failed(why) => (
             icons::CLOUD_WARNING,
             "Not saved",
             t.warning,
-            "This browser refused to store the scene (storage full, blocked or private mode). Use Export to keep your work.".to_owned(),
+            format!(
+                "{} The scene is not saved; use Export to keep your work.",
+                why.reason()
+            ),
         ),
         SaveState::Pending => return,
     };
