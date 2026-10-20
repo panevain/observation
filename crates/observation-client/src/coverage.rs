@@ -268,7 +268,7 @@ fn draw_region(
     ui: Res<UiState>,
     tokens: Res<Tokens>,
 ) {
-    let color = to_bevy(tokens.tools.region);
+    let color = to_bevy(tokens.world.region);
     let at = |p: [f32; 2]| Vec3::new(p[0], REGION_Y_M, p[1]);
     if let Some(r) = &scene.region
         && ui.region_draft.is_empty()

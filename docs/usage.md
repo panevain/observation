@@ -8,11 +8,11 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 
 | Region | What is in it |
 | --- | --- |
-| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export** and **?** |
-| Tool rail (left) | Five tools: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. A colour-coded banner across the top shows the active mode (Select blue, Place green, Aim orange, Move purple, Region teal), what a click will do, and the selected camera (or, in Place, the model being placed). Messages appear as toasts at the bottom |
+| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, remembered in this browser) and **?** |
+| Tool rail (left) | Five tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
+| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, or in Region the corners so far). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move and a cell cursor for Region. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
-| Status bar | A hint for the active tool, and the OpenStreetMap attribution link |
+| Status bar | The active tool's keys and gestures as keycaps on the left (dropped from the end when the window is narrow); on the right the three coverage figures (street, 2+ cameras, walls), so they stay in view while the inspector scrolls, and the OpenStreetMap attribution link |
 
 ## Pick an area
 
@@ -26,9 +26,9 @@ To load another street:
 4. The box shows its size. Each side must be between **20 m and 500 m**; otherwise the box turns red and the reason appears next to the button.
 5. Click **Load area**. Close the dialog with **Close**, **Esc**, or by clicking outside it.
 
-Loading shows "Loading buildings..." while the server fetches and prepares the data. A first request for a new place waits on the public map-data service and can be slow; repeat requests for the same box are served from the server's cache. If the map-data provider is busy you get a "busy, please retry shortly" message; wait a little and try again.
+While the server fetches and prepares the data, a card in the 3D view says what is loading and for how long. A first request for a new place waits on the public map-data service and can be slow; after a few seconds the card says so, and offers **Use demo street instead**. **Cancel** stops waiting (the request is ignored when it arrives); it is not offered while reloading the area of a restored or imported scene, or after undoing an area change, because the cameras already belong to that area. Repeat requests for the same box are served from the server's cache. If loading fails, for example with "the map provider is busy; try again in about 30 s" when the map-data provider is busy, the message stays at the bottom of the view until you dismiss it, with a **Retry** button. Failed imports and restores also stay until dismissed; smaller problems, such as an invalid region, disappear after a few seconds.
 
-Loading a new area, including **Demo street**, removes the cameras you placed, because cameras belong to an area (the demo street then gets its ten example cameras again). Autosave overwrites the stored scene within a couple of seconds, so use **Export** first if you want to keep it.
+Loading a new area, including **Demo street**, removes the cameras you placed, because cameras belong to an area (the demo street then gets its ten example cameras again). A message with an **Undo** button appears, and **Undo** (or Ctrl+Z) brings the previous area and its cameras back. Undo only lasts for this visit, and autosave overwrites the stored scene within a couple of seconds, so use **Export** if you want to keep a copy.
 
 ## Place cameras
 
@@ -38,7 +38,7 @@ Loading a new area, including **Demo street**, removes the cameras you placed, b
    - **A wall:** the camera is mounted 0.15 m in front of the wall, at the height you clicked, facing outward. Its tilt is the type's default (doorbell 0 degrees, indoor -10, others -20).
    - **The ground or a roof:** the camera goes on a pole at the model's default mount height above that point (doorbell 1.2 m, indoor 2.0 m, floodlight and spotlight 2.7 m, bullet, turret and dome 2.6 m). It faces north at first, and the tool switches to **Aim** so your next click points it.
    - **An existing camera:** selects it.
-4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight orange, bullet red, turret teal, dome purple, indoor pink. Further cameras of the same type get lighter and darker shades of that colour, so each camera stays distinguishable.
+4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight sky blue, bullet indigo, turret teal, dome violet, indoor slate. These stay clear of the yellow-to-purple coverage colours, and each type also has its own icon in the camera list and model picker. The second and third cameras of a type get a lighter and a darker shade of its colour; after that the shades repeat, and the camera names tell them apart.
 
 ## Aim and move
 
@@ -50,27 +50,25 @@ With Aim or Move active and a camera selected, a left-drag drives the tool rathe
 
 ## Fine-tune in the inspector
 
-Select a camera (in the viewport or by clicking its name in the list) to open **Selected camera**:
+Select a camera (in the viewport or by clicking its row in the list) to open **Selected camera**. It starts with the camera's colour, its type icon and its name (free text, up to 48 characters, edited in place), then:
 
 | Field | Meaning |
 | --- | --- |
-| Name | Free text, up to 48 characters |
 | Model | Change the model without moving the camera (searchable, as above) |
 | Colour | Colour of the camera body, its view cone and its per-camera overlay. Pick any colour or one of the quick swatches; **Default** returns to the colour for the camera's type |
-| Position (m) | **E** east, **S** south and **H** height above ground, in metres from the area centre. Height is limited to 0-60 m |
-| Heading | Compass bearing the camera faces, 0-360 degrees clockwise from north, with a compass label (N, NE, ...) |
-| Tilt | Elevation of the view axis, -90 to 90 degrees; negative looks down |
-| Roll | Rotation about the view axis, -180 to 180 degrees |
-| Face vector | Read-only unit vector the camera faces as (east, north, up) |
-| Field of view, Resolution, Night vision | Read-only, from the model. Night vision shows "7.5 m (assumed)" in a warning colour when the manufacturer publishes no figure |
-| Modelled range | Read-only effective range for the current detail level and lighting (see below) |
-| Source | Link to the manufacturer's spec page, for catalogue models |
+| Position | **E** east, **S** south and **H** height above ground, in metres from the area centre. Height is limited to 0-60 m |
+| Orientation | A compass dial: click or drag it to point the camera (Shift snaps to 15 degree steps); the shaded wedge is the horizontal field of view. Beside it, **Heading** (0-360 degrees clockwise from north, with a compass label such as NE; hover the label for the unit vector the camera faces as east, north, up), **Tilt** (-90 to 90 degrees; negative looks down) and **Roll** (-180 to 180 degrees) |
+| Optics (collapsed) | Read-only. **Field of view**, **Resolution** and **Night vision** from the model (night vision shows "7.5 m (assumed)" in a warning colour when the manufacturer publishes no figure), **Modelled range** for the current detail level and lighting (see below), and **Source**, a link to the manufacturer's spec page for catalogue models |
 
-Buttons: **Aim (A)**, **Move (M)**, **Duplicate** (a copy one metre east, with a new name) and **Delete**. In the **Cameras** list, the checkbox next to each camera ("Include in coverage") disables it without deleting it; a disabled camera is greyed out and ignored by the statistics and overlays.
+Every number field (here, in Custom model and Subject height) changes when you drag across it: hold **Shift** for finer steps or **Ctrl** (**Cmd** on a Mac) for coarser ones, or click it to type a value.
+
+Buttons: **Aim (A)**, **Move (M)**, **Focus (F)** (frame the camera in the view), **Duplicate** (a copy one metre east, with a new name) and **Delete**.
+
+In the **Cameras** list, each row shows an eye, the camera's colour, its type icon, its name and its model. Click a row to select the camera (click it again to deselect). Hovering a row highlights that camera in the 3D view, and hovering a camera in the 3D view highlights its row. The eye leaves a camera out of the coverage without deleting it (a crossed-out eye; the row is greyed out and the camera is ignored by the statistics and overlays). Right-click a row for **Select**, **Focus**, **Aim**, **Move**, **Duplicate**, **Include in coverage** and **Delete**.
 
 ## Read the coverage
 
-The **Coverage** section updates as soon as you change anything.
+The **Coverage** section updates as soon as you change anything. With no cameras placed it shows a short "No cameras yet" note with a **Place camera...** button instead of the figures.
 
 | Figure | Meaning |
 | --- | --- |
@@ -80,7 +78,7 @@ The **Coverage** section updates as soon as you change anything.
 
 Below the bar, the square metres behind the street figure are shown, plus "open ground seen": all visible ground that is not under a building, which includes the street.
 
-**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a teal outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
+**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a dark outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
 
 What counts as "street": every mapped road, service road (including driveways) and footpath, drawn as a band of its estimated width (about 14 m for a motorway down to 2 m for a footpath; the `width` and `lanes` tags are used when present), excluding anything under a building. Other way types, such as tracks, are ignored. Footpaths and service lanes therefore count towards the street figure.
 
@@ -114,10 +112,11 @@ A higher level shrinks each camera's range. The range for a level is `width_px /
 
 Open **Custom model** (above Analysis in the inspector) to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene. Models cannot be edited or removed in the app once added; edit an exported scene file and import it if you need to.
 
-## Save, export and import
+## Undo, save, export and import
 
-- **Autosave.** The scene (area, cameras, custom models, analysis settings and region) is saved to your browser's local storage about every 1.5 seconds under the key `observation.scene.v1`. It is restored the next time you open the app in the same browser. Clearing site data, private windows and some browser settings discard it.
-- **Export** downloads `observation-scene.json`. **Import** replaces the current scene with a chosen JSON file, without asking first, and reloads its area from the server.
+- **Undo and redo.** The arrows in the top bar, or **Ctrl+Z** and **Ctrl+Shift+Z** (or **Ctrl+Y**; **Cmd** on a Mac), step back and forward through your changes: placing, moving, aiming, editing and deleting cameras, the region, analysis settings, custom models, imports and area changes. A drag or a typed name counts as one step when you let go or leave the field. Hover an arrow to see what it would undo or redo. Deleting a camera or replacing the cameras also shows a message with an **Undo** button. Undo history is kept for this visit only (up to 100 steps), and undoing an area change reloads that area. While a text field has focus, Ctrl+Z undoes typing in the field instead.
+- **Autosave.** The scene (area, cameras, custom models, analysis settings and region) is saved to your browser's local storage about every 1.5 seconds under the key `observation.scene.v1`. It is restored the next time you open the app in the same browser. Clearing site data, private windows and some browser settings discard it. The status bar shows **Saved** once a save has gone through, or **Not saved** in a warning colour if the browser refused to store the scene; hover it to see why (storage full, site data blocked or no storage, as in some private modes), then use **Export** to keep your work.
+- **Export** downloads `observation-scene.json`. **Import** replaces the current scene with a chosen JSON file, without asking first (it can be undone), and reloads its area from the server.
 
 Scene files are plain JSON:
 

@@ -1,11 +1,14 @@
 //! Top bar, tool rail and status bar.
 
 use super::UiData;
-use super::widgets::{hint, secondary};
+use super::widgets::{RailKind, hint, keycap, rail_button, secondary};
+use crate::history::HistoryOp;
+use crate::icons;
 use crate::persist::PersistAction;
-use crate::state::{LoadArea, Tool};
+use crate::state::{LoadArea, SaveState, Tool};
+use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
-use bevy_egui::egui::{self, Align, Layout, RichText, Stroke, vec2};
+use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
 use observation_core::scene::AreaRef;
 
 pub fn top_bar(
@@ -47,6 +50,40 @@ pub fn top_bar(
         {
             load.write(LoadArea::demo());
         }
+        ui.separator();
+        for (op, glyph, keys, can, what) in [
+            (
+                HistoryOp::Undo,
+                icons::ARROW_COUNTER_CLOCKWISE,
+                "Ctrl+Z",
+                d.history.can_undo(),
+                d.history.undo_label(),
+            ),
+            (
+                HistoryOp::Redo,
+                icons::ARROW_CLOCKWISE,
+                "Ctrl+Shift+Z",
+                d.history.can_redo(),
+                d.history.redo_label(),
+            ),
+        ] {
+            let name = match op {
+                HistoryOp::Undo => "Undo",
+                HistoryOp::Redo => "Redo",
+            };
+            let tip = match what {
+                Some(w) => format!("{name} {w} ({keys})"),
+                None => format!("Nothing to {} ({keys})", name.to_lowercase()),
+            };
+            if ui
+                .add_enabled(can, secondary(&t, glyph))
+                .on_hover_text(&tip)
+                .on_disabled_hover_text(&tip)
+                .clicked()
+            {
+                d.ui.history_request = Some(op);
+            }
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui
                 .add(secondary(&t, "?"))
@@ -55,6 +92,7 @@ pub fn top_bar(
             {
                 d.ui.help_open = !d.ui.help_open;
             }
+            settings_menu(ui, d);
             if ui
                 .add(secondary(&t, "Export"))
                 .on_hover_text("Download the scene as JSON")
@@ -85,27 +123,35 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         for tool in Tool::ALL {
             let on = d.ui.tool == tool;
             let disabled = tool.needs_selection() && d.ui.selected.is_none();
-            let color = t.tool_color(tool);
-            let text = RichText::new(tool.label())
-                .size(t.font.caption)
-                .strong()
-                .color(if on { t.tools.on_tool } else { t.text });
-            let btn = egui::Button::new(text)
-                .fill(if on { color } else { t.surface })
-                .stroke(Stroke::new(
-                    t.stroke_width * if on { 2.0 } else { 1.0 },
-                    if on { color } else { t.border },
-                ))
-                .min_size(size);
-            let resp = ui
-                .add_enabled(!disabled, btn)
-                .on_hover_text(format!(
-                    "{} ({})\n{}",
+            // The active tool is the one accent-filled button, with the filled
+            // icon, so the mode never depends on hue alone.
+            let glyph = icons::tool(tool);
+            let icon = if on {
+                icons::fill::rich(glyph)
+            } else {
+                RichText::new(glyph)
+            };
+            let tip = if disabled {
+                format!(
+                    "{} ({})\nSelect a camera first",
                     tool.label(),
-                    tool.shortcut(),
-                    tool.hint()
-                ))
-                .on_disabled_hover_text("Select a camera first");
+                    tool.shortcut()
+                )
+            } else {
+                format!("{} ({})\n{}", tool.label(), tool.shortcut(), tool.hint())
+            };
+            let resp = rail_button(
+                ui,
+                &t,
+                icon,
+                tool.label(),
+                Some(tool.shortcut()),
+                size,
+                RailKind::Tool,
+                on,
+                !disabled,
+            )
+            .on_hover_text(tip);
             if resp.clicked() {
                 d.ui.tool = tool;
             }
@@ -114,40 +160,49 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         ui.separator();
         ui.add_space(t.space.md);
         let ui_state = &mut *d.ui;
-        let toggles: [(&str, &str, &mut bool); 2] = [
+        let toggles: [(&str, &str, &str, &mut bool); 2] = [
             (
+                icons::TRIANGLE_DASHED,
                 "Cones",
-                "Show view-cone outlines",
+                "Show every camera's view cone (the selected one always shows)",
                 &mut ui_state.show_frustums,
             ),
             (
+                icons::WALL,
                 "Walls",
                 "Show coverage on building walls",
                 &mut ui_state.show_facades,
             ),
         ];
-        for (label, tip, value) in toggles {
+        for (glyph, label, tip, value) in toggles {
             let on = *value;
-            let text = RichText::new(label).size(t.font.caption).color(if on {
-                t.text
-            } else {
-                t.text_muted
-            });
-            let btn = egui::Button::new(text)
-                .fill(if on { t.surface_sunken } else { t.surface })
-                .stroke(Stroke::new(t.stroke_width, t.border))
-                .min_size(size);
-            if ui.add(btn).on_hover_text(tip).clicked() {
+            let state = if on { "on" } else { "off" };
+            if rail_button(
+                ui,
+                &t,
+                RichText::new(glyph),
+                label,
+                None,
+                size,
+                RailKind::Toggle,
+                on,
+                true,
+            )
+            .on_hover_text(format!("{tip} ({state})"))
+            .clicked()
+            {
                 *value = !on;
             }
         }
     });
 }
 
+/// Shortcuts for the active tool on the left; the coverage figures and the
+/// attribution on the right, so the figures stay in view while the inspector
+/// is scrolled.
 pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
     let t = *d.tokens;
     ui.horizontal_centered(|ui| {
-        hint(ui, &t, d.ui.tool.hint());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let data = d.area.as_ref().map_or("© OpenStreetMap contributors", |a| {
                 a.bundle.attribution.as_str()
@@ -164,6 +219,99 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
                     .color(t.text_muted),
                 "https://www.openstreetmap.org/copyright",
             );
+            ui.separator();
+            save_status(ui, d);
+            ui.separator();
+            let s = d.coverage.stats;
+            for (value, caption) in [
+                (s.facade_fraction(), "walls"),
+                (s.street_multi_fraction(), "2+ cams"),
+                (s.street_fraction(), "street"),
+            ] {
+                ui.label(
+                    RichText::new(caption)
+                        .size(t.font.caption)
+                        .color(t.text_muted),
+                );
+                ui.label(
+                    RichText::new(format!("{:.0}%", value * 100.0))
+                        .size(t.font.caption)
+                        .family(strong_family())
+                        .color(t.text),
+                );
+            }
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = t.space.xs;
+                for (key, what) in d.ui.tool.keymap() {
+                    // Drop the rest rather than run into the figures.
+                    if ui.available_width() < 140.0 {
+                        break;
+                    }
+                    keycap(ui, &t, key);
+                    ui.label(
+                        RichText::new(*what)
+                            .size(t.font.caption)
+                            .color(t.text_muted),
+                    );
+                    ui.add_space(t.space.sm);
+                }
+            });
         });
     });
+}
+
+/// Whether the scene is safely in this browser's storage.
+fn save_status(ui: &mut egui::Ui, d: &UiData) {
+    let t = *d.tokens;
+    let (icon, text, color, tip) = match d.ui.save {
+        SaveState::Saved(at) => {
+            let ago = (d.ui.now - at).max(0.0);
+            let when = if ago < 60.0 {
+                "just now".to_owned()
+            } else {
+                format!("{:.0} min ago", ago / 60.0)
+            };
+            (
+                icons::CLOUD_CHECK,
+                "Saved",
+                t.text_muted,
+                format!("Saved in this browser {when}. Use Export to keep a copy elsewhere."),
+            )
+        }
+        SaveState::Failed(why) => (
+            icons::CLOUD_WARNING,
+            "Not saved",
+            t.warning,
+            format!(
+                "{} The scene is not saved; use Export to keep your work.",
+                why.reason()
+            ),
+        ),
+        SaveState::Pending => return,
+    };
+    ui.label(
+        RichText::new(format!("{icon} {text}"))
+            .size(t.font.caption)
+            .color(color),
+    )
+    .on_hover_text(tip);
+}
+
+/// Display preferences, remembered in this browser.
+fn settings_menu(ui: &mut egui::Ui, d: &mut UiData) {
+    let t = *d.tokens;
+    let button = secondary(&t, icons::GEAR_SIX);
+    let resp = ui.add(button).on_hover_text("Settings");
+    egui::Popup::menu(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(200.0);
+            hint(ui, &t, "Font");
+            for f in UiFont::ALL {
+                let on = *d.font == f;
+                if ui.selectable_label(on, f.label()).clicked() && !on {
+                    *d.font = f;
+                }
+            }
+        });
 }

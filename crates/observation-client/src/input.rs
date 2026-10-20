@@ -196,7 +196,10 @@ fn keyboard(
     if keys.just_pressed(KeyCode::Slash) || keys.just_pressed(KeyCode::F1) {
         ui.help_open = !ui.help_open;
     }
-    if keys.just_pressed(KeyCode::KeyF)
+    if keys.just_pressed(KeyCode::KeyF) {
+        ui.focus_request = true;
+    }
+    if std::mem::take(&mut ui.focus_request)
         && let Some(c) = ui.selected.and_then(|id| scene.camera(id))
         && let Ok(mut o) = orbit.single_mut()
     {
@@ -277,10 +280,15 @@ fn pointer(
         return;
     };
 
-    let mut cast = |screen: Vec2| -> Option<Hit> {
+    // `bodies_only` tests just the camera bodies: a cheap first pass for
+    // hover, where testing every building triangle on each mouse move is not
+    // worth it unless a body is under the pointer at all.
+    let mut cast = |screen: Vec2, bodies_only: bool| -> Option<Hit> {
         // Takes window coordinates: it maps the camera's viewport rect itself.
         let ray = camera.viewport_to_world(cam_t, screen).ok()?;
-        let filter = |e: Entity| buildings.contains(e) || grounds.contains(e) || bodies.contains(e);
+        let filter = |e: Entity| {
+            bodies.contains(e) || (!bodies_only && (buildings.contains(e) || grounds.contains(e)))
+        };
         let settings = MeshRayCastSettings::default()
             .with_filter(&filter)
             .with_visibility(RayCastVisibility::Any);
@@ -386,14 +394,37 @@ fn pointer(
         }
     }
 
-    let Some(pos) = pos else { return };
+    let Some(pos) = pos else {
+        if ui.hover_scene.is_some() {
+            ui.hover_scene = None;
+        }
+        return;
+    };
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // The camera under an idle mouse, so its row in the list lights up. A
+    // body hit is confirmed with the full cast, so one hidden behind a
+    // building does not light up.
+    if !pressed && active.is_empty() && delta != Vec2::ZERO {
+        let camera_at = |h: Option<Hit>| match h?.target {
+            HitTarget::Camera(id) => Some(id),
+            _ => None,
+        };
+        let hover = if over_ui || camera_at(cast(pos, true)).is_none() {
+            None
+        } else {
+            camera_at(cast(pos, false))
+        };
+        if ui.hover_scene != hover {
+            ui.hover_scene = hover;
+        }
+    }
 
     if just_pressed && !over_ui {
         st.gesture = Gesture::Pending { start: pos, button };
         if button == MouseButton::Left && ui.tool.needs_selection() && ui.selected.is_some() {
             st.gesture = Gesture::Tool;
-            if let Some(hit) = cast(pos) {
+            if let Some(hit) = cast(pos, false) {
                 apply_tool(&mut ui, &mut scene, &models, hit);
             }
         }
@@ -415,7 +446,7 @@ fn pointer(
             Gesture::Pan => pan(&mut orbit, delta, window.height()),
             Gesture::Tool => {
                 if delta != Vec2::ZERO
-                    && let Some(hit) = cast(pos)
+                    && let Some(hit) = cast(pos, false)
                 {
                     apply_tool(&mut ui, &mut scene, &models, hit);
                 }
@@ -435,7 +466,7 @@ fn pointer(
                     region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
                 }
             } else {
-                let hit = cast(pos);
+                let hit = cast(pos, false);
                 click(&mut ui, &mut scene, &models, hit);
             }
         }

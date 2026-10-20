@@ -6,6 +6,8 @@
 
 mod cameras;
 mod coverage;
+mod history;
+mod icons;
 mod input;
 mod net;
 mod persist;
@@ -53,6 +55,7 @@ fn main() {
         )
         .add_plugins((MeshPickingPlugin, EguiPlugin::default()))
         .insert_resource(theme::Tokens::from_environment())
+        .insert_resource(persist::load_font())
         .insert_resource(state::Models {
             catalog,
             custom: Vec::new(),
@@ -67,6 +70,7 @@ fn main() {
             coverage::CoveragePlugin,
             input::InputPlugin,
             persist::PersistPlugin,
+            history::HistoryPlugin,
             ui::UiPlugin,
         ))
         .add_systems(Startup, hide_loader)

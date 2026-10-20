@@ -27,5 +27,5 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn api_not_found() -> ApiError {
-    ApiError::NotFound
+    ApiError::NotFound("no such API address on this server")
 }

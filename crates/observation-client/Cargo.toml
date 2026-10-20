@@ -42,6 +42,7 @@ bevy = { workspace = true, features = [
 ] }
 bevy_egui = { workspace = true, features = ["render", "default_fonts", "open_url"] }
 crossbeam-channel = "0.5"
+egui-phosphor = { version = "0.14", default-features = false, features = ["regular", "fill", "subset"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["web"] }

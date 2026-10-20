@@ -74,7 +74,9 @@ impl TileProxy {
             }
             Ok(Upstream::NotModified(meta)) => {
                 let Some(c) = cached else {
-                    return Err(ApiError::Upstream("unexpected 304 from tile server".into()));
+                    return Err(ApiError::Upstream(
+                        "the tile server sent an unexpected 'not modified' reply".into(),
+                    ));
                 };
                 metrics::counter!(crate::metrics::TILE_CACHE, "result" => "revalidated")
                     .increment(1);
@@ -123,7 +125,7 @@ impl TileProxy {
         }
         let resp = req.send().await.map_err(|e| {
             tracing::warn!(error = %e.without_url(), ?id, "tile request failed");
-            ApiError::Upstream("could not reach the tile server".into())
+            ApiError::Upstream("could not reach the tile server; map tiles may be missing".into())
         })?;
         let status = resp.status();
         let header_str =
@@ -141,7 +143,7 @@ impl TileProxy {
                     .await
                     .map_err(|e| {
                         tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
-                        ApiError::Upstream("tile download failed".into())
+                        ApiError::Upstream("the tile download was interrupted".into())
                     })?
                     .ok_or_else(|| {
                         tracing::warn!(max = MAX_TILE_BYTES, ?id, "tile body too large");
@@ -155,7 +157,7 @@ impl TileProxy {
                 Ok(Upstream::Fresh(body, meta))
             }
             StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(resp.headers(), stale))),
-            StatusCode::NOT_FOUND => Err(ApiError::NotFound),
+            StatusCode::NOT_FOUND => Err(ApiError::NotFound("the tile server has no tile here")),
             StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
                 tracing::warn!(%status, ?id, "tile server is limiting us");
                 Err(ApiError::RateLimited {
@@ -165,7 +167,7 @@ impl TileProxy {
             other => {
                 tracing::warn!(status = %other, ?id, "tile server error");
                 Err(ApiError::Upstream(format!(
-                    "tile server returned {}",
+                    "the tile server answered with an error (HTTP {})",
                     other.as_u16()
                 )))
             }

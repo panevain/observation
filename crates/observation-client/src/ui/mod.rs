@@ -1,5 +1,6 @@
 //! egui front-end: docked panels around the 3D viewport, plus overlays.
 
+mod actions;
 mod inspector;
 pub mod map_picker;
 mod overlays;
@@ -7,10 +8,11 @@ mod toolbar;
 mod widgets;
 
 use crate::coverage::CoverageState;
+use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
-use crate::state::{Area, LoadArea, Loading, Models, Scene, UiState};
-use crate::theme::{MIN_VIEWPORT, Tokens};
+use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
+use crate::theme::{MIN_VIEWPORT, Tokens, UiFont, install_fonts, strong_family};
 use bevy::camera::Viewport;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -27,16 +29,28 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn apply_theme(mut contexts: EguiContexts, tokens: Res<Tokens>, mut done: Local<bool>) -> Result {
-    if !*done || tokens.is_changed() {
-        tokens.apply(contexts.ctx_mut()?);
-        *done = true;
+fn apply_theme(
+    mut contexts: EguiContexts,
+    tokens: Res<Tokens>,
+    font: Res<UiFont>,
+    mut done: Local<bool>,
+) -> Result {
+    let ctx = contexts.ctx_mut()?;
+    if !*done || font.is_changed() {
+        install_fonts(ctx, *font);
     }
+    if !*done || tokens.is_changed() {
+        tokens.apply(ctx);
+    }
+    *done = true;
     Ok(())
 }
 
-fn tick_toasts(time: Res<Time>, mut ui: ResMut<UiState>) {
+/// Wall-clock time: the virtual clock caps each frame at 250 ms, which would
+/// slow toasts and the loading timer whenever frames are sparse.
+fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>) {
     let dt = time.delta_secs();
+    ui.now = time.elapsed_secs_f64();
     if ui.toasts.is_empty() {
         return;
     }
@@ -55,17 +69,19 @@ pub struct UiData<'w> {
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
     pub area: Option<Res<'w, Area>>,
-    pub loading: Res<'w, Loading>,
+    pub loading: ResMut<'w, Loading>,
+    pub history: Res<'w, crate::history::History>,
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
     pub config: Res<'w, crate::net::ServerConfig>,
     pub layout: ResMut<'w, crate::state::UiLayout>,
+    pub font: ResMut<'w, UiFont>,
 }
 
 fn draw_ui(
     mut contexts: EguiContexts,
     mut d: UiData,
-    mut camera: Query<&mut Camera, With<crate::input::OrbitCamera>>,
+    mut camera: Query<(&mut Camera, &GlobalTransform), With<crate::input::OrbitCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
@@ -76,6 +92,11 @@ fn draw_ui(
     });
     let ctx = contexts.ctx_mut()?.clone();
     let t = *d.tokens;
+    // Fonts set by `apply_theme` take effect from the next pass; until then
+    // the UI's font families do not exist and laying out text would panic.
+    if !ctx.fonts(|f| f.definitions().families.contains_key(&strong_family())) {
+        return Ok(());
+    }
 
     let small = window.width() < MIN_VIEWPORT.x || window.height() < MIN_VIEWPORT.y;
     if small {
@@ -137,7 +158,7 @@ fn draw_ui(
 
     // Fit the 3D viewport to the space between the panels.
     let sf = window.scale_factor();
-    if let Ok(mut cam) = camera.single_mut() {
+    if let Ok((mut cam, _)) = camera.single_mut() {
         let pos = UVec2::new((left * sf) as u32, (top * sf) as u32);
         let full = UVec2::new(window.physical_width(), window.physical_height());
         let size = full
@@ -167,10 +188,52 @@ fn draw_ui(
         viewport_rect.max.y,
     ));
 
-    overlays::mode_banner(&ctx, &t, viewport_rect, &d);
-    overlays::toasts(&ctx, &t, viewport_rect, &d.ui);
-    if d.loading.area.is_some() {
-        overlays::loading(&ctx, &t, viewport_rect);
+    overlays::mode_pill(&ctx, &t, viewport_rect, &d);
+    // Quick actions next to the selected camera, where the eye already is.
+    let anchor =
+        d.ui.selected
+            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region))
+            .and_then(|id| d.scene.camera(id))
+            .zip(camera.single().ok())
+            .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
+            .map(|p| egui::pos2(p.x, p.y))
+            .filter(|p| viewport_rect.shrink(t.space.lg).contains(*p));
+    if let (Some(id), Some(at)) = (d.ui.selected, anchor)
+        && let Some(a) = overlays::camera_toolbar(&ctx, &t, viewport_rect, at)
+    {
+        actions::apply(&mut d, id, a);
+    }
+    overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
+    match overlays::toasts(&ctx, &t, viewport_rect, &d.ui) {
+        Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
+            d.ui.history_request = Some(HistoryOp::Undo);
+            d.ui.toasts
+                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+        }
+        Some(overlays::ToastEvent::Action(ToastAction::Retry(req))) => {
+            d.ui.toasts
+                .retain(|t| !matches!(t.action, Some(ToastAction::Retry(_))));
+            load.write(req);
+        }
+        Some(overlays::ToastEvent::Dismiss(i)) if i < d.ui.toasts.len() => {
+            d.ui.toasts.remove(i);
+        }
+        _ => {}
+    }
+    if let Some(area) = d.loading.area {
+        let elapsed = d.ui.now - d.loading.started;
+        let cancellable = d.loading.request.as_ref().is_some_and(|r| !r.keep_cameras);
+        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed, cancellable) {
+            Some(overlays::LoadingChoice::Cancel) => {
+                // The reply, when it comes, is ignored as superseded.
+                d.loading.area = None;
+                d.loading.request = None;
+            }
+            Some(overlays::LoadingChoice::Demo) => {
+                load.write(LoadArea::demo());
+            }
+            None => {}
+        }
     }
     if d.ui.help_open {
         overlays::help(&ctx, &t, &mut d.ui);

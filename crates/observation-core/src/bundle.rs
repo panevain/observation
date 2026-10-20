@@ -47,11 +47,11 @@ pub struct AreaBundle {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum BundleError {
-    #[error("not an Observation bundle")]
+    #[error("the reply is not an area bundle (a proxy or sign-in page may have answered)")]
     Magic,
-    #[error("unsupported bundle version {0} (expected {BUNDLE_VERSION})")]
+    #[error("the server sent bundle version {0}, but this app reads version {BUNDLE_VERSION}")]
     Version(u16),
-    #[error("corrupt bundle: {0}")]
+    #[error("the area data is damaged or cut short ({0})")]
     Decode(String),
 }
 
