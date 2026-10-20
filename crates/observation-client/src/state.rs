@@ -151,6 +151,13 @@ pub struct UiState {
     pub hover_scene: Option<u32>,
     /// Frame the selected camera in the 3D view (consumed by the input systems).
     pub focus_request: bool,
+    /// Undo or redo asked for by the UI or a shortcut (consumed by `history`).
+    pub history_request: Option<crate::history::HistoryOp>,
+    /// Whether the last autosave reached browser storage.
+    pub save: SaveState,
+    /// Wall-clock seconds since start-up, for "saved just now" and the
+    /// loading timer.
+    pub now: f64,
     pub toasts: Vec<Toast>,
     /// Corners placed so far with the Region tool, world `[x, z]`.
     pub region_draft: Vec<[f32; 2]>,
@@ -175,6 +182,9 @@ impl Default for UiState {
             hover_list: None,
             hover_scene: None,
             focus_request: false,
+            history_request: None,
+            save: SaveState::Pending,
+            now: 0.0,
             toasts: Vec::new(),
             region_draft: Vec::new(),
             region_hover: None,
@@ -189,12 +199,41 @@ pub enum ToastKind {
     Error,
 }
 
+/// A button on a toast.
+#[derive(Debug, Clone)]
+pub enum ToastAction {
+    Undo,
+    /// Send this area request again.
+    Retry(LoadArea),
+}
+
+impl ToastAction {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Undo => "Undo",
+            Self::Retry(_) => "Retry",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Toast {
     pub kind: ToastKind,
     pub text: String,
-    /// Seconds remaining.
+    pub action: Option<ToastAction>,
+    /// Seconds remaining; errors stay until dismissed.
     pub ttl: f32,
+}
+
+/// Outcome of the autosave, shown in the status bar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SaveState {
+    /// Nothing written yet this session.
+    Pending,
+    /// Written at this many seconds since start-up.
+    Saved(f64),
+    /// The browser refused the write (storage full, blocked or unavailable).
+    Failed,
 }
 
 impl UiState {
@@ -204,18 +243,35 @@ impl UiState {
     }
 
     pub fn info(&mut self, text: impl Into<String>) {
-        self.toasts.push(Toast {
-            kind: ToastKind::Info,
-            text: text.into(),
-            ttl: 4.0,
-        });
+        self.push_toast(ToastKind::Info, text.into(), None, 4.0);
     }
 
+    /// An info toast with a button; it stays a little longer to be reached.
+    pub fn info_with(&mut self, text: impl Into<String>, action: ToastAction) {
+        self.push_toast(ToastKind::Info, text.into(), Some(action), 8.0);
+    }
+
+    /// Errors stay until dismissed, so they are never missed.
     pub fn error(&mut self, text: impl Into<String>) {
+        self.push_toast(ToastKind::Error, text.into(), None, f32::INFINITY);
+    }
+
+    pub fn error_with(&mut self, text: impl Into<String>, action: ToastAction) {
+        self.push_toast(ToastKind::Error, text.into(), Some(action), f32::INFINITY);
+    }
+
+    fn push_toast(&mut self, kind: ToastKind, text: String, action: Option<ToastAction>, ttl: f32) {
+        // A newer Undo supersedes an older one: only the latest step is one
+        // click away.
+        if matches!(action, Some(ToastAction::Undo)) {
+            self.toasts
+                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+        }
         self.toasts.push(Toast {
-            kind: ToastKind::Error,
-            text: text.into(),
-            ttl: 8.0,
+            kind,
+            text,
+            action,
+            ttl,
         });
     }
 }
@@ -309,6 +365,31 @@ impl Scene {
         Some(file)
     }
 
+    /// The undoable part of the document.
+    pub fn snapshot(&self, models: &Models) -> Snapshot {
+        Snapshot {
+            area: self.area,
+            origin: self.origin,
+            cameras: self.cameras.clone(),
+            params: self.params,
+            region: self.region.clone(),
+            custom_models: models.custom.clone(),
+        }
+    }
+
+    /// Puts back a [`Self::snapshot`].
+    pub fn restore(&mut self, s: &Snapshot, models: &mut Models) {
+        self.area = s.area;
+        self.origin = s.origin;
+        self.cameras = s.cameras.clone();
+        self.params = s.params;
+        self.region = s.region.clone();
+        // `next_id` only grows, so an id is never handed out twice, even
+        // after undoing the camera that had it.
+        models.custom = s.custom_models.clone();
+        self.touch();
+    }
+
     /// Replaces the document with a loaded file (custom models go to `models`).
     pub fn load_file(&mut self, file: SceneFile, models: &mut Models) {
         self.area = Some(file.area);
@@ -320,6 +401,17 @@ impl Scene {
         models.custom = file.custom_models;
         self.touch();
     }
+}
+
+/// One undo step: everything [`Scene`] saves, plus the custom models.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snapshot {
+    pub area: Option<AreaRef>,
+    pub origin: LatLon,
+    pub cameras: Vec<CameraPlacement>,
+    pub params: CoverageParams,
+    pub region: Option<Region>,
+    pub custom_models: Vec<CameraModel>,
 }
 
 /// The currently loaded area and its analysis layers.
@@ -386,4 +478,8 @@ impl UiLayout {
 #[derive(Debug, Default, Resource)]
 pub struct Loading {
     pub area: Option<AreaRef>,
+    /// The request in flight, for Retry.
+    pub request: Option<LoadArea>,
+    /// When it was sent, seconds since start-up.
+    pub started: f64,
 }

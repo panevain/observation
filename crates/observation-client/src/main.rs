@@ -6,6 +6,7 @@
 
 mod cameras;
 mod coverage;
+mod history;
 mod icons;
 mod input;
 mod net;
@@ -69,6 +70,7 @@ fn main() {
             coverage::CoveragePlugin,
             input::InputPlugin,
             persist::PersistPlugin,
+            history::HistoryPlugin,
             ui::UiPlugin,
         ))
         .add_systems(Startup, hide_loader)

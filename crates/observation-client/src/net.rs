@@ -3,7 +3,7 @@
 //! Requests run on the browser's event loop (`fetch`) and report back through
 //! a channel that a system drains every frame.
 
-use crate::state::{AreaLoaded, LoadArea, Loading, UiState};
+use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, UiState};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::platform::collections::{HashMap, HashSet};
@@ -159,10 +159,13 @@ fn start_area_loads(
     mut reqs: MessageReader<LoadArea>,
     net: Res<Net>,
     mut loading: ResMut<Loading>,
+    time: Res<Time<Real>>,
 ) {
     // Only the most recent request matters.
     if let Some(req) = reqs.read().last() {
         loading.area = Some(req.area);
+        loading.request = Some(req.clone());
+        loading.started = time.elapsed_secs_f64();
         net.get(area_url(&req.area), Request::Area(req.clone()));
     }
 }
@@ -198,13 +201,17 @@ fn drain_replies(
             Request::Area(request) => {
                 if loading.area == Some(request.area) {
                     loading.area = None;
+                    loading.request = None;
                 } else {
-                    continue; // superseded
+                    continue; // superseded or cancelled
                 }
                 let result =
                     res.and_then(|bytes| AreaBundle::decode(&bytes).map_err(|e| e.to_string()));
                 if let Err(e) = &result {
-                    ui.error(format!("Could not load area: {e}"));
+                    ui.error_with(
+                        format!("Could not load area: {e}"),
+                        ToastAction::Retry(request.clone()),
+                    );
                 }
                 loaded.write(AreaLoaded { request, result });
             }

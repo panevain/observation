@@ -50,11 +50,8 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     );
     let s = d.coverage.stats;
     if d.scene.cameras.is_empty() {
-        hint(
-            ui,
-            t,
-            "Place a camera to see what it covers. Use the Place tool (P) and click a wall.",
-        );
+        empty_state(ui, d, t);
+        return;
     }
     ui.columns(3, |c| {
         stat(&mut c[0], t, s.street_fraction(), "of street seen", t.text);
@@ -100,6 +97,46 @@ fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             hint(ui, t, "cameras");
         });
     }
+}
+
+/// In place of three 0% figures: what to do first.
+fn empty_state(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    egui::Frame::new()
+        .fill(t.surface_sunken)
+        .corner_radius(egui::CornerRadius::same(t.radius.lg))
+        .inner_margin(egui::Margin::same(t.space.md as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(icons::SECURITY_CAMERA)
+                        .size(t.font.heading)
+                        .color(t.text_muted),
+                );
+                ui.label(
+                    RichText::new("No cameras yet")
+                        .size(t.font.title)
+                        .family(strong_family()),
+                );
+            });
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Choose a model under Cameras, then click a wall to mount it or the ground to put it on a pole. The street and wall coverage appears here.",
+                    )
+                    .color(t.text_muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(t.space.xs);
+            if ui
+                .add(primary(t, &format!("{}  Place camera…", icons::PLUS)))
+                .on_hover_text("P")
+                .clicked()
+            {
+                d.ui.tool = Tool::Place;
+            }
+        });
 }
 
 /// Draw, toggle, redraw or clear the region the figures are limited to.

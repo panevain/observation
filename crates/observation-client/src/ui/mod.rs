@@ -8,9 +8,10 @@ mod toolbar;
 mod widgets;
 
 use crate::coverage::CoverageState;
+use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
-use crate::state::{Area, LoadArea, Loading, Models, Scene, Tool, UiState};
+use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
 use crate::theme::{MIN_VIEWPORT, Tokens, UiFont, install_fonts, strong_family};
 use bevy::camera::Viewport;
 use bevy::prelude::*;
@@ -45,8 +46,11 @@ fn apply_theme(
     Ok(())
 }
 
-fn tick_toasts(time: Res<Time>, mut ui: ResMut<UiState>) {
+/// Wall-clock time: the virtual clock caps each frame at 250 ms, which would
+/// slow toasts and the loading timer whenever frames are sparse.
+fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>) {
     let dt = time.delta_secs();
+    ui.now = time.elapsed_secs_f64();
     if ui.toasts.is_empty() {
         return;
     }
@@ -65,7 +69,8 @@ pub struct UiData<'w> {
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
     pub area: Option<Res<'w, Area>>,
-    pub loading: Res<'w, Loading>,
+    pub loading: ResMut<'w, Loading>,
+    pub history: Res<'w, crate::history::History>,
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
     pub config: Res<'w, crate::net::ServerConfig>,
@@ -199,9 +204,35 @@ fn draw_ui(
         actions::apply(&mut d, id, a);
     }
     overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
-    overlays::toasts(&ctx, &t, viewport_rect, &d.ui);
-    if d.loading.area.is_some() {
-        overlays::loading(&ctx, &t, viewport_rect);
+    match overlays::toasts(&ctx, &t, viewport_rect, &d.ui) {
+        Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
+            d.ui.history_request = Some(HistoryOp::Undo);
+            d.ui.toasts
+                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+        }
+        Some(overlays::ToastEvent::Action(ToastAction::Retry(req))) => {
+            d.ui.toasts
+                .retain(|t| !matches!(t.action, Some(ToastAction::Retry(_))));
+            load.write(req);
+        }
+        Some(overlays::ToastEvent::Dismiss(i)) if i < d.ui.toasts.len() => {
+            d.ui.toasts.remove(i);
+        }
+        _ => {}
+    }
+    if let Some(area) = d.loading.area {
+        let elapsed = d.ui.now - d.loading.started;
+        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed) {
+            Some(overlays::LoadingChoice::Cancel) => {
+                // The reply, when it comes, is ignored as superseded.
+                d.loading.area = None;
+                d.loading.request = None;
+            }
+            Some(overlays::LoadingChoice::Demo) => {
+                load.write(LoadArea::demo());
+            }
+            None => {}
+        }
     }
     if d.ui.help_open {
         overlays::help(&ctx, &t, &mut d.ui);

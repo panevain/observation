@@ -2,12 +2,13 @@
 
 use super::UiData;
 use super::actions::CameraAction;
-use super::widgets::{hint, keycap, primary, swatch};
+use super::widgets::{hint, keycap, primary, secondary, swatch};
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{ToastKind, Tool, UiState};
+use crate::state::{ToastAction, ToastKind, Tool, UiState};
 use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
+use observation_core::scene::AreaRef;
 
 /// Full-screen block for viewports below the supported minimum.
 pub fn viewport_gate(ctx: &egui::Context, t: &Tokens, w: f32, h: f32) {
@@ -198,48 +199,147 @@ fn selection_chip(
         });
 }
 
-pub fn toasts(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, ui_state: &UiState) {
+/// What the user did with a toast this frame.
+pub enum ToastEvent {
+    Action(ToastAction),
+    Dismiss(usize),
+}
+
+/// The latest toasts at the bottom of the viewport. Errors stay until
+/// dismissed; a toast may carry one button (Undo, Retry).
+pub fn toasts(
+    ctx: &egui::Context,
+    t: &Tokens,
+    vp: egui::Rect,
+    ui_state: &UiState,
+) -> Option<ToastEvent> {
     if ui_state.toasts.is_empty() {
-        return;
+        return None;
     }
+    let mut event = None;
     egui::Area::new(Id::new("toasts"))
         .order(Order::Foreground)
         .pivot(Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(vp.center().x, vp.max.y - t.space.lg))
-        .interactable(false)
         .show(ctx, |ui| {
-            for toast in ui_state.toasts.iter().rev().take(3) {
-                let accent = match toast.kind {
-                    ToastKind::Info => t.accent,
-                    ToastKind::Error => t.danger,
+            let n = ui_state.toasts.len();
+            for (i, toast) in ui_state.toasts.iter().enumerate().rev().take(3) {
+                let error = toast.kind == ToastKind::Error;
+                let (icon, accent) = if error {
+                    (icons::WARNING_CIRCLE, t.danger)
+                } else {
+                    (icons::INFO, t.text_muted)
                 };
-                egui::Frame::new()
-                    .fill(t.surface_raised)
-                    .stroke(Stroke::new(t.stroke_width * 2.0, accent))
-                    .corner_radius(egui::CornerRadius::same(t.radius.md))
-                    .inner_margin(egui::Margin::symmetric(t.space.lg as i8, t.space.sm as i8))
+                t.card()
+                    .stroke(Stroke::new(
+                        t.stroke_width * if error { 2.0 } else { 1.0 },
+                        if error { t.danger } else { t.border },
+                    ))
+                    .inner_margin(egui::Margin::symmetric(t.space.md as i8, t.space.sm as i8))
                     .show(ui, |ui| {
-                        ui.label(&toast.text);
+                        ui.set_max_width((vp.width() - 2.0 * t.space.xl).min(560.0));
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(icon).size(t.font.title).color(accent));
+                            ui.add(egui::Label::new(&toast.text).wrap());
+                            if let Some(a) = &toast.action
+                                && ui.add(secondary(t, a.label())).clicked()
+                            {
+                                event = Some(ToastEvent::Action(a.clone()));
+                            }
+                            // Errors never time out, so they need a way out.
+                            if (error || toast.action.is_some())
+                                && ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(icons::X).color(t.text_muted),
+                                        )
+                                        .frame_when_inactive(false),
+                                    )
+                                    .on_hover_text("Dismiss")
+                                    .clicked()
+                            {
+                                event = Some(ToastEvent::Dismiss(i));
+                            }
+                        });
                     });
-                ui.add_space(t.space.xs);
+                if i + 3 > n {
+                    ui.add_space(t.space.xs);
+                }
             }
         });
+    event
 }
 
-pub fn loading(ctx: &egui::Context, t: &Tokens, vp: egui::Rect) {
+/// What the user chose on the loading card.
+pub enum LoadingChoice {
+    Cancel,
+    Demo,
+}
+
+/// The loading card: what is being fetched, for how long, and a way out.
+/// A first request for a new place waits on the public Overpass service,
+/// which can take most of a minute, so after a few seconds it says so.
+pub fn loading(
+    ctx: &egui::Context,
+    t: &Tokens,
+    vp: egui::Rect,
+    area: AreaRef,
+    elapsed: f64,
+) -> Option<LoadingChoice> {
+    let mut choice = None;
     egui::Area::new(Id::new("loading"))
         .order(Order::Foreground)
         .pivot(Align2::CENTER_CENTER)
         .fixed_pos(vp.center())
         .show(ctx, |ui| {
             t.card().show(ui, |ui| {
+                ui.set_max_width(380.0);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Loading buildings…");
+                    let what = match area {
+                        AreaRef::Demo => "Loading the demo street…".to_owned(),
+                        AreaRef::Osm { bbox } => format!(
+                            "Loading buildings for {:.0} × {:.0} m…",
+                            bbox.width_m(),
+                            bbox.height_m()
+                        ),
+                    };
+                    ui.label(RichText::new(what).family(strong_family()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("{elapsed:.0} s"))
+                                .size(t.font.caption)
+                                .color(t.text_muted),
+                        );
+                    });
                 });
-                hint(ui, t, "Fetching and preparing map data on the server.");
+                let stage = match (area, elapsed) {
+                    (AreaRef::Demo, _) => "Built into the server; this should take a moment.",
+                    (_, e) if e < 5.0 => "Fetching map data and preparing the 3D scene on the server.",
+                    (_, e) if e < 25.0 => {
+                        "Still working: a new place waits on OpenStreetMap's public Overpass service, which can take up to a minute. Places loaded before come from the server's cache."
+                    }
+                    _ => "The map-data service is slow right now. You can keep waiting, cancel and try a smaller area, or explore the demo street meanwhile.",
+                };
+                ui.add_space(t.space.xs);
+                ui.add(egui::Label::new(
+                    RichText::new(stage).size(t.font.caption).color(t.text_muted),
+                ).wrap());
+                ui.add_space(t.space.sm);
+                ui.horizontal(|ui| {
+                    if ui.add(secondary(t, "Cancel")).clicked() {
+                        choice = Some(LoadingChoice::Cancel);
+                    }
+                    if area != AreaRef::Demo
+                        && elapsed >= 5.0
+                        && ui.add(secondary(t, "Use demo street instead")).clicked()
+                    {
+                        choice = Some(LoadingChoice::Demo);
+                    }
+                });
             });
         });
+    choice
 }
 
 pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {

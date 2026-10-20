@@ -2,9 +2,10 @@
 
 use super::UiData;
 use super::widgets::{RailKind, hint, keycap, rail_button, secondary};
+use crate::history::HistoryOp;
 use crate::icons;
 use crate::persist::PersistAction;
-use crate::state::{LoadArea, Tool};
+use crate::state::{LoadArea, SaveState, Tool};
 use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
@@ -48,6 +49,40 @@ pub fn top_bar(
             .clicked()
         {
             load.write(LoadArea::demo());
+        }
+        ui.separator();
+        for (op, glyph, keys, can, what) in [
+            (
+                HistoryOp::Undo,
+                icons::ARROW_COUNTER_CLOCKWISE,
+                "Ctrl+Z",
+                d.history.can_undo(),
+                d.history.undo_label(),
+            ),
+            (
+                HistoryOp::Redo,
+                icons::ARROW_CLOCKWISE,
+                "Ctrl+Shift+Z",
+                d.history.can_redo(),
+                d.history.redo_label(),
+            ),
+        ] {
+            let name = match op {
+                HistoryOp::Undo => "Undo",
+                HistoryOp::Redo => "Redo",
+            };
+            let tip = match what {
+                Some(w) => format!("{name} {w} ({keys})"),
+                None => format!("Nothing to {} ({keys})", name.to_lowercase()),
+            };
+            if ui
+                .add_enabled(can, secondary(&t, glyph))
+                .on_hover_text(&tip)
+                .on_disabled_hover_text(&tip)
+                .clicked()
+            {
+                d.ui.history_request = Some(op);
+            }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui
@@ -185,6 +220,8 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
                 "https://www.openstreetmap.org/copyright",
             );
             ui.separator();
+            save_status(ui, d);
+            ui.separator();
             let s = d.coverage.stats;
             for (value, caption) in [
                 (s.facade_fraction(), "walls"),
@@ -221,6 +258,40 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
             });
         });
     });
+}
+
+/// Whether the scene is safely in this browser's storage.
+fn save_status(ui: &mut egui::Ui, d: &UiData) {
+    let t = *d.tokens;
+    let (icon, text, color, tip) = match d.ui.save {
+        SaveState::Saved(at) => {
+            let ago = (d.ui.now - at).max(0.0);
+            let when = if ago < 60.0 {
+                "just now".to_owned()
+            } else {
+                format!("{:.0} min ago", ago / 60.0)
+            };
+            (
+                icons::CLOUD_CHECK,
+                "Saved",
+                t.text_muted,
+                format!("Saved in this browser {when}. Use Export to keep a copy elsewhere."),
+            )
+        }
+        SaveState::Failed => (
+            icons::CLOUD_WARNING,
+            "Not saved",
+            t.warning,
+            "This browser refused to store the scene (storage full, blocked or private mode). Use Export to keep your work.".to_owned(),
+        ),
+        SaveState::Pending => return,
+    };
+    ui.label(
+        RichText::new(format!("{icon} {text}"))
+            .size(t.font.caption)
+            .color(color),
+    )
+    .on_hover_text(tip);
 }
 
 /// Display preferences, remembered in this browser.

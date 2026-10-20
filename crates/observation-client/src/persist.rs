@@ -1,6 +1,6 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
-use crate::state::{LoadArea, Models, Scene, UiState};
+use crate::state::{LoadArea, Models, SaveState, Scene, UiState};
 use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -66,8 +66,9 @@ pub fn load_font() -> UiFont {
 }
 
 fn save_font(font: Res<UiFont>) {
-    if !font.is_added() {
-        storage_set(FONT_KEY, font.key());
+    // Not worth a warning: the font just reverts on the next visit.
+    if !font.is_added() && !storage_set(FONT_KEY, font.key()) {
+        bevy::log::warn!("could not store the font choice");
     }
 }
 
@@ -100,7 +101,14 @@ fn restore(
     }
 }
 
-fn autosave(time: Res<Time>, scene: Res<Scene>, models: Res<Models>, mut p: ResMut<Persist>) {
+fn autosave(
+    time: Res<Time>,
+    real: Res<Time<Real>>,
+    scene: Res<Scene>,
+    models: Res<Models>,
+    mut p: ResMut<Persist>,
+    mut ui: ResMut<UiState>,
+) {
     p.timer += time.delta_secs();
     if p.timer < AUTOSAVE_INTERVAL {
         return;
@@ -111,8 +119,13 @@ fn autosave(time: Res<Time>, scene: Res<Scene>, models: Res<Models>, mut p: ResM
     };
     let json = file.to_json();
     if json != p.last_saved {
-        storage_set(STORAGE_KEY, &json);
-        p.last_saved = json;
+        if storage_set(STORAGE_KEY, &json) {
+            ui.save = SaveState::Saved(real.elapsed_secs_f64());
+            p.last_saved = json;
+        } else {
+            // Leave `last_saved` alone so the next check tries again.
+            ui.save = SaveState::Failed;
+        }
     }
 }
 
@@ -173,11 +186,10 @@ mod web {
         storage()?.get_item(key).ok().flatten()
     }
 
-    pub fn storage_set(key: &str, value: &str) {
-        if let Some(s) = storage() {
-            // Quota errors are non-fatal: the user can still export.
-            let _ = s.set_item(key, value);
-        }
+    /// Whether the value was stored. Quota and privacy errors are non-fatal:
+    /// the status bar says so and the user can still export.
+    pub fn storage_set(key: &str, value: &str) -> bool {
+        storage().is_some_and(|s| s.set_item(key, value).is_ok())
     }
 
     pub fn download(name: &str, text: &str) {
@@ -241,7 +253,9 @@ mod web {
     pub fn storage_get(_: &str) -> Option<String> {
         None
     }
-    pub fn storage_set(_: &str, _: &str) {}
+    pub fn storage_set(_: &str, _: &str) -> bool {
+        true
+    }
     pub fn download(name: &str, text: &str) {
         if let Err(e) = std::fs::write(name, text) {
             bevy::log::error!("export failed: {e}");

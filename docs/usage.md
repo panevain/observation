@@ -26,9 +26,9 @@ To load another street:
 4. The box shows its size. Each side must be between **20 m and 500 m**; otherwise the box turns red and the reason appears next to the button.
 5. Click **Load area**. Close the dialog with **Close**, **Esc**, or by clicking outside it.
 
-Loading shows "Loading buildings..." while the server fetches and prepares the data. A first request for a new place waits on the public map-data service and can be slow; repeat requests for the same box are served from the server's cache. If the map-data provider is busy you get a "busy, please retry shortly" message; wait a little and try again.
+While the server fetches and prepares the data, a card in the 3D view says what is loading and for how long. A first request for a new place waits on the public map-data service and can be slow; after a few seconds the card says so, and offers **Use demo street instead**. **Cancel** stops waiting (the request is ignored when it arrives). Repeat requests for the same box are served from the server's cache. If loading fails, for example with "busy, please retry shortly" when the map-data provider is busy, the message stays at the bottom of the view until you dismiss it, with a **Retry** button.
 
-Loading a new area, including **Demo street**, removes the cameras you placed, because cameras belong to an area (the demo street then gets its ten example cameras again). Autosave overwrites the stored scene within a couple of seconds, so use **Export** first if you want to keep it.
+Loading a new area, including **Demo street**, removes the cameras you placed, because cameras belong to an area (the demo street then gets its ten example cameras again). A message with an **Undo** button appears, and **Undo** (or Ctrl+Z) brings the previous area and its cameras back. Undo only lasts for this visit, and autosave overwrites the stored scene within a couple of seconds, so use **Export** if you want to keep a copy.
 
 ## Place cameras
 
@@ -68,7 +68,7 @@ In the **Cameras** list, each row shows an eye, the camera's colour, its type ic
 
 ## Read the coverage
 
-The **Coverage** section updates as soon as you change anything.
+The **Coverage** section updates as soon as you change anything. With no cameras placed it shows a short "No cameras yet" note with a **Place camera...** button instead of the figures.
 
 | Figure | Meaning |
 | --- | --- |
@@ -112,10 +112,11 @@ A higher level shrinks each camera's range. The range for a level is `width_px /
 
 Open **Custom model** (above Analysis in the inspector) to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene. Models cannot be edited or removed in the app once added; edit an exported scene file and import it if you need to.
 
-## Save, export and import
+## Undo, save, export and import
 
-- **Autosave.** The scene (area, cameras, custom models, analysis settings and region) is saved to your browser's local storage about every 1.5 seconds under the key `observation.scene.v1`. It is restored the next time you open the app in the same browser. Clearing site data, private windows and some browser settings discard it.
-- **Export** downloads `observation-scene.json`. **Import** replaces the current scene with a chosen JSON file, without asking first, and reloads its area from the server.
+- **Undo and redo.** The arrows in the top bar, or **Ctrl+Z** and **Ctrl+Shift+Z** (or **Ctrl+Y**; **Cmd** on a Mac), step back and forward through your changes: placing, moving, aiming, editing and deleting cameras, the region, analysis settings, custom models, imports and area changes. A drag or a typed name counts as one step when you let go or leave the field. Hover an arrow to see what it would undo or redo. Deleting a camera or replacing the cameras also shows a message with an **Undo** button. Undo history is kept for this visit only (up to 100 steps), and undoing an area change reloads that area. While a text field has focus, Ctrl+Z undoes typing in the field instead.
+- **Autosave.** The scene (area, cameras, custom models, analysis settings and region) is saved to your browser's local storage about every 1.5 seconds under the key `observation.scene.v1`. It is restored the next time you open the app in the same browser. Clearing site data, private windows and some browser settings discard it. The status bar shows **Saved** once a save has gone through, or **Not saved** in a warning colour if the browser refused to store the scene (full, blocked or private mode); then use **Export** to keep your work.
+- **Export** downloads `observation-scene.json`. **Import** replaces the current scene with a chosen JSON file, without asking first (it can be undone), and reloads its area from the server.
 
 Scene files are plain JSON:
 
