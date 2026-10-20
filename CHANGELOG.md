@@ -21,6 +21,10 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - A Region tool (R) to outline part of the area on the ground; while it is on, the coverage figures count only what lies inside. The region can be switched off, redrawn or cleared, and is saved with the scene (scene files gain an optional `region`).
 - Settings menu (gear in the top bar) with a choice of UI font, Inter or Iosevka, remembered in the browser. Both are bundled (subset to Latin-1, about 100 KB together; `scripts/subset-fonts.sh` rebuilds them) and figures use tabular digits.
 - Phosphor icons; each camera type has its own icon in the camera list and model picker.
+- A toolbar floats above the selected camera in the 3D view (Aim, Move, Focus, Duplicate, Delete), and camera rows have a right-click menu with the same actions plus Include in coverage.
+- The status bar lists the active tool's keys as keycaps and shows the three coverage figures; the tool rail shows each tool's shortcut.
+- Hovering a camera's row highlights it in the 3D view, and hovering a camera in the view highlights its row.
+- A compass dial for a camera's heading, with its field of view drawn as a wedge; Ctrl (or Cmd) makes number fields drag ten times faster (Shift already slows them).
 
 ### Changed
 
@@ -33,6 +37,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Camera type colours are now cool and neutral (doorbell blue, floodlight green, spotlight sky blue, bullet indigo, turret teal, dome violet, indoor slate) so cones never match a step of the yellow-to-purple coverage ramp; a type gets two extra shades before they repeat. Saved per-camera colours are unchanged.
 - The selection and aim markers are white over a dark casing, and the region outline is dark, so none of them reads as a camera or coverage colour.
 - Flatter widget style: buttons show hover and press by fill instead of an outline, input fields have a 3:1 edge, corners are smaller (4/6/8 px) and floating cards and menus have a shadow.
+- Selected camera is grouped into a name header, Position, Orientation and a collapsed Optics section; the face vector moved to the compass label's tooltip. Camera rows use an eye toggle instead of a checkbox, and the Cones and Walls toggles look different from the tools.
 
 ### Fixed
 

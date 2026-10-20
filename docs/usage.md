@@ -9,10 +9,10 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 | Region | What is in it |
 | --- | --- |
 | Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, remembered in this browser) and **?** |
-| Tool rail (left) | Five tools, each an icon with its name; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, or in Region the corners so far). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move and a cell cursor for Region. Messages appear as toasts at the bottom |
+| Tool rail (left) | Five tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
+| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, or in Region the corners so far). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move and a cell cursor for Region. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
-| Status bar | A hint for the active tool, and the OpenStreetMap attribution link |
+| Status bar | The active tool's keys and gestures as keycaps on the left (dropped from the end when the window is narrow); on the right the three coverage figures (street, 2+ cameras, walls), so they stay in view while the inspector scrolls, and the OpenStreetMap attribution link |
 
 ## Pick an area
 
@@ -50,23 +50,21 @@ With Aim or Move active and a camera selected, a left-drag drives the tool rathe
 
 ## Fine-tune in the inspector
 
-Select a camera (in the viewport or by clicking its name in the list) to open **Selected camera**:
+Select a camera (in the viewport or by clicking its row in the list) to open **Selected camera**. It starts with the camera's colour, its type icon and its name (free text, up to 48 characters, edited in place), then:
 
 | Field | Meaning |
 | --- | --- |
-| Name | Free text, up to 48 characters |
 | Model | Change the model without moving the camera (searchable, as above) |
 | Colour | Colour of the camera body, its view cone and its per-camera overlay. Pick any colour or one of the quick swatches; **Default** returns to the colour for the camera's type |
-| Position (m) | **E** east, **S** south and **H** height above ground, in metres from the area centre. Height is limited to 0-60 m |
-| Heading | Compass bearing the camera faces, 0-360 degrees clockwise from north, with a compass label (N, NE, ...) |
-| Tilt | Elevation of the view axis, -90 to 90 degrees; negative looks down |
-| Roll | Rotation about the view axis, -180 to 180 degrees |
-| Face vector | Read-only unit vector the camera faces as (east, north, up) |
-| Field of view, Resolution, Night vision | Read-only, from the model. Night vision shows "7.5 m (assumed)" in a warning colour when the manufacturer publishes no figure |
-| Modelled range | Read-only effective range for the current detail level and lighting (see below) |
-| Source | Link to the manufacturer's spec page, for catalogue models |
+| Position | **E** east, **S** south and **H** height above ground, in metres from the area centre. Height is limited to 0-60 m |
+| Orientation | A compass dial: click or drag it to point the camera (Shift snaps to 15 degree steps); the shaded wedge is the horizontal field of view. Beside it, **Heading** (0-360 degrees clockwise from north, with a compass label such as NE; hover the label for the unit vector the camera faces as east, north, up), **Tilt** (-90 to 90 degrees; negative looks down) and **Roll** (-180 to 180 degrees) |
+| Optics (collapsed) | Read-only. **Field of view**, **Resolution** and **Night vision** from the model (night vision shows "7.5 m (assumed)" in a warning colour when the manufacturer publishes no figure), **Modelled range** for the current detail level and lighting (see below), and **Source**, a link to the manufacturer's spec page for catalogue models |
 
-Buttons: **Aim (A)**, **Move (M)**, **Duplicate** (a copy one metre east, with a new name) and **Delete**. In the **Cameras** list, the checkbox next to each camera ("Include in coverage") disables it without deleting it; a disabled camera is greyed out and ignored by the statistics and overlays.
+Every number field changes when you drag across it: hold **Shift** for finer steps or **Ctrl** (**Cmd** on a Mac) for coarser ones, or click it to type a value.
+
+Buttons: **Aim (A)**, **Move (M)**, **Focus (F)** (frame the camera in the view), **Duplicate** (a copy one metre east, with a new name) and **Delete**.
+
+In the **Cameras** list, each row shows an eye, the camera's colour, its type icon, its name and its model. Click a row to select the camera (click it again to deselect). Hovering a row highlights that camera in the 3D view, and hovering a camera in the 3D view highlights its row. The eye leaves a camera out of the coverage without deleting it (a crossed-out eye; the row is greyed out and the camera is ignored by the statistics and overlays). Right-click a row for **Select**, **Focus**, **Aim**, **Move**, **Duplicate**, **Include in coverage** and **Delete**.
 
 ## Read the coverage
 
@@ -80,7 +78,7 @@ The **Coverage** section updates as soon as you change anything.
 
 Below the bar, the square metres behind the street figure are shown, plus "open ground seen": all visible ground that is not under a building, which includes the street.
 
-**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a teal outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
+**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a dark outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
 
 What counts as "street": every mapped road, service road (including driveways) and footpath, drawn as a band of its estimated width (about 14 m for a motorway down to 2 m for a footpath; the `width` and `lanes` tags are used when present), excluding anything under a building. Other way types, such as tracks, are ignored. Footpaths and service lanes therefore count towards the street figure.
 

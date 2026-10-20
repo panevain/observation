@@ -1,7 +1,8 @@
 //! Floating overlays: viewport gate, toasts, loading card, help, chips.
 
 use super::UiData;
-use super::widgets::{hint, primary, swatch};
+use super::actions::CameraAction;
+use super::widgets::{hint, keycap, primary, swatch};
 use crate::cameras::camera_color;
 use crate::icons;
 use crate::state::{ToastKind, Tool, UiState};
@@ -75,21 +76,71 @@ pub fn mode_pill(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
         });
 }
 
-/// A key name drawn as a keycap.
-pub fn keycap(ui: &mut egui::Ui, t: &Tokens, key: &str) {
-    egui::Frame::new()
-        .fill(t.surface_sunken)
-        .stroke(Stroke::new(t.stroke_width, t.border))
-        .corner_radius(egui::CornerRadius::same(t.radius.sm))
-        .inner_margin(egui::Margin::symmetric(t.space.xs as i8, 0))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(key)
-                    .size(t.font.caption)
-                    .monospace()
-                    .color(t.text_muted),
-            );
+/// Icon buttons floating just above the selected camera in the 3D view.
+/// Returns the action clicked, if any.
+pub fn camera_toolbar(
+    ctx: &egui::Context,
+    t: &Tokens,
+    vp: egui::Rect,
+    at: egui::Pos2,
+) -> Option<CameraAction> {
+    let mut action = None;
+    let gap = t.space.xl;
+    let resp = egui::Area::new(Id::new("camera-toolbar"))
+        .order(Order::Middle)
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(at - vec2(0.0, gap))
+        .constrain_to(vp.shrink(t.space.sm))
+        .show(ctx, |ui| {
+            t.card()
+                .inner_margin(egui::Margin::same(t.space.xs as i8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for a in [
+                            CameraAction::Aim,
+                            CameraAction::Move,
+                            CameraAction::Focus,
+                            CameraAction::Duplicate,
+                            CameraAction::Delete,
+                        ] {
+                            let color = if a == CameraAction::Delete {
+                                t.danger
+                            } else {
+                                t.text
+                            };
+                            let tip = a.shortcut().map_or_else(
+                                || a.label().to_owned(),
+                                |k| format!("{} ({k})", a.label()),
+                            );
+                            let button = egui::Button::new(
+                                RichText::new(a.icon()).size(t.font.title).color(color),
+                            )
+                            .frame_when_inactive(false)
+                            .min_size(vec2(t.layout.hit_target, t.layout.hit_target));
+                            if ui.add(button).on_hover_text(tip).clicked() {
+                                action = Some(a);
+                            }
+                        }
+                    });
+                });
         });
+    // A short stem from the toolbar down towards the camera.
+    let stem_top = egui::pos2(
+        at.x.clamp(resp.response.rect.min.x, resp.response.rect.max.x),
+        resp.response.rect.max.y,
+    );
+    if stem_top.y < at.y - 4.0 {
+        ctx.layer_painter(egui::LayerId::new(
+            Order::Middle,
+            Id::new("camera-toolbar-stem"),
+        ))
+        .line_segment(
+            [stem_top, at - vec2(0.0, 8.0)],
+            Stroke::new(t.stroke_width, t.border_strong),
+        );
+    }
+    action
 }
 
 /// Cursor over the 3D view for each tool, so the mode shows where the click

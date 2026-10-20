@@ -1,6 +1,6 @@
 //! Small reusable widgets built on the design tokens.
 
-use crate::theme::{Tokens, strong_family};
+use crate::theme::{NO_FILL, Tokens, strong_family};
 use bevy_egui::egui::{self, Color32, RichText, Sense, Stroke, Ui, vec2};
 
 /// Section heading with consistent spacing.
@@ -141,14 +141,27 @@ pub fn row(ui: &mut Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut Ui)) {
     ui.end_row();
 }
 
-/// A tool-rail button: icon over a caption, centred. `on` fills it with the
-/// accent and uses the filled icon weight.
+/// How a tool-rail button behaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailKind {
+    /// One of the exclusive tools: accent fill when on.
+    Tool,
+    /// An independent on/off switch: a sunken fill and an accent bar when on,
+    /// so it never looks like the active tool.
+    Toggle,
+}
+
+/// A tool-rail button: icon over a caption, centred, with the keyboard
+/// shortcut in the corner.
+#[allow(clippy::too_many_arguments)]
 pub fn rail_button(
     ui: &mut Ui,
     t: &Tokens,
     icon: RichText,
     label: &str,
+    shortcut: Option<&str>,
     size: egui::Vec2,
+    kind: RailKind,
     on: bool,
     enabled: bool,
 ) -> egui::Response {
@@ -161,20 +174,29 @@ pub fn rail_button(
     if !ui.is_rect_visible(rect) {
         return resp;
     }
-    let fill = if on {
-        t.accent
-    } else if enabled && resp.hovered() {
-        t.hover
-    } else {
-        Color32::TRANSPARENT
+    let hovered = enabled && resp.hovered();
+    let fill = match (kind, on) {
+        (RailKind::Tool, true) => t.accent,
+        (RailKind::Toggle, true) => t.surface_sunken,
+        _ if hovered => t.hover,
+        _ => NO_FILL,
     };
-    let fg = match (on, enabled) {
-        (true, _) => t.on_accent,
-        (false, true) => t.text,
-        (false, false) => t.text_muted.gamma_multiply(0.6),
+    let fg = match (kind, on, enabled) {
+        (RailKind::Tool, true, _) => t.on_accent,
+        (RailKind::Toggle, false, _) => t.text_muted,
+        (_, _, true) => t.text,
+        (_, _, false) => t.text_muted.gamma_multiply(0.6),
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, egui::CornerRadius::same(t.radius.md), fill);
+    let r = egui::CornerRadius::same(t.radius.md);
+    painter.rect_filled(rect, r, fill);
+    if kind == RailKind::Toggle && on {
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + t.space.md, rect.max.y - 3.0),
+            egui::pos2(rect.max.x - t.space.md, rect.max.y - 1.0),
+        );
+        painter.rect_filled(bar, egui::CornerRadius::same(1), t.accent);
+    }
     let icon = egui::WidgetText::from(icon.size(t.font.title + 2.0).color(fg)).into_galley(
         ui,
         Some(egui::TextWrapMode::Extend),
@@ -198,5 +220,137 @@ pub fn rail_button(
     );
     painter.galley(icon_pos, icon, fg);
     painter.galley(caption_pos, caption, fg);
+    if let Some(key) = shortcut {
+        let key_color = if kind == RailKind::Tool && on {
+            t.on_accent
+        } else {
+            t.text_muted
+        };
+        painter.text(
+            rect.right_top() + vec2(-4.0, 3.0),
+            egui::Align2::RIGHT_TOP,
+            key,
+            egui::FontId::monospace(t.font.caption - 2.0),
+            key_color,
+        );
+    }
+    resp
+}
+
+/// A key name drawn as a keycap.
+pub fn keycap(ui: &mut Ui, t: &Tokens, key: &str) {
+    egui::Frame::new()
+        .fill(t.surface_sunken)
+        .stroke(Stroke::new(t.stroke_width, t.border))
+        .corner_radius(egui::CornerRadius::same(t.radius.sm))
+        .inner_margin(egui::Margin::symmetric(t.space.xs as i8, 0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(key)
+                    .size(t.font.caption)
+                    .monospace()
+                    .color(t.text_muted),
+            );
+        });
+}
+
+/// Tooltip for every number field.
+pub const NUMBER_TIP: &str = "Drag to change · Shift: finer · Ctrl: coarser · click to type";
+
+/// Drag speed for a number field: ten times faster while Ctrl (or Cmd) is
+/// held. egui already slows a drag tenfold with Shift.
+pub fn drag_speed(ui: &Ui, speed: f64) -> f64 {
+    if ui.input(|i| i.modifiers.command_only()) {
+        speed * 10.0
+    } else {
+        speed
+    }
+}
+
+/// Small caption heading inside a section.
+pub fn subsection(ui: &mut Ui, t: &Tokens, title: &str) {
+    ui.add_space(t.space.xs);
+    ui.label(
+        RichText::new(title)
+            .size(t.font.caption)
+            .family(strong_family())
+            .color(t.text_muted),
+    );
+}
+
+/// A compass for a heading (degrees clockwise from north). Click or drag to
+/// point it; Shift snaps to 15°. The wedge shows the horizontal field of view.
+pub fn compass_dial(
+    ui: &mut Ui,
+    t: &Tokens,
+    heading: &mut f32,
+    fov_deg: Option<f32>,
+    color: Color32,
+) -> egui::Response {
+    let side = 64.0;
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(side, side), Sense::click_and_drag());
+    let c = rect.center();
+    let r = side / 2.0 - 2.0;
+    let dir = |deg: f32| {
+        let a = deg.to_radians();
+        vec2(a.sin(), -a.cos())
+    };
+    if (resp.dragged() || resp.clicked())
+        && let Some(p) = resp.interact_pointer_pos()
+        && p.distance(c) > 3.0
+    {
+        let v = p - c;
+        let mut deg = v.x.atan2(-v.y).to_degrees().rem_euclid(360.0);
+        deg = if ui.input(|i| i.modifiers.shift) {
+            (deg / 15.0).round() * 15.0
+        } else {
+            deg.round()
+        };
+        let deg = deg.rem_euclid(360.0);
+        if deg != *heading {
+            *heading = deg;
+            resp.mark_changed();
+        }
+    }
+    let painter = ui.painter();
+    let ring = if resp.hovered() || resp.dragged() {
+        t.text_muted
+    } else {
+        t.border_strong
+    };
+    painter.circle(c, r, t.surface_sunken, Stroke::new(t.stroke_width, ring));
+    for q in 0..4 {
+        let d = dir(q as f32 * 90.0);
+        painter.line_segment(
+            [c + d * (r - 5.0), c + d * r],
+            Stroke::new(t.stroke_width, ring),
+        );
+    }
+    painter.text(
+        c + dir(0.0) * (r - 11.0),
+        egui::Align2::CENTER_CENTER,
+        "N",
+        egui::FontId::new(t.font.caption - 2.0, egui::FontFamily::Proportional),
+        t.text_muted,
+    );
+    if let Some(fov) = fov_deg {
+        let half = (fov / 2.0).min(179.0);
+        let steps = 16;
+        let mut pts = vec![c];
+        for i in 0..=steps {
+            let a = *heading - half + 2.0 * half * i as f32 / steps as f32;
+            pts.push(c + dir(a) * (r - 4.0));
+        }
+        painter.add(egui::Shape::convex_polygon(
+            pts,
+            color.gamma_multiply(0.35),
+            Stroke::new(t.stroke_width, color),
+        ));
+    }
+    painter.line_segment(
+        [c, c + dir(*heading) * (r - 2.0)],
+        Stroke::new(t.stroke_width * 2.0, t.text),
+    );
+    painter.circle_filled(c, 2.5, t.text);
     resp
 }

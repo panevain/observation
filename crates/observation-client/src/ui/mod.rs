@@ -1,5 +1,6 @@
 //! egui front-end: docked panels around the 3D viewport, plus overlays.
 
+mod actions;
 mod inspector;
 pub mod map_picker;
 mod overlays;
@@ -9,7 +10,7 @@ mod widgets;
 use crate::coverage::CoverageState;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
-use crate::state::{Area, LoadArea, Loading, Models, Scene, UiState};
+use crate::state::{Area, LoadArea, Loading, Models, Scene, Tool, UiState};
 use crate::theme::{MIN_VIEWPORT, Tokens, UiFont, install_fonts, strong_family};
 use bevy::camera::Viewport;
 use bevy::prelude::*;
@@ -75,7 +76,7 @@ pub struct UiData<'w> {
 fn draw_ui(
     mut contexts: EguiContexts,
     mut d: UiData,
-    mut camera: Query<&mut Camera, With<crate::input::OrbitCamera>>,
+    mut camera: Query<(&mut Camera, &GlobalTransform), With<crate::input::OrbitCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
@@ -152,7 +153,7 @@ fn draw_ui(
 
     // Fit the 3D viewport to the space between the panels.
     let sf = window.scale_factor();
-    if let Ok(mut cam) = camera.single_mut() {
+    if let Ok((mut cam, _)) = camera.single_mut() {
         let pos = UVec2::new((left * sf) as u32, (top * sf) as u32);
         let full = UVec2::new(window.physical_width(), window.physical_height());
         let size = full
@@ -183,6 +184,20 @@ fn draw_ui(
     ));
 
     overlays::mode_pill(&ctx, &t, viewport_rect, &d);
+    // Quick actions next to the selected camera, where the eye already is.
+    let anchor =
+        d.ui.selected
+            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region))
+            .and_then(|id| d.scene.camera(id))
+            .zip(camera.single().ok())
+            .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
+            .map(|p| egui::pos2(p.x, p.y))
+            .filter(|p| viewport_rect.shrink(t.space.lg).contains(*p));
+    if let (Some(id), Some(at)) = (d.ui.selected, anchor)
+        && let Some(a) = overlays::camera_toolbar(&ctx, &t, viewport_rect, at)
+    {
+        actions::apply(&mut d, id, a);
+    }
     overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
     overlays::toasts(&ctx, &t, viewport_rect, &d.ui);
     if d.loading.area.is_some() {

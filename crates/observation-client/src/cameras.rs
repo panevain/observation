@@ -173,7 +173,8 @@ fn draw_frustums(
 ) {
     for c in &scene.cameras {
         let selected = ui.selected == Some(c.id);
-        if !(ui.show_frustums || selected) {
+        let hovered = ui.hovered() == Some(c.id);
+        if !(ui.show_frustums || selected || hovered) {
             continue;
         }
         let Some(m) = models.get(&c.model_id) else {
@@ -196,6 +197,13 @@ fn draw_frustums(
         }
         if let (Some(a), Some(b)) = (outline.last(), outline.first()) {
             gizmos.line(cone.eye + *a * r, cone.eye + *b * r, color);
+        }
+        if hovered && !selected {
+            gizmos.sphere(
+                Isometry3d::from_translation(cone.eye),
+                0.4,
+                to_bevy(tokens.world.halo),
+            );
         }
         if selected {
             // Neutral markers over a dark casing, so they read on any tile and

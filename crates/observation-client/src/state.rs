@@ -82,6 +82,41 @@ impl Tool {
         }
     }
 
+    /// Keys and gestures for the status bar: (key, what it does).
+    pub fn keymap(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Select => &[
+                ("Click", "select"),
+                ("Drag", "orbit"),
+                ("Right-drag", "pan"),
+                ("Scroll", "zoom"),
+                ("F", "focus"),
+                ("Del", "delete"),
+            ],
+            Self::Place => &[
+                ("Click wall", "mount"),
+                ("Click ground", "pole"),
+                ("Esc", "done"),
+            ],
+            Self::Aim => &[
+                ("Click/drag", "point camera"),
+                ("Right-drag", "pan"),
+                ("Esc", "done"),
+            ],
+            Self::Move => &[
+                ("Click/drag", "move camera"),
+                ("Right-drag", "pan"),
+                ("Esc", "done"),
+            ],
+            Self::Region => &[
+                ("Click", "add corner"),
+                ("Enter", "finish"),
+                ("Backspace", "remove corner"),
+                ("Esc", "cancel"),
+            ],
+        }
+    }
+
     pub fn needs_selection(self) -> bool {
         matches!(self, Self::Aim | Self::Move)
     }
@@ -110,6 +145,12 @@ pub struct UiState {
     pub map_open: bool,
     pub help_open: bool,
     pub custom_model_open: bool,
+    /// Camera under the pointer in the camera list.
+    pub hover_list: Option<u32>,
+    /// Camera under the pointer in the 3D view.
+    pub hover_scene: Option<u32>,
+    /// Frame the selected camera in the 3D view (consumed by the input systems).
+    pub focus_request: bool,
     pub toasts: Vec<Toast>,
     /// Corners placed so far with the Region tool, world `[x, z]`.
     pub region_draft: Vec<[f32; 2]>,
@@ -131,6 +172,9 @@ impl Default for UiState {
             map_open: false,
             help_open: false,
             custom_model_open: false,
+            hover_list: None,
+            hover_scene: None,
+            focus_request: false,
             toasts: Vec::new(),
             region_draft: Vec::new(),
             region_hover: None,
@@ -154,6 +198,11 @@ pub struct Toast {
 }
 
 impl UiState {
+    /// The camera to highlight: hovered in the list or in the 3D view.
+    pub fn hovered(&self) -> Option<u32> {
+        self.hover_list.or(self.hover_scene)
+    }
+
     pub fn info(&mut self, text: impl Into<String>) {
         self.toasts.push(Toast {
             kind: ToastKind::Info,

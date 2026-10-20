@@ -484,6 +484,9 @@ pub fn to_bevy(c: Color32) -> Color {
     Color::srgba_u8(r, g, b, a)
 }
 
+/// No fill: a button or row at rest.
+pub const NO_FILL: Color32 = Color32::TRANSPARENT;
+
 /// Untinted image drawing (multiplies texels by 1).
 pub const IMAGE_TINT: Color32 = Color32::WHITE;
 

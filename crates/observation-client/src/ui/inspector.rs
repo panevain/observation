@@ -1,13 +1,15 @@
 //! Right-hand inspector: coverage summary, analysis settings, cameras.
 
 use super::UiData;
+use super::actions::{self, CameraAction};
 use super::widgets::{
-    bar, danger, hint, primary, row, secondary, section, segmented, stat, swatch, swatch_button,
+    NUMBER_TIP, bar, compass_dial, danger, drag_speed, hint, primary, row, secondary, section,
+    segmented, stat, subsection, swatch, swatch_button,
 };
 use crate::cameras::camera_color;
 use crate::icons;
 use crate::state::{OverlayMode, Tool};
-use crate::theme::{Tokens, to_rgb};
+use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
     ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, DoriLevel, Lighting,
@@ -191,43 +193,177 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         &mut d.ui.place_model,
     );
     if ui
-        .add(primary(t, "Place camera…"))
+        .add(primary(t, &format!("{}  Place camera…", icons::PLUS)))
         .on_hover_text("Then click a wall or the ground (P)")
         .clicked()
     {
         d.ui.tool = Tool::Place;
     }
-    let mut toggle = None;
+    let mut action = None;
+    let mut hovered = None;
+    ui.spacing_mut().item_spacing.y = 2.0;
     for c in &d.scene.cameras {
-        let selected = d.ui.selected == Some(c.id);
-        ui.horizontal(|ui| {
-            let mut on = c.enabled;
-            if ui
-                .checkbox(&mut on, "")
-                .on_hover_text("Include in coverage")
-                .changed()
-            {
-                toggle = Some((c.id, on));
+        let model = d
+            .models
+            .get(&c.model_id)
+            .map_or_else(|| "Unknown model".to_owned(), CameraModel::display_name);
+        let row = CameraRow {
+            label: &c.label,
+            model: &model,
+            glyph: icons::kind(d.models.kind_of(&c.model_id)),
+            color: camera_color(&d.scene, c, &d.models, t),
+            enabled: c.enabled,
+            selected: d.ui.selected == Some(c.id),
+            highlighted: d.ui.hover_scene == Some(c.id),
+        };
+        let (resp, eye) = camera_row(ui, t, &row);
+        if resp.hovered() || eye.hovered() {
+            hovered = Some(c.id);
+        }
+        if eye.clicked() {
+            action = Some((c.id, CameraAction::ToggleEnabled));
+        } else if resp.clicked() {
+            // Clicking the selected row deselects it.
+            if row.selected {
+                d.ui.selected = None;
+            } else {
+                action = Some((c.id, CameraAction::Select));
             }
-            swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
-            let model = d
-                .models
-                .get(&c.model_id)
-                .map_or_else(|| "Unknown model".to_owned(), CameraModel::display_name);
-            let glyph = icons::kind(d.models.kind_of(&c.model_id));
-            let label = RichText::new(format!("{glyph}  {}  ·  {}", c.label, model))
-                .color(if c.enabled { t.text } else { t.text_muted });
-            let row = egui::Button::selectable(selected, label).truncate();
-            if ui.add(row).on_hover_text(&model).clicked() {
-                d.ui.selected = if selected { None } else { Some(c.id) };
+        }
+        resp.on_hover_text(&model).context_menu(|ui| {
+            for a in [
+                CameraAction::Select,
+                CameraAction::Focus,
+                CameraAction::Aim,
+                CameraAction::Move,
+                CameraAction::Duplicate,
+                CameraAction::ToggleEnabled,
+                CameraAction::Delete,
+            ] {
+                let mut button = egui::Button::new(format!("{}  {}", a.icon(), a.label()));
+                if let Some(k) = a.shortcut() {
+                    button = button.shortcut_text(k);
+                }
+                if a == CameraAction::ToggleEnabled {
+                    button = button.selected(c.enabled);
+                }
+                if ui.add(button).clicked() {
+                    action = Some((c.id, a));
+                }
             }
         });
     }
-    if let Some((id, on)) = toggle
-        && let Some(c) = d.scene.camera_mut(id)
-    {
-        c.enabled = on;
+    ui.spacing_mut().item_spacing.y = t.space.sm;
+    if d.ui.hover_list != hovered {
+        d.ui.hover_list = hovered;
     }
+    if let Some((id, a)) = action {
+        actions::apply(d, id, a);
+    }
+}
+
+/// What one row of the camera list shows.
+struct CameraRow<'a> {
+    label: &'a str,
+    model: &'a str,
+    glyph: &'a str,
+    color: egui::Color32,
+    enabled: bool,
+    selected: bool,
+    /// Hovered in the 3D view.
+    highlighted: bool,
+}
+
+/// A full-width camera row: an eye toggle, the colour, the type icon, the
+/// name and the model. Returns the row's response and the eye's.
+fn camera_row(ui: &mut egui::Ui, t: &Tokens, row: &CameraRow) -> (egui::Response, egui::Response) {
+    let height = t.layout.hit_target - 4.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let eye_rect = egui::Rect::from_min_size(rect.min, egui::vec2(height, height));
+    let eye = ui
+        .interact(eye_rect, resp.id.with("eye"), egui::Sense::click())
+        .on_hover_text(if row.enabled {
+            "Included in coverage: click to leave it out"
+        } else {
+            "Left out of coverage: click to include it"
+        });
+    if !ui.is_rect_visible(rect) {
+        return (resp, eye);
+    }
+    let painter = ui.painter();
+    let fill = if row.selected {
+        t.accent
+    } else if resp.hovered() || eye.hovered() || row.highlighted {
+        t.hover
+    } else {
+        NO_FILL
+    };
+    painter.rect_filled(rect, egui::CornerRadius::same(t.radius.md), fill);
+    let (fg, muted) = if row.selected {
+        (t.on_accent, t.on_accent)
+    } else if row.enabled {
+        (t.text, t.text_muted)
+    } else {
+        (t.text_muted, t.text_muted)
+    };
+    let font = egui::FontId::proportional(t.font.body);
+    let eye_glyph = if row.enabled {
+        icons::EYE
+    } else {
+        icons::EYE_SLASH
+    };
+    let eye_color = if eye.hovered() { fg } else { muted };
+    painter.text(
+        eye_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        eye_glyph,
+        font.clone(),
+        eye_color,
+    );
+    let mut x = eye_rect.max.x + t.space.xs;
+    let sw = egui::Rect::from_center_size(
+        egui::pos2(x + t.space.md / 2.0, rect.center().y),
+        egui::vec2(t.space.md, t.space.md),
+    );
+    let swatch_color = if row.enabled {
+        row.color
+    } else {
+        row.color.gamma_multiply(0.35)
+    };
+    painter.rect(
+        sw,
+        egui::CornerRadius::same(t.radius.sm),
+        swatch_color,
+        egui::Stroke::new(t.stroke_width, t.border),
+        egui::StrokeKind::Inside,
+    );
+    x = sw.max.x + t.space.sm;
+    let glyph = painter.layout_no_wrap(row.glyph.to_owned(), font.clone(), muted);
+    painter.galley(
+        egui::pos2(x, rect.center().y - glyph.size().y / 2.0),
+        glyph.clone(),
+        muted,
+    );
+    x += glyph.size().x + t.space.sm;
+    let avail = (rect.max.x - t.space.sm - x).max(0.0);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        row.label,
+        0.0,
+        egui::TextFormat::simple(egui::FontId::new(t.font.body, strong_family()), fg),
+    );
+    job.append(row.model, t.space.sm, egui::TextFormat::simple(font, muted));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+    let text = ui.fonts_mut(|f| f.layout_job(job));
+    painter.galley(
+        egui::pos2(x, rect.center().y - text.size().y / 2.0),
+        text,
+        fg,
+    );
+    (resp, eye)
 }
 
 fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
@@ -236,12 +372,24 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         d.ui.selected = None;
         return;
     };
+    let color = camera_color(&d.scene, &c, &d.models, t);
+    let model = d.models.get(&c.model_id).cloned();
     section(ui, t, "Selected camera");
-    ui.add(
-        TextEdit::singleline(&mut c.label)
-            .desired_width(f32::INFINITY)
-            .char_limit(48),
-    );
+    ui.horizontal(|ui| {
+        swatch(ui, t, color);
+        ui.label(
+            RichText::new(icons::kind(d.models.kind_of(&c.model_id)))
+                .size(t.font.title)
+                .color(t.text_muted),
+        );
+        ui.add(
+            TextEdit::singleline(&mut c.label)
+                .font(egui::FontId::new(t.font.title, strong_family()))
+                .desired_width(f32::INFINITY)
+                .char_limit(48),
+        )
+        .on_hover_text("Camera name");
+    });
     model_combo(
         ui,
         "sel-model",
@@ -251,123 +399,153 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     );
     color_row(ui, d, t, &mut c);
 
-    egui::Grid::new("cam-grid")
-        .num_columns(2)
-        .spacing([t.space.md, t.space.sm])
-        .show(ui, |ui| {
-            row(ui, t, "Position (m)", |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        DragValue::new(&mut c.position[0])
-                            .speed(0.1)
-                            .prefix("E ")
-                            .max_decimals(2),
-                    );
-                    ui.add(
-                        DragValue::new(&mut c.position[2])
-                            .speed(0.1)
-                            .prefix("S ")
-                            .max_decimals(2),
-                    );
-                    ui.add(
-                        DragValue::new(&mut c.position[1])
-                            .speed(0.05)
-                            .range(0.0..=60.0)
-                            .prefix("H ")
-                            .max_decimals(2),
-                    );
+    subsection(ui, t, "Position (m from the area centre)");
+    ui.horizontal(|ui| {
+        for (i, prefix, speed, range) in [
+            (0, "E ", 0.1, None),
+            (2, "S ", 0.1, None),
+            (1, "H ", 0.05, Some(0.0..=60.0)),
+        ] {
+            let mut field = DragValue::new(&mut c.position[i])
+                .speed(drag_speed(ui, speed))
+                .prefix(prefix)
+                .max_decimals(2);
+            if let Some(r) = range {
+                field = field.range(r);
+            }
+            ui.add(field).on_hover_text(NUMBER_TIP);
+        }
+    });
+
+    subsection(ui, t, "Orientation");
+    ui.horizontal(|ui| {
+        let mut yaw = c.yaw_deg;
+        let fov = model.as_ref().map(|m| m.hfov_deg);
+        if compass_dial(ui, t, &mut yaw, fov, color)
+            .on_hover_text("Heading: click or drag to point the camera (Shift snaps to 15°)")
+            .changed()
+        {
+            c.yaw_deg = yaw;
+        }
+        egui::Grid::new("orientation")
+            .num_columns(2)
+            .spacing([t.space.sm, t.space.xs])
+            .show(ui, |ui| {
+                row(ui, t, "Heading", |ui| {
+                    ui.horizontal(|ui| {
+                        let mut yaw = c.yaw_deg;
+                        if ui
+                            .add(
+                                DragValue::new(&mut yaw)
+                                    .speed(drag_speed(ui, 1.0))
+                                    .suffix("°")
+                                    .max_decimals(1),
+                            )
+                            .on_hover_text(NUMBER_TIP)
+                            .changed()
+                        {
+                            c.yaw_deg = yaw.rem_euclid(360.0);
+                        }
+                        let f = forward_from_yaw_pitch(c.yaw_deg, c.pitch_deg);
+                        ui.label(RichText::new(compass(c.yaw_deg)).color(t.text_muted))
+                            .on_hover_text(format!(
+                                "Faces ({:.2}, {:.2}, {:.2}) as (east, north, up)",
+                                f.x, -f.z, f.y
+                            ));
+                    });
                 });
-            });
-            row(ui, t, "Heading", |ui| {
-                let mut yaw = c.yaw_deg;
-                if ui
-                    .add(
-                        DragValue::new(&mut yaw)
-                            .speed(1.0)
+                row(ui, t, "Tilt", |ui| {
+                    ui.add(
+                        DragValue::new(&mut c.pitch_deg)
+                            .range(-90.0..=90.0)
+                            .speed(drag_speed(ui, 0.5))
                             .suffix("°")
                             .max_decimals(1),
                     )
-                    .changed()
-                {
-                    c.yaw_deg = yaw.rem_euclid(360.0);
-                }
-                ui.label(RichText::new(compass(c.yaw_deg)).color(t.text_muted));
-            });
-            row(ui, t, "Tilt", |ui| {
-                ui.add(
-                    DragValue::new(&mut c.pitch_deg)
-                        .range(-90.0..=90.0)
-                        .speed(0.5)
-                        .suffix("°")
-                        .max_decimals(1),
-                );
-            });
-            row(ui, t, "Roll", |ui| {
-                ui.add(
-                    DragValue::new(&mut c.roll_deg)
-                        .range(-180.0..=180.0)
-                        .speed(0.5)
-                        .suffix("°")
-                        .max_decimals(1),
-                );
-            });
-            row(ui, t, "Face vector", |ui| {
-                let f = forward_from_yaw_pitch(c.yaw_deg, c.pitch_deg);
-                ui.label(
-                    RichText::new(format!("({:.2}, {:.2}, {:.2})", f.x, -f.z, f.y)).monospace(),
-                )
-                .on_hover_text("Unit vector (east, north, up)");
-            });
-            if let Some(m) = d.models.get(&c.model_id) {
-                row(ui, t, "Field of view", |ui| {
-                    ui.label(format!("{:.0}° × {:.0}°", m.hfov_deg, m.vfov_deg));
+                    .on_hover_text("Negative looks down");
                 });
-                row(ui, t, "Resolution", |ui| {
-                    ui.label(format!("{} × {}", m.resolution[0], m.resolution[1]));
+                row(ui, t, "Roll", |ui| {
+                    ui.add(
+                        DragValue::new(&mut c.roll_deg)
+                            .range(-180.0..=180.0)
+                            .speed(drag_speed(ui, 0.5))
+                            .suffix("°")
+                            .max_decimals(1),
+                    )
+                    .on_hover_text(NUMBER_TIP);
                 });
-                row(ui, t, "Night vision", |ui| match m.ir_range_m {
-                    Some(r) => {
-                        ui.label(format!("{r:.1} m"));
-                    }
-                    None => {
-                        ui.label(
-                            RichText::new(format!("{ASSUMED_IR_RANGE_M:.1} m (assumed)"))
-                                .color(t.warning),
-                        )
-                        .on_hover_text("The manufacturer does not publish an IR range");
-                    }
-                });
-                if let Some(r) = d.coverage.ranges.get(&id) {
-                    row(ui, t, "Modelled range", |ui| {
-                        ui.label(format!("{r:.1} m"));
-                    });
-                }
-                // Validated on load too; never hand a non-https link to the browser.
-                if let Some(src) = m.source.as_deref().filter(|s| is_https_url(s)) {
-                    row(ui, t, "Source", |ui| {
-                        ui.hyperlink_to("spec sheet", src);
-                    });
-                }
-            }
-        });
+            });
+    });
 
+    if let Some(m) = &model {
+        egui::CollapsingHeader::new(
+            RichText::new("Optics")
+                .size(t.font.caption)
+                .family(strong_family())
+                .color(t.text_muted),
+        )
+        .id_salt("optics")
+        .show(ui, |ui| {
+            egui::Grid::new("optics-grid")
+                .num_columns(2)
+                .spacing([t.space.md, t.space.sm])
+                .show(ui, |ui| {
+                    row(ui, t, "Field of view", |ui| {
+                        ui.label(format!("{:.0}° × {:.0}°", m.hfov_deg, m.vfov_deg));
+                    });
+                    row(ui, t, "Resolution", |ui| {
+                        ui.label(format!("{} × {}", m.resolution[0], m.resolution[1]));
+                    });
+                    row(ui, t, "Night vision", |ui| match m.ir_range_m {
+                        Some(r) => {
+                            ui.label(format!("{r:.1} m"));
+                        }
+                        None => {
+                            ui.label(
+                                RichText::new(format!("{ASSUMED_IR_RANGE_M:.1} m (assumed)"))
+                                    .color(t.warning),
+                            )
+                            .on_hover_text("The manufacturer does not publish an IR range");
+                        }
+                    });
+                    if let Some(r) = d.coverage.ranges.get(&id) {
+                        row(ui, t, "Modelled range", |ui| {
+                            ui.label(format!("{r:.1} m"));
+                        });
+                    }
+                    // Validated on load too; never hand a non-https link to the browser.
+                    if let Some(src) = m.source.as_deref().filter(|s| is_https_url(s)) {
+                        row(ui, t, "Source", |ui| {
+                            ui.hyperlink_to("spec sheet", src);
+                        });
+                    }
+                });
+        });
+    }
+
+    let mut action = None;
     ui.horizontal_wrapped(|ui| {
-        if ui.add(secondary(t, "Aim (A)")).clicked() {
-            d.ui.tool = Tool::Aim;
+        for a in [
+            CameraAction::Aim,
+            CameraAction::Move,
+            CameraAction::Focus,
+            CameraAction::Duplicate,
+        ] {
+            let text = format!("{}  {}", a.icon(), a.label());
+            let tip = a
+                .shortcut()
+                .map_or_else(|| a.label().to_owned(), |k| format!("{} ({k})", a.label()));
+            if ui.add(secondary(t, &text)).on_hover_text(tip).clicked() {
+                action = Some(a);
+            }
         }
-        if ui.add(secondary(t, "Move (M)")).clicked() {
-            d.ui.tool = Tool::Move;
-        }
-        if ui.add(secondary(t, "Duplicate")).clicked() {
-            let mut copy = c.clone();
-            copy.label = String::new();
-            copy.position[0] += 1.0;
-            let new = d.scene.add_camera(copy);
-            d.ui.selected = Some(new);
-        }
-        if ui.add(danger(t, "Delete")).clicked() {
-            d.scene.remove_camera(id);
-            d.ui.selected = None;
+        let del = CameraAction::Delete;
+        if ui
+            .add(danger(t, &format!("{}  {}", del.icon(), del.label())))
+            .on_hover_text("Delete (Del)")
+            .clicked()
+        {
+            action = Some(del);
         }
     });
 
@@ -375,6 +553,9 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         && let Some(slot) = d.scene.camera_mut(id)
     {
         *slot = c;
+    }
+    if let Some(a) = action {
+        actions::apply(d, id, a);
     }
 }
 
