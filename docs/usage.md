@@ -8,7 +8,7 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 
 | Region | What is in it |
 | --- | --- |
-| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export** and **?** |
+| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, remembered in this browser) and **?** |
 | Tool rail (left) | Five tools: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
 | 3D viewport | The street in 3D with the map draped on the ground. A colour-coded banner across the top shows the active mode (Select blue, Place green, Aim orange, Move purple, Region teal), what a click will do, and the selected camera (or, in Place, the model being placed). Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
@@ -38,7 +38,7 @@ Loading a new area, including **Demo street**, removes the cameras you placed, b
    - **A wall:** the camera is mounted 0.15 m in front of the wall, at the height you clicked, facing outward. Its tilt is the type's default (doorbell 0 degrees, indoor -10, others -20).
    - **The ground or a roof:** the camera goes on a pole at the model's default mount height above that point (doorbell 1.2 m, indoor 2.0 m, floodlight and spotlight 2.7 m, bullet, turret and dome 2.6 m). It faces north at first, and the tool switches to **Aim** so your next click points it.
    - **An existing camera:** selects it.
-4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight orange, bullet red, turret teal, dome purple, indoor pink. Further cameras of the same type get lighter and darker shades of that colour, so each camera stays distinguishable.
+4. The new camera becomes the selection. It gets a name ("Camera 1", ...) and the default colour for its type: doorbell blue, floodlight green, spotlight sky blue, bullet indigo, turret teal, dome violet, indoor slate. These stay clear of the yellow-to-purple coverage colours, and each type also has its own icon in the camera list and model picker. The second and third cameras of a type get a lighter and a darker shade of its colour; after that the shades repeat, and the camera names tell them apart.
 
 ## Aim and move
 

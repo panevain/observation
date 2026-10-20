@@ -5,6 +5,7 @@ use super::widgets::{
     bar, danger, hint, primary, row, secondary, section, segmented, stat, swatch, swatch_button,
 };
 use crate::cameras::camera_color;
+use crate::icons;
 use crate::state::{OverlayMode, Tool};
 use crate::theme::{Tokens, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
@@ -213,11 +214,9 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 .models
                 .get(&c.model_id)
                 .map_or_else(|| "Unknown model".to_owned(), CameraModel::display_name);
-            let label = RichText::new(format!("{}  ·  {}", c.label, model)).color(if c.enabled {
-                t.text
-            } else {
-                t.text_muted
-            });
+            let glyph = icons::kind(d.models.kind_of(&c.model_id));
+            let label = RichText::new(format!("{glyph}  {}  ·  {}", c.label, model))
+                .color(if c.enabled { t.text } else { t.text_muted });
             let row = egui::Button::selectable(selected, label).truncate();
             if ui.add(row).on_hover_text(&model).clicked() {
                 d.ui.selected = if selected { None } else { Some(c.id) };
@@ -455,7 +454,11 @@ fn model_combo(
                     continue;
                 }
                 any = true;
-                ui.label(RichText::new(kind.label()).small().strong());
+                ui.label(
+                    RichText::new(format!("{}  {}", icons::kind(kind), kind.label()))
+                        .small()
+                        .strong(),
+                );
                 for m in items {
                     first.get_or_insert(m.id.clone());
                     ui.selectable_value(

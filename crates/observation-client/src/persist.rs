@@ -1,11 +1,14 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
 use crate::state::{LoadArea, Models, Scene, UiState};
+use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::scene::SceneFile;
 
 const STORAGE_KEY: &str = "observation.scene.v1";
+/// The chosen UI font (a [`UiFont::key`]).
+const FONT_KEY: &str = "observation.font";
 /// Seconds between autosave checks.
 const AUTOSAVE_INTERVAL: f32 = 1.5;
 
@@ -43,7 +46,28 @@ impl Plugin for PersistPlugin {
         app.init_resource::<Persist>()
             .add_message::<PersistAction>()
             .add_systems(Startup, restore)
-            .add_systems(Update, (handle_actions, receive_imports, autosave));
+            .add_systems(
+                Update,
+                (
+                    handle_actions,
+                    receive_imports,
+                    autosave,
+                    save_font.run_if(resource_changed::<UiFont>),
+                ),
+            );
+    }
+}
+
+/// The UI font saved in this browser, else the default.
+pub fn load_font() -> UiFont {
+    storage_get(FONT_KEY)
+        .and_then(|k| UiFont::from_key(&k))
+        .unwrap_or_default()
+}
+
+fn save_font(font: Res<UiFont>) {
+    if !font.is_added() {
+        storage_set(FONT_KEY, font.key());
     }
 }
 

@@ -198,22 +198,27 @@ fn draw_frustums(
             gizmos.line(cone.eye + *a * r, cone.eye + *b * r, color);
         }
         if selected {
-            let sel = to_bevy(tokens.world.selection);
-            gizmos.sphere(Isometry3d::from_translation(cone.eye), 0.4, sel);
+            // Neutral markers over a dark casing, so they read on any tile and
+            // never look like a camera or coverage colour.
+            let (mark, halo) = (to_bevy(tokens.world.selection), to_bevy(tokens.world.halo));
+            gizmos.sphere(Isometry3d::from_translation(cone.eye), 0.46, halo);
+            gizmos.sphere(Isometry3d::from_translation(cone.eye), 0.4, mark);
             // Where the optical axis meets the ground.
             if cone.forward.y < -1e-3 {
                 let t = -cone.eye.y / cone.forward.y;
                 if t <= r {
                     let p = cone.eye + cone.forward * t;
-                    gizmos.line(cone.eye, p, to_bevy(tokens.world.aim_target));
-                    gizmos.circle(
+                    let aim = to_bevy(tokens.world.aim_target);
+                    gizmos.line(cone.eye, p, aim);
+                    let flat = |lift: f32| {
                         Isometry3d::new(
-                            p + Vec3::Y * 0.05,
+                            p + Vec3::Y * lift,
                             Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                        ),
-                        0.5,
-                        to_bevy(tokens.world.aim_target),
-                    );
+                        )
+                    };
+                    gizmos.circle(flat(0.04), 0.58, halo);
+                    gizmos.circle(flat(0.05), 0.5, aim);
+                    gizmos.circle(flat(0.05), 0.08, aim);
                 }
             }
         }

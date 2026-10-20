@@ -1,6 +1,6 @@
 //! Small reusable widgets built on the design tokens.
 
-use crate::theme::Tokens;
+use crate::theme::{Tokens, strong_family};
 use bevy_egui::egui::{self, Color32, RichText, Sense, Stroke, Ui, vec2};
 
 /// Section heading with consistent spacing.
@@ -9,7 +9,7 @@ pub fn section(ui: &mut Ui, t: &Tokens, title: &str) {
     ui.label(
         RichText::new(title.to_uppercase())
             .size(t.font.caption)
-            .strong()
+            .family(strong_family())
             .color(t.text_muted),
     );
     ui.add_space(t.space.xs);
@@ -26,7 +26,7 @@ pub fn stat(ui: &mut Ui, t: &Tokens, value: f32, caption: &str, color: Color32) 
         ui.label(
             RichText::new(format!("{:.0}%", value * 100.0))
                 .size(t.font.heading + 4.0)
-                .strong()
+                .family(strong_family())
                 .color(color),
         );
         ui.label(
@@ -118,11 +118,11 @@ pub fn primary(t: &Tokens, text: &str) -> egui::Button<'static> {
         .min_size(vec2(0.0, t.layout.hit_target))
 }
 
-/// Neutral button with the standard hit target.
+/// Neutral button with the standard hit target. No outline: the theme's fill
+/// steps show hover and press.
 pub fn secondary(t: &Tokens, text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.to_owned()).color(t.text))
-        .fill(t.surface_sunken)
-        .stroke(Stroke::new(t.stroke_width, t.border))
+        .stroke(Stroke::NONE)
         .min_size(vec2(0.0, t.layout.hit_target))
 }
 

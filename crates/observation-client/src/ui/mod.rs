@@ -10,7 +10,7 @@ use crate::coverage::CoverageState;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::state::{Area, LoadArea, Loading, Models, Scene, UiState};
-use crate::theme::{MIN_VIEWPORT, Tokens};
+use crate::theme::{MIN_VIEWPORT, Tokens, UiFont, install_fonts, strong_family};
 use bevy::camera::Viewport;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -27,11 +27,20 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn apply_theme(mut contexts: EguiContexts, tokens: Res<Tokens>, mut done: Local<bool>) -> Result {
-    if !*done || tokens.is_changed() {
-        tokens.apply(contexts.ctx_mut()?);
-        *done = true;
+fn apply_theme(
+    mut contexts: EguiContexts,
+    tokens: Res<Tokens>,
+    font: Res<UiFont>,
+    mut done: Local<bool>,
+) -> Result {
+    let ctx = contexts.ctx_mut()?;
+    if !*done || font.is_changed() {
+        install_fonts(ctx, *font);
     }
+    if !*done || tokens.is_changed() {
+        tokens.apply(ctx);
+    }
+    *done = true;
     Ok(())
 }
 
@@ -60,6 +69,7 @@ pub struct UiData<'w> {
     pub picker: ResMut<'w, MapPicker>,
     pub config: Res<'w, crate::net::ServerConfig>,
     pub layout: ResMut<'w, crate::state::UiLayout>,
+    pub font: ResMut<'w, UiFont>,
 }
 
 fn draw_ui(
@@ -76,6 +86,11 @@ fn draw_ui(
     });
     let ctx = contexts.ctx_mut()?.clone();
     let t = *d.tokens;
+    // Fonts set by `apply_theme` take effect from the next pass; until then
+    // the UI's font families do not exist and laying out text would panic.
+    if !ctx.fonts(|f| f.definitions().families.contains_key(&strong_family())) {
+        return Ok(());
+    }
 
     let small = window.width() < MIN_VIEWPORT.x || window.height() < MIN_VIEWPORT.y;
     if small {

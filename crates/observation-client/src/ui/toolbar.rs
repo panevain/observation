@@ -2,8 +2,10 @@
 
 use super::UiData;
 use super::widgets::{hint, secondary};
+use crate::icons;
 use crate::persist::PersistAction;
 use crate::state::{LoadArea, Tool};
+use crate::theme::UiFont;
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, Stroke, vec2};
 use observation_core::scene::AreaRef;
@@ -55,6 +57,7 @@ pub fn top_bar(
             {
                 d.ui.help_open = !d.ui.help_open;
             }
+            settings_menu(ui, d);
             if ui
                 .add(secondary(&t, "Export"))
                 .on_hover_text("Download the scene as JSON")
@@ -166,4 +169,23 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
             );
         });
     });
+}
+
+/// Display preferences, remembered in this browser.
+fn settings_menu(ui: &mut egui::Ui, d: &mut UiData) {
+    let t = *d.tokens;
+    let button = secondary(&t, icons::GEAR_SIX);
+    let resp = ui.add(button).on_hover_text("Settings");
+    egui::Popup::menu(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(200.0);
+            hint(ui, &t, "Font");
+            for f in UiFont::ALL {
+                let on = *d.font == f;
+                if ui.selectable_label(on, f.label()).clicked() && !on {
+                    *d.font = f;
+                }
+            }
+        });
 }

@@ -19,6 +19,8 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Per-camera colours: each type has a default colour (further cameras of a type get lighter and darker shades), and any camera's colour can be changed.
 - The demo street starts with ten example cameras.
 - A Region tool (R) to outline part of the area on the ground; while it is on, the coverage figures count only what lies inside. The region can be switched off, redrawn or cleared, and is saved with the scene (scene files gain an optional `region`).
+- Settings menu (gear in the top bar) with a choice of UI font, Inter or Iosevka, remembered in the browser. Both are bundled (subset to Latin-1, about 100 KB together; `scripts/subset-fonts.sh` rebuilds them) and figures use tabular digits.
+- Phosphor icons; each camera type has its own icon in the camera list and model picker.
 
 ### Changed
 
@@ -28,6 +30,9 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - `OBS_OVERPASS_URL` takes up to 4 comma-separated interpreters, tried in order; malformed entries stop the server at startup. The whole-request timeout is 80 s (was 60 s) and an Overpass attempt 35 s (was 40 s).
 - The Analysis section is last in the inspector.
 - Scene files store a camera's colour as an optional `color` (`[r, g, b]`); the old `color_index` is ignored.
+- Camera type colours are now cool and neutral (doorbell blue, floodlight green, spotlight sky blue, bullet indigo, turret teal, dome violet, indoor slate) so cones never match a step of the yellow-to-purple coverage ramp; a type gets two extra shades before they repeat. Saved per-camera colours are unchanged.
+- The selection and aim markers are white over a dark casing, and the region outline is dark, so none of them reads as a camera or coverage colour. Tool colours are darker so banner text meets 4.5:1 contrast.
+- Flatter widget style: buttons show hover and press by fill instead of an outline, input fields have a 3:1 edge, corners are smaller (4/6/8 px) and floating cards and menus have a shadow.
 
 ### Fixed
 
