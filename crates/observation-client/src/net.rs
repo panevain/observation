@@ -1,8 +1,9 @@
-//! Fetching bundles and tiles from the server.
+//! Fetching bundles and tiles from the server, and following its local regions.
 //!
-//! Requests run on the browser's event loop (`fetch`) and report back through
-//! a channel that a system drains every frame.
+//! Requests run on the browser's event loop (`fetch`, `EventSource`) and report
+//! back through a channel that a system drains every frame.
 
+use crate::regions::{CatalogState, RegionAction, RegionRequest, Regions};
 use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, UiState};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
@@ -18,6 +19,10 @@ enum Request {
     Config,
     Area(LoadArea),
     Tile(TileId),
+    /// A status from the region event stream (an error: the stream dropped).
+    RegionsStatus,
+    RegionsCatalog,
+    RegionAction(RegionAction, String),
 }
 
 /// Settings published by the server at `/api/config`.
@@ -52,11 +57,45 @@ impl Default for Net {
 
 impl Net {
     fn get(&self, url: String, req: Request) {
+        self.send(HttpRequest::get(url), req);
+    }
+
+    fn send(&self, http: HttpRequest, req: Request) {
         let tx = self.tx.clone();
-        spawn_fetch(url, move |res| {
+        spawn_fetch(http, move |res| {
             // The receiver lives as long as the app; a send error means shutdown.
             let _ = tx.send((req, res));
         });
+    }
+
+    /// Follows `/api/regions/events`; every status (and every drop of the
+    /// stream, which the browser reconnects) arrives as a `RegionsStatus` reply.
+    fn follow_regions(&self) {
+        let tx = self.tx.clone();
+        spawn_event_source("/api/regions/events", "regions", move |res| {
+            let _ = tx.send((Request::RegionsStatus, res));
+        });
+    }
+}
+
+/// One HTTP request.
+#[derive(Debug, Clone)]
+struct HttpRequest {
+    url: String,
+    method: &'static str,
+    /// JSON body.
+    body: Option<String>,
+    bearer: Option<String>,
+}
+
+impl HttpRequest {
+    fn get(url: String) -> Self {
+        Self {
+            url,
+            method: "GET",
+            body: None,
+            bearer: None,
+        }
     }
 }
 
@@ -148,9 +187,16 @@ impl Plugin for NetPlugin {
             })
             .add_message::<LoadArea>()
             .add_message::<AreaLoaded>()
+            .init_resource::<Regions>()
             .add_systems(
                 Update,
-                (start_area_loads, pump_tiles, drain_replies).chain(),
+                (
+                    start_area_loads,
+                    pump_tiles,
+                    send_region_requests,
+                    drain_replies,
+                )
+                    .chain(),
             );
     }
 }
@@ -178,6 +224,33 @@ fn pump_tiles(net: Res<Net>, mut tiles: ResMut<Tiles>) {
     }
 }
 
+fn send_region_requests(net: Res<Net>, mut regions: ResMut<Regions>) {
+    if regions.outbox.is_empty() {
+        return;
+    }
+    let token = regions.token.trim().to_owned();
+    for r in std::mem::take(&mut regions.outbox) {
+        match r {
+            RegionRequest::Catalog => {
+                regions.catalog = CatalogState::Loading;
+                net.get("/api/regions/catalog".to_owned(), Request::RegionsCatalog);
+            }
+            RegionRequest::Action(action, id) => {
+                let body = serde_json::json!({ "id": id }).to_string();
+                net.send(
+                    HttpRequest {
+                        url: format!("/api/regions/{}", action.path()),
+                        method: "POST",
+                        body: Some(body),
+                        bearer: Some(token.clone()),
+                    },
+                    Request::RegionAction(action, id),
+                );
+            }
+        }
+    }
+}
+
 fn drain_replies(
     net: Res<Net>,
     mut tiles: ResMut<Tiles>,
@@ -186,16 +259,62 @@ fn drain_replies(
     mut loading: ResMut<Loading>,
     mut ui: ResMut<UiState>,
     mut config: ResMut<ServerConfig>,
+    mut regions: ResMut<Regions>,
 ) {
     for (req, res) in net.rx.try_iter() {
         match req {
             Request::Config => {
-                let attribution = res.ok().and_then(|b| {
-                    let v: serde_json::Value = serde_json::from_slice(&b).ok()?;
-                    v.get("attribution")?.as_str().map(str::to_owned)
-                });
+                let v: Option<serde_json::Value> =
+                    res.ok().and_then(|b| serde_json::from_slice(&b).ok());
+                let attribution = v
+                    .as_ref()
+                    .and_then(|v| v.get("attribution")?.as_str().map(str::to_owned));
                 if let Some(a) = attribution.filter(|a| !a.is_empty()) {
                     config.tile_attribution = a;
+                }
+                let has_regions = v
+                    .as_ref()
+                    .and_then(|v| v.get("regions")?.as_bool())
+                    .unwrap_or(false);
+                if has_regions && !regions.enabled {
+                    regions.enabled = true;
+                    regions.restore_token();
+                    net.follow_regions();
+                }
+            }
+            Request::RegionsStatus => match res {
+                Ok(bytes) => {
+                    regions.live = true;
+                    match serde_json::from_slice(&bytes) {
+                        Ok(status) => regions.update(status, &mut ui),
+                        Err(e) => warn!("unreadable region status: {e}"),
+                    }
+                }
+                Err(_) => regions.live = false,
+            },
+            Request::RegionsCatalog => {
+                regions.catalog = match res.and_then(|b| {
+                    serde_json::from_slice(&b)
+                        .map_err(|e| format!("the extract list could not be read: {e}"))
+                }) {
+                    Ok(list) => CatalogState::Loaded(list),
+                    Err(e) => CatalogState::Failed(e),
+                };
+            }
+            Request::RegionAction(action, id) => {
+                if regions.busy.as_deref() == Some(id.as_str()) {
+                    regions.busy = None;
+                }
+                match res.and_then(|b| {
+                    serde_json::from_slice(&b).map_err(|e| format!("unreadable reply: {e}"))
+                }) {
+                    Ok(status) => {
+                        regions.update(status, &mut ui);
+                        if action == RegionAction::Import {
+                            regions.store_token();
+                        }
+                    }
+                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.path())),
                 }
             }
             Request::Area(request) => {
@@ -279,7 +398,7 @@ pub(crate) fn js_cause(e: &wasm_bindgen::JsValue) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn spawn_fetch(url: String, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
@@ -287,18 +406,33 @@ fn spawn_fetch(url: String, done: impl FnOnce(Result<Vec<u8>, String>) + 'static
         let result = async {
             let window = web_sys::window()
                 .ok_or("the browser gave the app no window to make requests from")?;
+            let init = web_sys::RequestInit::new();
+            init.set_method(req.method);
+            let headers = web_sys::Headers::new()
+                .map_err(|e| format!("could not build the request: {}", js_cause(&e)))?;
+            if let Some(body) = &req.body {
+                let _ = headers.set("content-type", "application/json");
+                init.set_body(&wasm_bindgen::JsValue::from_str(body));
+            }
+            if let Some(token) = req.bearer.as_deref().filter(|t| !t.is_empty()) {
+                let _ = headers.set("authorization", &format!("Bearer {token}"));
+            }
+            init.set_headers(&headers);
             // A rejected fetch means no HTTP reply at all: offline, DNS, a dead
             // server, or a blocked connection.
-            let resp: web_sys::Response = JsFuture::from(window.fetch_with_str(&url))
-                .await
-                .map_err(|e| {
-                    format!(
-                        "the server did not answer (you may be offline, or it may be down): {}",
-                        js_cause(&e)
-                    )
-                })?
-                .dyn_into()
-                .map_err(|_| "the browser returned something other than a response".to_owned())?;
+            let resp: web_sys::Response =
+                JsFuture::from(window.fetch_with_str_and_init(&req.url, &init))
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "the server did not answer (you may be offline, or it may be down): {}",
+                            js_cause(&e)
+                        )
+                    })?
+                    .dyn_into()
+                    .map_err(|_| {
+                        "the browser returned something other than a response".to_owned()
+                    })?;
             if !resp.ok() {
                 let body = match resp.text() {
                     Ok(text) => JsFuture::from(text)
@@ -328,8 +462,50 @@ fn spawn_fetch(url: String, done: impl FnOnce(Result<Vec<u8>, String>) + 'static
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_fetch(url: String, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
     done(Err(format!(
-        "networking is only available in the browser build ({url})"
+        "networking is only available in the browser build ({})",
+        req.url
     )));
+}
+
+/// Opens an `EventSource` and calls `on` with the data of every `event`
+/// message, and with an error whenever the connection drops (the browser
+/// reconnects by itself). Lives as long as the page.
+#[cfg(target_arch = "wasm32")]
+fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let source = match web_sys::EventSource::new(url) {
+        Ok(s) => s,
+        Err(e) => {
+            on(Err(js_cause(&e)));
+            return;
+        }
+    };
+    let on = std::rc::Rc::new(on);
+    let on_message = {
+        let on = std::rc::Rc::clone(&on);
+        Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            if let Some(data) = e.data().as_string() {
+                on(Ok(data.into_bytes()));
+            }
+        })
+    };
+    let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+        on(Err("the live connection dropped".to_owned()));
+    });
+    let _ = source.add_event_listener_with_callback(event, on_message.as_ref().unchecked_ref());
+    source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+    // The source and its handlers live for the rest of the page.
+    on_message.forget();
+    on_error.forget();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_event_source(_: &str, _: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
+    on(Err(
+        "live updates are only available in the browser build".to_owned()
+    ));
 }

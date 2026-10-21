@@ -20,6 +20,8 @@ pub struct ClientConfig {
     pub attribution: String,
     pub max_bbox_side_m: f64,
     pub demo_available: bool,
+    /// A region agent is configured: the client shows the Regions dialog.
+    pub regions: bool,
     pub version: &'static str,
 }
 
@@ -30,6 +32,7 @@ pub async fn config(State(state): State<AppState>) -> Json<ClientConfig> {
         attribution: state.config().attribution.clone(),
         max_bbox_side_m: MAX_BBOX_SIDE_M,
         demo_available: state.demo().is_some(),
+        regions: state.regions().is_some(),
         version: env!("CARGO_PKG_VERSION"),
     })
 }

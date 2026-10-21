@@ -144,6 +144,8 @@ pub struct UiState {
     pub show_frustums: bool,
     pub map_open: bool,
     pub help_open: bool,
+    /// The local map-data regions dialog.
+    pub regions_open: bool,
     pub custom_model_open: bool,
     /// Camera under the pointer in the camera list.
     pub hover_list: Option<u32>,
@@ -178,6 +180,7 @@ impl Default for UiState {
             show_frustums: true,
             map_open: false,
             help_open: false,
+            regions_open: false,
             custom_model_open: false,
             hover_list: None,
             hover_scene: None,

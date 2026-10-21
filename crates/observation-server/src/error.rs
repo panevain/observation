@@ -16,6 +16,15 @@ pub enum ApiError {
     /// Unknown resource (404).
     #[error("{0}")]
     NotFound(&'static str),
+    /// Missing or wrong admin token (401).
+    #[error("{0}")]
+    Unauthorized(&'static str),
+    /// The action is turned off on this server (403).
+    #[error("{0}")]
+    Forbidden(&'static str),
+    /// The action clashes with work in progress (409).
+    #[error("{0}")]
+    Conflict(String),
     /// An upstream provider (Overpass, tile server) failed (502).
     #[error("{0}")]
     Upstream(String),
@@ -39,6 +48,9 @@ impl ApiError {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::RateLimited { .. } => StatusCode::SERVICE_UNAVAILABLE,

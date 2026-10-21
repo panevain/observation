@@ -291,3 +291,15 @@ jobs:
           cache-to: type=gha,scope=image-prebuilt,mode=max
       - name: Smoke test
         run: scripts/smoke-test-image.sh "${IMAGE}"
+      - name: Build region agent image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: regions
+          push: false
+          load: true
+          tags: observation-regions:ci
+          cache-from: type=gha,scope=image-regions
+          cache-to: type=gha,scope=image-regions,mode=max
+      - name: Smoke test region agent
+        run: scripts/smoke-test-regions.sh observation-regions:ci

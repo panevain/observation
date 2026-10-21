@@ -31,13 +31,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let bind = config.bind;
     let state = AppState::new(config)?;
+    if state.regions().is_some() {
+        tracing::info!(
+            manageable = state.config().admin_token.is_some(),
+            "local regions enabled"
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| format!("could not bind OBS_BIND {bind}: {e}"))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
+    let streams = state.clone();
     axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            streams.begin_shutdown();
+        })
         .await?;
     tracing::info!("shut down");
     Ok(())

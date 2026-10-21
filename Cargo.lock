@@ -4663,6 +4663,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-regions"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "observation-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "observation-server"
 version = "0.1.0"
 dependencies = [

@@ -34,6 +34,8 @@ pub enum ConfigError {
     MetricsBindSame(String),
     #[error("OBS_LOG_FORMAT `{0}` is not `text` or `json`")]
     LogFormat(String),
+    #[error("OBS_REGIONS_URL `{0}` is not an http(s) URL")]
+    RegionsUrl(String),
 }
 
 /// Server configuration.
@@ -71,6 +73,13 @@ pub struct Config {
     pub metrics_bind: Option<SocketAddr>,
     /// Log output format (`OBS_LOG_FORMAT`).
     pub log_format: LogFormat,
+    /// Base URL of the region agent (`OBS_REGIONS_URL`); `None` disables local regions.
+    pub regions_url: Option<String>,
+    /// Bearer token for the region agent (`OBS_REGIONS_TOKEN`).
+    pub regions_token: Option<String>,
+    /// Token that allows importing and deleting regions from the UI
+    /// (`OBS_ADMIN_TOKEN`); `None` makes regions read-only.
+    pub admin_token: Option<String>,
 }
 
 /// Whether two listen addresses would collide: same port and the same IP, or either
@@ -142,9 +151,23 @@ impl Config {
             Some("json") => LogFormat::Json,
             Some(other) => return Err(ConfigError::LogFormat(other.to_owned())),
         };
+        let regions_url = get("OBS_REGIONS_URL")
+            .map(|u| {
+                let ok = reqwest::Url::parse(&u)
+                    .is_ok_and(|p| matches!(p.scheme(), "http" | "https") && p.host().is_some());
+                if ok {
+                    Ok(u.trim_end_matches('/').to_owned())
+                } else {
+                    Err(ConfigError::RegionsUrl(u))
+                }
+            })
+            .transpose()?;
         Ok(Self {
             bind,
             metrics_bind,
+            regions_url,
+            regions_token: get("OBS_REGIONS_TOKEN"),
+            admin_token: get("OBS_ADMIN_TOKEN"),
             log_format,
             static_dir: or("OBS_STATIC_DIR", "dist").into(),
             cache_dir: or("OBS_CACHE_DIR", "cache").into(),
@@ -177,6 +200,9 @@ impl Config {
             request_timeout: Duration::from_secs(80),
             metrics_bind: None,
             log_format: LogFormat::Text,
+            regions_url: None,
+            regions_token: None,
+            admin_token: None,
         }
     }
 
@@ -290,6 +316,18 @@ mod tests {
         assert_eq!(c.bundle_ttl, Duration::from_secs(86_400));
         assert_eq!(c.cache_dir, PathBuf::from("cache"));
         assert_eq!(c.overpass_urls, vec![DEFAULT_OVERPASS_URL.to_owned()]);
+        assert_eq!(c.regions_url, None);
+        assert_eq!(c.admin_token, None);
+
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_REGIONS_URL", "http://regions:8090/"),
+            ("OBS_REGIONS_TOKEN", "agent"),
+            ("OBS_ADMIN_TOKEN", "admin"),
+        ]))
+        .unwrap();
+        assert_eq!(c.regions_url.as_deref(), Some("http://regions:8090"));
+        assert_eq!(c.regions_token.as_deref(), Some("agent"));
+        assert_eq!(c.admin_token.as_deref(), Some("admin"));
 
         let c = Config::from_lookup(lookup(&[(
             "OBS_OVERPASS_URL",
@@ -314,6 +352,10 @@ mod tests {
         assert!(matches!(
             Config::from_lookup(lookup(&[("OBS_BUNDLE_TTL_DAYS", "-1")])),
             Err(ConfigError::Ttl(_))
+        ));
+        assert!(matches!(
+            Config::from_lookup(lookup(&[("OBS_REGIONS_URL", "regions:8090")])),
+            Err(ConfigError::RegionsUrl(_))
         ));
         assert!(matches!(
             Config::from_lookup(lookup(&[("OBS_OVERPASS_URL", "a,b,c,d,e")])),

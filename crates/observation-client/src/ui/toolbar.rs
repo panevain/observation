@@ -50,6 +50,26 @@ pub fn top_bar(
         {
             load.write(LoadArea::demo());
         }
+        if d.regions.enabled {
+            let progress = d
+                .regions
+                .active_job()
+                .and_then(super::regions::progress_label);
+            let text = match &progress {
+                Some(p) => format!("{} {p}", icons::DATABASE),
+                None => icons::DATABASE.to_owned(),
+            };
+            let tip = match &progress {
+                Some(_) => "Importing map data on the server (click for details)",
+                None => "Local map data: regions this server answers itself",
+            };
+            if ui.add(secondary(&t, &text)).on_hover_text(tip).clicked() {
+                d.ui.regions_open = !d.ui.regions_open;
+            }
+            if progress.is_some() {
+                ui.spinner();
+            }
+        }
         ui.separator();
         for (op, glyph, keys, can, what) in [
             (

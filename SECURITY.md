@@ -46,6 +46,8 @@ In scope:
 
 - The `observation-server` HTTP service, including its request handling,
   caching and static file serving.
+- The optional `observation-regions` agent and its image, including region
+  imports, the admin token on region management and the agent token.
 - The WebAssembly client served by that server.
 - The container image and the build and release pipeline in this repository.
 

@@ -64,6 +64,8 @@ web-sys = { version = "0.3", features = [
     "FileList",
     "FileReader",
     "Event",
+    "EventSource",
+    "MessageEvent",
     "Response",
     "Request",
     "RequestInit",

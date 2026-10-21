@@ -76,10 +76,15 @@ impl Cache {
         is_safe_key(key).then(|| self.root.join("bundles").join(format!("{key}.obsb")))
     }
 
-    /// Reads a cached bundle. The flag tells whether it is still within the TTL;
+    /// Reads a cached bundle. The flag tells whether it is still within the TTL
+    /// and, given `valid_after`, was written after it (newer local data);
     /// expired bundles are returned too so callers can serve them when the
     /// upstream is down.
-    pub async fn get_bundle(&self, key: &str) -> Option<(Bytes, bool)> {
+    pub async fn get_bundle(
+        &self,
+        key: &str,
+        valid_after: Option<SystemTime>,
+    ) -> Option<(Bytes, bool)> {
         let path = self.bundle_path(key)?;
         let meta = tokio::fs::metadata(&path).await.ok()?;
         let bytes = tokio::fs::read(&path).await.ok()?;
@@ -89,12 +94,11 @@ impl Cache {
             tracing::warn!(key, "ignoring cached bundle with bad magic or old version");
             return None;
         }
-        let age = meta
-            .modified()
-            .ok()
-            .and_then(|m| SystemTime::now().duration_since(m).ok());
+        let modified = meta.modified().ok();
+        let age = modified.and_then(|m| SystemTime::now().duration_since(m).ok());
         // An mtime in the future (clock skew) counts as fresh.
-        let fresh = age.is_none_or(|a| a < self.bundle_ttl);
+        let fresh = age.is_none_or(|a| a < self.bundle_ttl)
+            && valid_after.is_none_or(|v| modified.is_none_or(|m| m >= v));
         Some((Bytes::from(bytes), fresh))
     }
 
@@ -240,15 +244,21 @@ mod tests {
     async fn bundle_round_trip_and_ttl() {
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::open(dir.path(), Duration::from_secs(3600), 1 << 20);
-        assert!(cache.get_bundle("1.0_2.0").await.is_none());
+        assert!(cache.get_bundle("1.0_2.0", None).await.is_none());
         cache.put_bundle("1.0_2.0", &bundle_bytes()).await.unwrap();
-        let (bytes, fresh) = cache.get_bundle("1.0_2.0").await.unwrap();
+        let (bytes, fresh) = cache.get_bundle("1.0_2.0", None).await.unwrap();
         assert_eq!(bytes.as_ref(), bundle_bytes().as_slice());
         assert!(fresh);
+        // Data imported after the bundle was written makes it stale.
+        let later = SystemTime::now() + Duration::from_secs(60);
+        let (_, fresh) = cache.get_bundle("1.0_2.0", Some(later)).await.unwrap();
+        assert!(!fresh);
+        let earlier = SystemTime::now() - Duration::from_secs(60);
+        assert!(cache.get_bundle("1.0_2.0", Some(earlier)).await.unwrap().1);
         assert!(cache.put_bundle("../evil", b"x").await.is_err());
 
         let expired = Cache::open(dir.path(), Duration::ZERO, 1 << 20);
-        let (_, fresh) = expired.get_bundle("1.0_2.0").await.unwrap();
+        let (_, fresh) = expired.get_bundle("1.0_2.0", None).await.unwrap();
         assert!(!fresh, "zero TTL bundles are stale but still readable");
     }
 
@@ -257,7 +267,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::open(dir.path(), Duration::from_secs(3600), 1 << 20);
         cache.put_bundle("1.0", b"<html>oops</html>").await.unwrap();
-        assert!(cache.get_bundle("1.0").await.is_none());
+        assert!(cache.get_bundle("1.0", None).await.is_none());
     }
 
     #[tokio::test]
