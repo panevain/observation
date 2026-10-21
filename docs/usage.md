@@ -107,8 +107,9 @@ These apply to every camera and are saved with the scene.
 | Observe | 62 | Clothing and activity |
 | Recognise | 125 | A person you know |
 | Identify | 250 | A stranger, beyond doubt |
+| Custom | 1-2000 (default 250) | Your own value, for calibrating against real footage |
 
-A higher level shrinks each camera's range. The range for a level is `width_px / (2 x px_per_m x tan(hfov / 2))`, capped at 100 m. For example a 1920 px wide, 90 degree camera reaches about 38 m at Detect, 15 m at Observe, 7.7 m at Recognise and 3.8 m at Identify.
+**Custom** shows a **Pixels per metre** field so you can test any density. A higher density shrinks each camera's range. The range for a level is `width_px / (2 x px_per_m x tan(hfov / 2))`, capped at 100 m. For example a 1920 px wide, 90 degree camera reaches about 38 m at Detect, 15 m at Observe, 7.7 m at Recognise and 3.8 m at Identify.
 
 **Lighting.** **Day** uses the DORI range only. **Night (IR)** uses the smaller of the DORI range and the camera's night-vision range. If the manufacturer publishes none, the app assumes **7.5 m** (about 25 ft, typical for consumer infrared LEDs) and flags it in the camera's details. The cameras' own floodlights and street lighting are not modelled.
 
@@ -134,10 +135,10 @@ Scene files are plain JSON:
 | `origin` | `{"lat", "lon"}` of the area centre that camera positions are relative to |
 | `cameras` | Optional list. Each has `id`, `label`, `model_id`, `position` as `[east, up, south]` in metres, `yaw_deg` (compass bearing), `pitch_deg`, `roll_deg`, `enabled`, and optionally `color` as `[r, g, b]` (0-255; absent means the default for the model's type). The `color_index` field of older files is ignored |
 | `custom_models` | Optional list of models: `id`, `vendor`, `name`, `kind`, `hfov_deg`, `vfov_deg`, `resolution` as `[w, h]`, and optionally `ir_range_m`, `source`, `notes` |
-| `params` | Optional: `dori` (`Detect`, `Observe`, `Recognise`, `Identify`), `lighting` (`Day`, `Night`), `subject_height_m` |
+| `params` | Optional: `dori` (`Detect`, `Observe`, `Recognise`, `Identify`, `Custom`), `custom_ppm` (1-2000, default 250; used with `Custom`), `lighting` (`Day`, `Night`), `subject_height_m` |
 | `region` | Optional: `points` (corners as `[east, south]` in metres, at most 256) and `enabled` |
 
-Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, and valid custom models. A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and a region with more than 256 corners or corners beyond 10,000 m is removed from the scene, rather than failing the import. A bad file shows an error toast and leaves the current scene untouched.
+Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, custom pixel density 1-2000 px/m, and valid custom models. A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and a region with more than 256 corners or corners beyond 10,000 m is removed from the scene, rather than failing the import. A bad file shows an error toast and leaves the current scene untouched.
 
 ## Keyboard, mouse and touch
 
