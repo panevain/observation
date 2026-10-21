@@ -232,11 +232,30 @@ impl Config {
             })?;
         }
         // Only `{s}` (always `a`) may vary the host; `{x}` and friends could steer
-        // the request to another address at run time.
-        let authority = self.tile_url.split_once("://").map_or("", |(_, rest)| {
-            rest.split(['/', '?', '#']).next().unwrap_or("")
-        });
-        if authority.replace("{s}", "a").contains('{') {
+        // the request to another address at run time. Parse the way the HTTP client
+        // will, with a marker for the placeholders, rather than splitting the text.
+        const MARK: &str = "placeholdermark";
+        let marked = self
+            .tile_url
+            .replace("{s}", "a")
+            .replace("{x}", MARK)
+            .replace("{y}", MARK)
+            .replace("{z}", MARK);
+        let in_host = match reqwest::Url::parse(&marked) {
+            Ok(u) => u.host_str().is_some_and(|h| h.contains(MARK)),
+            // E.g. `{x}.0.0.1`: a numeric last label makes the host an invalid IPv4
+            // address once the marker is in. Fall back to the text before the path.
+            Err(_) => {
+                let rest = self.tile_url.split_once(':').map_or("", |(_, r)| r);
+                let authority = rest
+                    .trim_start_matches(['/', '\\'])
+                    .split(['/', '\\', '?', '#'])
+                    .next()
+                    .unwrap_or("");
+                authority.replace("{s}", "a").contains('{')
+            }
+        };
+        if in_host {
             return Err(ConfigError::TileUrlHost(redact(&self.tile_url)));
         }
         let probe =
@@ -482,10 +501,14 @@ mod tests {
             bad("http://{x}.0.0.1/t.png"),
             ConfigError::TileUrlHost(_)
         ));
-        assert!(matches!(
-            bad("https://tiles.example:{z}/{x}.png"),
-            ConfigError::TileUrlHost(_)
-        ));
+        // Forms without `//` still have a host to the URL parser.
+        for u in [
+            "http:12{z}.0.0.1/{z}/{x}/{y}.png",
+            "http:\\\\16{x}.254.169.254/{z}.png",
+            "https://{z}.tiles.example/{x}/{y}.png",
+        ] {
+            assert!(matches!(bad(u), ConfigError::TileUrlHost(_)), "{u}");
+        }
         // `{s}` is always `a`, and placeholders in the path are fine.
         assert!(
             Config::from_lookup(lookup(&[(

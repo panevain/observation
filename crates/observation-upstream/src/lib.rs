@@ -68,6 +68,14 @@ fn blocked_v6(ip: Ipv6Addr) -> bool {
     if s[0] == 0x64 && s[1] == 0xff9b {
         return s[2] != 0 || s[3..6].iter().any(|&x| x != 0) || embedded(s[6], s[7]);
     }
+    // ::ffff:0:a.b.c.d (IPv4-translated, SIIT) maps onto IPv4 too.
+    if s[..4].iter().all(|&x| x == 0) && s[4] == 0xffff && s[5] == 0 {
+        return embedded(s[6], s[7]);
+    }
+    // 100::/64, discard-only.
+    if s[0] == 0x100 && s[1..4].iter().all(|&x| x == 0) {
+        return true;
+    }
     // 2002::/16 (6to4) carries an IPv4 address in bits 16..48.
     if s[0] == 0x2002 {
         return embedded(s[1], s[2]);
@@ -186,7 +194,8 @@ pub enum Redirects {
     SameHost,
 }
 
-/// A client builder with the guards applied. The caller adds timeouts and the
+/// A client builder with the guards applied. Unless `allow_private`, proxy
+/// environment variables (`HTTP_PROXY` and friends) are ignored. The caller adds timeouts and the
 /// user agent.
 pub fn client_builder(allow_private: bool, redirects: Redirects) -> reqwest::ClientBuilder {
     let policy = match redirects {
@@ -194,7 +203,7 @@ pub fn client_builder(allow_private: bool, redirects: Redirects) -> reqwest::Cli
         Redirects::SameHost => redirect::Policy::custom(move |attempt| {
             let next = attempt.url();
             let first = attempt.previous().first();
-            let ok = attempt.previous().len() < MAX_REDIRECTS
+            let ok = attempt.previous().len() <= MAX_REDIRECTS
                 && first.is_some_and(|f| {
                     f.host_str() == next.host_str()
                         && (f.scheme() == next.scheme() || next.scheme() == "https")
@@ -203,7 +212,15 @@ pub fn client_builder(allow_private: bool, redirects: Redirects) -> reqwest::Cli
             if ok { attempt.follow() } else { attempt.stop() }
         }),
     };
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder();
+    // A proxy resolves the upstream's name itself, past the filter, so proxy
+    // environment variables apply only when the filter is off anyway.
+    let builder = if allow_private {
+        builder
+    } else {
+        builder.no_proxy()
+    };
+    builder
         .dns_resolver(FilteringResolver::new(allow_private))
         .redirect(policy)
         .connect_timeout(Duration::from_secs(10))
@@ -385,5 +402,102 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), 302);
+    }
+
+    /// A server whose `/n` redirects to `/n+1` until `/{last}`, which answers 200.
+    async fn serve_chain(last: u32) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let at: u32 = head
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|p| p.trim_start_matches('/').parse().ok())
+                    .unwrap_or(0);
+                let reply = if at >= last {
+                    OK.to_owned()
+                } else {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: /{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        at + 1
+                    )
+                };
+                let _ = sock.write_all(reply.as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn five_redirects_are_followed_and_a_sixth_is_not() {
+        let c = client_builder(true, Redirects::SameHost).build().unwrap();
+        let five = serve_chain(5).await;
+        let resp = c
+            .get(format!("http://127.0.0.1:{five}/0"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let six = serve_chain(6).await;
+        let resp = c
+            .get(format!("http://127.0.0.1:{six}/0"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 302);
+    }
+
+    /// Runs in a child process that has `HTTP_PROXY` set (the workspace forbids
+    /// `unsafe`, so the test cannot set it in-process); a no-op otherwise.
+    #[tokio::test]
+    async fn proxy_probe_child() {
+        if std::env::var_os("OBSERVATION_PROXY_PROBE").is_none() {
+            return;
+        }
+        let strict = client_builder(false, Redirects::None).build().unwrap();
+        let err = strict
+            .get("http://metadata.invalid/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(err.is_connect(), "{err}");
+        let lax = client_builder(true, Redirects::None).build().unwrap();
+        assert_eq!(
+            lax.get("http://metadata.invalid/")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200,
+            "the proxy variable should apply once the filter is off"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn proxy_variables_cannot_bypass_the_filter() {
+        // A proxy that answers 200 to anything: a strict client must not use it.
+        let proxy = serve_once(OK).await;
+        let out = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "tests::proxy_probe_child", "--nocapture"])
+                .env("OBSERVATION_PROXY_PROBE", "1")
+                .env("HTTP_PROXY", format!("http://127.0.0.1:{proxy}"))
+                .env("http_proxy", format!("http://127.0.0.1:{proxy}"))
+                .env_remove("NO_PROXY")
+                .env_remove("no_proxy")
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{text}");
+        assert!(text.contains("1 passed"), "{text}");
     }
 }
