@@ -31,6 +31,11 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - A "No cameras yet" empty state with a Place camera button replaces the 0% figures.
 - The status bar shows whether the autosave reached browser storage (Saved, or Not saved with a hint to export).
 
+### Security
+
+- The server no longer follows redirects from the tile and Overpass upstreams, so an upstream cannot send it to an internal address.
+- `OBS_OVERPASS_URL` and `OBS_TILE_URL` are checked at startup: http(s) only, no credentials, and no loopback, private, link-local or `.internal` host unless `OBS_ALLOW_PRIVATE_UPSTREAMS=1` is set. Deployments that point at a private-network upstream must set it.
+
 ### Changed
 
 - Error messages say what went wrong and what to do next: failed area loads tell offline from a down server, a server error or damaged data; storage, import and export failures give the browser's reason (the status bar tooltip says why the autosave failed); scene, bundle, camera-model and bounding-box errors name the field and the allowed range; the server's replies name the limit (for example the size of a too-large box) and never include internal details.

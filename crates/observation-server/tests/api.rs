@@ -737,6 +737,37 @@ async fn expired_tiles_are_revalidated_and_stale_served_on_failure() {
 }
 
 #[tokio::test]
+async fn upstream_redirects_are_not_followed() {
+    let (inner, inner_url) = spawn_overpass().await;
+    let target = inner_url.replace("/api/interpreter", "/");
+    let router = Router::new()
+        .route(
+            "/{z}/{x}/{y}",
+            get({
+                let target = target.clone();
+                move || async move { (StatusCode::FOUND, [(header::LOCATION, target)]) }
+            }),
+        )
+        .route(
+            "/o",
+            post({
+                let target = target.clone();
+                move || async move { (StatusCode::FOUND, [(header::LOCATION, target)]) }
+            }),
+        );
+    let addr = spawn(router).await;
+    let h = harness(
+        &format!("http://{addr}/o"),
+        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
+    );
+    let (status, _, _) = get_uri(&h.app, "/api/tiles/1/0/0.png").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(inner.hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn upstream_tiles_must_be_png() {
     let router = Router::new().route(
         "/{z}/{x}/{y}",

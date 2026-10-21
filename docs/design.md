@@ -66,7 +66,7 @@ Errors are JSON `{"error": "..."}`: 400 bad request, 404, 502 upstream failure, 
 
 ### Configuration
 
-Read from the environment at start-up; empty values count as unset; invalid `OBS_BIND`, `OBS_BUNDLE_TTL_DAYS`, `OBS_OVERPASS_URL`, `OBS_METRICS_BIND` (or one equal to `OBS_BIND`) or `OBS_LOG_FORMAT`, and an address that cannot be bound, stop the server with an error.
+Read from the environment at start-up; empty values count as unset; invalid `OBS_BIND`, `OBS_BUNDLE_TTL_DAYS`, `OBS_OVERPASS_URL`, `OBS_TILE_URL`, `OBS_METRICS_BIND` (or one equal to `OBS_BIND`) or `OBS_LOG_FORMAT`, and an address that cannot be bound, stop the server with an error.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -74,8 +74,9 @@ Read from the environment at start-up; empty values count as unset; invalid `OBS
 | `OBS_STATIC_DIR` | `dist` | Built client directory (relative to the working directory). A warning is logged if it has no `index.html` |
 | `OBS_CACHE_DIR` | `cache` | Root of the bundle and tile caches |
 | `OBS_CONTACT` | `https://github.com/panevain/observation` | Put in the `User-Agent` (`observation/<version> (+<contact>)`); set your own |
-| `OBS_OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Overpass interpreter, or up to 4 comma-separated http(s) interpreters tried in order (for example your own instance, then a public one). Malformed entries stop the server at startup |
-| `OBS_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Upstream tile template (`{z}`, `{x}`, `{y}`; `{s}` becomes `a`) |
+| `OBS_OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Overpass interpreter, or up to 4 comma-separated http(s) interpreters tried in order (for example your own instance, then a public one). Malformed entries, credentials in the URL, and loopback, private or link-local hosts (unless `OBS_ALLOW_PRIVATE_UPSTREAMS`) stop the server at startup |
+| `OBS_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Upstream tile template (`{z}`, `{x}`, `{y}`; `{s}` becomes `a`). Same URL checks as `OBS_OVERPASS_URL` |
+| `OBS_ALLOW_PRIVATE_UPSTREAMS` | unset | `1` allows `OBS_OVERPASS_URL` and `OBS_TILE_URL` hosts on loopback, private, link-local or `.internal` addresses (for example your own Overpass instance on a private network). Upstream redirects are never followed |
 | `OBS_TILE_ATTRIBUTION` | `© OpenStreetMap contributors` | Attribution embedded in bundles and `/api/config` |
 | `OBS_BUNDLE_TTL_DAYS` | `7` | Bundle freshness; fractional values allowed, `0` revalidates every time |
 | `OBS_LOG_FORMAT` | `text` | `json` writes one JSON object per log event; set the level with `RUST_LOG` (default `info`) |

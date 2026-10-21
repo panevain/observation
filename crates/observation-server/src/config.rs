@@ -26,8 +26,15 @@ pub enum ConfigError {
     Ttl(String),
     #[error("OBS_OVERPASS_URL lists more than {MAX_OVERPASS_URLS} endpoints")]
     OverpassUrls,
-    #[error("OBS_OVERPASS_URL entry `{0}` is not an http(s) URL")]
+    #[error("OBS_OVERPASS_URL entry `{0}` is not an http(s) URL without credentials")]
     OverpassUrl(String),
+    #[error("OBS_TILE_URL `{0}` is not an http(s) URL without credentials")]
+    TileUrl(String),
+    #[error(
+        "{var} `{url}` points at a loopback, private or link-local address; \
+         set OBS_ALLOW_PRIVATE_UPSTREAMS=1 if that is intended"
+    )]
+    PrivateUpstream { var: &'static str, url: String },
     #[error("OBS_METRICS_BIND `{0}` is not a socket address like 127.0.0.1:9090")]
     MetricsBind(String),
     #[error("OBS_METRICS_BIND `{0}` must differ from OBS_BIND")]
@@ -51,6 +58,9 @@ pub struct Config {
     pub overpass_urls: Vec<String>,
     /// Upstream tile URL template (`OBS_TILE_URL`).
     pub tile_url: String,
+    /// Allow upstreams on loopback, private or link-local addresses
+    /// (`OBS_ALLOW_PRIVATE_UPSTREAMS`).
+    pub allow_private_upstreams: bool,
     /// Attribution text (`OBS_TILE_ATTRIBUTION`).
     pub attribution: String,
     /// How long a cached bundle is considered fresh (`OBS_BUNDLE_TTL_DAYS`).
@@ -77,6 +87,56 @@ pub struct Config {
 /// one a wildcard (`0.0.0.0` / `::`).
 fn overlaps(a: SocketAddr, b: SocketAddr) -> bool {
     a.port() == b.port() && (a.ip() == b.ip() || a.ip().is_unspecified() || b.ip().is_unspecified())
+}
+
+/// Checks an upstream URL: http(s), a host, no credentials and, unless `allow_private`,
+/// no loopback, private or link-local literal host. `Err(None)` means malformed; the caller
+/// names the offending variable.
+fn check_upstream(
+    var: &'static str,
+    raw: &str,
+    allow_private: bool,
+) -> Result<(), Option<ConfigError>> {
+    use std::net::IpAddr;
+    let url = reqwest::Url::parse(raw)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .filter(|u| u.username().is_empty() && u.password().is_none())
+        .ok_or(None)?;
+    let host = url.host_str().filter(|h| !h.is_empty()).ok_or(None)?;
+    let private = match host.trim_matches(['[', ']']).parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => private_v4(ip),
+        Ok(IpAddr::V6(ip)) => ip.to_ipv4_mapped().map_or_else(
+            || {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_unique_local()
+                    || ip.is_unicast_link_local()
+            },
+            private_v4,
+        ),
+        Err(_) => {
+            let d = host.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost") || d.ends_with(".internal")
+        }
+    };
+    if private && !allow_private {
+        return Err(Some(ConfigError::PrivateUpstream {
+            var,
+            url: raw.to_owned(),
+        }));
+    }
+    Ok(())
+}
+
+fn private_v4(ip: std::net::Ipv4Addr) -> bool {
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        // Carrier-grade NAT, 100.64.0.0/10.
+        || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 0x40)
 }
 
 /// How tracing events are written (to stdout).
@@ -125,12 +185,22 @@ impl Config {
         if overpass_urls.is_empty() {
             overpass_urls.push(DEFAULT_OVERPASS_URL.to_owned());
         }
-        if let Some(bad) = overpass_urls.iter().find(|u| {
-            !reqwest::Url::parse(u)
-                .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
-        }) {
-            return Err(ConfigError::OverpassUrl(bad.clone()));
+        let allow_private_upstreams = matches!(
+            get("OBS_ALLOW_PRIVATE_UPSTREAMS").as_deref(),
+            Some("1" | "true")
+        );
+        for u in &overpass_urls {
+            check_upstream("OBS_OVERPASS_URL", u, allow_private_upstreams)
+                .map_err(|e| e.unwrap_or_else(|| ConfigError::OverpassUrl(u.clone())))?;
         }
+        let tile_url = or("OBS_TILE_URL", DEFAULT_TILE_URL);
+        let probe = tile_url
+            .replace("{z}", "0")
+            .replace("{x}", "0")
+            .replace("{y}", "0")
+            .replace("{s}", "a");
+        check_upstream("OBS_TILE_URL", &probe, allow_private_upstreams)
+            .map_err(|e| e.unwrap_or_else(|| ConfigError::TileUrl(tile_url.clone())))?;
         let metrics_bind = get("OBS_METRICS_BIND")
             .map(|raw| raw.parse().map_err(|_| ConfigError::MetricsBind(raw)))
             .transpose()?;
@@ -150,7 +220,8 @@ impl Config {
             cache_dir: or("OBS_CACHE_DIR", "cache").into(),
             contact: or("OBS_CONTACT", DEFAULT_CONTACT),
             overpass_urls,
-            tile_url: or("OBS_TILE_URL", DEFAULT_TILE_URL),
+            tile_url,
+            allow_private_upstreams,
             attribution: or("OBS_TILE_ATTRIBUTION", DEFAULT_ATTRIBUTION),
             bundle_ttl: Duration::from_secs_f64(ttl_days * 86_400.0),
             ..Self::defaults()
@@ -166,6 +237,7 @@ impl Config {
             contact: DEFAULT_CONTACT.into(),
             overpass_urls: vec![DEFAULT_OVERPASS_URL.into()],
             tile_url: DEFAULT_TILE_URL.into(),
+            allow_private_upstreams: false,
             attribution: DEFAULT_ATTRIBUTION.into(),
             bundle_ttl: Duration::from_secs(7 * 86_400),
             tile_min_ttl: Duration::from_secs(7 * 86_400),
@@ -327,5 +399,61 @@ mod tests {
             )])),
             Err(ConfigError::OverpassUrl(u)) if u == "overpass.example/api/interpreter"
         ));
+    }
+
+    #[test]
+    fn upstream_urls_are_screened() {
+        let bad = |k: &str, v: &str| Config::from_lookup(lookup(&[(k, v)])).unwrap_err();
+        for u in [
+            "http://169.254.169.254/latest",
+            "http://127.0.0.1:9/o",
+            "http://10.0.0.5/o",
+            "http://localhost/o",
+            "http://metadata.google.internal/o",
+            "http://[::1]/o",
+            "http://[fd00::1]/o",
+            "http://[::ffff:169.254.169.254]/o",
+        ] {
+            assert!(
+                matches!(
+                    bad("OBS_OVERPASS_URL", u),
+                    ConfigError::PrivateUpstream { .. }
+                ),
+                "{u}"
+            );
+            assert!(
+                matches!(
+                    bad("OBS_TILE_URL", &format!("{u}/{{z}}/{{x}}/{{y}}.png")),
+                    ConfigError::PrivateUpstream { .. }
+                ),
+                "{u}"
+            );
+        }
+        assert!(matches!(
+            bad(
+                "OBS_TILE_URL",
+                "https://user:pw@tiles.example/{z}/{x}/{y}.png"
+            ),
+            ConfigError::TileUrl(_)
+        ));
+        assert!(matches!(
+            bad("OBS_OVERPASS_URL", "https://user@overpass.example/api"),
+            ConfigError::OverpassUrl(_)
+        ));
+        assert!(matches!(
+            bad("OBS_TILE_URL", "ftp://tiles.example/{z}/{x}/{y}.png"),
+            ConfigError::TileUrl(_)
+        ));
+    }
+
+    #[test]
+    fn private_upstreams_can_be_allowed() {
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_ALLOW_PRIVATE_UPSTREAMS", "1"),
+            ("OBS_OVERPASS_URL", "http://10.0.0.5/api/interpreter"),
+            ("OBS_TILE_URL", "http://localhost:8081/{z}/{x}/{y}.png"),
+        ]))
+        .unwrap();
+        assert!(c.allow_private_upstreams);
     }
 }

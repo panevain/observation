@@ -88,11 +88,15 @@ impl AppState {
             .user_agent(&user_agent)
             .timeout(config.overpass_timeout)
             .connect_timeout(Duration::from_secs(10))
+            // A redirect could send the proxy to an internal address.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         let tile_client = reqwest::Client::builder()
             .user_agent(&user_agent)
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))
+            // A redirect could send the proxy to an internal address.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         let cache = Arc::new(Cache::open(
