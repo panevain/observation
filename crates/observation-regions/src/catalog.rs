@@ -12,6 +12,8 @@ use tokio::sync::Mutex;
 
 /// How long a fetched index is used before it is fetched again.
 const MAX_AGE: Duration = Duration::from_secs(24 * 3600);
+/// After a failed fetch, an old list is used for this long before trying again.
+const RETRY_AFTER: Duration = Duration::from_secs(600);
 /// Largest index accepted (the real one is about 0.5 MB).
 const MAX_INDEX_BYTES: usize = 16 * 1024 * 1024;
 
@@ -157,7 +159,14 @@ impl Catalog {
                 match stale {
                     Some(list) => {
                         tracing::warn!(error = %e, "using an old extract list");
-                        Ok(Arc::new(list))
+                        let list = Arc::new(list);
+                        // Kept as if fetched long ago, so the next fetch is tried in
+                        // RETRY_AFTER rather than by every caller meanwhile.
+                        let at = SystemTime::now()
+                            .checked_sub(MAX_AGE.saturating_sub(RETRY_AFTER))
+                            .unwrap_or(SystemTime::UNIX_EPOCH);
+                        *cached = Some((at, Arc::clone(&list)));
+                        Ok(list)
                     }
                     None => Err(e),
                 }

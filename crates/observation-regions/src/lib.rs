@@ -32,7 +32,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use observation_core::geo::BBox;
-use observation_core::regions::{RegionAction, RegionsSnapshot, is_valid_region_id};
+use observation_core::regions::{
+    RegionAction, RegionsSnapshot, bearer_matches, is_valid_region_id,
+};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -86,14 +88,18 @@ pub fn write_atomic_blocking(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .parent()
         .ok_or_else(|| std::io::Error::other("path has no parent"))?;
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        path.file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default()
-    ));
-    let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    // A unique name per write, so concurrent writers never share a temp file.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".tmp-{}-{n}", std::process::id()));
+    // Synced before the rename, so a power loss leaves the old file or the new one.
+    let result = (|| {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -110,11 +116,22 @@ pub struct Agent {
     queries: Semaphore,
     waiting: std::sync::atomic::AtomicUsize,
     query_timeout: Duration,
+    /// Flipped when shutting down, to end long polls.
+    shutdown: tokio::sync::watch::Sender<bool>,
+}
+
+/// The agent could not start.
+#[derive(Debug, thiserror::Error)]
+pub enum StartError {
+    #[error(transparent)]
+    State(#[from] registry::OpenError),
+    #[error("could not build the HTTP client: {0}")]
+    Client(#[from] reqwest::Error),
 }
 
 impl Agent {
     /// Opens the data directory and builds the HTTP client.
-    pub fn new(config: &Config) -> Result<Arc<Self>, reqwest::Error> {
+    pub fn new(config: &Config) -> Result<Arc<Self>, StartError> {
         let client = reqwest::Client::builder()
             .user_agent(config.user_agent())
             .connect_timeout(Duration::from_secs(20))
@@ -123,7 +140,7 @@ impl Agent {
             &config.data_dir,
             config.max_download_bytes,
             config.refresh_days,
-        ));
+        )?);
         Ok(Arc::new(Self {
             catalog: Catalog::new(
                 client.clone(),
@@ -140,30 +157,36 @@ impl Agent {
             queries: Semaphore::new(config.query_concurrency),
             waiting: std::sync::atomic::AtomicUsize::new(0),
             query_timeout: config.query_timeout,
+            shutdown: tokio::sync::watch::Sender::new(false),
         }))
+    }
+
+    /// Ends pending long polls so a graceful shutdown does not wait on them.
+    pub fn begin_shutdown(&self) {
+        self.shutdown.send_replace(true);
     }
 
     /// Runs queued imports one at a time, forever.
     pub async fn run_worker(self: Arc<Self>) {
         loop {
-            let id = self.registry.next_job().await;
+            let (id, job) = self.registry.next_job().await;
             let this = Arc::clone(&self);
-            let job_id = id.clone();
+            let region = id.clone();
             let task = tokio::spawn(async move {
-                let extract = match this.catalog.find(&job_id).await {
+                let extract = match this.catalog.find(&region).await {
                     Ok(Some(x)) => x,
                     Ok(None) => {
                         return Err(format!(
-                            "`{job_id}` is no longer offered by the extract list"
+                            "`{region}` is no longer offered by the extract list"
                         ));
                     }
                     Err(e) => return Err(e.to_string()),
                 };
-                import::run(&this.tools, &this.registry, &extract).await
+                import::run(&this.tools, &this.registry, job, &extract).await
             });
-            if !self.registry.started(&id, task.abort_handle()) {
+            if !self.registry.started(&id, job, task.abort_handle()) {
                 let _ = task.await;
-                self.registry.finish(&id, None);
+                self.registry.finish(&id, job, None);
                 continue;
             }
             tracing::info!(region = %id, "import started");
@@ -182,7 +205,7 @@ impl Agent {
                 .join("work")
                 .join(registry::slug(&id));
             let _ = tokio::fs::remove_dir_all(work).await;
-            self.registry.finish(&id, result);
+            self.registry.finish(&id, job, result);
         }
     }
 
@@ -233,15 +256,6 @@ pub fn app(agent: Arc<Agent>) -> Router {
         .with_state(agent)
 }
 
-/// Compares in time independent of where the inputs differ.
-pub fn same_secret(a: &str, b: &str) -> bool {
-    a.len() == b.len()
-        && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
-}
-
 async fn require_token(
     State(agent): State<Arc<Agent>>,
     req: Request,
@@ -251,9 +265,8 @@ async fn require_token(
         let given = req
             .headers()
             .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "));
-        if !given.is_some_and(|g| same_secret(g, token)) {
+            .and_then(|v| v.to_str().ok());
+        if !bearer_matches(given, token) {
             return Err(err(
                 StatusCode::UNAUTHORIZED,
                 "missing or wrong agent token",
@@ -270,10 +283,15 @@ struct Since {
 
 async fn regions(State(agent): State<Arc<Agent>>, Query(q): Query<Since>) -> Json<RegionsSnapshot> {
     let mut rx = agent.registry.subscribe();
+    let mut shutdown = agent.shutdown.subscribe();
     if let Some(since) = q.since
         && rx.borrow_and_update().version == since
+        && !*shutdown.borrow()
     {
-        let _ = tokio::time::timeout(LONG_POLL, rx.changed()).await;
+        tokio::select! {
+            _ = tokio::time::timeout(LONG_POLL, rx.changed()) => {}
+            _ = shutdown.changed() => {}
+        }
     }
     Json(rx.borrow().clone())
 }
@@ -426,37 +444,55 @@ async fn run_query(bin: &Path, db: &Path, query: &str) -> Result<Vec<u8>, String
         return Err("could not talk to osm3s_query".into());
     };
     let query = query.as_bytes().to_vec();
-    let write = async move {
+    let write = tokio::spawn(async move {
         stdin.write_all(&query).await?;
         stdin.shutdown().await
-    };
+    });
+    // Drained to the end (so the child never blocks on it); the start is kept.
+    let errs = tokio::spawn(async move {
+        let mut kept = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = stderr.read(&mut buf).await {
+            if n == 0 {
+                break;
+            }
+            if kept.len() < 64 * 1024 {
+                kept.extend_from_slice(&buf[..n]);
+            }
+        }
+        kept
+    });
     let read = async {
         let mut out = Vec::new();
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             let n = stdout.read(&mut buf).await?;
             if n == 0 {
-                break;
+                return Ok(out);
             }
             if out.len() + n > MAX_RESULT_BYTES {
                 return Err(std::io::Error::other("the result is too large"));
             }
             out.extend_from_slice(&buf[..n]);
         }
-        Ok(out)
+    }
+    .await;
+    let out = match read {
+        Ok(out) => out,
+        Err(e) => {
+            // Stop it now rather than let it block on the pipe until the timeout.
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(format!("osm3s_query output: {e}"));
+        }
     };
-    let errs = async {
-        let mut e = Vec::new();
-        let _ = (&mut stderr).take(64 * 1024).read_to_end(&mut e).await;
-        e
-    };
-    let (w, out, errs) = tokio::join!(write, read, errs);
     let status = child
         .wait()
         .await
         .map_err(|e| format!("osm3s_query failed: {e}"))?;
-    let out = out.map_err(|e| format!("osm3s_query output: {e}"))?;
-    if !status.success() || w.is_err() {
+    let wrote = write.await.is_ok_and(|w| w.is_ok());
+    let errs = errs.await.unwrap_or_default();
+    if !status.success() || !wrote {
         let errs = String::from_utf8_lossy(&errs);
         return Err(format!(
             "osm3s_query failed ({status}): {}",
@@ -473,10 +509,40 @@ async fn run_query(bin: &Path, db: &Path, query: &str) -> Result<Vec<u8>, String
 mod tests {
     use super::*;
 
-    #[test]
-    fn secrets_compare() {
-        assert!(same_secret("abc", "abc"));
-        assert!(!same_secret("abc", "abd"));
-        assert!(!same_secret("abc", "abcd"));
+    /// A stand-in `osm3s_query` running `script`.
+    #[cfg(unix)]
+    fn fake_query_bin(script: &str) -> tempfile::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("osm3s_query");
+        std::fs::write(&bin, format!("#!/bin/sh\ncat >/dev/null\n{script}\n")).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn queries_return_output_and_errors() {
+        let ok = fake_query_bin("echo '{\"elements\":[]}'");
+        let out = run_query(ok.path(), Path::new("/db"), "q").await.unwrap();
+        assert_eq!(out, b"{\"elements\":[]}\n");
+        let bad = fake_query_bin("echo 'runtime error: broken' >&2; exit 3");
+        let e = run_query(bad.path(), Path::new("/db"), "q")
+            .await
+            .unwrap_err();
+        assert!(e.contains("runtime error: broken"), "{e}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn oversized_results_fail_at_once() {
+        // Endless output: must stop at the cap, not wait for the query timeout.
+        let big = fake_query_bin("yes '{\"padding\":1}'");
+        let started = std::time::Instant::now();
+        let e = run_query(big.path(), Path::new("/db"), "q")
+            .await
+            .unwrap_err();
+        assert!(e.contains("too large"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }

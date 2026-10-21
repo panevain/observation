@@ -6,7 +6,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use observation_core::geo::BBox;
-use observation_core::regions::{RegionAction, RegionsSnapshot, RegionsStatus};
+use observation_core::regions::{
+    ActionKind, RegionAction, RegionView, RegionsSnapshot, RegionsStatus,
+};
 use reqwest::StatusCode;
 use tokio::sync::watch;
 
@@ -19,33 +21,6 @@ const MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
 /// How long the catalog is reused.
 const CATALOG_TTL: Duration = Duration::from_secs(3600);
-
-/// A region management action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    Import,
-    Cancel,
-    Delete,
-}
-
-impl Action {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "import" => Some(Self::Import),
-            "cancel" => Some(Self::Cancel),
-            "delete" => Some(Self::Delete),
-            _ => None,
-        }
-    }
-
-    fn path(self) -> &'static str {
-        match self {
-            Self::Import => "import",
-            Self::Cancel => "cancel",
-            Self::Delete => "delete",
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Regions {
@@ -97,12 +72,17 @@ impl Regions {
         }
     }
 
-    fn publish(&self, online: bool, snapshot: Option<RegionsSnapshot>) {
+    /// Publishes the agent's reachability and, if given, its snapshot. With
+    /// `only_newer`, a snapshot older than the current one is dropped (an
+    /// action's reply can arrive after the poller saw later changes; the poller
+    /// itself always replaces, since a restarted agent counts from 0 again).
+    fn publish(&self, online: bool, snapshot: Option<RegionsSnapshot>, only_newer: bool) {
         self.tx.send_if_modified(|s| {
             let mut changed = s.agent_online != online;
             s.agent_online = online;
             if let Some(snap) = snapshot
                 && snap != s.snapshot
+                && !(only_newer && snap.version <= s.snapshot.version)
             {
                 s.snapshot = snap;
                 changed = true;
@@ -142,10 +122,10 @@ impl Regions {
             match result {
                 Ok(snap) => {
                     backoff = Duration::from_secs(1);
-                    self.publish(true, Some(snap));
+                    self.publish(true, Some(snap), false);
                 }
                 Err(e) => {
-                    self.publish(false, None);
+                    self.publish(false, None, false);
                     if warned.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
                         tracing::warn!(error = %e, "region agent unreachable");
                         warned = Some(Instant::now());
@@ -158,13 +138,16 @@ impl Regions {
     }
 
     /// When the newest ready region whose bounds hold `bbox` was imported.
-    /// Bundles built before then are rebuilt from the region.
+    /// Bundles built before then are rebuilt from the region. (Bounds are a
+    /// superset of the boundary: a box just outside it is rebuilt once per
+    /// import, from public Overpass. Regions without bounds, those crossing the
+    /// antimeridian, invalidate nothing; their bundles age out with the TTL.)
     pub fn data_since(&self, bbox: &BBox) -> Option<SystemTime> {
         let s = self.tx.borrow();
         s.snapshot
             .regions
             .iter()
-            .filter(|r| r.ready && r.bbox.is_some_and(|b| holds(&b, bbox)))
+            .filter(|r| r.ready && r.bbox.is_some_and(|b| b.contains_box(bbox)))
             .filter_map(|r| r.imported_unix)
             .max()
             .map(|t| UNIX_EPOCH + Duration::from_secs(t))
@@ -173,14 +156,10 @@ impl Regions {
     /// Buildings and roads for `bbox` from a local region. `Ok(None)` when no
     /// region holds the area (or the agent is offline); errors are logged by
     /// the caller, which falls back to public Overpass.
-    pub async fn fetch(&self, bbox: &BBox) -> Result<Option<OsmData>, String> {
+    pub async fn fetch(&self, bbox: &BBox, timeout: Duration) -> Result<Option<OsmData>, String> {
         {
             let s = self.tx.borrow();
-            let candidate = s
-                .snapshot
-                .regions
-                .iter()
-                .any(|r| r.ready && r.bbox.is_some_and(|b| holds(&b, bbox)));
+            let candidate = s.snapshot.regions.iter().any(|r| might_hold(r, bbox));
             if !s.agent_online || !candidate {
                 return Ok(None);
             }
@@ -192,7 +171,7 @@ impl Regions {
                 &format!("/interpreter?bbox={}", bbox.overpass()),
             )
             .form(&[("data", build_query(bbox))])
-            .timeout(Duration::from_secs(35))
+            .timeout(timeout)
             .send()
             .await
             .map_err(|e| e.without_url().to_string())?;
@@ -235,7 +214,7 @@ impl Regions {
     }
 
     /// Forwards an action and publishes the snapshot the agent answers with.
-    pub async fn act(&self, action: Action, id: &str) -> Result<RegionsStatus, ApiError> {
+    pub async fn act(&self, action: ActionKind, id: &str) -> Result<RegionsStatus, ApiError> {
         if !self.manageable {
             return Err(ApiError::Forbidden(
                 "region management is turned off on this server (set OBS_ADMIN_TOKEN)",
@@ -254,7 +233,7 @@ impl Regions {
         let body = self.answer(resp).await?;
         let snap: RegionsSnapshot = serde_json::from_slice(&body)
             .map_err(|e| ApiError::Internal(format!("agent snapshot unreadable: {e}")))?;
-        self.publish(true, Some(snap));
+        self.publish(true, Some(snap), true);
         Ok(self.status())
     }
 
@@ -291,28 +270,43 @@ fn unreachable_agent() -> ApiError {
     ApiError::Upstream("the region agent is not reachable; try again shortly".into())
 }
 
-/// Whether `outer` holds all of `inner`.
-fn holds(outer: &BBox, inner: &BBox) -> bool {
-    outer.south <= inner.south
-        && outer.west <= inner.west
-        && outer.north >= inner.north
-        && outer.east >= inner.east
+/// Whether `r` may hold `bbox`: ready, and its bounds hold the box (a region
+/// without bounds, crossing the antimeridian, is left to the agent to decide).
+fn might_hold(r: &RegionView, bbox: &BBox) -> bool {
+    r.ready && r.bbox.is_none_or(|b| b.contains_box(bbox))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn bbox_holds() {
-        let outer = BBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
-        assert!(holds(&outer, &BBox::new(0.1, 0.1, 0.2, 0.2).unwrap()));
-        assert!(!holds(&outer, &BBox::new(0.9, 0.9, 1.1, 1.1).unwrap()));
+    fn region(ready: bool, bbox: Option<BBox>) -> RegionView {
+        RegionView {
+            id: "r".into(),
+            name: "R".into(),
+            ready,
+            bbox,
+            data_timestamp: None,
+            imported_unix: Some(1),
+            disk_bytes: None,
+            job: None,
+            last_error: None,
+        }
     }
 
     #[test]
-    fn actions() {
-        assert_eq!(Action::parse("import"), Some(Action::Import));
-        assert_eq!(Action::parse("nuke"), None);
+    fn candidates() {
+        let inner = BBox::new(0.1, 0.1, 0.2, 0.2).unwrap();
+        let outer = BBox::new(0.0, 0.0, 1.0, 1.0).ok();
+        assert!(might_hold(&region(true, outer), &inner));
+        assert!(!might_hold(&region(false, outer), &inner));
+        assert!(!might_hold(
+            &region(true, BBox::new(0.5, 0.5, 1.0, 1.0).ok()),
+            &inner
+        ));
+        assert!(
+            might_hold(&region(true, None), &inner),
+            "no bounds: ask the agent"
+        );
     }
 }

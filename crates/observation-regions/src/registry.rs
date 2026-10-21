@@ -12,6 +12,10 @@
 //!
 //! A region's database is shared as an [`Arc<RegionDb>`]; a refresh or delete
 //! retires it, and the directory is removed when the last query using it ends.
+//!
+//! Every queued import gets a [`JobId`]. The worker passes it back with its
+//! progress and result, which are ignored once the job was cancelled or
+//! replaced, so a stale task can never touch a newer import of the same region.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -22,6 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use observation_core::geo::BBox;
 use observation_core::regions::{JobPhase, JobView, RegionView, RegionsSnapshot};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::sync::{Notify, watch};
 use tokio::task::AbortHandle;
 
@@ -29,6 +34,8 @@ use crate::poly::Boundary;
 
 /// Progress is published at most this often (phase changes go out at once).
 const PUBLISH_EVERY: Duration = Duration::from_millis(250);
+/// A failed or cancelled scheduled refresh is not retried for this long.
+const RETRY_REFRESH_AFTER: u64 = 24 * 3600;
 
 pub fn now_unix() -> u64 {
     SystemTime::now()
@@ -40,6 +47,9 @@ pub fn now_unix() -> u64 {
 pub fn slug(id: &str) -> String {
     id.replace('/', "__")
 }
+
+/// Identifies one queued import.
+pub type JobId = u64;
 
 /// An imported Overpass database.
 #[derive(Debug)]
@@ -65,14 +75,19 @@ impl RegionDb {
 }
 
 impl Drop for RegionDb {
+    /// Deleting a large database takes a while: it runs on its own thread, so
+    /// neither the registry lock nor a runtime thread waits for it.
     fn drop(&mut self) {
-        if self.retired.load(Ordering::SeqCst) {
-            if let Err(e) = std::fs::remove_dir_all(&self.dir) {
-                tracing::warn!(dir = %self.dir.display(), error = %e, "could not remove old region database");
-            } else {
-                tracing::info!(dir = %self.dir.display(), "removed old region database");
-            }
+        if !self.retired.load(Ordering::SeqCst) {
+            return;
         }
+        let dir = std::mem::take(&mut self.dir);
+        std::thread::spawn(move || match std::fs::remove_dir_all(&dir) {
+            Ok(()) => tracing::info!(dir = %dir.display(), "removed old region database"),
+            Err(e) => {
+                tracing::warn!(dir = %dir.display(), error = %e, "could not remove old region database");
+            }
+        });
     }
 }
 
@@ -88,6 +103,9 @@ pub struct RegionRecord {
     pub imported_unix: Option<u64>,
     pub disk_bytes: Option<u64>,
     pub last_error: Option<String>,
+    /// When the last import ended, however it ended (Unix seconds).
+    #[serde(default)]
+    pub last_attempt_unix: Option<u64>,
     /// An import was queued or running; it is queued again after a restart.
     #[serde(default)]
     pub pending: bool,
@@ -107,16 +125,48 @@ pub struct Imported {
 struct Region {
     record: RegionRecord,
     db: Option<Arc<RegionDb>>,
-    job: Option<JobView>,
+    job: Option<(JobId, JobView)>,
 }
 
 #[derive(Debug, Default)]
 struct State {
     version: u64,
+    next_job: JobId,
     regions: BTreeMap<String, Region>,
-    queue: VecDeque<String>,
-    running: Option<(String, AbortHandle)>,
+    queue: VecDeque<(String, JobId)>,
+    running: Option<(JobId, AbortHandle)>,
     last_publish: Option<Instant>,
+}
+
+impl State {
+    fn new_job(&mut self) -> (JobId, JobView) {
+        self.next_job += 1;
+        (
+            self.next_job,
+            JobView {
+                phase: JobPhase::Queued,
+                done: 0,
+                total: None,
+                since_unix: now_unix(),
+            },
+        )
+    }
+
+    /// The region whose current job is `job`.
+    fn job_region(&mut self, id: &str, job: JobId) -> Option<&mut Region> {
+        self.regions
+            .get_mut(id)
+            .filter(|r| r.job.as_ref().is_some_and(|(j, _)| *j == job))
+    }
+
+    /// Aborts the running task if it is `job`.
+    fn abort_if_running(&self, job: Option<JobId>) {
+        if let (Some(job), Some((running, handle))) = (job, &self.running)
+            && *running == job
+        {
+            handle.abort();
+        }
+    }
 }
 
 /// Why a region action was refused.
@@ -126,6 +176,17 @@ pub enum ActionError {
     NotFound,
     /// An import of this region is already queued or running.
     Busy,
+}
+
+/// `regions.json` exists but cannot be used. The agent refuses to start
+/// rather than treat every database as unreferenced and delete it.
+#[derive(Debug, Error)]
+#[error(
+    "{path} is unreadable ({reason}); fix or remove it to start (removing it deletes all imported regions)"
+)]
+pub struct OpenError {
+    path: String,
+    reason: String,
 }
 
 #[derive(Debug)]
@@ -142,17 +203,25 @@ impl Registry {
     /// Loads `regions.json`, opens the databases it names, deletes leftovers
     /// (unreferenced databases, interrupted downloads) and queues imports that
     /// were pending when the agent stopped.
-    pub fn open(data_dir: &Path, max_download_bytes: u64, refresh_days: u32) -> Self {
-        let records: Vec<RegionRecord> = std::fs::read(data_dir.join("regions.json"))
-            .ok()
-            .and_then(|b| match serde_json::from_slice(&b) {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    tracing::error!(error = %e, "regions.json is unreadable; starting without regions");
-                    None
-                }
-            })
-            .unwrap_or_default();
+    pub fn open(
+        data_dir: &Path,
+        max_download_bytes: u64,
+        refresh_days: u32,
+    ) -> Result<Self, OpenError> {
+        let path = data_dir.join("regions.json");
+        let records: Vec<RegionRecord> = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| OpenError {
+                path: path.display().to_string(),
+                reason: e.to_string(),
+            })?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                return Err(OpenError {
+                    path: path.display().to_string(),
+                    reason: e.to_string(),
+                });
+            }
+        };
         let db_root = data_dir.join("db");
         let mut state = State::default();
         for mut record in records {
@@ -171,10 +240,10 @@ impl Registry {
                 record.last_error =
                     Some("the region's database was missing; import it again".into());
             }
-            if record.pending {
-                state.queue.push_back(record.id.clone());
+            let job = record.pending.then(|| state.new_job());
+            if let Some((j, _)) = &job {
+                state.queue.push_back((record.id.clone(), *j));
             }
-            let job = record.pending.then(queued_job);
             state
                 .regions
                 .insert(record.id.clone(), Region { record, db, job });
@@ -197,14 +266,14 @@ impl Registry {
         }
         let snapshot = build_snapshot(&state, max_download_bytes, refresh_days);
         let (tx, _) = watch::channel(snapshot);
-        Self {
+        Ok(Self {
             state: Mutex::new(state),
             tx,
             wake: Notify::new(),
             data_dir: data_dir.to_owned(),
             max_download_bytes,
             refresh_days,
-        }
+        })
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -227,16 +296,15 @@ impl Registry {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Publishes the state now and, if `persist`, writes `regions.json`.
+    /// Publishes the state and, if `persist`, writes `regions.json`. The file
+    /// is written before the lock is released, so writes cannot overtake each
+    /// other (it is small, and only written on actions and job ends).
     fn commit(&self, mut state: MutexGuard<'_, State>, persist: bool) {
         state.version += 1;
         state.last_publish = Some(Instant::now());
         let snapshot = build_snapshot(&state, self.max_download_bytes, self.refresh_days);
-        let records: Vec<RegionRecord> = state.regions.values().map(|r| r.record.clone()).collect();
-        drop(state);
-        self.tx.send_replace(snapshot);
         if persist {
-            // Small and rare (on actions and phase ends), so written in place.
+            let records: Vec<&RegionRecord> = state.regions.values().map(|r| &r.record).collect();
             let path = self.data_dir.join("regions.json");
             match serde_json::to_vec_pretty(&records) {
                 Ok(bytes) => {
@@ -247,27 +315,30 @@ impl Registry {
                 Err(e) => tracing::error!(error = %e, "could not encode regions.json"),
             }
         }
+        drop(state);
+        self.tx.send_replace(snapshot);
     }
 
     /// Queues an import (or re-import) of `id`.
     pub fn enqueue(&self, id: &str, name: &str) -> Result<(), ActionError> {
         let mut s = self.lock();
+        if s.regions.get(id).is_some_and(|r| r.job.is_some()) {
+            return Err(ActionError::Busy);
+        }
+        let job = s.new_job();
+        let job_id = job.0;
         let region = s.regions.entry(id.to_owned()).or_insert_with(|| Region {
             record: RegionRecord {
                 id: id.to_owned(),
-                name: name.to_owned(),
                 ..RegionRecord::default()
             },
             db: None,
             job: None,
         });
-        if region.job.is_some() {
-            return Err(ActionError::Busy);
-        }
         region.record.name = name.to_owned();
         region.record.pending = true;
-        region.job = Some(queued_job());
-        s.queue.push_back(id.to_owned());
+        region.job = Some(job);
+        s.queue.push_back((id.to_owned(), job_id));
         self.commit(s, true);
         self.wake.notify_one();
         Ok(())
@@ -278,20 +349,14 @@ impl Registry {
     pub fn cancel(&self, id: &str) -> Result<(), ActionError> {
         let mut s = self.lock();
         let region = s.regions.get_mut(id).ok_or(ActionError::NotFound)?;
-        if region.job.is_none() {
-            return Err(ActionError::NotFound);
-        }
-        region.job = None;
+        let (job, _) = region.job.take().ok_or(ActionError::NotFound)?;
         region.record.pending = false;
+        region.record.last_attempt_unix = Some(now_unix());
         if region.db.is_none() {
             s.regions.remove(id);
         }
-        s.queue.retain(|q| q != id);
-        if let Some((running, handle)) = &s.running
-            && running == id
-        {
-            handle.abort();
-        }
+        s.queue.retain(|(_, j)| *j != job);
+        s.abort_if_running(Some(job));
         self.commit(s, true);
         Ok(())
     }
@@ -303,27 +368,24 @@ impl Registry {
         if let Some(db) = &region.db {
             db.retire();
         }
-        s.queue.retain(|q| q != id);
-        if let Some((running, handle)) = &s.running
-            && running == id
-        {
-            handle.abort();
-        }
+        let job = region.job.as_ref().map(|(j, _)| *j);
+        s.queue.retain(|(_, j)| Some(*j) != job);
+        s.abort_if_running(job);
         self.commit(s, true);
+        drop(region);
         Ok(())
     }
 
-    /// Waits for the next queued import and marks it running. `start` spawns
-    /// the job; its abort handle is kept for [`Self::cancel`].
-    pub async fn next_job(&self) -> String {
+    /// Waits until nothing runs and an import is queued; returns it.
+    pub async fn next_job(&self) -> (String, JobId) {
         loop {
             let notified = self.wake.notified();
             {
                 let mut s = self.lock();
                 if s.running.is_none()
-                    && let Some(id) = s.queue.pop_front()
+                    && let Some(next) = s.queue.pop_front()
                 {
-                    return id;
+                    return next;
                 }
             }
             notified.await;
@@ -331,74 +393,74 @@ impl Registry {
     }
 
     /// Records the running job's abort handle (call right after spawning it).
-    /// Returns `false`, and aborts it, if the region was cancelled meanwhile.
-    pub fn started(&self, id: &str, handle: AbortHandle) -> bool {
+    /// Returns `false`, and aborts it, if the job was cancelled meanwhile.
+    pub fn started(&self, id: &str, job: JobId, handle: AbortHandle) -> bool {
         let mut s = self.lock();
-        let alive = s.regions.get(id).is_some_and(|r| r.job.is_some());
-        if !alive {
+        if s.job_region(id, job).is_none() {
             handle.abort();
             return false;
         }
-        s.running = Some((id.to_owned(), handle));
+        s.running = Some((job, handle));
         true
     }
 
-    /// Updates the running job's progress; published when the phase changes
-    /// or [`PUBLISH_EVERY`] has passed.
-    pub fn progress(&self, id: &str, phase: JobPhase, done: u64, total: Option<u64>) {
+    /// Updates a job's progress; published when the phase changes or
+    /// [`PUBLISH_EVERY`] has passed. Ignored for a cancelled or replaced job.
+    pub fn progress(&self, id: &str, job: JobId, phase: JobPhase, done: u64, total: Option<u64>) {
         let mut s = self.lock();
         let due = s.last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_EVERY);
-        let Some(job) = s.regions.get_mut(id).and_then(|r| r.job.as_mut()) else {
+        let Some((_, view)) = s.job_region(id, job).and_then(|r| r.job.as_mut()) else {
             return;
         };
-        let phase_changed = job.phase != phase;
+        let phase_changed = view.phase != phase;
         if phase_changed {
-            job.since_unix = now_unix();
+            view.since_unix = now_unix();
         }
-        job.phase = phase;
-        job.done = done;
-        job.total = total;
+        view.phase = phase;
+        view.done = done;
+        view.total = total;
         if phase_changed || due {
             self.commit(s, false);
         }
     }
 
-    /// Ends the running job: installs `result` (retiring the database it
-    /// replaces) or records its error. `None` means it was cancelled.
-    pub fn finish(&self, id: &str, result: Option<Result<Imported, String>>) {
+    /// Ends a job: installs `result` (retiring the database it replaces) or
+    /// records its error. `None` means it was cancelled. A result for a job
+    /// that is no longer current is dropped.
+    pub fn finish(&self, id: &str, job: JobId, result: Option<Result<Imported, String>>) {
         let mut s = self.lock();
-        s.running = None;
-        // A cancelled or deleted region has no job any more: drop the result.
-        let Some(region) = s.regions.get_mut(id).filter(|r| r.job.is_some()) else {
-            if let Some(Ok(imported)) = result {
-                imported.db.retire();
-            }
-            self.commit(s, false);
-            self.wake.notify_one();
-            return;
-        };
-        region.job = None;
-        region.record.pending = false;
-        match result {
-            Some(Ok(imported)) => {
-                if let Some(old) = region.db.replace(Arc::clone(&imported.db)) {
-                    old.retire();
+        if s.running.as_ref().is_some_and(|(j, _)| *j == job) {
+            s.running = None;
+        }
+        let mut retired = None;
+        if let Some(region) = s.job_region(id, job) {
+            region.job = None;
+            region.record.pending = false;
+            region.record.last_attempt_unix = Some(now_unix());
+            match result {
+                Some(Ok(imported)) => {
+                    retired = region.db.replace(Arc::clone(&imported.db));
+                    let r = &mut region.record;
+                    r.db_dir = Some(imported.db_dir);
+                    r.bbox = imported.bbox;
+                    r.data_timestamp = imported.data_timestamp;
+                    r.imported_unix = Some(now_unix());
+                    r.disk_bytes = Some(imported.disk_bytes);
+                    r.last_error = None;
+                    tracing::info!(region = id, "region ready");
                 }
-                let r = &mut region.record;
-                r.db_dir = Some(imported.db_dir);
-                r.bbox = imported.bbox;
-                r.data_timestamp = imported.data_timestamp;
-                r.imported_unix = Some(now_unix());
-                r.disk_bytes = Some(imported.disk_bytes);
-                r.last_error = None;
-                tracing::info!(region = id, "region ready");
+                // The region stays listed (with its old data, if any) so the error can be read.
+                Some(Err(e)) => {
+                    tracing::warn!(region = id, error = %e, "region import failed");
+                    region.record.last_error = Some(e);
+                }
+                None => {}
             }
-            // The region stays listed (with its old data, if any) so the error can be read.
-            Some(Err(e)) => {
-                tracing::warn!(region = id, error = %e, "region import failed");
-                region.record.last_error = Some(e);
+            if let Some(old) = &retired {
+                old.retire();
             }
-            None => {}
+        } else if let Some(Ok(imported)) = result {
+            imported.db.retire();
         }
         self.commit(s, true);
         self.wake.notify_one();
@@ -414,6 +476,8 @@ impl Registry {
         };
         s.regions
             .values()
+            // Cheap rejection by bounds before the polygon test.
+            .filter(|r| r.record.bbox.is_none_or(|b| b.contains_box(bbox)))
             .filter(|r| {
                 r.db.as_ref()
                     .is_some_and(|db| db.boundary.contains_bbox(bbox))
@@ -422,28 +486,30 @@ impl Registry {
             .and_then(|r| Some((r.record.id.clone(), Arc::clone(r.db.as_ref()?))))
     }
 
-    /// Ready regions older than the refresh interval, without a job.
+    /// Ready regions due for a scheduled refresh: imported more than the
+    /// refresh interval ago, and not attempted (failed or cancelled) within a day.
     pub fn due_for_refresh(&self) -> Vec<(String, String)> {
         if self.refresh_days == 0 {
             return Vec::new();
         }
-        let cutoff = now_unix().saturating_sub(u64::from(self.refresh_days) * 86_400);
+        let now = now_unix();
+        let cutoff = now.saturating_sub(u64::from(self.refresh_days) * 86_400);
+        let retry_cutoff = now.saturating_sub(RETRY_REFRESH_AFTER);
         self.lock()
             .regions
             .values()
             .filter(|r| r.db.is_some() && r.job.is_none())
-            .filter(|r| r.record.imported_unix.is_some_and(|t| t < cutoff))
+            .filter(|r| {
+                let Some(imported) = r.record.imported_unix.filter(|t| *t < cutoff) else {
+                    return false;
+                };
+                // An attempt after the last import failed or was cancelled: back off.
+                r.record
+                    .last_attempt_unix
+                    .is_none_or(|t| t <= imported || t < retry_cutoff)
+            })
             .map(|r| (r.record.id.clone(), r.record.name.clone()))
             .collect()
-    }
-}
-
-fn queued_job() -> JobView {
-    JobView {
-        phase: JobPhase::Queued,
-        done: 0,
-        total: None,
-        since_unix: now_unix(),
     }
 }
 
@@ -461,7 +527,7 @@ fn build_snapshot(s: &State, max_download_bytes: u64, refresh_days: u32) -> Regi
                 data_timestamp: r.record.data_timestamp.clone(),
                 imported_unix: r.record.imported_unix,
                 disk_bytes: r.record.disk_bytes,
-                job: r.job.clone(),
+                job: r.job.as_ref().map(|(_, v)| v.clone()),
                 last_error: r.record.last_error.clone(),
             })
             .collect(),
@@ -493,22 +559,38 @@ mod tests {
         tokio::spawn(std::future::pending::<()>()).abort_handle()
     }
 
+    fn open(dir: &Path) -> Registry {
+        Registry::open(dir, 1, 7).unwrap()
+    }
+
+    /// Database removal runs on its own thread; wait for it.
+    fn gone(path: &Path) -> bool {
+        for _ in 0..200 {
+            if !path.exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
     #[tokio::test]
     async fn import_lifecycle_persists_and_swaps() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = Registry::open(dir.path(), 1, 7);
+        let reg = open(dir.path());
         reg.enqueue("monaco", "Monaco").unwrap();
         assert_eq!(reg.enqueue("monaco", "Monaco"), Err(ActionError::Busy));
-        assert_eq!(reg.next_job().await, "monaco");
-        assert!(reg.started("monaco", spawn_dummy()));
-        reg.progress("monaco", JobPhase::Downloading, 1, Some(2));
+        let (id, job) = reg.next_job().await;
+        assert_eq!(id, "monaco");
+        assert!(reg.started(&id, job, spawn_dummy()));
+        reg.progress(&id, job, JobPhase::Downloading, 1, Some(2));
         let snap = reg.snapshot();
         assert_eq!(
             snap.regions[0].job.as_ref().map(|j| j.phase),
             Some(JobPhase::Downloading)
         );
 
-        reg.finish("monaco", Some(Ok(imported(dir.path(), "monaco-1"))));
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "monaco-1"))));
         let bbox = BBox::new(0.2, 0.2, 0.3, 0.3).unwrap();
         assert_eq!(reg.covering(&bbox).map(|c| c.0).as_deref(), Some("monaco"));
         assert!(reg.snapshot().regions[0].ready);
@@ -516,52 +598,112 @@ mod tests {
         // A refresh swaps the database; the old one goes when unused.
         let (_, held) = reg.covering(&bbox).unwrap();
         reg.enqueue("monaco", "Monaco").unwrap();
-        assert_eq!(reg.next_job().await, "monaco");
-        assert!(reg.started("monaco", spawn_dummy()));
-        reg.finish("monaco", Some(Ok(imported(dir.path(), "monaco-2"))));
+        let (id, job) = reg.next_job().await;
+        assert!(reg.started(&id, job, spawn_dummy()));
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "monaco-2"))));
         assert!(dir.path().join("db/monaco-1").exists(), "still in use");
         drop(held);
-        assert!(!dir.path().join("db/monaco-1").exists());
+        assert!(gone(&dir.path().join("db/monaco-1")));
 
         // Reopening restores the region from regions.json.
-        let reopened = Registry::open(dir.path(), 1, 7);
+        let reopened = open(dir.path());
         assert!(reopened.covering(&bbox).is_some());
         reopened.delete("monaco").unwrap();
         assert!(reopened.covering(&bbox).is_none());
-        assert!(!dir.path().join("db/monaco-2").exists());
+        assert!(gone(&dir.path().join("db/monaco-2")));
+    }
+
+    #[tokio::test]
+    async fn a_stale_job_cannot_touch_a_newer_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = open(dir.path());
+        reg.enqueue("a", "A").unwrap();
+        let (id, old) = reg.next_job().await;
+        assert!(reg.started(&id, old, spawn_dummy()));
+        // Cancelled, then imported again before the old task has wound down.
+        reg.cancel("a").unwrap();
+        reg.enqueue("a", "A").unwrap();
+        reg.progress("a", old, JobPhase::Importing, 5, Some(9));
+        reg.finish("a", old, Some(Ok(imported(dir.path(), "a-old"))));
+        let snap = reg.snapshot();
+        let job = snap.regions[0]
+            .job
+            .as_ref()
+            .expect("the new import is still queued");
+        assert_eq!(job.phase, JobPhase::Queued);
+        assert!(!snap.regions[0].ready, "the stale result was not installed");
+        assert!(gone(&dir.path().join("db/a-old")));
+        let (_, new) = reg.next_job().await;
+        assert_ne!(new, old);
+        assert!(reg.started("a", new, spawn_dummy()));
     }
 
     #[tokio::test]
     async fn cancel_forgets_new_regions_and_failures_are_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = Registry::open(dir.path(), 1, 7);
+        let reg = open(dir.path());
         reg.enqueue("a", "A").unwrap();
         reg.cancel("a").unwrap();
         assert!(reg.snapshot().regions.is_empty());
         assert_eq!(reg.cancel("a"), Err(ActionError::NotFound));
 
         reg.enqueue("b", "B").unwrap();
-        assert_eq!(reg.next_job().await, "b");
-        assert!(reg.started("b", spawn_dummy()));
-        reg.finish("b", Some(Err("no space left".into())));
+        let (id, job) = reg.next_job().await;
+        assert_eq!(id, "b");
+        assert!(reg.started(&id, job, spawn_dummy()));
+        reg.finish(&id, job, Some(Err("no space left".into())));
         let snap = reg.snapshot();
         assert_eq!(snap.regions[0].last_error.as_deref(), Some("no space left"));
         assert!(!snap.regions[0].ready);
     }
 
     #[tokio::test]
+    async fn failed_refreshes_are_not_retried_hourly() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::open(dir.path(), 1, 1).unwrap();
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
+        // Pretend the import is two days old.
+        {
+            let mut state = reg.lock();
+            let r = &mut state.regions.get_mut("a").unwrap().record;
+            r.imported_unix = Some(now_unix() - 2 * 86_400);
+            r.last_attempt_unix = r.imported_unix;
+        }
+        assert_eq!(reg.due_for_refresh().len(), 1);
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Err("gone".into())));
+        assert!(
+            reg.due_for_refresh().is_empty(),
+            "retried after a day, not every hour"
+        );
+    }
+
+    #[tokio::test]
     async fn pending_imports_resume_and_leftovers_go() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let reg = Registry::open(dir.path(), 1, 7);
+            let reg = open(dir.path());
             reg.enqueue("a", "A").unwrap();
         }
         std::fs::create_dir_all(dir.path().join("db/stray-1")).unwrap();
         std::fs::create_dir_all(dir.path().join("work/a")).unwrap();
-        let reg = Registry::open(dir.path(), 1, 7);
-        assert_eq!(reg.next_job().await, "a");
+        let reg = open(dir.path());
+        assert_eq!(reg.next_job().await.0, "a");
         assert!(!dir.path().join("db/stray-1").exists());
         assert!(!dir.path().join("work").exists());
+    }
+
+    #[test]
+    fn a_corrupt_state_file_stops_start_up_and_keeps_the_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("db/a-1")).unwrap();
+        std::fs::write(dir.path().join("regions.json"), b"[{\"id\": \"a\", ").unwrap();
+        let err = Registry::open(dir.path(), 1, 7).unwrap_err();
+        assert!(err.to_string().contains("regions.json"));
+        assert!(dir.path().join("db/a-1").exists());
     }
 
     #[test]

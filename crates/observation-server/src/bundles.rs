@@ -17,6 +17,10 @@ use crate::error::ApiError;
 use crate::overpass::{OsmData, OverpassClient};
 use crate::regions::Regions;
 
+/// Longest wait for a local region (they answer in well under a second), so
+/// most of the request's time is left for the Overpass fallback.
+const LOCAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 type Flight = Shared<BoxFuture<'static, Result<Bytes, ApiError>>>;
 
 /// Produces encoded bundles for (snapped) bounding boxes.
@@ -103,10 +107,12 @@ impl BundleService {
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
+        // One budget for both sources: Overpass gets what the local try left.
+        let started = std::time::Instant::now();
         let local = self.fetch_local(&bbox).await;
         let fetched = match local {
             Some(d) => Ok(d),
-            None => self.overpass.fetch(&bbox).await,
+            None => self.overpass.fetch_since(&bbox, started).await,
         };
         let data = match fetched {
             Ok(d) => d,
@@ -155,7 +161,7 @@ impl BundleService {
     /// Data from a local region, if one holds `bbox` and answers.
     async fn fetch_local(&self, bbox: &BBox) -> Option<OsmData> {
         let regions = self.regions.as_ref()?;
-        let outcome = regions.fetch(bbox).await;
+        let outcome = regions.fetch(bbox, LOCAL_TIMEOUT).await;
         let label = match &outcome {
             Ok(Some(_)) => "ok",
             Ok(None) => "not_covered",

@@ -3,7 +3,7 @@
 //! Requests run on the browser's event loop (`fetch`, `EventSource`) and report
 //! back through a channel that a system drains every frame.
 
-use crate::regions::{CatalogState, RegionAction, RegionRequest, Regions};
+use crate::regions::{CatalogState, RegionRequest, Regions};
 use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, UiState};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
@@ -11,6 +11,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::bundle::AreaBundle;
+use observation_core::regions::ActionKind;
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
 
@@ -22,7 +23,7 @@ enum Request {
     /// A status from the region event stream (an error: the stream dropped).
     RegionsStatus,
     RegionsCatalog,
-    RegionAction(RegionAction, String),
+    RegionAction(ActionKind, String),
 }
 
 /// Settings published by the server at `/api/config`.
@@ -310,7 +311,7 @@ fn drain_replies(
                 }) {
                     Ok(status) => {
                         regions.update(status, &mut ui);
-                        if action == RegionAction::Import {
+                        if action == ActionKind::Import {
                             regions.store_token();
                         }
                     }
@@ -470,21 +471,31 @@ fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 's
 }
 
 /// Opens an `EventSource` and calls `on` with the data of every `event`
-/// message, and with an error whenever the connection drops (the browser
-/// reconnects by itself). Lives as long as the page.
+/// message, and with an error whenever the connection drops. The browser
+/// retries a dropped stream by itself, but gives up for good after an error
+/// answer (a 503 from the stream cap, a 502 from a proxy during a restart);
+/// then a new one is opened after [`REOPEN_AFTER_MS`]. Lives as long as the page.
 #[cfg(target_arch = "wasm32")]
 fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
+    open_event_source(url.to_owned(), event.to_owned(), std::rc::Rc::new(on));
+}
+
+/// Wait before replacing an `EventSource` the browser closed.
+#[cfg(target_arch = "wasm32")]
+const REOPEN_AFTER_MS: i32 = 5_000;
+
+#[cfg(target_arch = "wasm32")]
+fn open_event_source(url: String, event: String, on: std::rc::Rc<dyn Fn(Result<Vec<u8>, String>)>) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
 
-    let source = match web_sys::EventSource::new(url) {
+    let source = match web_sys::EventSource::new(&url) {
         Ok(s) => s,
         Err(e) => {
             on(Err(js_cause(&e)));
             return;
         }
     };
-    let on = std::rc::Rc::new(on);
     let on_message = {
         let on = std::rc::Rc::clone(&on);
         Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
@@ -493,12 +504,28 @@ fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String
             }
         })
     };
-    let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-        on(Err("the live connection dropped".to_owned()));
-    });
-    let _ = source.add_event_listener_with_callback(event, on_message.as_ref().unchecked_ref());
+    let on_error = {
+        let source = source.clone();
+        let (url, event) = (url.clone(), event.clone());
+        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            on(Err("the live connection dropped".to_owned()));
+            if source.ready_state() != web_sys::EventSource::CLOSED {
+                return; // the browser is reconnecting
+            }
+            let (url, event, on) = (url.clone(), event.clone(), std::rc::Rc::clone(&on));
+            let reopen = Closure::once_into_js(move || open_event_source(url, event, on));
+            if let Some(window) = web_sys::window() {
+                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    reopen.unchecked_ref(),
+                    REOPEN_AFTER_MS,
+                );
+            }
+        })
+    };
+    let _ = source.add_event_listener_with_callback(&event, on_message.as_ref().unchecked_ref());
     source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-    // The source and its handlers live for the rest of the page.
+    // The handlers live as long as their source: for the page, or until it is
+    // closed and replaced, which is rare enough not to matter.
     on_message.forget();
     on_error.forget();
 }

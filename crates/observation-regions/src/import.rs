@@ -19,7 +19,7 @@ use tokio::process::Command;
 
 use crate::catalog::Extract;
 use crate::poly::{Boundary, MAX_POLY_BYTES};
-use crate::registry::{Imported, RegionDb, Registry, now_unix, slug};
+use crate::registry::{Imported, JobId, RegionDb, Registry, now_unix, slug};
 
 /// The tools and limits an import needs.
 #[derive(Debug, Clone)]
@@ -37,6 +37,7 @@ const READ_STALL: Duration = Duration::from_secs(60);
 pub async fn run(
     tools: &Tools,
     registry: &Arc<Registry>,
+    job: JobId,
     extract: &Extract,
 ) -> Result<Imported, String> {
     let id = extract.entry.id.as_str();
@@ -47,11 +48,11 @@ pub async fn run(
         .map_err(|e| format!("could not create a work directory: {e}"))?;
 
     let pbf = work.join("extract.osm.pbf");
-    download(tools, registry, id, &extract.pbf_url, &pbf).await?;
+    download(tools, registry, id, job, &extract.pbf_url, &pbf).await?;
     let poly = fetch_poly(tools, &extract.poly_url).await?;
     let boundary = Boundary::parse(&poly).map_err(|e| e.to_string())?;
 
-    registry.progress(id, JobPhase::Filtering, 0, None);
+    registry.progress(id, job, JobPhase::Filtering, 0, None);
     let filtered = work.join("filtered.osm.pbf");
     let mut filter = Command::new(&tools.osmium);
     filter
@@ -66,15 +67,15 @@ pub async fn run(
 
     let info = file_info(tools, &filtered).await?;
     let total = info.data.count.nodes + info.data.count.ways + info.data.count.relations;
-    registry.progress(id, JobPhase::Importing, 0, Some(total));
+    registry.progress(id, job, JobPhase::Importing, 0, Some(total));
     let db = work.join("db");
     tokio::fs::create_dir_all(&db)
         .await
         .map_err(|e| format!("could not create the database directory: {e}"))?;
-    import(tools, registry, id, &filtered, &db, total).await?;
+    import(tools, registry, id, job, &filtered, &db, total).await?;
     let _ = tokio::fs::remove_file(&filtered).await;
 
-    registry.progress(id, JobPhase::Finishing, 0, None);
+    registry.progress(id, job, JobPhase::Finishing, 0, None);
     tokio::fs::write(db.join("region.poly"), &poly)
         .await
         .map_err(|e| format!("could not save the region boundary: {e}"))?;
@@ -103,15 +104,16 @@ async fn download(
     tools: &Tools,
     registry: &Registry,
     id: &str,
+    job: JobId,
     url: &str,
     dest: &Path,
 ) -> Result<(), String> {
     let max = registry.max_download_bytes();
-    let mut resp = tools
-        .client
-        .get(url)
-        .send()
+    // The body may take hours, so only the wait for the headers is bounded here
+    // (and each piece of the body below).
+    let mut resp = tokio::time::timeout(READ_STALL, tools.client.get(url).send())
         .await
+        .map_err(|_| "the download server did not answer; try again later".to_owned())?
         .and_then(reqwest::Response::error_for_status)
         .map_err(|e| format!("could not download the extract: {}", e.without_url()))?;
     let total = resp.content_length();
@@ -129,7 +131,7 @@ async fn download(
         .await
         .map_err(|e| format!("could not store the download: {e}"))?;
     let mut done = 0u64;
-    registry.progress(id, JobPhase::Downloading, 0, total);
+    registry.progress(id, job, JobPhase::Downloading, 0, total);
     loop {
         let chunk = tokio::time::timeout(READ_STALL, resp.chunk())
             .await
@@ -143,7 +145,7 @@ async fn download(
         file.write_all(&chunk)
             .await
             .map_err(|e| format!("could not store the download: {e}"))?;
-        registry.progress(id, JobPhase::Downloading, done, total);
+        registry.progress(id, job, JobPhase::Downloading, done, total);
     }
     file.flush()
         .await
@@ -213,6 +215,7 @@ async fn import(
     tools: &Tools,
     registry: &Registry,
     id: &str,
+    job: JobId,
     filtered: &Path,
     db: &Path,
     total: u64,
@@ -259,7 +262,7 @@ async fn import(
             }
             counter.feed(&buf[..n]);
             sink.write_all(&buf[..n]).await?;
-            registry.progress(id, JobPhase::Importing, counter.count, Some(total));
+            registry.progress(id, job, JobPhase::Importing, counter.count, Some(total));
         }
         sink.shutdown().await
     }

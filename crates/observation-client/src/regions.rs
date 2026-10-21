@@ -2,7 +2,7 @@
 //! extract catalog, and import / cancel / delete requests from the UI.
 
 use bevy::prelude::*;
-use observation_core::regions::{CatalogEntry, RegionView, RegionsStatus};
+use observation_core::regions::{ActionKind, CatalogEntry, RegionView, RegionsStatus};
 
 use crate::state::UiState;
 
@@ -19,29 +19,11 @@ pub enum CatalogState {
     Failed(String),
 }
 
-/// A management action on one region.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegionAction {
-    Import,
-    Cancel,
-    Delete,
-}
-
-impl RegionAction {
-    pub fn path(self) -> &'static str {
-        match self {
-            Self::Import => "import",
-            Self::Cancel => "cancel",
-            Self::Delete => "delete",
-        }
-    }
-}
-
 /// Something the UI asked the network layer to do.
 #[derive(Debug, Clone)]
 pub enum RegionRequest {
     Catalog,
-    Action(RegionAction, String),
+    Action(ActionKind, String),
 }
 
 #[derive(Debug, Default, Resource)]

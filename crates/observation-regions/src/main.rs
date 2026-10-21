@@ -31,8 +31,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .map_err(|e| format!("could not bind OBS_REGIONS_BIND {}: {e}", config.bind))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
+    let polls = agent.clone();
     axum::serve(listener, app(agent))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            polls.begin_shutdown();
+        })
         .await?;
     tracing::info!("shut down");
     Ok(())

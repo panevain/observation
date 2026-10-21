@@ -3,10 +3,10 @@
 
 use super::widgets::{bar, danger, hint, primary, secondary, section};
 use crate::icons;
-use crate::regions::{CatalogState, RegionAction, RegionRequest, Regions};
+use crate::regions::{CatalogState, RegionRequest, Regions};
 use crate::theme::{Tokens, strong_family};
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
-use observation_core::regions::{JobPhase, RegionView};
+use observation_core::regions::{ActionKind, JobPhase, RegionView};
 
 /// Matches shown at once in the add list.
 const MAX_MATCHES: usize = 40;
@@ -155,20 +155,14 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                 ui.add_enabled_ui(!busy, |ui| {
                     if region.job.is_some() {
                         if ui.add(secondary(t, "Cancel")).clicked() {
-                            r.request(RegionRequest::Action(
-                                RegionAction::Cancel,
-                                region.id.clone(),
-                            ));
+                            r.request(RegionRequest::Action(ActionKind::Cancel, region.id.clone()));
                         }
                         return;
                     }
                     if r.confirm_delete.as_deref() == Some(region.id.as_str()) {
                         if ui.add(danger(t, "Delete for good")).clicked() {
                             r.confirm_delete = None;
-                            r.request(RegionRequest::Action(
-                                RegionAction::Delete,
-                                region.id.clone(),
-                            ));
+                            r.request(RegionRequest::Action(ActionKind::Delete, region.id.clone()));
                         }
                         if ui.add(secondary(t, "Keep")).clicked() {
                             r.confirm_delete = None;
@@ -187,10 +181,7 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                         .on_hover_text("Download and import the latest data")
                         .clicked()
                     {
-                        r.request(RegionRequest::Action(
-                            RegionAction::Import,
-                            region.id.clone(),
-                        ));
+                        r.request(RegionRequest::Action(ActionKind::Import, region.id.clone()));
                     }
                 });
             });
@@ -307,7 +298,7 @@ fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                             .on_disabled_hover_text("Enter the admin token first")
                             .clicked()
                         {
-                            r.request(RegionRequest::Action(RegionAction::Import, e.id.clone()));
+                            r.request(RegionRequest::Action(ActionKind::Import, e.id.clone()));
                         }
                     });
                 });

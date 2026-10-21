@@ -160,6 +160,14 @@ impl BBox {
         (self.south..=self.north).contains(&p.lat) && (self.west..=self.east).contains(&p.lon)
     }
 
+    /// Whether `other` lies wholly inside this box (edges may touch).
+    pub fn contains_box(&self, other: &BBox) -> bool {
+        self.south <= other.south
+            && self.west <= other.west
+            && self.north >= other.north
+            && self.east >= other.east
+    }
+
     /// Overpass `(s,w,n,e)` filter string.
     pub fn overpass(&self) -> String {
         format!(

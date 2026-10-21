@@ -73,7 +73,8 @@ impl Boundary {
         Ok(Self { outers, holes })
     }
 
-    /// Bounds of the outer rings.
+    /// Bounds of the outer rings; `None` for a boundary that crosses the
+    /// antimeridian (Alaska, Russia, Fiji), whose bounds would span the globe.
     pub fn bbox(&self) -> Option<BBox> {
         let pts = self.outers.iter().flatten();
         let (mut s, mut w, mut n, mut e) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -82,6 +83,9 @@ impl Boundary {
             n = n.max(p.lat);
             w = w.min(p.lon);
             e = e.max(p.lon);
+        }
+        if w < -180.0 || e > 180.0 || e - w > 180.0 {
+            return None;
         }
         // Boundaries may reach past the Web Mercator latitudes `BBox` accepts.
         BBox::new(s.max(-85.0), w, n.min(85.0), e).ok()
@@ -224,6 +228,12 @@ END
         assert!(!b.contains_bbox(&bbox(3.0, 3.0, 7.0, 7.0)));
         // Inside the triangular island.
         assert!(b.contains_bbox(&bbox(20.1, 20.5, 20.2, 20.6)));
+    }
+
+    #[test]
+    fn antimeridian_boundaries_have_no_bbox() {
+        let fiji = "fiji\n1\n 177 -19\n 180.5 -19\n 180.5 -16\n 177 -16\nEND\n2\n -180 -19\n -179 -19\n -179 -16\nEND\nEND\n";
+        assert_eq!(Boundary::parse(fiji).unwrap().bbox(), None);
     }
 
     #[test]

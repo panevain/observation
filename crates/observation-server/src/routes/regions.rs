@@ -10,12 +10,14 @@ use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::{self, Stream};
-use observation_core::regions::{RegionAction, RegionsStatus, is_valid_region_id};
+use observation_core::regions::{
+    ActionKind, RegionAction, RegionsStatus, bearer_matches, is_valid_region_id,
+};
 use tokio::sync::{OwnedSemaphorePermit, watch};
 
 use crate::AppState;
 use crate::error::ApiError;
-use crate::regions::{Action, Regions};
+use crate::regions::Regions;
 
 fn regions(state: &AppState) -> Result<&Arc<Regions>, ApiError> {
     state.regions().ok_or(ApiError::NotFound(
@@ -53,15 +55,6 @@ pub async fn catalog(State(state): State<AppState>) -> Result<Response, ApiError
         .into_response())
 }
 
-/// Compares in time independent of where the inputs differ.
-fn same_secret(a: &str, b: &str) -> bool {
-    a.len() == b.len()
-        && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
-}
-
 /// `POST /api/regions/{import|cancel|delete}` with `{"id": "…"}` and
 /// `Authorization: Bearer <OBS_ADMIN_TOKEN>`.
 pub async fn act(
@@ -71,7 +64,7 @@ pub async fn act(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let regions = regions(&state)?;
-    let action = Action::parse(&action).ok_or(ApiError::NotFound("no such region action"))?;
+    let action = ActionKind::parse(&action).ok_or(ApiError::NotFound("no such region action"))?;
     let Some(admin) = state.config().admin_token.as_deref() else {
         return Err(ApiError::Forbidden(
             "region management is turned off on this server (set OBS_ADMIN_TOKEN)",
@@ -79,9 +72,8 @@ pub async fn act(
     };
     let given = headers
         .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    if !given.is_some_and(|g| same_secret(g, admin)) {
+        .and_then(|v| v.to_str().ok());
+    if !bearer_matches(given, admin) {
         return Err(ApiError::Unauthorized(
             "the admin token is missing or wrong",
         ));
@@ -138,16 +130,4 @@ fn status_stream(
             Some((Ok(event), (rx, shutdown, permit, false)))
         },
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn secrets_compare() {
-        assert!(same_secret("token", "token"));
-        assert!(!same_secret("token", "tokeN"));
-        assert!(!same_secret("token", "token2"));
-    }
 }

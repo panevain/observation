@@ -129,6 +129,48 @@ pub struct CatalogEntry {
     pub parent: Option<String>,
 }
 
+/// A region management action, named by the last part of its route
+/// (`/api/regions/import`, agent `/regions/import`, ...).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionKind {
+    Import,
+    Cancel,
+    Delete,
+}
+
+impl ActionKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "import" => Some(Self::Import),
+            "cancel" => Some(Self::Cancel),
+            "delete" => Some(Self::Delete),
+            _ => None,
+        }
+    }
+
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Import => "import",
+            Self::Cancel => "cancel",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+/// Whether an `Authorization` header value is `Bearer <secret>`, compared in
+/// time independent of where the token differs.
+pub fn bearer_matches(header: Option<&str>, secret: &str) -> bool {
+    let Some(given) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
+        return false;
+    };
+    given.len() == secret.len()
+        && given
+            .bytes()
+            .zip(secret.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
 /// Body of the import, cancel and delete requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegionAction {
@@ -163,6 +205,28 @@ mod tests {
         ] {
             assert!(!is_valid_region_id(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn bearer_tokens() {
+        assert!(bearer_matches(Some("Bearer s3cret"), "s3cret"));
+        for bad in [
+            None,
+            Some("s3cret"),
+            Some("Bearer s3creT"),
+            Some("Bearer s3cret2"),
+            Some("Basic s3cret"),
+        ] {
+            assert!(!bearer_matches(bad, "s3cret"), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn actions_round_trip() {
+        for a in [ActionKind::Import, ActionKind::Cancel, ActionKind::Delete] {
+            assert_eq!(ActionKind::parse(a.path()), Some(a));
+        }
+        assert_eq!(ActionKind::parse("nuke"), None);
     }
 
     #[test]
