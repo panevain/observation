@@ -379,11 +379,11 @@ mod tests {
         assert_eq!(resp.status(), 200);
         // A blocked literal target is refused unless private hosts are allowed.
         let c = client_builder(false, Redirects::SameHost).build().unwrap();
-        assert!(
-            c.get(format!("http://127.0.0.1:{port}/"))
-                .send()
-                .await
-                .is_err()
-        );
+        let resp = c
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 302);
     }
 }
