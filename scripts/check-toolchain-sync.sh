@@ -25,12 +25,22 @@ check "$rust" "$(first '^FROM rust:[0-9.]+' Dockerfile | sed -E 's/FROM rust:([0
 lock_rust="$(awk '/^\[\[tools\.rust\]\]/ {f=1; next} f && /^version = / {gsub(/[^0-9.]/, ""); print; exit}' mise.lock)"
 check "$rust" "$lock_rust" "mise.lock [[tools.rust]]"
 check "$trunk" "$(first '^ARG TRUNK_VERSION=[0-9.]+' Dockerfile | sed -E 's/.*=//')" "Dockerfile TRUNK_VERSION"
-# Other workflows pass mise-action a literal version.
-for wf in .github/workflows/*.yml; do
-  [[ "$wf" == .github/workflows/ci.yml ]] && continue
+# Every mise-action step must pin `version:`, either to MISE_VERSION (in ci.yml) or to the
+# same literal. A step without one would install whatever mise is latest.
+for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
+  [[ -f "$wf" ]] || continue
   while read -r v; do
+    [[ "$wf" == .github/workflows/ci.yml && "$v" == '${{ env.MISE_VERSION }}' ]] && continue
     check "$mise" "$v" "$wf mise-action version"
-  done < <(grep -A3 'uses: jdx/mise-action@' "$wf" | grep -Eo 'version: *[0-9]+\.[0-9]+\.[0-9]+' | sed -E 's/.*: *//' || true)
+  done < <(awk '
+    function done_step() { if (inside) print (v == "" ? "<none>" : v); inside = 0 }
+    /uses: *jdx\/mise-action@/ { done_step(); inside = 1; v = ""; next }
+    inside && /^ *- / { done_step() }
+    inside && /^ *version:/ {
+      v = $0; sub(/^ *version: */, "", v); sub(/ +#.*$/, "", v); gsub(/^["\x27]|["\x27]$/, "", v)
+    }
+    END { done_step() }
+  ' "$wf")
 done
 
 if (( fail )); then exit 1; fi

@@ -52,6 +52,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run fmt
 
   clippy-native:
@@ -74,6 +75,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run clippy-native
 
   clippy-wasm:
@@ -96,6 +98,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run clippy-wasm
 
   test:
@@ -126,6 +129,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       # cargo-nextest from its release archive, checksum-verified (same approach as Trivy).
       - name: Install cargo-nextest (pinned, checksum-verified)
         env:
@@ -178,6 +182,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - name: Coverage
         run: |
           set -euo pipefail
@@ -210,6 +215,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run tokens
       - run: mise run sync
 
@@ -236,6 +242,7 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
           install: true
+          cache_save: ${{ env.SAVE_CACHE }}
       - name: Install brotli (for the size report)
         run: |
           command -v brotli >/dev/null || {
@@ -249,7 +256,7 @@ jobs:
       # The docker job packages a stub dist/, so check the real one here.
       - name: Check dist/
         run: |
-          grep -qi '<html' dist/index.html
+          grep -qis '<html' dist/index.html || { echo "::error::dist/index.html missing or not HTML"; exit 1; }
           compgen -G 'dist/*.wasm' >/dev/null || { echo "::error::no .wasm in dist/"; exit 1; }
           compgen -G 'dist/*.js' >/dev/null || { echo "::error::no .js in dist/"; exit 1; }
       - name: Wasm size report
@@ -260,10 +267,7 @@ jobs:
             echo
             echo "| file | raw | gzip -9 | brotli -q 11 |"
             echo "| --- | ---: | ---: | ---: |"
-            found=0
             for f in dist/*.wasm; do
-              [ -e "$f" ] || continue
-              found=1
               raw=$(stat -c %s "$f")
               gz=$(gzip -9 -c "$f" | wc -c)
               if command -v brotli >/dev/null 2>&1; then
@@ -276,9 +280,6 @@ jobs:
                 "$(awk -v n="$gz" 'BEGIN{printf "%.2f MiB", n/1048576}')" \
                 "$br"
             done
-            if [ "$found" -eq 0 ]; then
-              echo "| _no .wasm files in dist/_ | | | |"
-            fi
           } | tee -a "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
