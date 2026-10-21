@@ -360,7 +360,13 @@ impl OverpassClient {
 
     /// Fetches and parses buildings and roads for `bbox`.
     pub async fn fetch(&self, bbox: &BBox) -> Result<OsmData, ApiError> {
-        let result = self.fetch_inner(bbox).await;
+        self.fetch_since(bbox, Instant::now()).await
+    }
+
+    /// As [`Self::fetch`], for a request that began at `started` (time already
+    /// spent, such as on a local region, counts against the budget).
+    pub async fn fetch_since(&self, bbox: &BBox, started: Instant) -> Result<OsmData, ApiError> {
+        let result = self.fetch_inner(bbox, started).await;
         let outcome = match &result {
             Ok(_) => "ok",
             Err(ApiError::RateLimited { .. }) => "rate_limited",
@@ -370,8 +376,8 @@ impl OverpassClient {
         result
     }
 
-    async fn fetch_inner(&self, bbox: &BBox) -> Result<OsmData, ApiError> {
-        let deadline = Instant::now() + self.budget;
+    async fn fetch_inner(&self, bbox: &BBox, started: Instant) -> Result<OsmData, ApiError> {
+        let deadline = started + self.budget;
         self.check_cooldown()?;
         let guard = WaitGuard(&self.waiting);
         if self

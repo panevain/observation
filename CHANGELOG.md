@@ -9,6 +9,8 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Added
 
+- Local map data: an optional region agent (`observation-regions`, Docker target `regions`, run together with the app by the new `compose.yaml`) imports Geofabrik extracts into its own Overpass databases. Areas inside an imported region load from it instead of public Overpass, which stays the fallback elsewhere. A **Local map data** dialog (database button in the top bar) lists regions, imports new ones from a searchable list, and updates, cancels or deletes them, with live progress over server-sent events; the top bar shows a running import and a message says when it is done. Cached bundles inside a region are rebuilt after each import, and regions refresh every 7 days. Set `OBS_REGIONS_URL` and `OBS_REGIONS_TOKEN` to enable it and `OBS_ADMIN_TOKEN` to allow management from the UI; the map picker outlines regions with local data.
+
 - Opt-in Prometheus metrics (`OBS_METRICS_BIND`), JSON logs (`OBS_LOG_FORMAT=json`) and an `x-request-id` header on every response.
 - Release images are signed with cosign (keyless).
 - `image-full.yml` builds the in-image client path before release, and a `zizmor (workflow audit)` check (required in the rulesets: re-import them).

@@ -11,6 +11,7 @@ mod icons;
 mod input;
 mod net;
 mod persist;
+mod regions;
 mod state;
 mod theme;
 mod ui;

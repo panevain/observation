@@ -27,6 +27,9 @@ pub const BUNDLE_CACHE: &str = "observation_bundle_cache_total";
 pub const TILE_CACHE: &str = "observation_tile_cache_total";
 /// Overpass fetches: `outcome` is `ok`, `error` or `rate_limited` (including our own cooldown).
 pub const OVERPASS_FETCH: &str = "observation_overpass_fetches_total";
+/// Bundle builds tried against a local region: `outcome` is `ok`, `not_covered`
+/// (the agent has no region holding the area) or `error`; the last two fall back to Overpass.
+pub const REGION_QUERY: &str = "observation_region_queries_total";
 
 /// Latency bucket upper bounds in seconds; the request timeout is 80 s.
 const DURATION_BUCKETS: &[f64] = &[

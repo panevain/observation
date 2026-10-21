@@ -29,11 +29,12 @@ The browser only ever talks to its own origin. Upstream services are reached by 
 
 | Crate | Responsibility |
 | --- | --- |
-| `observation-core` | Pure logic with no engine dependency, shared by both sides. `geo` (projection, bounding boxes), `tiles` (slippy-map maths), `building` (height inference, extrusion), `bundle` (wire format, road widths), `camera` (models, DORI, catalogue parsing), `frustum` (view cones), `occlusion` (line of sight), `coverage` (raster, statistics), `scene` (saved files) |
-| `observation-server` | `config` (environment), `overpass` (client and parser), `bundles` (cache plus single-flight), `cache` (disk), `tiles` (proxy), `demo` (fixture bundle), `routes/*`, `error` |
+| `observation-core` | Pure logic with no engine dependency, shared by both sides. `geo` (projection, bounding boxes), `regions` (region status JSON), `tiles` (slippy-map maths), `building` (height inference, extrusion), `bundle` (wire format, road widths), `camera` (models, DORI, catalogue parsing), `frustum` (view cones), `occlusion` (line of sight), `coverage` (raster, statistics), `scene` (saved files) |
+| `observation-server` | `config` (environment), `overpass` (client and parser), `bundles` (cache plus single-flight), `cache` (disk), `tiles` (proxy), `demo` (fixture bundle), `regions` (region agent client and status relay), `routes/*`, `error` |
+| `observation-regions` | Optional region agent binary: `catalog` (Geofabrik index), `poly` (boundaries, containment), `import` (download, filter, Overpass import), `registry` (regions, queue, persistence), HTTP API in `lib` |
 | `observation-client` | Bevy app compiled to `wasm32-unknown-unknown`: networking, 3D world, camera bodies, coverage systems, input, persistence, egui UI, design tokens |
 
-Core and server are the workspace's default members, so plain `cargo build` and `cargo test` do not compile the Bevy client. Workspace lints forbid `unsafe` code and warn on `unwrap`, `dbg!` and `todo!`; CI turns warnings into errors.
+Core, server and region agent are the workspace's default members, so plain `cargo build` and `cargo test` do not compile the Bevy client. Workspace lints forbid `unsafe` code and warn on `unwrap`, `dbg!` and `todo!`; CI turns warnings into errors.
 
 ## Coordinate frame
 
@@ -59,10 +60,14 @@ Map tiles are Web Mercator. Each tile's corner coordinates are run through the s
 | `GET /api/area?bbox=south,west,north,east` | Bundle, `Cache-Control: public, max-age=86400` |
 | `GET /api/demo` | Demo bundle built at startup, `max-age=3600`; 404 if the fixture failed to build |
 | `GET /api/tiles/{z}/{x}/{y}.png` | Proxied tile, `max-age=604800` |
+| `GET /api/regions` | [Local regions](#local-regions) status: `{agent_online, manageable, snapshot}`, `no-store`. 404 when no region agent is configured (as for every `/api/regions` route) |
+| `GET /api/regions/events` | The same status as server-sent events (`event: regions`), once on connect and after every change. Not subject to the request timeout; at most 256 streams at once (503 beyond); streams end when the server shuts down |
+| `GET /api/regions/catalog` | Importable Geofabrik extracts, `[{id, name, parent}]` |
+| `POST /api/regions/{import,cancel,delete}` | `{"id": "<extract id>"}` with `Authorization: Bearer <OBS_ADMIN_TOKEN>`; answers the new status. 403 when `OBS_ADMIN_TOKEN` is unset, 401 for a missing or wrong token, 409 when an import of that region is already queued or running |
 | `/api/*` (anything else) | JSON 404, deliberately not the SPA page |
 | everything else | Static client from `OBS_STATIC_DIR`, with `index.html` as fallback. HTML is `no-cache`; other files are treated as content-hashed (trunk `filehash = true`) and get `public, max-age=31536000, immutable` |
 
-Errors are JSON `{"error": "..."}`: 400 bad request, 404, 502 upstream failure, 504 upstream timeout, 503 rate limited (with `Retry-After`), 500 internal (detail logged, never sent), 408 on request timeout.
+Errors are JSON `{"error": "..."}`: 400 bad request, 401 and 403 (region management), 404, 409 (region import already running), 502 upstream failure, 504 upstream timeout, 503 rate limited (with `Retry-After`), 500 internal (detail logged, never sent), 408 on request timeout.
 
 ### Configuration
 
@@ -80,6 +85,9 @@ Read from the environment at start-up; empty values count as unset; invalid `OBS
 | `OBS_TILE_ATTRIBUTION` | `© OpenStreetMap contributors` | Attribution embedded in bundles and `/api/config` |
 | `OBS_BUNDLE_TTL_DAYS` | `7` | Bundle freshness; fractional values allowed, `0` revalidates every time |
 | `OBS_LOG_FORMAT` | `text` | `json` writes one JSON object per log event; set the level with `RUST_LOG` (default `info`) |
+| `OBS_REGIONS_URL` | unset | Base URL of the [region agent](#local-regions), such as `http://regions:8090`. Unset turns local regions off (and hides them in the UI) |
+| `OBS_REGIONS_TOKEN` | unset | Bearer token sent to the region agent; set the same value on the agent |
+| `OBS_ADMIN_TOKEN` | unset | Token the UI must send to import, update, cancel or delete regions. Unset makes regions read-only. Use a long random value (`openssl rand -hex 32`): it is the only guard on a feature that downloads gigabytes |
 | `OBS_METRICS_BIND` | unset | Address for a separate Prometheus listener such as `127.0.0.1:9090`. Unset disables metrics. It is not the public port, so `/metrics` is never reachable through the app's own address |
 | `RUST_LOG` | `info` | `tracing` filter |
 
@@ -94,6 +102,7 @@ Every response carries an `x-request-id` header (taken from the request if the c
 | `observation_bundle_cache_total` | `result`: `hit`, `built`, `stale_served`, `error` | `hit` is per request served from a fresh file. The others are per upstream refresh, which concurrent requests for the same area share |
 | `observation_tile_cache_total` | `result`: `hit`, `miss` (nothing cached), `refreshed` (expired copy replaced), `revalidated` (304), `stale_served`, `error` (upstream failed, no copy) | Tile cache outcomes, one per request |
 | `observation_overpass_fetches_total` | `outcome`: `ok`, `error`, `rate_limited` | Upstream Overpass fetches |
+| `observation_region_queries_total` | `outcome`: `ok`, `not_covered`, `error` | Bundle builds tried against a local region; the last two fall back to Overpass |
 
 Fixed in code (not configurable): tile minimum freshness 7 days, tile cache cap 512 MiB, at most 4 concurrent upstream tile fetches, Overpass retry pause 2 s and cooldown 30 s, Overpass timeout 35 s per attempt, tile client timeout 20 s, whole-request timeout 80 s, request body limit 16 KiB. The container sets `OBS_BIND=0.0.0.0:8080`, `OBS_STATIC_DIR=/app/dist` and `OBS_CACHE_DIR=/var/cache/observation`. The cache directory is not a volume; mount one there (writable by uid 65532) to keep it across container runs.
 
@@ -103,9 +112,9 @@ For `GET /api/area`:
 
 1. **Validate.** `bbox` must be four finite numbers in Overpass order; latitudes within +/-85, longitudes within +/-180; south < north and west < east. Each side, measured at the centre latitude, must be 20-500 m. Anything else is a 400. (Boxes crossing the antimeridian are not supported.)
 2. **Snap.** The box is expanded outward to a 0.0001 degree grid (about 10 m) so nearby requests share a cache entry. The cache key is `south_west_north_east` with five decimals. The bundle's origin is the snapped box's centre, and snapping is deterministic, so a saved scene that stores the requested box reproduces the same frame.
-3. **Cache.** `bundles/<key>.obsb` on disk; fresh while its modification time is within the TTL.
+3. **Cache.** `bundles/<key>.obsb` on disk; fresh while its modification time is within the TTL and, when a ready local region's bounds hold the box, later than that region's import (so importing or refreshing a region rebuilds the bundles in it on their next request).
 4. **Single-flight.** Concurrent requests for one key share a single in-flight job. The job runs as its own task, so it finishes and fills the cache even if every waiting client disconnects.
-5. **Fetch.** One Overpass query per box (below). Only one Overpass request is in flight at a time (a semaphore with one permit), and at most 3 more may wait for it; further misses fail fast with 503 and `Retry-After: 10`. A transient failure (connection error, no answer within 35 s, 429, 502, 503 or 504, or a `remark` saying the query timed out) is retried after a 2 s pause: on the next configured interpreter, or once on the same one when only one is configured. An interpreter that answers 429 or 504 (on its last try in that fetch) rests for a 30 s **cooldown** and is skipped meanwhile; while every interpreter rests, new fetches fail immediately with 503 and `Retry-After`. Retries stop when 90% of the 80 s request timeout has passed (queueing included), so the client always gets an answer rather than a 408. The reply after the last failed attempt is 504 if it timed out, 503 if it was refused as busy, and 502 otherwise. Other statuses, a `remark` reporting any other runtime error (such as running out of memory) and an unparseable body are 502 without a retry. A response larger than 32 MiB is refused; the cap is enforced while the body streams in, so it does not depend on `Content-Length`.
+5. **Fetch.** From a [local region](#local-regions) when one is ready and its bounds hold the box: the agent runs the query below against the region's own database, and anything but a result within 15 s (no region holds the area exactly, the agent is down, busy or fails) falls back to public Overpass. The time spent on the local try counts against the Overpass retry budget below. Otherwise one Overpass query per box (below). Only one Overpass request is in flight at a time (a semaphore with one permit), and at most 3 more may wait for it; further misses fail fast with 503 and `Retry-After: 10`. A transient failure (connection error, no answer within 35 s, 429, 502, 503 or 504, or a `remark` saying the query timed out) is retried after a 2 s pause: on the next configured interpreter, or once on the same one when only one is configured. An interpreter that answers 429 or 504 (on its last try in that fetch) rests for a 30 s **cooldown** and is skipped meanwhile; while every interpreter rests, new fetches fail immediately with 503 and `Retry-After`. Retries stop when 90% of the 80 s request timeout has passed (queueing included), so the client always gets an answer rather than a 408. The reply after the last failed attempt is 504 if it timed out, 503 if it was refused as busy, and 502 otherwise. Other statuses, a `remark` reporting any other runtime error (such as running out of memory) and an unparseable body are 502 without a retry. A response larger than 32 MiB is refused; the cap is enforced while the body streams in, so it does not depend on `Content-Length`.
 6. **Parse** the `out geom` JSON (below).
 7. **Build.** Project to the world frame, extrude buildings, pack, encode.
 8. **Store and reply.** The bundle is written atomically (temp file in the same directory, then rename). A failed write is logged and the response is still sent.
@@ -136,6 +145,50 @@ The result is clamped to 1-300 m. `min_height`, or `building:min_level` x 3 m, g
 **Road widths** (`bundle::road_width_m`): a `width` tag between 1 and 60 m wins; else `lanes` (1-11) x 3.25 m; else a default by type: motorway and trunk 14 m, primary 10, secondary 8, tertiary 7, residential and unclassified 6, living street 5, service 4, footway, path, pedestrian, cycleway and steps 2, `*_link` ramps 6. Other highway types are ignored.
 
 **Extrusion.** Each footprint becomes vertical walls with outward normals (separate vertices per wall face, so shading stays flat) and a flat roof triangulated with `earcut`, holes included. Raised parts also get an underside. Footprints that are degenerate (fewer than three distinct points, near-zero area, or no height) are dropped. Roofs are always flat: this is what makes the occlusion test exact (see below).
+
+### Local regions
+
+Public Overpass instances are shared and often slow or busy. An operator can run the **region agent** (`crates/observation-regions`, the `regions` image target) next to the server, and import whole [Geofabrik](https://download.geofabrik.de) extracts (a city, state or country) into it from the UI. Areas inside an imported region are then answered from the server's own copy in tens of milliseconds, and public Overpass is used only elsewhere.
+
+```
+browser ──SSE /api/regions/events──▶ observation-server ──long-poll GET /regions──▶ observation-regions
+        ──POST /api/regions/import──▶ (admin token)     ──POST /regions/import───▶  ├─ download .osm.pbf + .poly
+                                                                                     ├─ osmium tags-filter
+area bundle miss ──────────────────▶ bundles.rs ────────POST /interpreter?bbox=──▶  ├─ osmium cat | update_database
+                                       │ 404 / error                                 └─ osm3s_query --db-dir=<region>
+                                       └──▶ public Overpass (as before)
+```
+
+**The agent** runs in a Debian image with Overpass API 0.7.62 (built from the sha256-pinned release tarball) and `osmium-tool`. It keeps one Overpass database per region under its data volume and imports one region at a time from a queue:
+
+1. **Download** the extract's `-latest.osm.pbf` from the URL in Geofabrik's `index-v1-nogeom.json` (ids are only accepted if the index lists them, and downloads must be on the index's own host), refusing anything over `OBS_REGIONS_MAX_DOWNLOAD_MB`, and its `.poly` boundary.
+2. **Filter** with `osmium tags-filter w/building r/building w/highway` (referenced nodes and member ways are kept). This cuts the data to roughly a tenth.
+3. **Import** with `osmium cat -f osm | update_database --meta=no` (lz4 compression) into a new directory under `work/`. Progress counts the `<node`, `<way` and `<relation` elements streamed against `osmium fileinfo`'s totals; download progress is bytes against `Content-Length`.
+4. **Swap.** The finished database moves to `db/<region>-<time>/` with its boundary, and replaces the old one in `regions.json`. Queries already running on the old database finish on it; its directory is removed when the last one ends.
+
+Plan disk space from the database, not the download: an Overpass database is far larger than the filtered extract (Monaco's 0.7 MB extract became 57 MB, Liechtenstein's 3.3 MB became 156 MB), and an update needs room for the old and the new database at once.
+
+A cancelled, failed or interrupted import leaves the previous data in service and its work directory is removed (an import that was running when the agent stopped is queued again on start). Each queued import has its own id, so a cancelled task that is still winding down cannot touch a newer import of the same region. `regions.json` is written with fsync and rename while the registry is locked; if it exists but cannot be read, the agent refuses to start rather than delete the databases it can no longer account for. Queries run `osm3s_query --db-dir` directly (no dispatcher, since a database is never written after its import), at most 4 at a time (`OBS_REGIONS_QUERY_CONCURRENCY`) with up to 32 waiting, 30 s each, results capped at 32 MiB (a larger result stops the query at once). A query is answered only when the requested box lies wholly inside a region's boundary polygon (regions are first narrowed by their bounds) (corners inside, no boundary edge or hole reaching into it); near a border the agent answers 404 and the server uses public Overpass, because an extract is complete only inside its boundary.
+
+**Freshness and invalidation.** Regions are re-imported automatically after `OBS_REGIONS_REFRESH_DAYS` (default 7; Geofabrik publishes daily), or on demand with the region's update button. A scheduled refresh that fails or is cancelled is tried again a day later, not at the next hourly check. Each import records the extract's OSM replication timestamp. The server keeps a copy of the agent's region list (long-polling `GET /regions?since=<version>`, which answers on the next change or after 25 s) and treats cached bundles older than the newest covering region's import as stale, so the next request for such a box rebuilds it from local data. Browsers may still use their own copy of a bundle for up to a day (`max-age=86400`).
+
+**Progress in the browser.** The server relays the agent's list to the browser as server-sent events. The client opens one `EventSource` at start-up (only when `/api/config` says `regions: true`), shows the running import in the top bar, and toasts when an import finishes or fails. The **Local map data** dialog lists regions with phase, progress and detail, and imports from a searchable list of extracts. Nothing in the page waits for an import.
+
+**Security.** The agent has no published port in `compose.yaml` and checks `OBS_REGIONS_TOKEN` on every route but `/healthz`. Management through the server needs `OBS_ADMIN_TOKEN` (compared in constant time); the UI keeps it in `sessionStorage` for the browser session only. The agent never takes a URL from a request: region ids are validated (`[a-z0-9-]` parts joined by `/`) and looked up in the index, and child processes get fixed arguments.
+
+**Agent configuration** (environment of the `regions` container):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OBS_REGIONS_BIND` | `0.0.0.0:8090` | Listen address; keep it on a private network |
+| `OBS_REGIONS_DATA_DIR` | `/data` | Databases, downloads, `regions.json` and the cached index. Mount a volume; a country takes several GB during its import |
+| `OBS_REGIONS_TOKEN` | unset | Required bearer token (the agent warns at start-up without one) |
+| `OBS_REGIONS_MAX_DOWNLOAD_MB` | `2048` | Largest extract downloaded |
+| `OBS_REGIONS_REFRESH_DAYS` | `7` | Re-import ready regions after this many days; `0` never |
+| `OBS_REGIONS_QUERY_CONCURRENCY` | `4` | `osm3s_query` processes at once (1-64) |
+| `OBS_REGIONS_CATALOG_URL` | Geofabrik's `index-v1-nogeom.json` | Extract index; downloads must share its host, so a mirror must serve both |
+| `OBS_REGIONS_OVERPASS_BIN`, `OBS_REGIONS_OSMIUM` | `/opt/overpass/bin`, `osmium` | Tool locations (set in the image) |
+| `OBS_CONTACT`, `OBS_LOG_FORMAT`, `RUST_LOG` | | As for the server; `OBS_CONTACT` goes into the agent's `User-Agent` to Geofabrik |
 
 ### Bundle format
 
@@ -350,6 +403,8 @@ Observation has no telemetry: no analytics, crash reporting, usage pings, update
 | Browser to any third party | None | Never automatically | Nothing. `Content-Security-Policy` has `default-src 'self'` and `connect-src 'self'`, and `img-src` allows only `'self' data: blob:`, so scripts, fonts, styles, images, fetch, XHR, WebSocket and beacons cannot reach another origin. `web/index.html` loads no external script, font or stylesheet. The client has no HTTP, WebSocket or analytics crate, and compiles in none of Bevy's `http`, `https`, `web_asset_cache`, `bevy_remote`, `bevy_dev_tools`, `sysinfo_plugin` or trace features | Already off |
 | Browser (user-clicked links: model "spec sheet" (`https://` only), OSM copyright) | The linked site | Only when the user clicks | A new tab (`window.open`, target `_blank`). CSP does not restrict these, and `Referrer-Policy: strict-origin-when-cross-origin` sends the origin (not the path). `Cross-Origin-Opener-Policy: same-origin` denies the opened page a handle back to the app | Don't click them |
 | Server, Overpass client | `OBS_OVERPASS_URL` (default `overpass-api.de`) | Bundle cache miss or expiry (default TTL 7 days) | `POST` form field `data` holding the query above with the snapped bounding box; `User-Agent: observation/<version> (+OBS_CONTACT)` | Not for live areas. Point it at your own instance, or serve only the demo street. `OBS_CONTACT` sets the contact string |
+| Region agent (optional) | `download.geofabrik.de` (`OBS_REGIONS_CATALOG_URL`) | Opening the add list (index, cached a day); importing or refreshing a region | `GET` of the index, the extract and its boundary; `User-Agent: observation-regions/<version> (+OBS_CONTACT)` | Only runs when deployed; `OBS_REGIONS_REFRESH_DAYS=0` stops scheduled refreshes |
+| Server, region agent (optional) | `OBS_REGIONS_URL` (your own agent) | Constantly (a long poll at most every 25 s), and on bundle misses inside a region | Bounding boxes and the Overpass query; the region list | Unset `OBS_REGIONS_URL` |
 | Server, tile proxy | `OBS_TILE_URL` (default `tile.openstreetmap.org`) | Tile cache miss or expiry (at least 7 days) | `GET` of the tile; the same `User-Agent`; the browser's `Referer` header; `If-None-Match` / `If-Modified-Since` when revalidating | Point `OBS_TILE_URL` at another provider. The `Referer` is forwarded on purpose (see below) |
 | Server, anything else | None | Never | No version check, tracing exporter or error reporting. Logs go to stdout only. The `metrics` and `metrics-exporter-prometheus` crates are present for opt-in Prometheus metrics: nothing is sent anywhere, they are served pull-only on the separate address `OBS_METRICS_BIND`, and with it unset (the default) no recorder is installed and no listener opens. `Cargo.lock` has no other telemetry crate (no sentry, opentelemetry, segment, posthog, mixpanel, datadog, honeycomb or self-update crate) | Already off (unset `OBS_METRICS_BIND`) |
 
