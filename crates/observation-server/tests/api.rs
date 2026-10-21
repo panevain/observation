@@ -737,6 +737,48 @@ async fn expired_tiles_are_revalidated_and_stale_served_on_failure() {
 }
 
 #[tokio::test]
+async fn tile_redirects_are_not_followed() {
+    let (target, template) = spawn_tiles(3600).await;
+    let target_url = template
+        .replace("{z}", "1")
+        .replace("{x}", "0")
+        .replace("{y}", "0");
+    let router = Router::new().route(
+        "/{z}/{x}/{y}",
+        get(move || {
+            let to = target_url.clone();
+            async move { (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, to)]) }
+        }),
+    );
+    let addr = spawn(router).await;
+    let h = harness(
+        "http://127.0.0.1:9/o",
+        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
+    );
+    let (status, _, _) = get_uri(&h.app, "/api/tiles/1/0/0.png").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(target.hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn overpass_redirects_are_not_followed() {
+    let (inner, inner_url) = spawn_overpass().await;
+    // 307 keeps the method and body, so a followed redirect would reach the interpreter.
+    let router = Router::new().route(
+        "/o",
+        post(move || {
+            let to = inner_url.clone();
+            async move { (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, to)]) }
+        }),
+    );
+    let addr = spawn(router).await;
+    let h = harness(&format!("http://{addr}/o"), "http://127.0.0.1:9/{z}");
+    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(inner.hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn upstream_tiles_must_be_png() {
     let router = Router::new().route(
         "/{z}/{x}/{y}",

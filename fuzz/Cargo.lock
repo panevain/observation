@@ -1082,6 +1082,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "observation-core",
+ "observation-upstream",
  "reqwest",
  "serde",
  "serde_json",
@@ -1090,6 +1091,16 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "observation-upstream"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

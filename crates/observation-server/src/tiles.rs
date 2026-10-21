@@ -165,6 +165,14 @@ impl TileProxy {
                 })
             }
             other => {
+                if other.is_redirection() {
+                    // Redirects are not followed (see `observation_upstream`).
+                    tracing::warn!(
+                        status = %other,
+                        location = ?resp.headers().get(header::LOCATION),
+                        "tile server redirected; point OBS_TILE_URL at the final URL"
+                    );
+                }
                 tracing::warn!(status = %other, ?id, "tile server error");
                 Err(ApiError::Upstream(format!(
                     "the tile server answered with an error (HTTP {})",

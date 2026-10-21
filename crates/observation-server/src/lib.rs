@@ -23,6 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::body::Bytes;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
+use observation_upstream::{Redirects, client_builder};
 use thiserror::Error;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -66,6 +67,8 @@ pub(crate) async fn read_capped(
 /// The shared state could not be built.
 #[derive(Debug, Error)]
 pub enum StateError {
+    #[error(transparent)]
+    Config(#[from] config::ConfigError),
     #[error("could not build HTTP client: {0}")]
     Client(#[from] reqwest::Error),
 }
@@ -98,15 +101,16 @@ impl AppState {
     /// (so this must run inside a Tokio runtime).
     pub fn new(config: Config) -> Result<Self, StateError> {
         let user_agent = config.user_agent();
-        let overpass_client = reqwest::Client::builder()
+        config.validate()?;
+        // No redirects: an upstream must not be able to send us elsewhere.
+        let upstream = || client_builder(config.allow_private_upstreams, Redirects::None);
+        let overpass_client = upstream()
             .user_agent(&user_agent)
             .timeout(config.overpass_timeout)
-            .connect_timeout(Duration::from_secs(10))
             .build()?;
-        let tile_client = reqwest::Client::builder()
+        let tile_client = upstream()
             .user_agent(&user_agent)
             .timeout(Duration::from_secs(20))
-            .connect_timeout(Duration::from_secs(10))
             .build()?;
 
         let cache = Arc::new(Cache::open(
@@ -118,7 +122,10 @@ impl AppState {
         let regions = match &config.regions_url {
             Some(url) => {
                 // No overall timeout: snapshot requests long-poll (each request sets its own).
-                let client = reqwest::Client::builder()
+                // The agent normally sits on a private network and is trusted with
+                // `OBS_REGIONS_TOKEN`, so addresses are not filtered, but it must not
+                // redirect that token elsewhere.
+                let client = client_builder(true, Redirects::None)
                     .user_agent(&user_agent)
                     .connect_timeout(Duration::from_secs(5))
                     .build()?;
