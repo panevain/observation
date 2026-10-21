@@ -93,7 +93,8 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Stage 3b: client-build -- Bevy -> wasm32 via trunk (the slow part).
 # Skipped by the `runtime-prebuilt` target below, which takes a dist/ built
-# elsewhere (CI's wasm job) through the `client-dist` named build context.
+# elsewhere through the `client-dist` named build context (CI's docker and
+# Trivy jobs pass a stub dist/).
 # ---------------------------------------------------------------------------
 FROM chef AS client-build
 

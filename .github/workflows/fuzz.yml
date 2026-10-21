@@ -5,6 +5,14 @@ name: Fuzz
 # and the coverage geometry. Short smoke runs on PRs; longer runs nightly.
 on:
   pull_request:
+    # The targets link observation-core and observation-server (and their path dependencies,
+    # which inherit versions from the root Cargo.toml); the client cannot affect them.
+    paths:
+      - .github/workflows/fuzz.yml
+      - fuzz/**
+      - Cargo.toml
+      - crates/**
+      - "!crates/observation-client/**"
   push:
     branches: [develop]
   schedule:
@@ -16,9 +24,10 @@ on:
         required: false
         default: "300"
 
+# A newer push supersedes a pull request run; develop pushes and the nightly run finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions: {}
 

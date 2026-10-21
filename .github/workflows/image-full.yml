@@ -1,6 +1,6 @@
 name: Image (full build)
 
-# The CI docker job builds the image from a prebuilt dist/ (target runtime-prebuilt). This
+# The CI docker job builds the image around a stub dist/ (target runtime-prebuilt). This
 # workflow builds the default target, which compiles the client inside the image the way
 # Release does, so a break there is found before a tag. It runs only when inputs to that
 # path change, weekly, and on demand.
