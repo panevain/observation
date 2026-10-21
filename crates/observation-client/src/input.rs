@@ -179,6 +179,7 @@ fn keyboard(
         ui.tool = Tool::Select;
         ui.map_open = false;
         ui.help_open = false;
+        ui.regions_open = false;
     }
     if ui.tool == Tool::Region {
         // Drawing a region: Enter closes it, Backspace undoes a corner.

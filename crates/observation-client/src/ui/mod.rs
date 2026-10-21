@@ -4,6 +4,7 @@ mod actions;
 mod inspector;
 pub mod map_picker;
 mod overlays;
+mod regions;
 mod toolbar;
 mod widgets;
 
@@ -76,6 +77,7 @@ pub struct UiData<'w> {
     pub config: Res<'w, crate::net::ServerConfig>,
     pub layout: ResMut<'w, crate::state::UiLayout>,
     pub font: ResMut<'w, UiFont>,
+    pub regions: ResMut<'w, crate::regions::Regions>,
 }
 
 fn draw_ui(
@@ -238,12 +240,23 @@ fn draw_ui(
     if d.ui.help_open {
         overlays::help(&ctx, &t, &mut d.ui);
     }
+    if d.ui.regions_open {
+        regions::window(&ctx, &t, &mut d.regions, &mut d.ui.regions_open);
+    }
+    let local: Vec<(String, observation_core::geo::BBox)> = d
+        .regions
+        .regions()
+        .iter()
+        .filter(|r| r.ready)
+        .filter_map(|r| Some((r.name.clone(), r.bbox?)))
+        .collect();
     if d.ui.map_open
         && let Some(bbox) = map_picker::window(
             &ctx,
             &t,
             &mut d.picker,
             &tile_draws,
+            &local,
             &d.config.tile_attribution,
             &mut d.ui.map_open,
         )

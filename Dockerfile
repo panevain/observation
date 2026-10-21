@@ -107,6 +107,75 @@ RUN --mount=type=cache,target=/root/.cache/trunk \
     trunk build --release --locked
 
 # ---------------------------------------------------------------------------
+# Region agent image (target `regions`): Overpass API binaries, osmium and the
+# observation-regions agent, which imports Geofabrik extracts into local
+# Overpass databases. Optional; see compose.yaml.
+#   docker build --target regions -t observation-regions .
+# ---------------------------------------------------------------------------
+FROM chef AS regions-build
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p observation-regions --recipe-path recipe.json
+
+COPY . .
+RUN cargo build --release --locked -p observation-regions \
+    && cp target/release/observation-regions /observation-regions
+
+# Overpass API from the release tarball, sha256-verified. Releases:
+# https://dev.overpass-api.de/releases/
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS overpass-build
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG OVERPASS_VERSION=0.7.62.11
+ARG OVERPASS_SHA256=ff9ab837034c25a1956ff638e9af66a7f36f6cbaffc97d71429d1aa8b0a929ba
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates curl g++ make libexpat1-dev zlib1g-dev liblz4-dev
+
+WORKDIR /src
+RUN set -eux; \
+    f="osm-3s_v${OVERPASS_VERSION}.tar.gz"; \
+    curl --proto '=https' --tlsv1.2 -fsSL -o "/tmp/${f}" "https://dev.overpass-api.de/releases/${f}"; \
+    echo "${OVERPASS_SHA256}  /tmp/${f}" | sha256sum -c -; \
+    tar -xzf "/tmp/${f}" --strip-components=1; \
+    ./configure --prefix=/opt/overpass --enable-lz4 CXXFLAGS="-O2"; \
+    make -j"$(nproc)"; \
+    mkdir -p /out/bin; \
+    cp bin/osm3s_query bin/update_database /out/bin/; \
+    mkdir -p /out/data
+
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS regions
+
+LABEL org.opencontainers.image.title="observation-regions" \
+      org.opencontainers.image.description="Region agent for Observation: local Overpass databases built from Geofabrik extracts" \
+      org.opencontainers.image.source="https://github.com/panevain/observation" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates libexpat1 zlib1g liblz4-1 osmium-tool
+
+COPY --from=overpass-build /out/bin /opt/overpass/bin
+COPY --from=regions-build /observation-regions /usr/local/bin/observation-regions
+COPY --from=overpass-build --chown=65532:65532 /out/data /data
+
+ENV OBS_REGIONS_BIND=0.0.0.0:8090 \
+    OBS_REGIONS_DATA_DIR=/data \
+    OBS_REGIONS_OVERPASS_BIN=/opt/overpass/bin
+
+VOLUME /data
+EXPOSE 8090
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/observation-regions"]
+
+# ---------------------------------------------------------------------------
 # Stage 4: runtime -- distroless, glibc, runs as nonroot (uid/gid 65532).
 #   Pinned by digest; refresh with:
 #   docker buildx imagetools inspect gcr.io/distroless/cc-debian12:nonroot

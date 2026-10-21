@@ -23,6 +23,17 @@ docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com observation
 
 Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to OpenStreetMap services so they can reach you; set it to something real.
 
+### Docker Compose, with local map data
+
+Public Overpass servers are often slow or busy. `compose.yaml` runs the app with an optional **region agent** that imports whole Geofabrik extracts (a city, state or country) into its own Overpass databases, so areas inside them load in milliseconds:
+
+```sh
+cp .env.example .env      # set OBS_REGIONS_TOKEN, OBS_ADMIN_TOKEN and OBS_CONTACT
+docker compose up -d --build
+```
+
+Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
+
 ### From source
 
 You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14. [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
@@ -59,7 +70,8 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | Path | Contents |
 | --- | --- |
 | `crates/observation-core` | Engine-free logic shared by client and server: projection, tiles, building extrusion, bundle format, cameras, view cones, occlusion, coverage, scene files |
-| `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, static files |
+| `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, region management relay, static files |
+| `crates/observation-regions` | Optional region agent (`regions` image target): imports Geofabrik extracts into local Overpass databases and answers queries for them |
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |

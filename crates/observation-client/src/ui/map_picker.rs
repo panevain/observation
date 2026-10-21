@@ -220,12 +220,14 @@ pub fn register_tiles(
     out
 }
 
-/// Shows the dialog. Returns the chosen box when the user confirms.
+/// Shows the dialog, outlining the server's ready `local` regions. Returns
+/// the chosen box when the user confirms.
 pub fn window(
     ctx: &egui::Context,
     t: &Tokens,
     p: &mut MapPicker,
     tile_draws: &[TileDraw],
+    local: &[(String, BBox)],
     attribution: &str,
     open: &mut bool,
 ) -> Option<BBox> {
@@ -332,6 +334,20 @@ pub fn window(
                 }
             }
             let view = View::new(p, rect);
+
+            // Regions answered from the server's own data (bounds; the edges are approximate).
+            for (name, b) in local {
+                let r = Rect::from_two_pos(
+                    view.screen_of(LatLon::new(b.north, b.west)),
+                    view.screen_of(LatLon::new(b.south, b.east)),
+                );
+                if !r.intersects(rect) {
+                    continue;
+                }
+                painter.rect_stroke(r, 0.0, Stroke::new(t.stroke_width * 1.5, t.accent.gamma_multiply(0.7)), StrokeKind::Middle);
+                let at = r.left_top().max(rect.left_top()) + vec2(t.space.xs, t.space.xs);
+                painter.text(at, Align2::LEFT_TOP, format!("Local data: {name}"), egui::FontId::proportional(t.font.caption), t.accent);
+            }
 
             // Selection box.
             if let Some(b) = p.selection {

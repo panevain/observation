@@ -1,0 +1,51 @@
+# Observation with its optional region agent, for production on one host.
+#
+#   cp .env.example .env    # then set the tokens
+#   docker compose up -d --build
+#
+# The app listens on http://localhost:8080. The region agent has no published
+# port: only the app reaches it, over the compose network. Imported regions
+# live in the `regions` volume and the bundle/tile cache in `cache`.
+#
+# Without the agent, run the app alone (`docker run ghcr.io/panevain/observation`);
+# everything but local regions works the same.
+
+services:
+  observation:
+    build:
+      context: .
+      target: runtime
+    image: observation:local
+    restart: unless-stopped
+    ports:
+      - "${OBS_PORT:-8080}:8080"
+    environment:
+      OBS_CONTACT: ${OBS_CONTACT:-}
+      OBS_REGIONS_URL: http://regions:8090
+      OBS_REGIONS_TOKEN: ${OBS_REGIONS_TOKEN:?set OBS_REGIONS_TOKEN in .env}
+      # Leave empty to make regions read-only in the UI.
+      OBS_ADMIN_TOKEN: ${OBS_ADMIN_TOKEN:-}
+      OBS_LOG_FORMAT: ${OBS_LOG_FORMAT:-text}
+    volumes:
+      - cache:/var/cache/observation
+    depends_on:
+      - regions
+
+  regions:
+    build:
+      context: .
+      target: regions
+    image: observation-regions:local
+    restart: unless-stopped
+    environment:
+      OBS_CONTACT: ${OBS_CONTACT:-}
+      OBS_REGIONS_TOKEN: ${OBS_REGIONS_TOKEN:?set OBS_REGIONS_TOKEN in .env}
+      OBS_REGIONS_MAX_DOWNLOAD_MB: ${OBS_REGIONS_MAX_DOWNLOAD_MB:-2048}
+      OBS_REGIONS_REFRESH_DAYS: ${OBS_REGIONS_REFRESH_DAYS:-7}
+      OBS_LOG_FORMAT: ${OBS_LOG_FORMAT:-text}
+    volumes:
+      - regions:/data
+
+volumes:
+  cache:
+  regions:

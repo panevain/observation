@@ -14,6 +14,7 @@ pub mod example;
 pub mod frustum;
 pub mod geo;
 pub mod occlusion;
+pub mod regions;
 pub mod scene;
 pub mod tiles;
 

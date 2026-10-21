@@ -1,9 +1,10 @@
 //! Bundle server for Observation.
 //!
 //! Serves pre-processed OSM area bundles (`/api/area`, `/api/demo`), a caching
-//! tile proxy (`/api/tiles/...`) and the static client, with security headers,
-//! compression and request timeouts. [`app`] builds the whole [`Router`] so
-//! tests can drive it without a socket.
+//! tile proxy (`/api/tiles/...`), local region management (`/api/regions...`,
+//! when a region agent is configured) and the static client, with security
+//! headers, compression and request timeouts. [`app`] builds the whole
+//! [`Router`] so tests can drive it without a socket.
 
 pub mod bundles;
 pub mod cache;
@@ -12,6 +13,7 @@ pub mod demo;
 pub mod error;
 pub mod metrics;
 pub mod overpass;
+pub mod regions;
 pub mod routes;
 pub mod tiles;
 
@@ -33,6 +35,7 @@ use crate::bundles::BundleService;
 use crate::cache::Cache;
 use crate::config::Config;
 use crate::overpass::OverpassClient;
+use crate::regions::Regions;
 use crate::tiles::TileProxy;
 
 /// `content-security-policy` sent with every response.
@@ -78,10 +81,21 @@ struct Inner {
     tiles: TileProxy,
     /// `None` if the embedded fixture failed to build (logged at startup).
     demo: Option<Bytes>,
+    /// `None` without `OBS_REGIONS_URL`.
+    regions: Option<Arc<Regions>>,
+    /// Flipped to `true` when the server starts shutting down, to end event streams.
+    shutdown: tokio::sync::watch::Sender<bool>,
+    /// Bounds the open region event streams.
+    streams: Arc<tokio::sync::Semaphore>,
 }
+
+/// Most region event streams open at once.
+pub const MAX_EVENT_STREAMS: usize = 256;
 
 impl AppState {
     /// Builds the HTTP clients, opens the cache and prepares the demo bundle.
+    /// With a region agent configured, also starts following its regions
+    /// (so this must run inside a Tokio runtime).
     pub fn new(config: Config) -> Result<Self, StateError> {
         let user_agent = config.user_agent();
         let overpass_client = reqwest::Client::builder()
@@ -101,9 +115,28 @@ impl AppState {
             config.tile_cache_cap_bytes,
         ));
         let overpass = Arc::new(OverpassClient::new(overpass_client, &config));
+        let regions = match &config.regions_url {
+            Some(url) => {
+                // No overall timeout: snapshot requests long-poll (each request sets its own).
+                let client = reqwest::Client::builder()
+                    .user_agent(&user_agent)
+                    .connect_timeout(Duration::from_secs(5))
+                    .build()?;
+                let regions = Arc::new(Regions::new(
+                    client,
+                    url.clone(),
+                    config.regions_token.clone(),
+                    config.admin_token.is_some(),
+                ));
+                tokio::spawn(Arc::clone(&regions).run_poller());
+                Some(regions)
+            }
+            None => None,
+        };
         let bundles = Arc::new(BundleService::new(
             Arc::clone(&cache),
             overpass,
+            regions.clone(),
             config.attribution.clone(),
         ));
         let tiles = TileProxy::new(tile_client, &config, cache);
@@ -123,7 +156,28 @@ impl AppState {
             bundles,
             tiles,
             demo,
+            regions,
+            shutdown: tokio::sync::watch::Sender::new(false),
+            streams: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_STREAMS)),
         })))
+    }
+
+    /// The region agent client, if `OBS_REGIONS_URL` is set.
+    pub fn regions(&self) -> Option<&Arc<Regions>> {
+        self.0.regions.as_ref()
+    }
+
+    /// Ends open event streams so a graceful shutdown does not wait on them.
+    pub fn begin_shutdown(&self) {
+        self.0.shutdown.send_replace(true);
+    }
+
+    pub(crate) fn shutdown_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.0.shutdown.subscribe()
+    }
+
+    pub(crate) fn event_streams(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.0.streams
     }
 
     pub fn config(&self) -> &Config {
@@ -154,13 +208,14 @@ pub fn app(state: AppState) -> Router {
     let metrics_on = state.config().metrics_bind.is_some();
     // Layers added last are outermost: request id > trace > security headers >
     // compression > metrics > timeout. Metrics sit outside the timeout so timed-out
-    // requests are counted too.
-    routes::router(state)
+    // requests are counted too. Event streams stay open, so they skip the timeout.
+    routes::router(state.clone())
         .layer(RequestBodyLimitLayer::new(16 * 1024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             timeout,
         ))
+        .merge(routes::streams(state))
         .layer(axum::middleware::from_fn(
             move |req: axum::extract::Request, next: axum::middleware::Next| async move {
                 if metrics_on {

@@ -1,4 +1,5 @@
-//! Bundle production: disk cache, single-flight de-duplication and Overpass.
+//! Bundle production: disk cache, single-flight de-duplication, and the data
+//! source: a local region when one holds the area, else public Overpass.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -13,7 +14,12 @@ use tracing::Instrument;
 
 use crate::cache::Cache;
 use crate::error::ApiError;
-use crate::overpass::OverpassClient;
+use crate::overpass::{OsmData, OverpassClient};
+use crate::regions::Regions;
+
+/// Longest wait for a local region (they answer in well under a second), so
+/// most of the request's time is left for the Overpass fallback.
+const LOCAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 type Flight = Shared<BoxFuture<'static, Result<Bytes, ApiError>>>;
 
@@ -26,15 +32,22 @@ type Flight = Shared<BoxFuture<'static, Result<Bytes, ApiError>>>;
 pub struct BundleService {
     cache: Arc<Cache>,
     overpass: Arc<OverpassClient>,
+    regions: Option<Arc<Regions>>,
     attribution: String,
     in_flight: Mutex<HashMap<String, Flight>>,
 }
 
 impl BundleService {
-    pub fn new(cache: Arc<Cache>, overpass: Arc<OverpassClient>, attribution: String) -> Self {
+    pub fn new(
+        cache: Arc<Cache>,
+        overpass: Arc<OverpassClient>,
+        regions: Option<Arc<Regions>>,
+        attribution: String,
+    ) -> Self {
         Self {
             cache,
             overpass,
+            regions,
             attribution,
             in_flight: Mutex::new(HashMap::new()),
         }
@@ -43,7 +56,7 @@ impl BundleService {
     /// Returns the encoded bundle for `bbox`, which should already be snapped.
     pub async fn get(self: &Arc<Self>, bbox: BBox) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
-        if let Some((bytes, true)) = self.cache.get_bundle(&key).await {
+        if let Some((bytes, true)) = self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
@@ -90,14 +103,21 @@ impl BundleService {
     /// an expired cached bundle when the upstream fails.
     async fn produce(&self, key: &str, bbox: BBox) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
-        if let Some((bytes, true)) = self.cache.get_bundle(key).await {
+        if let Some((bytes, true)) = self.cache.get_bundle(key, self.valid_after(&bbox)).await {
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
-        let data = match self.overpass.fetch(&bbox).await {
+        // One budget for both sources: Overpass gets what the local try left.
+        let started = std::time::Instant::now();
+        let local = self.fetch_local(&bbox).await;
+        let fetched = match local {
+            Some(d) => Ok(d),
+            None => self.overpass.fetch_since(&bbox, started).await,
+        };
+        let data = match fetched {
             Ok(d) => d,
             Err(e) => {
-                if let Some((stale, _)) = self.cache.get_bundle(key).await {
+                if let Some((stale, _)) = self.cache.get_bundle(key, None).await {
                     metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "stale_served")
                         .increment(1);
                     tracing::warn!(key, error = %e, "serving expired bundle because upstream failed");
@@ -130,5 +150,27 @@ impl BundleService {
             "built bundle"
         );
         Ok(bytes)
+    }
+
+    /// When a local region holding `bbox` got its data: bundles cached before
+    /// then are rebuilt.
+    fn valid_after(&self, bbox: &BBox) -> Option<SystemTime> {
+        self.regions.as_ref()?.data_since(bbox)
+    }
+
+    /// Data from a local region, if one holds `bbox` and answers.
+    async fn fetch_local(&self, bbox: &BBox) -> Option<OsmData> {
+        let regions = self.regions.as_ref()?;
+        let outcome = regions.fetch(bbox, LOCAL_TIMEOUT).await;
+        let label = match &outcome {
+            Ok(Some(_)) => "ok",
+            Ok(None) => "not_covered",
+            Err(e) => {
+                tracing::warn!(error = %e, "local region query failed; using Overpass");
+                "error"
+            }
+        };
+        metrics::counter!(crate::metrics::REGION_QUERY, "outcome" => label).increment(1);
+        outcome.ok().flatten()
     }
 }
