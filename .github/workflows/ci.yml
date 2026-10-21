@@ -7,11 +7,11 @@ on:
     branches: [main, develop, "release/**", "hotfix/**"]
   pull_request:
 
-# A newer push supersedes a pull request run. Branch runs always finish, so every commit on
-# develop is checked and gets to save its caches.
+# A newer push supersedes a pull request run. Branch runs each get their own group, so none is
+# cancelled or left queued: every commit on develop is checked and gets to save its caches.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions: {}
 
@@ -246,6 +246,12 @@ jobs:
         run: |
           mise exec -- trunk --version
           mise run build
+      # The docker job packages a stub dist/, so check the real one here.
+      - name: Check dist/
+        run: |
+          grep -qi '<html' dist/index.html
+          compgen -G 'dist/*.wasm' >/dev/null || { echo "::error::no .wasm in dist/"; exit 1; }
+          compgen -G 'dist/*.js' >/dev/null || { echo "::error::no .js in dist/"; exit 1; }
       - name: Wasm size report
         run: |
           set -euo pipefail
