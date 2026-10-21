@@ -7,13 +7,8 @@ OBS_CONTACT = "CHANGE-ME@example.com"
 # Overpass interpreters, tried in order when one fails or times out (at most 4).
 # OBS_OVERPASS_URL = "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter"
 
-# Docker Compose (`mise run up`) reads the rest of this file.
-# Shared by the app and the region agent; required. Use a long random value
-# (`openssl rand -hex 32`).
-OBS_REGIONS_TOKEN = "CHANGE-ME"
-# Lets the UI import, update, cancel and delete regions. Leave unset to make
-# regions read-only.
-# OBS_ADMIN_TOKEN = ""
+# Docker Compose (`mise run up`) reads the rest of this file. Its tokens
+# (OBS_REGIONS_TOKEN, OBS_ADMIN_TOKEN) are fnox secrets: see fnox.toml.
 # Host port for the app (default 8080).
 # OBS_PORT = "8080"
 # `json` for one JSON object per log line (default `text`).

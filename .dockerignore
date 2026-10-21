@@ -22,4 +22,5 @@ Dockerfile
 # Local secrets for docker compose
 .env
 mise.local.toml
+fnox.local.toml
 .mise.local.toml
