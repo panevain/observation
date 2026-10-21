@@ -7,18 +7,33 @@ on:
     branches: [main, develop, "release/**", "hotfix/**"]
   pull_request:
 
+# A newer push supersedes a pull request run. Branch runs each get their own group, so none is
+# cancelled or left queued: every commit on develop is checked and gets to save its caches.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 permissions: {}
+
+defaults:
+  run:
+    # bash -eo pipefail: a failing command on the left of a pipe fails the step.
+    shell: bash
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
+  # Line tables keep file:line in panics and backtraces; full debug info would roughly double
+  # the size of target/ (and so of every cache) for no use in CI.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # The jobs install exactly what they need; stop `mise run` from installing the rest.
   MISE_TASK_RUN_AUTO_INSTALL: "false"
+  MISE_VERSION: 2026.10.13
+  # Caches are written only by develop (the default branch). Pull requests, release/hotfix
+  # branches and main all restore the default branch's caches, so writes from anywhere else
+  # only use up the repository's cache quota and evict develop's entries.
+  SAVE_CACHE: ${{ github.ref == 'refs/heads/develop' }}
 
 jobs:
   fmt:
@@ -35,8 +50,9 @@ jobs:
         run: rustup toolchain install --profile minimal --no-self-update
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run fmt
 
   clippy-native:
@@ -54,11 +70,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+          save-if: ${{ env.SAVE_CACHE }}
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run clippy-native
 
   clippy-wasm:
@@ -76,11 +93,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: wasm-clippy
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+          save-if: ${{ env.SAVE_CACHE }}
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run clippy-wasm
 
   test:
@@ -96,19 +114,22 @@ jobs:
       - name: Install toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal --no-self-update
       # Bevy's native audio/input backends need these headers to compile the
-      # client's unit tests on Linux.
+      # client's unit tests on Linux. The client has tests only once it has a
+      # library target (the same condition `mise run test` uses).
       - name: Install system libraries (Bevy)
+        if: hashFiles('crates/observation-client/src/lib.rs') != ''
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: test
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+          save-if: ${{ env.SAVE_CACHE }}
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       # cargo-nextest from its release archive, checksum-verified (same approach as Trivy).
       - name: Install cargo-nextest (pinned, checksum-verified)
         env:
@@ -121,6 +142,9 @@ jobs:
           echo "${NEXTEST_SHA256}  ${RUNNER_TEMP}/nextest.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/nextest.tar.gz" -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - run: mise run test
+        env:
+          # .config/nextest.toml: report every failure, and end a hung test.
+          NEXTEST_PROFILE: ci
 
   coverage:
     name: coverage (informational)
@@ -142,7 +166,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: coverage
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+          save-if: ${{ env.SAVE_CACHE }}
       - name: Install cargo-llvm-cov (pinned, checksum-verified)
         env:
           LLVM_COV_VERSION: "0.9.1"
@@ -156,8 +180,9 @@ jobs:
           tar -xzf "${RUNNER_TEMP}/${f}" -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - name: Coverage
         run: |
           set -euo pipefail
@@ -188,8 +213,9 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: false
+          cache_save: ${{ env.SAVE_CACHE }}
       - run: mise run tokens
       - run: mise run sync
 
@@ -208,20 +234,31 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: wasm-release
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+          save-if: ${{ env.SAVE_CACHE }}
+          # trunk's wasm-bindgen and wasm-opt downloads (versions follow Cargo.lock and trunk).
+          cache-directories: ~/.cache/trunk
       # trunk comes from mise.toml, checksum-verified via mise.lock.
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          version: 2026.10.13
+          version: ${{ env.MISE_VERSION }}
           install: true
+          cache_save: ${{ env.SAVE_CACHE }}
       - name: Install brotli (for the size report)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends brotli
+          command -v brotli >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends brotli
+          }
       - name: Build (release)
         run: |
           mise exec -- trunk --version
           mise run build
+      # The docker job packages a stub dist/, so check the real one here.
+      - name: Check dist/
+        run: |
+          grep -qis '<html' dist/index.html || { echo "::error::dist/index.html missing or not HTML"; exit 1; }
+          compgen -G 'dist/*.wasm' >/dev/null || { echo "::error::no .wasm in dist/"; exit 1; }
+          compgen -G 'dist/*.js' >/dev/null || { echo "::error::no .js in dist/"; exit 1; }
       - name: Wasm size report
         run: |
           set -euo pipefail
@@ -230,10 +267,7 @@ jobs:
             echo
             echo "| file | raw | gzip -9 | brotli -q 11 |"
             echo "| --- | ---: | ---: | ---: |"
-            found=0
             for f in dist/*.wasm; do
-              [ -e "$f" ] || continue
-              found=1
               raw=$(stat -c %s "$f")
               gz=$(gzip -9 -c "$f" | wc -c)
               if command -v brotli >/dev/null 2>&1; then
@@ -246,9 +280,6 @@ jobs:
                 "$(awk -v n="$gz" 'BEGIN{printf "%.2f MiB", n/1048576}')" \
                 "$br"
             done
-            if [ "$found" -eq 0 ]; then
-              echo "| _no .wasm files in dist/_ | | | |"
-            fi
           } | tee -a "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -261,9 +292,10 @@ jobs:
     name: docker (build + smoke test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # The client is compiled once, in the wasm job; the image reuses its dist/
-    # (Dockerfile target runtime-prebuilt) instead of building Bevy a second time.
-    needs: wasm
+    # Runs alongside the wasm job rather than after it. The smoke test needs only a
+    # dist/index.html, so the image takes a stub dist/ (Dockerfile target runtime-prebuilt),
+    # the same one the Trivy scan uses, and both builds share the image-prebuilt layer cache.
+    # The client built inside the image is covered by image-full.yml and Release.
     permissions:
       contents: read
     env:
@@ -272,10 +304,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dist
-          path: dist
+      - name: Stub client dist
+        run: |
+          mkdir -p "${RUNNER_TEMP}/stub-dist"
+          echo '<!doctype html><html></html>' > "${RUNNER_TEMP}/stub-dist/index.html"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -283,12 +315,13 @@ jobs:
           context: .
           target: runtime-prebuilt
           build-contexts: |
-            client-dist=dist
+            client-dist=${{ runner.temp }}/stub-dist
           push: false
           load: true
           tags: ${{ env.IMAGE }}
           cache-from: type=gha,scope=image-prebuilt
-          cache-to: type=gha,scope=image-prebuilt,mode=max
+          # Written from develop only (see SAVE_CACHE); everything else reads it.
+          cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,scope=image-prebuilt,mode=max' || '' }}
       - name: Smoke test
         run: scripts/smoke-test-image.sh "${IMAGE}"
       - name: Build region agent image
@@ -300,6 +333,6 @@ jobs:
           load: true
           tags: observation-regions:ci
           cache-from: type=gha,scope=image-regions
-          cache-to: type=gha,scope=image-regions,mode=max
+          cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,scope=image-regions,mode=max' || '' }}
       - name: Smoke test region agent
         run: scripts/smoke-test-regions.sh observation-regions:ci

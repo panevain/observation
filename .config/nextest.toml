@@ -1,0 +1,9 @@
+# cargo-nextest configuration (https://nexte.st/docs/configuration/).
+# CI runs the `ci` profile (NEXTEST_PROFILE=ci in .github/workflows/ci.yml).
+
+[profile.ci]
+# Report every failing test, not just the first one.
+fail-fast = false
+# Flag a test after 60 s and end it after 3 minutes, instead of letting a hang run into the
+# job timeout.
+slow-timeout = { period = "60s", terminate-after = 3 }

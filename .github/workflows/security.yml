@@ -167,8 +167,9 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE }}
+          # The CI docker job builds this same image (same stub dist/) and writes this cache
+          # from develop; reading it is enough here.
           cache-from: type=gha,scope=image-prebuilt
-          cache-to: type=gha,scope=image-prebuilt,mode=max
 
       - name: Trivy image scan
         run: |
