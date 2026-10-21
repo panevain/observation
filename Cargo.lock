@@ -4668,6 +4668,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "observation-core",
+ "observation-upstream",
  "reqwest",
  "serde",
  "serde_json",
@@ -4688,6 +4689,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "observation-core",
+ "observation-upstream",
  "reqwest",
  "serde",
  "serde_json",

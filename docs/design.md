@@ -79,9 +79,9 @@ Read from the environment at start-up; empty values count as unset; invalid `OBS
 | `OBS_STATIC_DIR` | `dist` | Built client directory (relative to the working directory). A warning is logged if it has no `index.html` |
 | `OBS_CACHE_DIR` | `cache` | Root of the bundle and tile caches |
 | `OBS_CONTACT` | `https://github.com/panevain/observation` | Put in the `User-Agent` (`observation/<version> (+<contact>)`); set your own |
-| `OBS_OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Overpass interpreter, or up to 4 comma-separated http(s) interpreters tried in order (for example your own instance, then a public one). Malformed entries, credentials in the URL, and loopback, private or link-local hosts (unless `OBS_ALLOW_PRIVATE_UPSTREAMS`) stop the server at startup |
-| `OBS_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Upstream tile template (`{z}`, `{x}`, `{y}`; `{s}` becomes `a`). Same URL checks as `OBS_OVERPASS_URL` |
-| `OBS_ALLOW_PRIVATE_UPSTREAMS` | unset | `1` allows `OBS_OVERPASS_URL` and `OBS_TILE_URL` hosts on loopback, private, link-local or `.internal` addresses (for example your own Overpass instance on a private network). Upstream redirects are never followed |
+| `OBS_OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Overpass interpreter, or up to 4 comma-separated http(s) interpreters tried in order (for example your own instance, then a public one). Malformed entries, and literal loopback, private or link-local addresses (unless `OBS_ALLOW_PRIVATE_UPSTREAMS`), stop the server at startup |
+| `OBS_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Upstream tile template (`{z}`, `{x}`, `{y}`; `{s}` becomes `a`). Same URL checks as `OBS_OVERPASS_URL`; `{x}`, `{y}` and `{z}` may not appear in the host |
+| `OBS_ALLOW_PRIVATE_UPSTREAMS` | unset | `1` lets `OBS_OVERPASS_URL` and `OBS_TILE_URL` point at loopback, private or link-local addresses (for example your own Overpass instance on a private network). Without it, those addresses are refused at startup, and a host name that resolves to one is refused when connecting. Upstream redirects are never followed. `OBS_REGIONS_URL` is exempt: the agent is private by design |
 | `OBS_TILE_ATTRIBUTION` | `© OpenStreetMap contributors` | Attribution embedded in bundles and `/api/config` |
 | `OBS_BUNDLE_TTL_DAYS` | `7` | Bundle freshness; fractional values allowed, `0` revalidates every time |
 | `OBS_LOG_FORMAT` | `text` | `json` writes one JSON object per log event; set the level with `RUST_LOG` (default `info`) |
@@ -187,6 +187,7 @@ A cancelled, failed or interrupted import leaves the previous data in service an
 | `OBS_REGIONS_REFRESH_DAYS` | `7` | Re-import ready regions after this many days; `0` never |
 | `OBS_REGIONS_QUERY_CONCURRENCY` | `4` | `osm3s_query` processes at once (1-64) |
 | `OBS_REGIONS_CATALOG_URL` | Geofabrik's `index-v1-nogeom.json` | Extract index; downloads must share its host, so a mirror must serve both |
+| `OBS_ALLOW_PRIVATE_UPSTREAMS` | `0` | `1` lets the index and downloads use loopback, private or link-local addresses (a mirror on your network); otherwise refused, and redirects never leave the index's host |
 | `OBS_REGIONS_OVERPASS_BIN`, `OBS_REGIONS_OSMIUM` | `/opt/overpass/bin`, `osmium` | Tool locations (set in the image) |
 | `OBS_CONTACT`, `OBS_LOG_FORMAT`, `RUST_LOG` | | As for the server; `OBS_CONTACT` goes into the agent's `User-Agent` to Geofabrik |
 

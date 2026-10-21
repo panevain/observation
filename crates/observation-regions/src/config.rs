@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use observation_upstream::{UrlProblem, redact};
 use thiserror::Error;
 
 /// Geofabrik's extract list without geometry.
@@ -19,6 +20,12 @@ pub enum ConfigError {
     Number(&'static str, String),
     #[error("OBS_REGIONS_CATALOG_URL `{0}` is not an http(s) URL")]
     CatalogUrl(String),
+    #[error(
+        "OBS_REGIONS_CATALOG_URL `{0}` points at a private or loopback address; set OBS_ALLOW_PRIVATE_UPSTREAMS=1 if that is intended"
+    )]
+    PrivateCatalogUrl(String),
+    #[error("OBS_ALLOW_PRIVATE_UPSTREAMS `{0}` is not one of 1/true/yes/on or 0/false/no/off")]
+    AllowPrivate(String),
     #[error("OBS_LOG_FORMAT `{0}` is not `text` or `json`")]
     LogFormat(String),
 }
@@ -35,6 +42,9 @@ pub struct Config {
     pub osmium: PathBuf,
     /// Extract list URL (`OBS_REGIONS_CATALOG_URL`).
     pub catalog_url: String,
+    /// Let upstreams resolve to loopback, private or link-local addresses
+    /// (`OBS_ALLOW_PRIVATE_UPSTREAMS`).
+    pub allow_private_upstreams: bool,
     /// Largest extract that will be downloaded (`OBS_REGIONS_MAX_DOWNLOAD_MB`).
     pub max_download_bytes: u64,
     /// Re-import ready regions after this many days; 0 = never (`OBS_REGIONS_REFRESH_DAYS`).
@@ -72,11 +82,23 @@ impl Config {
 
         let bind_raw = or("OBS_REGIONS_BIND", "0.0.0.0:8090");
         let bind = bind_raw.parse().map_err(|_| ConfigError::Bind(bind_raw))?;
+        let allow_private_upstreams = match get("OBS_ALLOW_PRIVATE_UPSTREAMS") {
+            None => false,
+            Some(raw) => match raw.to_ascii_lowercase().as_str() {
+                "0" | "false" | "no" | "off" => false,
+                "1" | "true" | "yes" | "on" => true,
+                _ => return Err(ConfigError::AllowPrivate(raw)),
+            },
+        };
         let catalog_url = or("OBS_REGIONS_CATALOG_URL", DEFAULT_CATALOG_URL);
-        if !reqwest::Url::parse(&catalog_url)
-            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
-        {
-            return Err(ConfigError::CatalogUrl(catalog_url));
+        match observation_upstream::check_url(&catalog_url, allow_private_upstreams) {
+            Ok(()) => {}
+            Err(UrlProblem::Malformed) => {
+                return Err(ConfigError::CatalogUrl(redact(&catalog_url)));
+            }
+            Err(UrlProblem::Private) => {
+                return Err(ConfigError::PrivateCatalogUrl(redact(&catalog_url)));
+            }
         }
         let json_logs = match get("OBS_LOG_FORMAT").as_deref() {
             None | Some("text") => false,
@@ -90,6 +112,7 @@ impl Config {
             overpass_bin: or("OBS_REGIONS_OVERPASS_BIN", "/opt/overpass/bin").into(),
             osmium: or("OBS_REGIONS_OSMIUM", "osmium").into(),
             catalog_url,
+            allow_private_upstreams,
             max_download_bytes: num("OBS_REGIONS_MAX_DOWNLOAD_MB", 2048)?.saturating_mul(1 << 20),
             refresh_days: u32::try_from(refresh_days).unwrap_or(u32::MAX),
             token: get("OBS_REGIONS_TOKEN"),
@@ -149,5 +172,65 @@ mod tests {
             Config::from_lookup(lookup(&[("OBS_REGIONS_CATALOG_URL", "ftp://x/")])),
             Err(ConfigError::CatalogUrl(_))
         ));
+    }
+
+    #[test]
+    fn allow_private_upstreams() {
+        let get = |v: &str| {
+            Config::from_lookup(lookup(&[("OBS_ALLOW_PRIVATE_UPSTREAMS", v)]))
+                .map(|c| c.allow_private_upstreams)
+        };
+        assert!(
+            !Config::from_lookup(lookup(&[]))
+                .unwrap()
+                .allow_private_upstreams
+        );
+        for v in ["1", "true", "YES", " On "] {
+            assert_eq!(get(v), Ok(true), "{v}");
+        }
+        for v in ["0", "False", "no", "OFF", ""] {
+            assert_eq!(get(v), Ok(false), "{v}");
+        }
+        assert_eq!(get("maybe"), Err(ConfigError::AllowPrivate("maybe".into())));
+    }
+
+    #[test]
+    fn catalog_url_checks() {
+        let catalog = |url: &str, allow: &str| {
+            Config::from_lookup(lookup(&[
+                ("OBS_REGIONS_CATALOG_URL", url),
+                ("OBS_ALLOW_PRIVATE_UPSTREAMS", allow),
+            ]))
+            .map(|c| c.catalog_url)
+        };
+        for url in [
+            "http://169.254.169.254/index.json",
+            "http://localhost:8080/index.json",
+            "http://[::1]/index.json",
+        ] {
+            assert_eq!(
+                catalog(url, ""),
+                Err(ConfigError::PrivateCatalogUrl(url.into())),
+                "{url}"
+            );
+            assert_eq!(catalog(url, "1"), Ok(url.to_owned()), "{url}");
+        }
+        // Credentials stay out of error messages.
+        let err = catalog("http://u:secret@10.0.0.1/i.json", "").unwrap_err();
+        assert_eq!(
+            err,
+            ConfigError::PrivateCatalogUrl("http://10.0.0.1/i.json".into())
+        );
+        assert!(err.to_string().contains("OBS_ALLOW_PRIVATE_UPSTREAMS"));
+        assert_eq!(
+            catalog("ftp://u:secret@mirror.example/i.json", ""),
+            Err(ConfigError::CatalogUrl(
+                "ftp://mirror.example/i.json".into()
+            ))
+        );
+        assert_eq!(
+            catalog("u:secret@mirror.example/i.json", "1"),
+            Err(ConfigError::CatalogUrl("<invalid URL>".into()))
+        );
     }
 }

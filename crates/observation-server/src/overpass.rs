@@ -475,6 +475,16 @@ impl OverpassClient {
             })?;
         let status = resp.status();
         if !status.is_success() {
+            if status.is_redirection() {
+                // Redirects are not followed (see `observation_upstream`); say where to.
+                tracing::warn!(
+                    endpoint,
+                    %status,
+                    location = ?resp.headers().get(reqwest::header::LOCATION),
+                    "overpass redirected; point OBS_OVERPASS_URL at the final URL"
+                );
+                return Err(AttemptError::Retry(Transient::Failed));
+            }
             tracing::warn!(endpoint, %status, "overpass returned an error status");
             return Err(match status {
                 StatusCode::TOO_MANY_REQUESTS | StatusCode::GATEWAY_TIMEOUT => {

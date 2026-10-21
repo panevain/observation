@@ -132,10 +132,15 @@ pub enum StartError {
 impl Agent {
     /// Opens the data directory and builds the HTTP client.
     pub fn new(config: &Config) -> Result<Arc<Self>, StartError> {
-        let client = reqwest::Client::builder()
-            .user_agent(config.user_agent())
-            .connect_timeout(Duration::from_secs(20))
-            .build()?;
+        // Extracts and the index come from one host; redirects may not leave it,
+        // and names may not resolve to private addresses unless allowed.
+        let client = observation_upstream::client_builder(
+            config.allow_private_upstreams,
+            observation_upstream::Redirects::SameHost,
+        )
+        .user_agent(config.user_agent())
+        .connect_timeout(Duration::from_secs(20))
+        .build()?;
         let registry = Arc::new(Registry::open(
             &config.data_dir,
             config.max_download_bytes,
