@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-client"]
-default-members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions"]
+members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-upstream", "crates/observation-client"]
+default-members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-upstream"]
 # Fuzz targets are a separate nightly-only workspace (see fuzz/README.md).
 exclude = ["fuzz"]
 
@@ -15,6 +15,7 @@ publish = false
 
 [workspace.dependencies]
 observation-core = { path = "crates/observation-core" }
+observation-upstream = { path = "crates/observation-upstream" }
 
 # shared
 glam = { version = "0.33", features = ["serde"] }

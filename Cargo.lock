@@ -4701,6 +4701,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-upstream"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "offset-allocator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
