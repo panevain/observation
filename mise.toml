@@ -19,6 +19,8 @@ idiomatic_version_file_enable_tools = ["rust"]
 # mise.lock records the release checksums. scripts/check-toolchain-sync.sh keeps the
 # version in sync with TRUNK_VERSION in the Dockerfile.
 "github:trunk-rs/trunk" = "0.21.14"
+# Loads the Compose secrets for `mise run up` (see fnox.toml).
+"github:jdx/fnox" = "1.42.0"
 
 [env]
 # trunk would otherwise query the crates.io API for a newer release on every build.
