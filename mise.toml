@@ -4,8 +4,8 @@
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
 # [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
 # aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
-# Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
-# gitignored; copy mise.local.toml.example to start.
+# Machine-specific settings and secrets (OBS_CONTACT, OBS_BIND, the Compose tokens) go in
+# mise.local.toml, which is gitignored; copy mise.local.toml.example to start.
 
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
@@ -84,6 +84,10 @@ run = "cargo run --locked -p observation-server"
 description = "Release-build the client, then run the server"
 depends = ["build"]
 run = "cargo run --locked --release -p observation-server"
+
+[tasks.up]
+description = "Build and start the Docker Compose stack (app + region agent) with the mise environment"
+run = "docker compose up -d --build"
 
 [tasks.check]
 description = "fmt, clippy, tests, design tokens and version sync (the non-Docker CI checks; build is separate)"

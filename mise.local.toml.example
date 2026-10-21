@@ -6,3 +6,19 @@ OBS_CONTACT = "CHANGE-ME@example.com"
 # OBS_BIND = "127.0.0.1:8080"
 # Overpass interpreters, tried in order when one fails or times out (at most 4).
 # OBS_OVERPASS_URL = "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter"
+
+# Docker Compose (`mise run up`) reads the rest of this file.
+# Shared by the app and the region agent; required. Use a long random value
+# (`openssl rand -hex 32`).
+OBS_REGIONS_TOKEN = "CHANGE-ME"
+# Lets the UI import, update, cancel and delete regions. Leave unset to make
+# regions read-only.
+# OBS_ADMIN_TOKEN = ""
+# Host port for the app (default 8080).
+# OBS_PORT = "8080"
+# `json` for one JSON object per log line (default `text`).
+# OBS_LOG_FORMAT = "json"
+# Largest Geofabrik extract downloaded, MB (default 2048).
+# OBS_REGIONS_MAX_DOWNLOAD_MB = "2048"
+# Re-import regions after this many days; 0 never (default 7).
+# OBS_REGIONS_REFRESH_DAYS = "7"

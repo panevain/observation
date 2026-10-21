@@ -28,8 +28,8 @@ Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to O
 Public Overpass servers are often slow or busy. `compose.yaml` runs the app with an optional **region agent** that imports whole Geofabrik extracts (a city, state or country) into its own Overpass databases, so areas inside them load in milliseconds:
 
 ```sh
-cp .env.example .env      # set OBS_REGIONS_TOKEN, OBS_ADMIN_TOKEN and OBS_CONTACT
-docker compose up -d --build
+cp mise.local.toml.example mise.local.toml   # set OBS_REGIONS_TOKEN, OBS_ADMIN_TOKEN and OBS_CONTACT
+mise run up                                  # docker compose up -d --build, with those variables
 ```
 
 Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
