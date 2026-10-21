@@ -33,14 +33,14 @@ cp mise.local.toml.example mise.local.toml   # set OBS_CONTACT
 mise run up                                  # fnox exec -- docker compose up -d --build
 ```
 
-The tokens are read by [fnox](https://fnox.jdx.dev), which `mise install` sets up. Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
+The tokens and other Compose settings are read by [fnox](https://fnox.jdx.dev), which mise installs for that task. Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
 
 ### From source
 
 You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14. [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
 
 ```sh
-mise install                          # Rust (via rustup), trunk and fnox (checksum-verified via mise.lock)
+mise install                          # Rust (via rustup) and trunk (checksum-verified via mise.lock)
 cp mise.local.toml.example mise.local.toml   # then set OBS_CONTACT (gitignored)
 mise run serve                        # dev-build the client -> dist/, then run the server
 ```

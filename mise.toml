@@ -4,9 +4,10 @@
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
 # [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
 # aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
-# Machine-specific settings (OBS_CONTACT, OBS_BIND, Compose options) go in mise.local.toml,
-# which is gitignored; copy mise.local.toml.example to start. The Compose tokens are
-# fnox secrets (fnox.toml; values in the gitignored fnox.local.toml).
+# Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
+# gitignored; copy mise.local.toml.example to start. Docker Compose settings and tokens
+# are fnox secrets (fnox.toml; values in the gitignored fnox.local.toml), loaded only by
+# `mise run up`.
 
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
@@ -19,8 +20,6 @@ idiomatic_version_file_enable_tools = ["rust"]
 # mise.lock records the release checksums. scripts/check-toolchain-sync.sh keeps the
 # version in sync with TRUNK_VERSION in the Dockerfile.
 "github:trunk-rs/trunk" = "0.21.14"
-# Loads the Compose secrets for `mise run up` (see fnox.toml).
-"github:jdx/fnox" = "1.42.0"
 
 [env]
 # trunk would otherwise query the crates.io API for a newer release on every build.
@@ -89,7 +88,9 @@ depends = ["build"]
 run = "cargo run --locked --release -p observation-server"
 
 [tasks.up]
-description = "Build and start the Docker Compose stack (app + region agent) with the mise environment and fnox secrets"
+description = "Build and start the Docker Compose stack (app + region agent) with the fnox settings and secrets"
+# A task tool: installed and locked for this task only, so `mise install` and CI skip it.
+tools."github:jdx/fnox" = "1.42.0"
 run = "fnox exec -- docker compose up -d --build"
 
 [tasks.check]
