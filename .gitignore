@@ -10,6 +10,7 @@
 /.mise.local.toml
 /.env
 /.env.local
+/fnox.local.toml
 /.claude/settings.local.json
 /CLAUDE.local.md
 /lcov.info
