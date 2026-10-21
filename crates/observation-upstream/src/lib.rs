@@ -456,23 +456,17 @@ mod tests {
     /// `unsafe`, so the test cannot set it in-process); a no-op otherwise.
     #[tokio::test]
     async fn proxy_probe_child() {
-        if std::env::var_os("OBSERVATION_PROXY_PROBE").is_none() {
+        // The host the proxy would be asked for, handed over by the parent test.
+        let Some(host) = std::env::var_os("OBSERVATION_PROXY_PROBE") else {
             return;
-        }
+        };
+        let target = format!("http://{}/", host.to_string_lossy());
         let strict = client_builder(false, Redirects::None).build().unwrap();
-        let err = strict
-            .get("http://metadata.invalid/")
-            .send()
-            .await
-            .unwrap_err();
+        let err = strict.get(&target).send().await.unwrap_err();
         assert!(err.is_connect(), "{err}");
         let lax = client_builder(true, Redirects::None).build().unwrap();
         assert_eq!(
-            lax.get("http://metadata.invalid/")
-                .send()
-                .await
-                .unwrap()
-                .status(),
+            lax.get(&target).send().await.unwrap().status(),
             200,
             "the proxy variable should apply once the filter is off"
         );
@@ -485,7 +479,7 @@ mod tests {
         let out = tokio::task::spawn_blocking(move || {
             std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "tests::proxy_probe_child", "--nocapture"])
-                .env("OBSERVATION_PROXY_PROBE", "1")
+                .env("OBSERVATION_PROXY_PROBE", "metadata.invalid")
                 .env("HTTP_PROXY", format!("http://127.0.0.1:{proxy}"))
                 .env("http_proxy", format!("http://127.0.0.1:{proxy}"))
                 .env_remove("NO_PROXY")
