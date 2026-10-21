@@ -3,9 +3,10 @@
 #   # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
 #   mise run up
 #
-# The variables below come from the environment: `mise run up` loads them from
-# fnox.local.toml (gitignored), and OBS_CONTACT from mise.local.toml. Without
-# mise, export them before `docker compose up -d --build`.
+# The variables below come from the environment: `mise run up` loads the tokens
+# from fnox.local.toml (gitignored), the other settings from its task env in
+# mise.toml and OBS_CONTACT from mise.local.toml. Without mise, export them
+# before `docker compose up -d --build`; unset ones use the defaults here.
 #
 # The app listens on http://localhost:8080. The region agent has no published
 # port: only the app reaches it, over the compose network. Imported regions

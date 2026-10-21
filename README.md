@@ -33,7 +33,7 @@ cp mise.local.toml.example mise.local.toml   # set OBS_CONTACT
 mise run up                                  # fnox exec -- docker compose up -d --build
 ```
 
-The tokens and other Compose settings are read by [fnox](https://fnox.jdx.dev), which mise installs for that task. Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
+The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits are in the `up` task in `mise.toml`. Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
 
 ### From source
 

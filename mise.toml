@@ -5,9 +5,9 @@
 # [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
 # aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
-# gitignored; copy mise.local.toml.example to start. Docker Compose settings and tokens
-# are fnox secrets (fnox.toml; values in the gitignored fnox.local.toml), loaded only by
-# `mise run up`.
+# gitignored; copy mise.local.toml.example to start. Docker Compose settings are on the
+# `up` task below; its tokens are fnox secrets (fnox.toml; values in the gitignored
+# fnox.local.toml).
 
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
@@ -88,10 +88,22 @@ depends = ["build"]
 run = "cargo run --locked --release -p observation-server"
 
 [tasks.up]
-description = "Build and start the Docker Compose stack (app + region agent) with the fnox settings and secrets"
+description = "Build and start the Docker Compose stack (app + region agent) with the fnox secrets"
 # A task tool: installed and locked for this task only, so `mise install` and CI skip it.
 tools."github:jdx/fnox" = "1.42.0"
 run = "fnox exec -- docker compose up -d --build"
+
+# Compose settings, for this task only (so `mise run serve` is unaffected). A variable
+# already set wins, e.g. `OBS_PORT=9090 mise run up`.
+[tasks.up.env]
+# Host port for the app.
+OBS_PORT = "{{ get_env(name='OBS_PORT', default='8080') }}"
+# `json` for one JSON object per log line.
+OBS_LOG_FORMAT = "{{ get_env(name='OBS_LOG_FORMAT', default='text') }}"
+# Largest Geofabrik extract downloaded, MB.
+OBS_REGIONS_MAX_DOWNLOAD_MB = "{{ get_env(name='OBS_REGIONS_MAX_DOWNLOAD_MB', default='2048') }}"
+# Re-import regions after this many days; 0 never.
+OBS_REGIONS_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_REFRESH_DAYS', default='7') }}"
 
 [tasks.check]
 description = "fmt, clippy, tests, design tokens and version sync (the non-Docker CI checks; build is separate)"

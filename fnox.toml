@@ -1,15 +1,11 @@
-# Docker Compose settings and secrets, loaded only by `mise run up` (which runs
-# Compose under `fnox exec`): https://fnox.jdx.dev
+# Docker Compose secrets, loaded only by `mise run up` (which runs Compose under
+# `fnox exec`): https://fnox.jdx.dev. Other Compose settings are in mise.toml.
 # Only the names are committed. Put values in fnox.local.toml (gitignored), e.g.
 #   OBS_REGIONS_TOKEN = { default = "<openssl rand -hex 32>" }
 # or point a secret at a provider (1Password, age, ...) here instead. A variable
-# already exported in the shell is used when no value is set. Unset ones fall back
-# to compose.yaml, which stops with an error if OBS_REGIONS_TOKEN is missing.
+# already exported in the shell is used when no value is set; compose.yaml stops
+# with an error if OBS_REGIONS_TOKEN is still missing.
 
 [secrets]
 OBS_REGIONS_TOKEN = { description = "Bearer token shared by the app and the region agent (required)", if_missing = "ignore" }
 OBS_ADMIN_TOKEN = { description = "Token the UI sends to manage regions; unset makes regions read-only", if_missing = "ignore" }
-OBS_PORT = { description = "Host port for the app (default 8080)", if_missing = "ignore" }
-OBS_LOG_FORMAT = { description = "`json` for one JSON object per log line (default `text`)", if_missing = "ignore" }
-OBS_REGIONS_MAX_DOWNLOAD_MB = { description = "Largest Geofabrik extract downloaded, MB (default 2048)", if_missing = "ignore" }
-OBS_REGIONS_REFRESH_DAYS = { description = "Re-import regions after this many days; 0 never (default 7)", if_missing = "ignore" }
