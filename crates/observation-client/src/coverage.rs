@@ -80,13 +80,18 @@ fn key(c: &CameraPlacement, m: &CameraModel, p: &CoverageParams) -> u64 {
         m.ir_range_m.map(f32::to_bits),
     )
         .hash(&mut h);
-    (p.dori, p.lighting, p.subject_height_m.to_bits()).hash(&mut h);
+    (
+        p.pixels_per_metre().to_bits(),
+        p.lighting,
+        p.subject_height_m.to_bits(),
+    )
+        .hash(&mut h);
     h.finish()
 }
 
 /// The view cone used for analysis and drawing.
 pub fn cone_for(c: &CameraPlacement, m: &CameraModel, p: &CoverageParams) -> ViewCone {
-    ViewCone::new(c, m, m.effective_range_m(p.dori, p.lighting))
+    ViewCone::new(c, m, m.effective_range_m(p.pixels_per_metre(), p.lighting))
 }
 
 fn update_coverage(
@@ -127,7 +132,7 @@ fn update_coverage(
         };
         state.ranges.insert(
             c.id,
-            m.effective_range_m(scene.params.dori, scene.params.lighting),
+            m.effective_range_m(scene.params.pixels_per_metre(), scene.params.lighting),
         );
         let k = key(c, m, &scene.params);
         if state.cams.get(&c.id).is_some_and(|(old, _)| *old == k) {

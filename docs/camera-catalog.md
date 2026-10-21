@@ -45,6 +45,8 @@ The app uses DORI pixel-density targets (EN 62676-4):
 | Recognise | 125 |
 | Identify | 250 |
 
+The **Custom** level uses a pixel density the user enters (1-2000 px/m).
+
 For a level with density `ppm`:
 
 ```

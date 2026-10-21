@@ -13,7 +13,7 @@ use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
     ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, CatalogError, DoriLevel,
-    Lighting, forward_from_yaw_pitch, is_https_url,
+    Lighting, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM, forward_from_yaw_pitch, is_https_url,
 };
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
@@ -185,6 +185,18 @@ fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     hint(ui, t, "Detail level (pixels per metre on a person)");
     let opts: Vec<(DoriLevel, &str)> = DoriLevel::ALL.iter().map(|l| (*l, l.label())).collect();
     segmented(ui, t, &mut p.dori, &opts);
+    if p.dori == DoriLevel::Custom {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Pixels per metre");
+            ui.add(
+                DragValue::new(&mut p.custom_ppm)
+                    .range(MIN_CUSTOM_PPM..=MAX_CUSTOM_PPM)
+                    .speed(drag_speed(ui, 1.0))
+                    .suffix(" px/m"),
+            )
+            .on_hover_text(NUMBER_TIP);
+        });
+    }
     hint(
         ui,
         t,
@@ -193,6 +205,7 @@ fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             DoriLevel::Observe => "Observe (62 px/m): clothing and activity.",
             DoriLevel::Recognise => "Recognise (125 px/m): a person you know.",
             DoriLevel::Identify => "Identify (250 px/m): a stranger, beyond doubt.",
+            DoriLevel::Custom => "Custom: your own density, e.g. measured from real footage.",
         },
     );
     segmented(

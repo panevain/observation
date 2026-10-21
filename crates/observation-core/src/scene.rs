@@ -1,6 +1,6 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
-use crate::camera::{CameraModel, CameraPlacement, is_https_url};
+use crate::camera::{CameraModel, CameraPlacement, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM, is_https_url};
 use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
 use serde::{Deserialize, Serialize};
@@ -126,6 +126,12 @@ impl SceneFile {
                 "subject height is {height} m, but must be 0 to 10 m"
             )));
         }
+        let ppm = scene.params.custom_ppm;
+        if !(MIN_CUSTOM_PPM..=MAX_CUSTOM_PPM).contains(&ppm) {
+            return Err(SceneError::Invalid(format!(
+                "custom pixel density is {ppm} px/m, but must be {MIN_CUSTOM_PPM} to {MAX_CUSTOM_PPM} px/m"
+            )));
+        }
         for m in &mut scene.custom_models {
             // Drop a non-https spec-sheet link rather than the whole scene: a
             // planted `javascript:` link is neutralised, and a scene autosaved
@@ -142,6 +148,7 @@ impl SceneFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::DoriLevel;
 
     fn scene() -> SceneFile {
         let mut s = SceneFile::new(AreaRef::Demo, LatLon::new(1.0, 2.0));
@@ -255,5 +262,16 @@ mod tests {
         let s = SceneFile::from_json(json).unwrap();
         assert!(s.cameras.is_empty());
         assert_eq!(s.params, CoverageParams::default());
+    }
+
+    #[test]
+    fn custom_ppm_round_trip_and_bounds() {
+        let mut s = scene();
+        s.params.dori = DoriLevel::Custom;
+        s.params.custom_ppm = 400.0;
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        assert_eq!(loaded.params.pixels_per_metre(), 400.0);
+        s.params.custom_ppm = 0.0;
+        assert!(SceneFile::from_json(&s.to_json()).is_err());
     }
 }
