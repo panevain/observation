@@ -77,5 +77,17 @@
       <p>Observation is designed for tablets and desktops. Please use a screen or window of at least 768 × 600 pixels.</p>
     </div>
     <noscript><div class="card"><h1>Observation</h1><p>JavaScript and WebAssembly are required.</p></div></noscript>
+    <script>
+      // Bevy cancels the browser's default action for keys pressed in the canvas
+      // (prevent_default_event_handling, which the tablet keyboard needs), and a
+      // cancelled Ctrl/Cmd+C, X or V fires no copy, cut or paste event, which is
+      // the only way egui's text fields get the clipboard. Keep those three
+      // shortcuts away from Bevy so the browser handles them.
+      addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && ["c", "x", "v"].includes(e.key.toLowerCase())) {
+          e.stopImmediatePropagation();
+        }
+      }, { capture: true });
+    </script>
   </body>
 </html>
