@@ -105,6 +105,12 @@ OBS_REGIONS_MAX_DOWNLOAD_MB = "{{ get_env(name='OBS_REGIONS_MAX_DOWNLOAD_MB', de
 # Re-import regions after this many days; 0 never.
 OBS_REGIONS_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_REFRESH_DAYS', default='7') }}"
 
+[tasks.down]
+description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"
+tools."github:jdx/fnox" = "1.42.0"
+# Under fnox too: compose.yaml refuses to load without OBS_REGIONS_TOKEN, even to stop.
+run = "fnox exec -- docker compose down"
+
 [tasks.check]
 description = "fmt, clippy, tests, design tokens and version sync (the non-Docker CI checks; build is separate)"
 depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens", "sync"]

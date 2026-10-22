@@ -40,12 +40,21 @@ bevy = { workspace = true, features = [
     "touch",
     "webgl2",
 ] }
-bevy_egui = { workspace = true, features = ["render", "default_fonts", "open_url"] }
+bevy_egui = { workspace = true, features = [
+    "render",
+    "default_fonts",
+    "open_url",
+] }
 crossbeam-channel = "0.5"
-egui-phosphor = { version = "0.14", default-features = false, features = ["regular", "fill", "subset"] }
+egui-phosphor = { version = "0.14", default-features = false, features = [
+    "regular",
+    "fill",
+    "subset",
+] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["web"] }
+bevy_egui = { workspace = true, features = ["manage_clipboard"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
