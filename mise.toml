@@ -19,7 +19,7 @@ idiomatic_version_file_enable_tools = ["rust"]
 [tools]
 # mise.lock records the release checksums. scripts/check-toolchain-sync.sh keeps the
 # version in sync with TRUNK_VERSION in the Dockerfile.
-"github:trunk-rs/trunk" = "0.21.14"
+"github:trunk-rs/trunk" = "0.22.0"
 
 [env]
 # trunk would otherwise query the crates.io API for a newer release on every build.
@@ -90,7 +90,7 @@ run = "cargo run --locked --release -p observation-server"
 [tasks.up]
 description = "Build and start the Docker Compose stack (app + region agent) with the fnox secrets"
 # A task tool: installed and locked for this task only, so `mise install` and CI skip it.
-tools."github:jdx/fnox" = "1.42.0"
+tools."github:jdx/fnox" = "1.42.1"
 run = "fnox exec -- docker compose up -d --build"
 
 # Compose settings, for this task only (so `mise run serve` is unaffected). A variable
@@ -107,7 +107,7 @@ OBS_REGIONS_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_REFRESH_DAYS', default=
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"
-tools."github:jdx/fnox" = "1.42.0"
+tools."github:jdx/fnox" = "1.42.1"
 # Under fnox too: compose.yaml refuses to load without OBS_REGIONS_TOKEN, even to stop.
 run = "fnox exec -- docker compose down"
 

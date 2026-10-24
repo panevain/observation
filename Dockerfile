@@ -16,12 +16,12 @@ FROM rust:1.99.1-slim-trixie@sha256:1a939748a7cbab172de91a014e3804a97af1394a8c84
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG TRUNK_VERSION=0.21.14
-# sha256 of the release tarballs, taken from
-# https://github.com/trunk-rs/trunk/releases/tag/v0.21.14 (the published
-# *.tar.gz.sha256 files) and cross-checked against a locally computed hash.
-ARG TRUNK_SHA256_AMD64=f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
-ARG TRUNK_SHA256_ARM64=b1d8e60e454f7fc182d9a4d95d1506ffbae947d8ba90f8f6f02da93b60f980f9
+ARG TRUNK_VERSION=0.22.0
+# sha256 of the release tarballs: GitHub's digests of the assets of
+# https://github.com/trunk-rs/trunk/releases/tag/v0.22.0, which match the published
+# *.tar.gz.sha256 files. scripts/bump-pins.sh updates these with the version.
+ARG TRUNK_SHA256_AMD64=f78c1989240c56592d8cfc4df5cc27399a3ff66a3f9cc819e16f1e3d809ce7c2
+ARG TRUNK_SHA256_ARM64=a05b519ad8ba8b3935772586c2f08f93dd8f9ce06c74c03e89d3c2d03cb628b1
 ARG CARGO_CHEF_VERSION=0.1.78
 ARG CARGO_AUDITABLE_VERSION=0.7.7
 
