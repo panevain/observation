@@ -62,7 +62,7 @@ description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "Rust, trunk and CI mise versions agree across rust-toolchain.toml, Cargo.toml, Dockerfile, mise.toml and the workflows"
+description = "Rust, trunk and CI mise versions agree across rust-toolchain.toml, Cargo.toml, Dockerfile, mise.toml and the workflows, and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
 
 [tasks.treemap]

@@ -5,8 +5,8 @@ on:
     branches: [main, develop]
   pull_request:
   schedule:
-    # Daily, deliberately off the hour. Scheduled runs are what make
-    # rustsec/audit-check open/update advisory issues (remediation tracking).
+    # Daily, deliberately off the hour: a new advisory against develop fails this run.
+    # Advisories against the latest release are tracked by release-watch.yml.
     - cron: "17 4 * * *"
   workflow_dispatch:
 
@@ -53,13 +53,16 @@ jobs:
           "${RUNNER_TEMP}/zizmor-venv/bin/pip" install --require-hashes --no-deps \
             -r .github/zizmor-requirements.txt
           echo "${RUNNER_TEMP}/zizmor-venv/bin" >> "${GITHUB_PATH}"
-      # Offline: no GitHub token, so online-only audits are skipped rather than failing.
+      # Online audits (impostor commits, actions with known vulnerabilities, stale refs) use the
+      # job's read-only token. `.github` covers dependabot.yml as well as the workflows.
       - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # SARIF output exits 0 even with findings, so it is written first for code scanning
           # and the plain run below is the one that fails the job.
-          zizmor --offline --format sarif --no-exit-codes .github/workflows > zizmor.sarif
-          zizmor --offline .github/workflows
+          zizmor --format sarif --no-exit-codes .github > zizmor.sarif
+          zizmor .github
       - name: Upload SARIF
         if: ${{ !cancelled() && hashFiles('zizmor.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
         uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
@@ -67,25 +70,25 @@ jobs:
           sarif_file: zizmor.sarif
           category: zizmor
 
+  # Both lockfiles, including the fuzz workspace's (cargo-deny covers only the root one: the fuzz
+  # crate's licences are not on the allow-list, and it ships nothing). Ignores come from
+  # .cargo/audit.toml. Yanked crates fail the job, as they do in cargo-deny.
   cargo-audit:
     name: cargo-audit
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    # issues: write -> scheduled runs open/update one issue per new advisory.
-    # checks: write -> reports the audit as a check run.
+    timeout-minutes: 10
     permissions:
       contents: read
-      issues: write # scheduled runs open/update advisory issues
-      checks: write # publish the audit check run
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cargo-audit (pinned, checksum-verified)
+        run: scripts/ci-tools.sh install cargo-audit
+      - name: cargo audit
+        run: |
+          cargo audit --deny yanked --file Cargo.lock
+          cargo audit --deny yanked --file fuzz/Cargo.lock
 
   trivy:
     name: trivy (image + repo)
@@ -95,13 +98,6 @@ jobs:
       contents: read
       security-events: write # upload Trivy SARIF to code scanning
     env:
-      # Trivy is installed from a pinned GitHub release and verified against a
-      # pinned sha256 -- NOT via aquasecurity/trivy-action (its tags were
-      # compromised in March 2026, CVE-2026-33634).
-      # Checksum source: trivy_0.76.0_checksums.txt in
-      # https://github.com/aquasecurity/trivy/releases/tag/v0.76.0
-      TRIVY_VERSION: "0.76.0"
-      TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
       IMAGE: observation:scan
       # No phoning home: Trivy 0.76.0 otherwise sends a version check plus
       # anonymous usage data to check.trivy.dev on every run. The vulnerability
@@ -113,19 +109,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # From its pinned GitHub release (scripts/ci-tools.sh), NOT via aquasecurity/trivy-action
+      # (its tags were compromised in March 2026, CVE-2026-33634).
       - name: Install Trivy (pinned, checksum-verified)
         run: |
-          set -euo pipefail
-          archive="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${archive}"
-          echo "${TRIVY_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
-          mkdir -p "${RUNNER_TEMP}/trivy-bin"
-          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/trivy-bin" trivy
-          echo "${RUNNER_TEMP}/trivy-bin" >> "${GITHUB_PATH}"
-
-      - name: Trivy version
-        run: trivy --version
+          scripts/ci-tools.sh install trivy
+          trivy --version
 
       # Repo scan first (cheap): Cargo.lock vulnerabilities, Dockerfile
       # misconfiguration, committed secrets. --ignore-unfixed only affects
@@ -181,6 +170,16 @@ jobs:
             --format sarif --output trivy-image.sarif \
             --exit-code 1 \
             "${IMAGE}"
+
+      # The server binary is built with cargo-auditable, so Trivy reads its crate list. Without
+      # that (a plain `cargo build`), the scan silently covers only the Debian packages.
+      - name: Image scan sees the server's crates
+        run: |
+          set -euo pipefail
+          n="$(trivy image --image-src docker --scanners vuln --list-all-pkgs --format json --quiet "${IMAGE}" |
+            jq '[.Results[]? | select(.Type == "rustbinary") | .Packages[]?] | length')"
+          echo "Rust crates seen in the image: ${n}"
+          [ "${n}" -gt 0 ] || { echo "::error::Trivy found no Rust crates in the image; is the server built with cargo auditable?"; exit 1; }
 
       - name: Upload image SARIF
         if: ${{ !cancelled() && hashFiles('trivy-image.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}

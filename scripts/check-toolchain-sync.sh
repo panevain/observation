@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Fails when the pinned Rust, trunk or CI mise version differs between the files
-# that repeat it. rust-toolchain.toml is the source of truth for Rust, mise.toml
-# for trunk, and MISE_VERSION in ci.yml for the mise that workflows install.
-# Needs only POSIX tools plus grep -E.
+# that repeat it, or when the advisory ignore lists disagree. rust-toolchain.toml is the
+# source of truth for Rust, mise.toml for trunk, MISE_VERSION in ci.yml for the mise that
+# workflows install, and deny.toml for advisory ignores (mirrored in .cargo/audit.toml and
+# osv-scanner.toml). Needs only POSIX tools plus grep -E.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -43,5 +44,11 @@ for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
   ' "$wf")
 done
 
+# Advisory ignores: the same IDs in all three files (sorted, one per line).
+ids() { grep -Eo 'RUSTSEC-[0-9]{4}-[0-9]{4}|GHSA(-[0-9a-z]{4}){3}' | sort -u | paste -sd' ' -; }
+deny_ids="$(awk '/^ignore = \[/ {f=1; next} f && /^\]/ {exit} f && !/^ *#/' deny.toml | ids)"
+check "$deny_ids" "$(awk '/^ignore = \[/ {f=1; next} f && /^\]/ {exit} f' .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/audit.toml ignore"
+check "$deny_ids" "$(grep -E '^id *=' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
+
 if (( fail )); then exit 1; fi
-echo "versions in sync: rust $rust, trunk $trunk, mise $mise"
+echo "versions in sync: rust $rust, trunk $trunk, mise $mise; advisory ignores: ${deny_ids:-none}"

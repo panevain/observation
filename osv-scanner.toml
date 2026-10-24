@@ -1,0 +1,9 @@
+# osv-scanner ignores, read by OpenSSF Scorecard's Vulnerabilities check (it applies the
+# osv-scanner.toml next to each lockfile; fuzz/Cargo.lock needs none). Mirrors
+# [advisories].ignore in deny.toml, where each entry's reason lives; `mise run sync` checks
+# that the lists agree. ignoreUntil matches the deny.toml expiry.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0344"
+ignoreUntil = 2027-01-09T00:00:00Z
+reason = "ruzstd via bevy_image 0.20: unreachable (no KTX2 texture decoding); blocked on Bevy 0.20.1"
