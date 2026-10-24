@@ -10,7 +10,7 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use observation_core::bundle::AreaBundle;
+use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
 use observation_core::regions::ActionKind;
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
@@ -100,12 +100,14 @@ impl HttpRequest {
     }
 }
 
-/// URL for an area request.
+/// URL for an area request. The bundle format version is part of it (the
+/// server ignores it) so that the browser, which may cache bundles for a day,
+/// never hands a new client a body in an older format.
 pub fn area_url(area: &AreaRef) -> String {
     match area {
-        AreaRef::Demo => "/api/demo".to_owned(),
+        AreaRef::Demo => format!("/api/demo?v={BUNDLE_VERSION}"),
         AreaRef::Osm { bbox } => format!(
-            "/api/area?bbox={:.6},{:.6},{:.6},{:.6}",
+            "/api/area?bbox={:.6},{:.6},{:.6},{:.6}&v={BUNDLE_VERSION}",
             bbox.south, bbox.west, bbox.north, bbox.east
         ),
     }

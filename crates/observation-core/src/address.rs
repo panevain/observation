@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 /// has no address, metres.
 pub const MAX_ADDRESS_DISTANCE_M: f32 = 25.0;
 
+/// An address node this close to a building's outline lies on it, metres.
+pub const ON_OUTLINE_M: f32 = 0.5;
+
 /// Longest tag value kept; OSM allows 255 characters, addresses need far fewer.
 const MAX_TAG_CHARS: usize = 80;
 
@@ -90,9 +93,12 @@ pub enum AddressSource<'a> {
 /// when the address is a node; with several, the closest node wins), or a free
 /// address point. A building's own address beats points inside it. Nothing
 /// within [`MAX_ADDRESS_DISTANCE_M`] gives `None`.
+///
+/// `footprint` looks up a building by its index in the bundle, for points that
+/// lie in one.
 pub fn address_at<'a>(
     p: [f32; 2],
-    footprints: &[&'a Footprint],
+    footprint: impl Fn(u32) -> Option<&'a Footprint>,
     sources: impl IntoIterator<Item = AddressSource<'a>>,
 ) -> Option<&'a Address> {
     let max = MAX_ADDRESS_DISTANCE_M;
@@ -109,7 +115,7 @@ pub fn address_at<'a>(
                 let to_point = dist(p, ap.position);
                 let building = ap
                     .building
-                    .and_then(|i| footprints.get(i as usize))
+                    .and_then(&footprint)
                     .filter(|f| near_bounds(p, &f.outer, max));
                 match building {
                     Some(f) => ((distance_to_footprint(p, f), to_point), &ap.address),
@@ -131,6 +137,11 @@ fn dist(a: [f32; 2], b: [f32; 2]) -> f32 {
 
 /// Cheap reject: `p` is more than `margin` outside the ring's bounding box.
 fn near_bounds(p: [f32; 2], ring: &[[f32; 2]], margin: f32) -> bool {
+    within_bounds(p, ring_bounds(ring), margin)
+}
+
+/// The ring's bounding box, `(min, max)`.
+pub fn ring_bounds(ring: &[[f32; 2]]) -> ([f32; 2], [f32; 2]) {
     let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
     for q in ring {
         for i in 0..2 {
@@ -138,6 +149,11 @@ fn near_bounds(p: [f32; 2], ring: &[[f32; 2]], margin: f32) -> bool {
             hi[i] = hi[i].max(q[i]);
         }
     }
+    (lo, hi)
+}
+
+/// `p` lies in the box `(lo, hi)` grown by `margin`.
+fn within_bounds(p: [f32; 2], (lo, hi): ([f32; 2], [f32; 2]), margin: f32) -> bool {
     (0..2).all(|i| p[i] >= lo[i] - margin && p[i] <= hi[i] + margin)
 }
 
@@ -146,9 +162,39 @@ pub fn distance_to_footprint(p: [f32; 2], f: &Footprint) -> f32 {
     if point_in_ring(p, &f.outer) {
         return 0.0;
     }
-    ring_edges(&f.outer)
+    distance_to_ring(p, &f.outer)
+}
+
+/// Distance from `p` to the nearest edge of `ring`, inside or out.
+pub fn distance_to_ring(p: [f32; 2], ring: &[[f32; 2]]) -> f32 {
+    ring_edges(ring)
         .map(|(a, b)| distance_to_segment(p, a, b))
         .fold(f32::INFINITY, f32::min)
+}
+
+/// Index of the footprint an address node at `p` belongs to, given each
+/// footprint's [`ring_bounds`]: the first whose outer ring holds `p` outside
+/// its holes, else the first whose outline `p` lies on (within
+/// [`ON_OUTLINE_M`]). Entrance nodes are vertices of the outline, where the
+/// even-odd test can go either way.
+pub fn building_of(
+    p: [f32; 2],
+    footprints: &[&Footprint],
+    bounds: &[([f32; 2], [f32; 2])],
+) -> Option<usize> {
+    let candidates = || footprints.iter().zip(bounds).enumerate();
+    candidates()
+        .find(|(_, (f, b))| {
+            within_bounds(p, **b, 0.0)
+                && point_in_ring(p, &f.outer)
+                && !f.holes.iter().any(|h| point_in_ring(p, h))
+        })
+        .or_else(|| {
+            candidates().find(|(_, (f, b))| {
+                within_bounds(p, **b, ON_OUTLINE_M) && distance_to_ring(p, &f.outer) <= ON_OUTLINE_M
+            })
+        })
+        .map(|(i, _)| i)
 }
 
 /// Even-odd test; the ring may or may not repeat its first point.
@@ -205,6 +251,14 @@ mod tests {
         }
     }
 
+    fn at<'a>(
+        p: [f32; 2],
+        fps: &[&'a Footprint],
+        src: impl IntoIterator<Item = AddressSource<'a>>,
+    ) -> Option<&'a Address> {
+        address_at(p, |i| fps.get(i as usize).copied(), src)
+    }
+
     fn addr(n: &str) -> Address {
         Address {
             housenumber: Some(n.into()),
@@ -259,11 +313,11 @@ mod tests {
             ]
         };
         // On a's east wall, nearer a than b.
-        assert_eq!(address_at([10.15, 5.0], &fps, src()), Some(&a1));
+        assert_eq!(at([10.15, 5.0], &fps, src()), Some(&a1));
         // A pole in b's front yard.
-        assert_eq!(address_at([25.0, 14.0], &fps, src()), Some(&a2));
+        assert_eq!(at([25.0, 14.0], &fps, src()), Some(&a2));
         // Far from everything.
-        assert_eq!(address_at([200.0, 0.0], &fps, src()), None);
+        assert_eq!(at([200.0, 0.0], &fps, src()), None);
     }
 
     #[test]
@@ -292,11 +346,11 @@ mod tests {
             ]
         };
         // On the terrace's front wall: the nearer entrance.
-        assert_eq!(address_at([4.0, 20.15], &fps, src()), Some(&p1.address));
-        assert_eq!(address_at([16.0, 20.15], &fps, src()), Some(&p3.address));
+        assert_eq!(at([4.0, 20.15], &fps, src()), Some(&p1.address));
+        assert_eq!(at([16.0, 20.15], &fps, src()), Some(&p3.address));
         // On the terrace's east wall, 1.85 m from the house but 0.15 m from
         // the terrace, whose entrance nodes are 5 m away: still the terrace.
-        assert_eq!(address_at([20.15, 10.0], &fps, src()), Some(&p3.address));
+        assert_eq!(at([20.15, 10.0], &fps, src()), Some(&p3.address));
         // A building's own address beats nodes inside it.
         let shop = AddressPoint {
             address: addr("5A"),
@@ -307,7 +361,7 @@ mod tests {
             AddressSource::Point(&shop),
             AddressSource::Building(&house, &h),
         ];
-        assert_eq!(address_at([27.0, 10.15], &fps, both), Some(&h));
+        assert_eq!(at([27.0, 10.15], &fps, both), Some(&h));
     }
 
     #[test]
@@ -318,7 +372,31 @@ mod tests {
             building: None,
         };
         let src = [AddressSource::Point(&p)];
-        assert_eq!(address_at([3.0, 4.0], &[], src), Some(&p.address));
-        assert_eq!(address_at([30.0, 0.0], &[], src), None);
+        assert_eq!(at([3.0, 4.0], &[], src), Some(&p.address));
+        assert_eq!(at([30.0, 0.0], &[], src), None);
+    }
+
+    #[test]
+    fn entrance_nodes_on_the_outline_belong_to_the_building() {
+        // A front wall at z = 20 with an entrance vertex at x = 5: the
+        // even-odd test calls that vertex outside.
+        let f = Footprint {
+            outer: vec![
+                [0.0, 0.0],
+                [20.0, 0.0],
+                [20.0, 20.0],
+                [5.0, 20.0],
+                [0.0, 20.0],
+            ],
+            ..square(0.0, 0.0, 20.0)
+        };
+        let other = square(30.0, 0.0, 10.0);
+        let fps = [&f, &other];
+        let bounds: Vec<_> = fps.iter().map(|f| ring_bounds(&f.outer)).collect();
+        assert!(!point_in_ring([5.0, 20.0], &f.outer));
+        assert_eq!(building_of([5.0, 20.0], &fps, &bounds), Some(0));
+        assert_eq!(building_of([5.0, 10.0], &fps, &bounds), Some(0));
+        assert_eq!(building_of([35.0, 5.0], &fps, &bounds), Some(1));
+        assert_eq!(building_of([25.0, 5.0], &fps, &bounds), None);
     }
 }

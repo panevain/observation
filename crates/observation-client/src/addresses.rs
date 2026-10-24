@@ -2,20 +2,24 @@
 //! and the group it is listed under.
 
 use crate::state::{Area, Scene};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
-use observation_core::address::Address;
-use observation_core::camera::CameraPlacement;
+use bevy_egui::EguiPostUpdateSet;
+use observation_core::camera::{CameraPlacement, MAX_GROUP_CHARS};
 
-/// Group for cameras with neither a hand-set group nor an address nearby.
+/// Heading for cameras with neither a hand-set group nor an address nearby.
 pub const NO_ADDRESS: &str = "No address";
 
 pub struct AddressesPlugin;
 
 impl Plugin for AddressesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CameraAddresses>()
-            .add_systems(Update, resolve_addresses);
+        // After every `Update` edit (placing, moving, undo, a new area) and
+        // before the UI pass, so the list never shows a frame-old grouping.
+        app.init_resource::<CameraAddresses>().add_systems(
+            PostUpdate,
+            resolve_addresses.before(EguiPostUpdateSet::EndPass),
+        );
     }
 }
 
@@ -34,23 +38,23 @@ impl CameraAddresses {
         self.by_camera.get(&id).and_then(|(_, a)| a.as_deref())
     }
 
-    /// The group a camera is listed under: its own, else its address.
-    pub fn group_of<'a>(&'a self, c: &'a CameraPlacement) -> &'a str {
+    /// The group a camera is listed under: its own, else its address; `None`
+    /// when it has neither.
+    pub fn group_of<'a>(&'a self, c: &'a CameraPlacement) -> Option<&'a str> {
         c.group
             .as_deref()
             .map(str::trim)
             .filter(|g| !g.is_empty())
             .or_else(|| self.automatic(c.id))
-            .unwrap_or(NO_ADDRESS)
     }
 
     /// Cameras by group, in the order each group first appears in the scene,
-    /// with [`NO_ADDRESS`] last.
+    /// with the cameras that have no group (`None`) last.
     pub fn groups<'a>(
         &'a self,
         cameras: &'a [CameraPlacement],
-    ) -> Vec<(&'a str, Vec<&'a CameraPlacement>)> {
-        let mut out: Vec<(&str, Vec<&CameraPlacement>)> = Vec::new();
+    ) -> Vec<(Option<&'a str>, Vec<&'a CameraPlacement>)> {
+        let mut out: Vec<(Option<&str>, Vec<&CameraPlacement>)> = Vec::new();
         for c in cameras {
             let g = self.group_of(c);
             match out.iter_mut().find(|(name, _)| *name == g) {
@@ -58,7 +62,7 @@ impl CameraAddresses {
                 None => out.push((g, vec![c])),
             }
         }
-        out.sort_by_key(|(name, _)| *name == NO_ADDRESS);
+        out.sort_by_key(|(name, _)| name.is_none());
         out
     }
 
@@ -80,10 +84,13 @@ fn resolve_addresses(
     area: Option<Res<Area>>,
     mut cache: ResMut<CameraAddresses>,
 ) {
-    let Some(area) = area else {
+    // No area, or the cameras belong to another one still loading (an undo
+    // across an area change, an imported scene): nothing to resolve against.
+    let Some(area) = area.filter(|a| scene.area == Some(a.area)) else {
         if !cache.by_camera.is_empty() {
             cache.by_camera.clear();
         }
+        cache.revision = None;
         return;
     };
     if area.is_changed() {
@@ -94,15 +101,18 @@ fn resolve_addresses(
         return;
     }
     cache.revision = Some(scene.revision);
-    cache
-        .by_camera
-        .retain(|id, _| scene.cameras.iter().any(|c| c.id == *id));
+    let ids: HashSet<u32> = scene.cameras.iter().map(|c| c.id).collect();
+    cache.by_camera.retain(|id, _| ids.contains(id));
     for c in &scene.cameras {
         let at = [c.position[0], c.position[2]];
         if cache.by_camera.get(&c.id).is_some_and(|(p, _)| *p == at) {
             continue;
         }
-        let address = area.bundle.address_at(at).map(Address::label);
+        // Cut to a group name's length, so picking it as a group matches.
+        let address = area
+            .bundle
+            .address_at(at)
+            .map(|a| a.label().chars().take(MAX_GROUP_CHARS).collect());
         cache.by_camera.insert(c.id, (at, address));
     }
 }

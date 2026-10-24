@@ -3,7 +3,7 @@
 //! Layout: `b"OBSB"` magic, `u16` little-endian format version, then a
 //! postcard-encoded [`AreaBundle`].
 
-use crate::address::{Address, AddressPoint, AddressSource, point_in_ring};
+use crate::address::{Address, AddressPoint, AddressSource, building_of, ring_bounds};
 use crate::building::{Footprint, MeshData, extrude};
 use crate::geo::{BBox, LatLon, Projection};
 use serde::{Deserialize, Serialize};
@@ -92,14 +92,14 @@ impl AreaBundle {
     /// The address a camera at world `[x, z]` belongs to (see
     /// [`crate::address::address_at`]).
     pub fn address_at(&self, p: [f32; 2]) -> Option<&Address> {
-        let footprints: Vec<&Footprint> = self.footprints().collect();
+        let footprint = |i: u32| self.buildings.get(i as usize).map(|b| &b.footprint);
         let buildings = self.buildings.iter().filter_map(|b| {
             b.address
                 .as_ref()
                 .map(|a| AddressSource::Building(&b.footprint, a))
         });
         let points = self.addresses.iter().map(AddressSource::Point);
-        crate::address::address_at(p, &footprints, buildings.chain(points))
+        crate::address::address_at(p, footprint, buildings.chain(points))
     }
 }
 
@@ -222,30 +222,13 @@ pub fn build_bundle(
             points: r.points.iter().map(to_w).collect(),
         })
         .collect();
-    let bounds: Vec<([f32; 2], [f32; 2])> = out
-        .iter()
-        .map(|b| {
-            let ring = &b.footprint.outer;
-            let lo = ring
-                .iter()
-                .fold([f32::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
-            let hi = ring.iter().fold([f32::NEG_INFINITY; 2], |m, p| {
-                [m[0].max(p[0]), m[1].max(p[1])]
-            });
-            (lo, hi)
-        })
-        .collect();
+    let footprints: Vec<&Footprint> = out.iter().map(|b| &b.footprint).collect();
+    let bounds: Vec<_> = footprints.iter().map(|f| ring_bounds(&f.outer)).collect();
     let addresses = addresses
         .iter()
         .map(|a| {
             let position = to_w(&a.point);
-            let [x, z] = position;
-            let building = out.iter().zip(&bounds).position(|(b, (lo, hi))| {
-                (lo[0]..=hi[0]).contains(&x)
-                    && (lo[1]..=hi[1]).contains(&z)
-                    && point_in_ring(position, &b.footprint.outer)
-                    && !b.footprint.holes.iter().any(|h| point_in_ring(position, h))
-            });
+            let building = building_of(position, &footprints, &bounds);
             AddressPoint {
                 address: a.address.clone(),
                 position,

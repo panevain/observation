@@ -247,10 +247,10 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     ui.spacing_mut().item_spacing.y = 2.0;
     let groups = d.addresses.groups(&d.scene.cameras);
     // Headings only help once something has an address or a group.
-    let headed = !matches!(groups.as_slice(), [(NO_ADDRESS, _)] | []);
+    let headed = !matches!(groups.as_slice(), [(None, _)] | []);
     for (group, cameras) in &groups {
         if headed {
-            group_heading(ui, t, group, cameras.len());
+            group_heading(ui, t, *group, cameras.len());
         }
         for &c in cameras {
             let model = d
@@ -313,14 +313,14 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     }
 }
 
-/// The heading above a group of cameras: its address (or name) and count.
-fn group_heading(ui: &mut egui::Ui, t: &Tokens, group: &str, count: usize) {
+/// The heading above a group of cameras: its address (or name) and count;
+/// `None` for the cameras with neither.
+fn group_heading(ui: &mut egui::Ui, t: &Tokens, group: Option<&str>, count: usize) {
     ui.add_space(t.space.xs);
     ui.horizontal(|ui| {
-        let glyph = if group == NO_ADDRESS {
-            icons::WARNING_CIRCLE
-        } else {
-            icons::MAP_PIN
+        let (glyph, group) = match group {
+            Some(g) => (icons::MAP_PIN, g),
+            None => (icons::WARNING_CIRCLE, NO_ADDRESS),
         };
         ui.label(RichText::new(glyph).color(t.text_muted));
         let count = RichText::new(count.to_string())
@@ -696,12 +696,20 @@ fn group_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement)
                     .desired_width((ui.available_width() - picker_w).max(0.0))
                     .char_limit(MAX_GROUP_CHARS),
             )
-            .on_hover_text(match automatic {
-                Some(a) => format!(
+            .on_hover_text(match (name.trim().is_empty(), automatic) {
+                (true, Some(a)) => format!(
                     "Listed under {a}, the nearest address in OpenStreetMap. Type a name to list it elsewhere"
                 ),
-                None => "No address in OpenStreetMap is near this camera. Type a name to group it"
-                    .to_owned(),
+                (true, None) => {
+                    "No address in OpenStreetMap is near this camera. Type a name to group it"
+                        .to_owned()
+                }
+                (false, Some(a)) => format!(
+                    "Listed under this name. Clear it to list the camera under {a}, the nearest address in OpenStreetMap"
+                ),
+                (false, None) => format!(
+                    "Listed under this name. Clear it to list the camera under {NO_ADDRESS}: no address in OpenStreetMap is near it"
+                ),
             });
         if resp.changed() {
             c.group = (!name.trim().is_empty()).then_some(name);

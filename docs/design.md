@@ -134,7 +134,7 @@ The query is the same for every box:
 out geom qt;
 ```
 
-**Parsing.** Closed `building` ways with at least four points and no missing nodes become buildings. Ways that are `outer` members of a building relation are skipped, because the relation covers them. Multipolygon relations have their outer and inner member ways **stitched** end to end (reversing where needed; shared nodes have identical coordinates, so exact comparison is correct) into closed rings. Unclosed fragments are dropped. Each outer ring becomes a building, and each inner ring becomes a hole of the outer ring that contains its first point. A relation's buildings carry the negated relation id so they cannot clash with way ids. `highway` ways become roads when the type has a known width; `area=yes` ways are skipped. Buildings keep their address (`addr:housenumber` or `addr:housename`, with `addr:street` or else `addr:place`, and `addr:unit`; each value trimmed and cut to 80 characters), and nodes with a house number or house name become **address points**. Each point records the building it lies in (outer ring, outside holes).
+**Parsing.** Closed `building` ways with at least four points and no missing nodes become buildings. Ways that are `outer` members of a building relation are skipped, because the relation covers them. Multipolygon relations have their outer and inner member ways **stitched** end to end (reversing where needed; shared nodes have identical coordinates, so exact comparison is correct) into closed rings. Unclosed fragments are dropped. Each outer ring becomes a building, and each inner ring becomes a hole of the outer ring that contains its first point. A relation's buildings carry the negated relation id so they cannot clash with way ids. `highway` ways become roads when the type has a known width; `area=yes` ways are skipped. Buildings keep their address (`addr:housenumber` or `addr:housename`, with `addr:street` or else `addr:place`, and `addr:unit`; each value trimmed and cut to 80 characters), and nodes with a house number or house name become **address points**. Each point records the building it lies in (inside the outer ring and outside holes, or else on the outline within 0.5 m, as an entrance node is).
 
 **Height inference** (`building::infer_heights`), in priority order:
 
@@ -202,6 +202,8 @@ A response body is:
 | 0 | 4 bytes | Magic `OBSB` |
 | 4 | 2 bytes | Format version, `u16` little-endian (currently `2`; version 2 added addresses) |
 | 6 | rest | `AreaBundle`, encoded with [postcard](https://docs.rs/postcard) |
+
+The client adds `v=<format version>` to bundle URLs (the server ignores it), so a bundle the browser cached in an older format is never handed to a newer client.
 
 `AreaBundle` fields, in order: `bbox` (south, west, north, east as f64), `origin` (lat, lon), `buildings`, `roads`, `mesh`, `addresses`, `attribution`, `generated_unix`.
 
