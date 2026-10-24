@@ -2,17 +2,17 @@
 
 # ---------------------------------------------------------------------------
 # Stage 1: chef -- toolchain, trunk and cargo-chef (rarely changes).
-#   * Rust 1.99.1 on Debian 12 (bookworm) -- must match rust-toolchain.toml.
+#   * Rust 1.99.1 on Debian 13 (trixie) -- must match rust-toolchain.toml.
 #   * Pinned by digest (multi-arch index); the tag is kept for readability.
-#     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-bookworm
-#     (Dependabot's docker ecosystem bumps both tag and digest.)
+#     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-trixie
+#     (Dependabot refreshes the digest; the tag moves with rust-toolchain.toml.)
 #
 # Layer caching strategy: dependencies are compiled from a cargo-chef recipe
 # (only Cargo.toml/Cargo.lock data), so the expensive Bevy/axum dependency
 # build is a regular image layer that the GHA layer cache keeps until the
 # dependency graph changes. Source-only changes rebuild just our crates.
 # ---------------------------------------------------------------------------
-FROM rust:1.99.1-slim-bookworm@sha256:86234e857a413004348b471d11a4ebe1aa92d2eae2b6b143cac68fd1ac3c48be AS chef
+FROM rust:1.99.1-slim-trixie@sha256:1a939748a7cbab172de91a014e3804a97af1394a8c844faa67fce9401c4e40fb AS chef
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -23,6 +23,7 @@ ARG TRUNK_VERSION=0.21.14
 ARG TRUNK_SHA256_AMD64=f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
 ARG TRUNK_SHA256_ARM64=b1d8e60e454f7fc182d9a4d95d1506ffbae947d8ba90f8f6f02da93b60f980f9
 ARG CARGO_CHEF_VERSION=0.1.78
+ARG CARGO_AUDITABLE_VERSION=0.7.7
 
 # TRUNK_SKIP_VERSION_CHECK: trunk would otherwise query the crates.io API for a
 # newer trunk release on every build (builder stages only; not in the runtime image).
@@ -62,10 +63,13 @@ RUN rustup toolchain install --profile minimal --no-self-update \
     && rustup target add wasm32-unknown-unknown \
     && rustc --version && cargo --version
 
-# cargo-chef, pinned and built from crates.io with its own lockfile.
+# cargo-chef and cargo-auditable, pinned and built from crates.io with their own lockfiles.
+# cargo-auditable embeds the dependency list in the native binaries (a few KB, kept by
+# `strip`), so Trivy, the image SBOM and `cargo audit bin` can see which crates they contain.
 RUN cargo install --locked --version "${CARGO_CHEF_VERSION}" cargo-chef \
+    && cargo install --locked --version "${CARGO_AUDITABLE_VERSION}" cargo-auditable \
     && rm -rf /usr/local/cargo/registry \
-    && cargo chef --version
+    && cargo chef --version && cargo auditable --version
 
 # ---------------------------------------------------------------------------
 # Stage 2: planner -- reduce the workspace to a dependency recipe.
@@ -84,9 +88,10 @@ FROM chef AS server-build
 COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --locked -p observation-server --recipe-path recipe.json
 
+# `cargo auditable build` rebuilds only the workspace crates; the cooked dependencies stay fresh.
 COPY . .
 RUN set -eux; \
-    cargo build --release --locked -p observation-server; \
+    cargo auditable build --release --locked -p observation-server; \
     mkdir -p /out/cache; \
     cp target/release/observation-server /out/observation-server
 
@@ -119,12 +124,12 @@ COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --locked -p observation-regions --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --locked -p observation-regions \
+RUN cargo auditable build --release --locked -p observation-regions \
     && cp target/release/observation-regions /observation-regions
 
 # Overpass API from the release tarball, sha256-verified. Releases:
 # https://dev.overpass-api.de/releases/
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS overpass-build
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS overpass-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG OVERPASS_VERSION=0.7.62.11
@@ -149,17 +154,21 @@ RUN set -eux; \
     cp bin/osm3s_query bin/update_database /out/bin/; \
     mkdir -p /out/data
 
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS regions
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS regions
 
 LABEL org.opencontainers.image.title="observation-regions" \
       org.opencontainers.image.description="Region agent for Observation: local Overpass databases built from Geofabrik extracts" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
+# `apt-get upgrade` takes the Debian security fixes published since the base image was
+# built. Release builds skip the layer cache for this stage (no-cache-filters in
+# release.yml), so every published region agent image has them.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        ca-certificates libexpat1 zlib1g liblz4-1 osmium-tool
 
@@ -177,11 +186,13 @@ USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/observation-regions"]
 
 # ---------------------------------------------------------------------------
-# Stage 4: runtime -- distroless, glibc, runs as nonroot (uid/gid 65532).
+# Stage 4: runtime -- distroless (Debian 13), glibc, runs as nonroot (uid/gid 65532).
 #   Pinned by digest; refresh with:
-#   docker buildx imagetools inspect gcr.io/distroless/cc-debian12:nonroot
+#   docker buildx imagetools inspect gcr.io/distroless/cc-debian13:nonroot
+#   Distroless stops rebuilding a Debian release's images once the next one is out
+#   (cc-debian12 was frozen in August 2026), so move to the new suffix when that happens.
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS runtime-base
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e AS runtime-base
 
 LABEL org.opencontainers.image.title="observation" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
