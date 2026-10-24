@@ -276,7 +276,14 @@ pub struct CameraPlacement {
     pub color: Option<[u8; 3]>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Group the camera is listed under, set by hand. `None` groups it by the
+    /// address OpenStreetMap gives for its position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
+
+/// Longest group name kept.
+pub const MAX_GROUP_CHARS: usize = 80;
 
 fn default_true() -> bool {
     true
@@ -486,6 +493,7 @@ mod tests {
             roll_deg: 0.0,
             color: None,
             enabled: true,
+            group: None,
         };
         p.look_at(Vec3::new(10.0, 0.0, 0.0));
         assert!((p.yaw_deg - 90.0).abs() < 1e-3);

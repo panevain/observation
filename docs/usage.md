@@ -62,6 +62,7 @@ Select a camera (in the viewport or by clicking its row in the list) to open **S
 | --- | --- |
 | Model | Change the model without moving the camera (searchable, as above) |
 | Colour | Colour of the camera body, its view cone and its per-camera overlay. Pick any colour or one of the quick swatches; **Default** returns to the colour for the camera's type |
+| Group | Which group the camera is listed under (see below). Empty means by address: the field shows, greyed out, the address OpenStreetMap gives for the camera's position. Type a name (up to 80 characters) to group it yourself, or use the pin button to pick another address near your cameras or go back to **By address** |
 | Position | **E** east, **S** south and **H** height above ground, in metres from the area centre. Height is limited to 0-60 m |
 | Orientation | A compass dial: click or drag it to point the camera (Shift snaps to 15 degree steps); the shaded wedge is the horizontal field of view. Beside it, **Heading** (0-360 degrees clockwise from north, with a compass label such as NE; hover the label for the unit vector the camera faces as east, north, up), **Tilt** (-90 to 90 degrees; negative looks down) and **Roll** (-180 to 180 degrees) |
 | Optics (collapsed) | Read-only. **Field of view**, **Resolution** and **Night vision** from the model (night vision shows "7.5 m (assumed)" in a warning colour when the manufacturer publishes no figure), **Modelled range** for the current detail level and lighting (see below), and **Source**, a link to the manufacturer's spec page for catalogue models |
@@ -71,6 +72,16 @@ Every number field (here, in Custom model and Subject height) changes when you d
 Buttons: **Aim (A)**, **Move (M)**, **Focus (F)** (frame the camera in the view), **Duplicate** (a copy one metre east, with a new name) and **Delete**.
 
 In the **Cameras** list, each row shows an eye, the camera's colour, its type icon, its name and its model. Click a row to select the camera (click it again to deselect). Hovering a row highlights that camera in the 3D view, and hovering a camera in the 3D view highlights its row. The eye leaves a camera out of the coverage without deleting it (a crossed-out eye; the row is greyed out and the camera is ignored by the statistics and overlays). Right-click a row for **Select**, **Focus**, **Aim**, **Move**, **Duplicate**, **Include in coverage** and **Delete**.
+
+### Groups by address
+
+The list groups cameras by street address, worked out from OpenStreetMap as you place and move them. Each group has a heading with its address and how many cameras it holds. Groups appear in the order of their first camera, with **No address** last. A camera belongs to the nearest address within 25 m:
+
+- a building tagged with an address (a camera on its wall, or on a pole in its yard), or
+- an address mapped as a point inside a building (an entrance, or one of a terrace's houses). A camera on that building takes the closest of its points, or
+- an address point on its own.
+
+A building's own address wins over points inside it. The address is the house number (or house name), the street (or place; where OpenStreetMap gives neither, the nearest named road within 100 m) and any unit, such as "10011 Northeast 120th Street". City and postcode are left out because they rarely differ within one area. The number always comes before the street, so in countries that write it after the street it reads the other way round. If nothing in the loaded area has an address, there are no headings. A camera's **Group** field overrides its address, for example to list a camera on a detached garage with the house, or to group by owner.
 
 ## Read the coverage
 
@@ -168,7 +179,7 @@ Treat the numbers as a rough guide, not a survey.
 - **DORI is an approximation.** The detail levels are pixel-density targets from the published horizontal resolution, not a test of what a camera actually records.
 - **Buildings only.** Only OpenStreetMap buildings block the view. Trees, hedges, fences, vehicles, poles, awnings, terrain, bridges and tunnels are not modelled; the ground is flat. Buildings are flat-roofed boxes, so roof pitch and dormers are ignored, and `building:part` outlines are not loaded separately.
 - **Heights are inferred.** Use the `height` tag when present (units such as `m`, `ft` and `12'6"` are understood); otherwise `building:levels` at 3 m per storey (plus 1 m for the roof when no roof levels are tagged); otherwise a default for the building type: sheds, garages, carports and cabins 3 m, bungalows 4 m, houses and residential buildings 6.5 m, apartments, dormitories and hotels 10 m, churches 12 m, anything else 6 m. Heights are limited to 1-300 m. Many areas have few height tags, so wall figures in particular can be off.
-- **Map data varies.** OpenStreetMap coverage and accuracy differ by place; missing buildings let cameras see through the gap.
+- **Map data varies.** OpenStreetMap coverage and accuracy differ by place; missing buildings let cameras see through the gap, and missing addresses leave cameras under **No address** (or under a neighbour's address) until you set their group.
 - **Night.** The 7.5 m assumption applies only when no night-vision range is published; floodlights and street lights are ignored.
 - **One area at a time,** 20-500 m per side. Only the loaded area is analysed, so views beyond its edge are cut off.
 - **Single person-height sample.** A spot is judged by one point at the subject height; people of other heights or crouching behind low cover are not distinguished.

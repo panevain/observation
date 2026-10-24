@@ -134,6 +134,7 @@ impl BundleService {
             bbox,
             &data.buildings,
             &data.roads,
+            &data.addresses,
             self.attribution.as_str(),
             generated,
         );

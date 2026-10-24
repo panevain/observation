@@ -28,6 +28,7 @@ pub fn build_demo(attribution: &str, generated_unix: u64) -> Result<Bytes, DemoE
         bbox,
         &data.buildings,
         &data.roads,
+        &data.addresses,
         attribution,
         generated_unix,
     );
@@ -67,5 +68,12 @@ mod tests {
         };
         let cams = observation_core::example::example_cameras(&b, &[&catalog], 10);
         assert_eq!(cams.len(), 10);
+        // Most sit on a house with an address, so the list groups them.
+        let addressed: Vec<String> = cams
+            .iter()
+            .filter_map(|c| b.address_at([c.position[0], c.position[2]]))
+            .map(|a| a.label())
+            .collect();
+        assert!(addressed.len() >= 5, "{addressed:?}");
     }
 }

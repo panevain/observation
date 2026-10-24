@@ -59,13 +59,14 @@ impl Prism {
     }
 }
 
-/// Crossing-number test.
-pub fn point_in_ring(p: Vec2, ring: &[Vec2]) -> bool {
+/// Crossing-number test; the ring may or may not repeat its first point.
+/// Takes `Vec2` rings or bundle `[f32; 2]` rings.
+pub fn point_in_ring<P: Copy + Into<Vec2>>(p: Vec2, ring: &[P]) -> bool {
     let mut inside = false;
     let n = ring.len();
     let mut j = n.wrapping_sub(1);
     for i in 0..n {
-        let (a, b) = (ring[i], ring[j]);
+        let (a, b): (Vec2, Vec2) = (ring[i].into(), ring[j].into());
         if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
             inside = !inside;
         }

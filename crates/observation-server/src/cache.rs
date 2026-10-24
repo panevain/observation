@@ -228,7 +228,8 @@ mod tests {
 
     fn bundle_bytes() -> Vec<u8> {
         let mut v = BUNDLE_MAGIC.to_vec();
-        v.extend_from_slice(&[1, 0, 9, 9]);
+        v.extend_from_slice(&BUNDLE_VERSION.to_le_bytes());
+        v.extend_from_slice(&[9, 9]);
         v
     }
 

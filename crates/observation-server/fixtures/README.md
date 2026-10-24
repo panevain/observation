@@ -11,8 +11,10 @@ Retrieved 2026-10-18 with a single OSM API request,
 `GET https://api.openstreetmap.org/api/0.6/map?bbox=-122.208,47.7075,-122.204,47.7098`,
 and converted to the Overpass `out geom` shape with
 `python3 -I osm_to_overpass.py map.osm > demo-overpass.json`. The result
-contains the same features the live Overpass query returns: building ways,
-building multipolygon relations and highway ways.
+contains building ways (with their `addr:*` tags), building multipolygon
+relations and highway ways. The converter also keeps address nodes, as the
+live query does; this extract has none, since the street's addresses are all
+on its buildings.
 
 To re-record against Overpass directly, run `./fetch.sh` (one request; wait
 ≥ 30 s before retrying a failure). It uses this query, with `{bbox}` taken from
@@ -24,6 +26,8 @@ To re-record against Overpass directly, run `./fetch.sh` (one request; wait
   way["building"]({bbox});
   relation["building"]["type"="multipolygon"]({bbox});
   way["highway"]({bbox});
+  node["addr:housenumber"]({bbox});
+  node["addr:housename"]({bbox});
 );
 out geom qt;
 ```

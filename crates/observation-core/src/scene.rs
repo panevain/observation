@@ -1,6 +1,8 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
-use crate::camera::{CameraModel, CameraPlacement, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM, is_https_url};
+use crate::camera::{
+    CameraModel, CameraPlacement, MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, is_https_url,
+};
 use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
 use serde::{Deserialize, Serialize};
@@ -99,6 +101,15 @@ impl SceneFile {
             )));
         }
         let finite = |v: &[f32]| v.iter().all(|x| x.is_finite() && x.abs() < 10_000.0);
+        for c in &mut scene.cameras {
+            // A blank group means "by address"; an overlong one is cut short.
+            c.group = c
+                .group
+                .as_deref()
+                .map(str::trim)
+                .filter(|g| !g.is_empty())
+                .map(|g| g.chars().take(MAX_GROUP_CHARS).collect());
+        }
         for (i, c) in scene.cameras.iter().enumerate() {
             if !finite(&c.position) {
                 return Err(SceneError::Invalid(format!(
@@ -162,6 +173,7 @@ mod tests {
             roll_deg: 0.0,
             color: Some([10, 20, 30]),
             enabled: true,
+            group: None,
         });
         s
     }
@@ -254,6 +266,26 @@ mod tests {
         let far = s.to_json().replace("10.0", "1e9");
         let loaded = SceneFile::from_json(&far).unwrap();
         assert_eq!((loaded.region, loaded.cameras.len()), (None, 1));
+    }
+
+    #[test]
+    fn groups_are_tidied() {
+        let mut s = scene();
+        assert!(!s.to_json().contains("group"), "omitted when automatic");
+        s.cameras[0].group = Some("  Garage  ".into());
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        assert_eq!(loaded.cameras[0].group.as_deref(), Some("Garage"));
+        s.cameras[0].group = Some("   ".into());
+        assert_eq!(
+            SceneFile::from_json(&s.to_json()).unwrap().cameras[0].group,
+            None
+        );
+        s.cameras[0].group = Some("x".repeat(1000));
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        assert_eq!(
+            loaded.cameras[0].group.as_ref().map(String::len),
+            Some(MAX_GROUP_CHARS)
+        );
     }
 
     #[test]
