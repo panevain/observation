@@ -204,7 +204,7 @@ pub fn extrude(fp: &Footprint, mesh: &mut MeshData) -> bool {
         for p in &flat {
             mesh.push_vertex([p[0] as f32, y, p[1] as f32], n);
         }
-        for t in tris.chunks_exact(3) {
+        for t in tris.as_chunks::<3>().0 {
             mesh.push_tri(base + t[0], base + t[1], base + t[2], n);
         }
     };
@@ -289,7 +289,7 @@ mod tests {
             // 4 walls * 2 tris + 2 roof tris
             assert_eq!(m.indices.len(), (4 * 2 + 2) * 3);
             let centre = glam::Vec3::new(5.0, 2.5, 5.0);
-            for t in m.indices.chunks_exact(3) {
+            for t in m.indices.as_chunks::<3>().0 {
                 let p = |i: u32| glam::Vec3::from_array(m.positions[i as usize]);
                 let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
                 let face = (b - a).cross(c - a).normalize();

@@ -156,7 +156,7 @@ impl Cache {
         self.write_atomic(&json, &encode_meta(meta)?).await?;
         let _ = self
             .tile_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                 Some(
                     v.saturating_sub(previous)
                         .saturating_add(bytes.len() as u64),

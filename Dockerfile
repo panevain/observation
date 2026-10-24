@@ -2,9 +2,9 @@
 
 # ---------------------------------------------------------------------------
 # Stage 1: chef -- toolchain, trunk and cargo-chef (rarely changes).
-#   * Rust 1.97.1 on Debian 12 (bookworm) -- must match rust-toolchain.toml.
+#   * Rust 1.99.1 on Debian 12 (bookworm) -- must match rust-toolchain.toml.
 #   * Pinned by digest (multi-arch index); the tag is kept for readability.
-#     Refresh with: docker buildx imagetools inspect rust:1.97.1-slim-bookworm
+#     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-bookworm
 #     (Dependabot's docker ecosystem bumps both tag and digest.)
 #
 # Layer caching strategy: dependencies are compiled from a cargo-chef recipe
@@ -12,7 +12,7 @@
 # build is a regular image layer that the GHA layer cache keeps until the
 # dependency graph changes. Source-only changes rebuild just our crates.
 # ---------------------------------------------------------------------------
-FROM rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS chef
+FROM rust:1.99.1-slim-bookworm@sha256:86234e857a413004348b471d11a4ebe1aa92d2eae2b6b143cac68fd1ac3c48be AS chef
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
