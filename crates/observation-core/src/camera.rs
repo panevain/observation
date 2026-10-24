@@ -400,8 +400,10 @@ mod tests {
         assert!((m.dori_range_m(25.0) - 38.4).abs() < 0.01);
         assert!(m.dori_range_m(250.0) < m.dori_range_m(125.0));
         assert_eq!(m.effective_range_m(25.0, Lighting::Night), 10.0);
-        // A zero or negative density cannot yield an infinite or negative range.
+        // A zero or negative density cannot yield an infinite or negative range
+        // (the 100 m cap alone would hide an infinite one, so test a negative).
         assert_eq!(m.dori_range_m(0.0), m.dori_range_m(MIN_CUSTOM_PPM));
+        assert_eq!(m.dori_range_m(-25.0), m.dori_range_m(MIN_CUSTOM_PPM));
     }
 
     #[test]

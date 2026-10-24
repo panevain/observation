@@ -272,6 +272,20 @@ mod tests {
         let loaded = SceneFile::from_json(&s.to_json()).unwrap();
         assert_eq!(loaded.params.pixels_per_metre(), 400.0);
         s.params.custom_ppm = 0.0;
-        assert!(SceneFile::from_json(&s.to_json()).is_err());
+        assert!(matches!(
+            SceneFile::from_json(&s.to_json()),
+            Err(SceneError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn params_without_custom_ppm_load_with_the_default() {
+        // Scenes saved before the Custom level have `params` but no `custom_ppm`.
+        let json = r#"{"format":"observation-scene","version":1,"area":{"kind":"demo"},
+            "origin":{"lat":0.0,"lon":0.0},
+            "params":{"dori":"Recognise","lighting":"Night","subject_height_m":1.6}}"#;
+        let s = SceneFile::from_json(json).unwrap();
+        assert_eq!(s.params.dori, DoriLevel::Recognise);
+        assert_eq!(s.params.custom_ppm, CoverageParams::default().custom_ppm);
     }
 }

@@ -64,7 +64,12 @@ impl Plugin for CoveragePlugin {
     }
 }
 
-fn key(c: &CameraPlacement, m: &CameraModel, p: &CoverageParams) -> u64 {
+/// Everything a camera's visibility depends on: its pose, the fields of view
+/// and effective range that shape its cone, and the subject height. Hashing
+/// the resolved range (not the density, lighting and IR range behind it) means
+/// a settings change that leaves the range alone, such as a density change
+/// while the IR range caps it at night, recomputes nothing.
+fn key(c: &CameraPlacement, m: &CameraModel, range: f32, subject_height_m: f32) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for v in c
         .position
@@ -76,14 +81,8 @@ fn key(c: &CameraPlacement, m: &CameraModel, p: &CoverageParams) -> u64 {
     (
         m.hfov_deg.to_bits(),
         m.vfov_deg.to_bits(),
-        m.resolution,
-        m.ir_range_m.map(f32::to_bits),
-    )
-        .hash(&mut h);
-    (
-        p.pixels_per_metre().to_bits(),
-        p.lighting,
-        p.subject_height_m.to_bits(),
+        range.to_bits(),
+        subject_height_m.to_bits(),
     )
         .hash(&mut h);
     h.finish()
@@ -130,18 +129,13 @@ fn update_coverage(
         let Some(m) = models.get(&c.model_id) else {
             continue;
         };
-        state.ranges.insert(
-            c.id,
-            m.effective_range_m(scene.params.pixels_per_metre(), scene.params.lighting),
-        );
-        let k = key(c, m, &scene.params);
+        let range = m.effective_range_m(scene.params.pixels_per_metre(), scene.params.lighting);
+        state.ranges.insert(c.id, range);
+        let k = key(c, m, range, scene.params.subject_height_m);
         if state.cams.get(&c.id).is_some_and(|(old, _)| *old == k) {
             continue;
         }
-        let vis = layers.visibility(
-            &cone_for(c, m, &scene.params),
-            scene.params.subject_height_m,
-        );
+        let vis = layers.visibility(&ViewCone::new(c, m, range), scene.params.subject_height_m);
         if let Some((_, old)) = state.cams.insert(c.id, (k, vis)) {
             counts.remove(&old);
         }
