@@ -28,10 +28,24 @@ jobs:
       fail-fast: false
       matrix:
         language: [rust, actions]
+    env:
+      # Rust: the extractor runs cargo (build scripts and proc macros) in this directory, which
+      # rust-cache keeps between runs (saved from develop only, like ci.yml's caches) instead of
+      # a fresh scratch directory each time.
+      CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ github.workspace }}/target/codeql
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
+        if: matrix.language == 'rust'
+        run: scripts/ci-rust-toolchain.sh
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: matrix.language == 'rust'
+        with:
+          workspaces: ". -> target/codeql"
+          shared-key: codeql
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ matrix.language }}
