@@ -1,8 +1,8 @@
 name: Prune images
 
 # Keeps `devel`, `latest` and every X.Y.Z (or X.Y.Z-pre) tag of the container
-# image, and deletes any other tagged version (old edge, main, X.Y and sha-*
-# tags).
+# images (observation and observation-regions), and deletes any other tagged
+# version (old edge, main, X.Y and sha-* tags).
 #
 # `sha256-<digest>` tags are the registry's fallback for the build attestation
 # of image <digest>. They are kept while the registry can still serve that
@@ -41,13 +41,16 @@ concurrency:
 permissions: {}
 
 env:
-  PACKAGE: observation
   KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
   ATTESTATION_REGEX: '^sha256-([0-9a-f]{64})(\.[a-z]+)?$'
 
 jobs:
   prune:
-    name: prune image tags
+    name: prune image tags (${{ matrix.package }})
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [observation, observation-regions]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
@@ -60,6 +63,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.repository }}
+          PACKAGE: ${{ matrix.package }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || (github.event_name != 'workflow_dispatch' && vars.PRUNE_IMAGES != 'true') }}
         run: |
           set -euo pipefail
@@ -74,6 +78,12 @@ jobs:
             *) base="users/$OWNER" ;;
           esac
           url="$base/packages/container/$PACKAGE/versions"
+          # A package appears with its first push (observation-regions with the first release
+          # after it was added).
+          if ! gh api "$base/packages/container/$PACKAGE" --silent 2>/dev/null; then
+            echo "Package $PACKAGE does not exist yet; nothing to prune."
+            exit 0
+          fi
 
           gh api --paginate "$url?per_page=100" --jq '.[]' | jq -s '.' >"$RUNNER_TEMP/versions.json"
           # Anonymous-style pull token for the registry; empty on failure, in

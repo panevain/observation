@@ -88,14 +88,23 @@ depends = ["build"]
 run = "cargo run --locked --release -p observation-server"
 
 [tasks.up]
-description = "Build and start the Docker Compose stack (app + region agent) with the fnox secrets"
+description = "Start the Docker Compose stack (app + region agent) from the released images, with the fnox secrets"
 # A task tool: installed and locked for this task only, so `mise install` and CI skip it.
 tools."github:jdx/fnox" = "1.42.1"
-run = "fnox exec -- docker compose up -d --build"
+usage = 'flag "--build" help="Build both images from this checkout (tagged :local) instead of pulling OBS_VERSION"'
+run = '''
+if [ "${usage_build:-false}" = true ]; then
+  OBS_VERSION=local fnox exec -- docker compose up -d --build
+else
+  fnox exec -- docker compose up -d --pull always
+fi
+'''
 
 # Compose settings, for this task only (so `mise run serve` is unaffected). A variable
 # already set wins, e.g. `OBS_PORT=9090 mise run up`.
 [tasks.up.env]
+# Release to run: `latest`, or a version such as 0.1.0 (both images use the same one).
+OBS_VERSION = "{{ get_env(name='OBS_VERSION', default='latest') }}"
 # Host port for the app.
 OBS_PORT = "{{ get_env(name='OBS_PORT', default='8080') }}"
 # `json` for one JSON object per log line.

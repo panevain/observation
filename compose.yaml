@@ -1,7 +1,11 @@
 # Observation with its optional region agent, for production on one host.
 #
 #   # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
-#   mise run up
+#   mise run up            # the released images (OBS_VERSION, default latest), pulled
+#   mise run up --build    # both images built from this checkout instead
+#
+# Released images are signed and attested (SECURITY.md); a patch release reaches a running
+# stack with another `mise run up`, which pulls the tag again.
 #
 # The variables below come from the environment: `mise run up` loads the tokens
 # from fnox.local.toml (gitignored), the other settings from its task env in
@@ -17,10 +21,10 @@
 
 services:
   observation:
+    image: ghcr.io/panevain/observation:${OBS_VERSION:-latest}
     build:
       context: .
       target: runtime
-    image: observation:local
     restart: unless-stopped
     ports:
       - "${OBS_PORT:-8080}:8080"
@@ -37,10 +41,10 @@ services:
       - regions
 
   regions:
+    image: ghcr.io/panevain/observation-regions:${OBS_VERSION:-latest}
     build:
       context: .
       target: regions
-    image: observation-regions:local
     restart: unless-stopped
     environment:
       OBS_CONTACT: ${OBS_CONTACT:-}
