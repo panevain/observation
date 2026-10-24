@@ -53,8 +53,19 @@ jobs:
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install_args: cargo-fuzz
+          install: false
           cache_save: ${{ github.ref == 'refs/heads/develop' }}
+      # cargo-fuzz is built from crates.io (mise.ci.toml), and mise builds it with the root
+      # rust-toolchain.toml's toolchain, which must be installed first. Restored from mise's
+      # cache, it is already there.
+      - name: Install cargo-fuzz
+        run: |
+          set -euo pipefail
+          if ! mise which cargo-fuzz >/dev/null 2>&1; then
+            mise run ci:toolchain
+            mise install --locked cargo-fuzz
+          fi
+          mise which cargo-fuzz
       - name: Install toolchain (from fuzz/rust-toolchain.toml; the only one left installed)
         run: mise run ci:toolchain -C fuzz
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
