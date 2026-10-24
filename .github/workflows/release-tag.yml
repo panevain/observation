@@ -1,0 +1,126 @@
+name: Release tag
+
+# Tags main when a release/* or hotfix/* merge lands on it (main takes nothing else), and
+# then opens the back-merge PR into develop. The tag starts Release (images, GitHub release)
+# and Treemap.
+#   release/* merges are tagged straight away: merging the release PR was the decision.
+#   hotfix/* merges, which hotfix.yml can open and merge on its own, wait for one approval
+#   of the `release` environment (Actions > the run > Review deployments).
+# The bot app pushes the tag (it is a bypass actor of the v* tag creation ruleset), so the
+# tag push starts workflows; one pushed with GITHUB_TOKEN would not.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # find the PR that this push merged
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      kind: ${{ steps.plan.outputs.kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Version and kind
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n '/^\[workspace\.package\]/,/^$/ s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::bad workspace version '${version}'"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
+            echo "v${version} already exists; nothing to tag."
+            exit 0
+          fi
+          head="$(gh api "repos/${REPO}/commits/${GITHUB_SHA}/pulls" --jq '[.[] | select(.merged_at != null)][0].head.ref // ""')"
+          case "${head}" in
+            hotfix/*) kind=hotfix ;;
+            release/*) kind=release ;;
+            *) echo "::error::${GITHUB_SHA} is not a merge of a release/* or hotfix/* PR (head '${head}'); tag it by hand if it should be released."; exit 1 ;;
+          esac
+          echo "Will tag v${version} (${kind}, from ${head})."
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "kind=${kind}" >> "${GITHUB_OUTPUT}"
+
+  # One click for hotfixes: the job waits for a reviewer of the `release` environment.
+  approve:
+    name: approve hotfix release
+    needs: plan
+    if: needs.plan.outputs.kind == 'hotfix'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release
+    permissions: {}
+    steps:
+      - env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: echo "Approved the release of v${VERSION}."
+
+  tag:
+    name: tag and back-merge
+    needs: [plan, approve]
+    # approve is skipped for release/* merges.
+    if: ${{ !cancelled() && needs.plan.outputs.version != '' && needs.plan.result == 'success' && (needs.approve.result == 'success' || needs.approve.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # develop's history, for the back-merge check
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Tag
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/ci-git.sh identity "${BOT}"
+          git -c core.hooksPath=/dev/null tag -a "v${VERSION}" -m "v${VERSION}" "${GITHUB_SHA}"
+          scripts/ci-git.sh push-tag "v${VERSION}"
+          echo "### Tagged v${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
+      # git-flow's back-merge, from a branch of its own so that conflicts can be resolved on it
+      # (main itself is protected). Auto-merge (merge commit) completes it once checks pass.
+      - name: Back-merge into develop
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor "${GITHUB_SHA}" origin/develop; then
+            echo "develop already contains v${VERSION}."
+            exit 0
+          fi
+          branch="backmerge/v${VERSION}"
+          git switch -c "${branch}" "${GITHUB_SHA}"
+          scripts/ci-git.sh push "${branch}"
+          url="$(gh pr create --base develop --head "${branch}" \
+            --title "Back-merge v${VERSION} into develop" \
+            --body "Brings the v${VERSION} release commits from \`main\` back into \`develop\` (git-flow). Merges itself with a merge commit when the checks pass; if it conflicts (usually CHANGELOG.md or Cargo.lock), merge \`develop\` into \`${branch}\`, resolve, and push.")"
+          echo "${url}"
+          gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url} (conflicts?); merge it by hand."
