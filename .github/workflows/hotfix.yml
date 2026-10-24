@@ -1,0 +1,147 @@
+name: Hotfix
+
+# Opens a security patch release of the latest release as a hotfix PR into main:
+#   - `cargo update -p` for every crate with an advisory that has a compatible fix,
+#   - every digest-pinned base image re-pinned to its tag's current digest,
+#   - the workspace version bumped to the next patch, with a CHANGELOG "Security" entry.
+# release-watch.yml starts it when it finds something to fix; run it by hand with `force` to
+# patch-release on fresh base images even when nothing is flagged. The PR merges itself
+# (merge commit) once its checks pass, and release-tag.yml then waits for one approval of the
+# `release` environment before it tags and publishes (CONTRIBUTING.md).
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Open the hotfix even when no advisory or image finding needs one (re-pins the base images)
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  prepare:
+    name: prepare hotfix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.state.outputs.next }}
+      ready: ${{ steps.ready.outputs.ready }}
+    steps:
+      # The scripts come from this workflow's ref (develop); they work on a checkout of main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Release state
+        id: state
+        run: |
+          set -euo pipefail
+          scripts/release-state.sh | tee -a "${GITHUB_OUTPUT}" > "${RUNNER_TEMP}/state"
+          # shellcheck disable=SC1091
+          . "${RUNNER_TEMP}/state"
+          [ -n "${latest}" ] || { echo "::error::no release yet; nothing to patch"; exit 1; }
+          [ "${pending}" = false ] || { echo "::error::main is at ${main}, which is not tagged yet; tag or finish that release first"; exit 1; }
+          [ "${hotfix}" = false ] || { echo "::error::a hotfix/* branch already exists"; exit 1; }
+          [ "${main}" = "${latest}" ] || { echo "::error::main is at ${main} but the latest release is ${latest}"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main
+          persist-credentials: false
+      - name: Install toolchain (from main's rust-toolchain.toml)
+        working-directory: main
+        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Install cargo-audit and Trivy (pinned, checksum-verified)
+        run: scripts/ci-tools.sh install cargo-audit trivy
+      - name: Fix
+        id: ready
+        env:
+          LATEST: ${{ steps.state.outputs.latest }}
+          NEXT: ${{ steps.state.outputs.next }}
+          FORCE: ${{ inputs.force }}
+          TRIVY_DISABLE_TELEMETRY: "true"
+          TRIVY_SKIP_VERSION_CHECK: "true"
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/hotfix"
+          action="$(python3 scripts/security-patch.py check --repo main --version "${LATEST}" --out "${out}")"
+          if [ "${action}" != hotfix ] && [ "${FORCE}" != true ]; then
+            { echo "Nothing to fix in v${LATEST}."; echo; cat "${out}/summary.md"; } >> "${GITHUB_STEP_SUMMARY}"
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
+          (cd main && ../scripts/set-version.sh "${NEXT}")
+          python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
+          # A hotfix only moves versions and pins.
+          unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
+          [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
+          git -C main diff --binary > "${out}/hotfix.patch"
+          {
+            cat "${out}/summary.md"
+            echo
+            echo "This PR merges itself when its checks pass. Release tag then waits for an approval of the \`release\` environment (Actions > Release tag > Review deployments) before it tags v${NEXT} and publishes."
+          } > "${out}/body.md"
+          cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.ready.outputs.ready == 'true'
+        with:
+          name: hotfix
+          path: |
+            ${{ runner.temp }}/hotfix/hotfix.patch
+            ${{ runner.temp }}/hotfix/body.md
+          if-no-files-found: error
+          retention-days: 14
+
+  # The bot app pushes and opens the PR (so its checks start) from a job that runs nothing
+  # from the dependency tree.
+  open-pr:
+    name: open hotfix PR
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hotfix
+          path: ${{ runner.temp }}/hotfix
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
+          branch="hotfix/${VERSION}"
+          git apply --index "${RUNNER_TEMP}/hotfix/hotfix.patch"
+          scripts/ci-git.sh identity "${BOT}"
+          git switch -c "${branch}"
+          git -c core.hooksPath=/dev/null commit -m "hotfix: ${VERSION} (security updates)"
+          scripts/ci-git.sh push "${branch}"
+          url="$(gh pr create --base main --head "${branch}" --title "hotfix: ${VERSION}" \
+            --body-file "${RUNNER_TEMP}/hotfix/body.md")"
+          echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          gh pr merge --auto --merge "${url}"
