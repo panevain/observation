@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Fails when the pinned Rust, trunk or CI mise version differs between the files
-# that repeat it, or when the advisory ignore lists disagree. rust-toolchain.toml is the
-# source of truth for Rust, mise.toml for trunk, MISE_VERSION in ci.yml for the mise that
-# workflows install, and deny.toml for advisory ignores (mirrored in .cargo/audit.toml and
-# osv-scanner.toml). Needs only POSIX tools plus grep -E.
+# Fails when the pinned Rust or CI mise version differs between the files that repeat it,
+# or when the advisory ignore lists disagree. rust-toolchain.toml is the source of truth for
+# Rust, MISE_VERSION in ci.yml for the mise that the workflows and the Dockerfile use, and
+# deny.toml for advisory ignores (mirrored in .cargo/audit.toml and osv-scanner.toml). Every
+# other tool is pinned once, in mise.toml or mise.ci.toml. Needs only POSIX tools plus grep -E.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -11,9 +11,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 first() { grep -Eom1 "$1" "$2" | head -n1 || true; }
 
 rust="$(first '^channel *= *"[^"]+"' rust-toolchain.toml | sed -E 's/.*"([^"]+)"/\1/')"
-trunk="$(first '"github:trunk-rs/trunk" *= *"[^"]+"' mise.toml | sed -E 's/.*= *"([^"]+)"/\1/')"
 mise="$(first '^  MISE_VERSION: *[0-9.]+' .github/workflows/ci.yml | sed -E 's/.*: *//')"
-[[ -n "$rust" && -n "$trunk" && -n "$mise" ]] || { echo "could not read pinned versions" >&2; exit 1; }
+[[ -n "$rust" && -n "$mise" ]] || { echo "could not read pinned versions" >&2; exit 1; }
 
 fail=0
 check() { # expected actual label
@@ -25,7 +24,7 @@ check "$rust" "$(first '^FROM rust:[0-9.]+' Dockerfile | sed -E 's/FROM rust:([0
 # mise.lock records the idiomatic rust version; `mise install --locked` fails if it is behind.
 lock_rust="$(awk '/^\[\[tools\.rust\]\]/ {f=1; next} f && /^version = / {gsub(/[^0-9.]/, ""); print; exit}' mise.lock)"
 check "$rust" "$lock_rust" "mise.lock [[tools.rust]]"
-check "$trunk" "$(first '^ARG TRUNK_VERSION=[0-9.]+' Dockerfile | sed -E 's/.*=//')" "Dockerfile TRUNK_VERSION"
+check "$mise" "$(first '^FROM ghcr.io/jdx/mise:[0-9.]+' Dockerfile | sed -E 's/.*://')" "Dockerfile FROM ghcr.io/jdx/mise:"
 # Every mise-action step must pin `version:`, either to MISE_VERSION (in ci.yml) or to the
 # same literal. A step without one would install whatever mise is latest.
 for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
@@ -51,4 +50,4 @@ check "$deny_ids" "$(awk '/^ignore = \[/ {f=1; next} f && /^\]/ {exit} f' .cargo
 check "$deny_ids" "$(grep -E '^id *=' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
 
 if (( fail )); then exit 1; fi
-echo "versions in sync: rust $rust, trunk $trunk, mise $mise; advisory ignores: ${deny_ids:-none}"
+echo "versions in sync: rust $rust, mise $mise; advisory ignores: ${deny_ids:-none}"

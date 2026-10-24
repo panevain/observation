@@ -1,5 +1,5 @@
 # cargo-nextest configuration (https://nexte.st/docs/configuration/).
-# CI runs the `ci` profile (NEXTEST_PROFILE=ci in .github/workflows/ci.yml).
+# CI runs the `ci` profile (NEXTEST_PROFILE=ci in mise.ci.toml).
 
 [profile.ci]
 # Report every failing test, not just the first one.

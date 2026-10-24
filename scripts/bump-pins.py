@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Bumps the pins Dependabot can't: the tool table in scripts/ci-tools.sh, trunk, fnox, the
-CI mise version, cargo-chef, cargo-auditable and Overpass in the Dockerfile, the Rust
-toolchain and the fuzz nightly. Used by pins.yml (weekly), which then runs `mise lock` and
-scripts/check-toolchain-sync.sh and opens a PR.
+"""Bumps the pins Dependabot can't: the tools in mise.toml and mise.ci.toml (through
+`mise upgrade --bump`), fnox (a task tool, which mise does not bump), the CI mise version (the
+workflows and the Dockerfile's mise image), Overpass in the Dockerfile, the Rust toolchain and
+the fuzz nightly. Used by pins.yml (weekly), which then runs `mise run lock` and
+`mise run sync` and opens a PR.
 
 A release is taken once it is COOLDOWN_DAYS old (as Dependabot's cooldown does), and only a
-stable one. Checksums are GitHub's sha256 digests of the release assets (they match the
-checksum files the projects publish); Overpass publishes none, so its tarball is hashed here.
+stable one. Overpass publishes no checksums, so its tarball is hashed here; mise records the
+tools' checksums in mise.lock and mise.ci.lock.
 
   bump-pins.py [--summary FILE] [--only NAME...]
 
-Prints one line per bump and writes them as a Markdown list to FILE. Needs gh (GH_TOKEN) and
-docker buildx (for the Rust image digest).
+Prints one line per bump and writes them as a Markdown list to FILE. Needs mise, gh
+(GH_TOKEN) and docker buildx (for image digests).
 """
 
 import argparse
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -68,21 +70,11 @@ def github_latest(repo, tag_re):
     return best
 
 
-def asset_sha(rel, name):
-    for a in rel["assets"]:
-        if a["name"] == name:
-            d = a.get("digest") or ""
-            if not re.fullmatch(r"sha256:[0-9a-f]{64}", d):
-                raise SystemExit(f"{rel['tag_name']}: no sha256 digest for {name}")
-            return d.removeprefix("sha256:")
-    raise SystemExit(f"{rel['tag_name']}: no asset {name}")
-
-
-def crate_latest(name):
-    data = json.loads(http(f"https://crates.io/api/v1/crates/{name}"))
-    ok = [v["num"] for v in data["versions"]
-          if not v["yanked"] and SEMVER.fullmatch(v["num"]) and date(v["created_at"]) <= CUTOFF]
-    return max(ok, key=key) if ok else None
+def image_digest(image):
+    """Digest of an image's index, or None if the tag is not published."""
+    p = subprocess.run(["docker", "buildx", "imagetools", "inspect", image, "--format", "{{json .Manifest.Digest}}"],
+                       text=True, capture_output=True)
+    return json.loads(p.stdout) if p.returncode == 0 else None
 
 
 class Files:
@@ -114,52 +106,29 @@ class Files:
                 (ROOT / rel).write_text(text)
 
 
-CI_TOOLS = {
-    # name: (repo, tag regex, asset name for a version)
-    "trivy": ("aquasecurity/trivy", r"v(.+)", "trivy_{v}_Linux-64bit.tar.gz"),
-    "cosign": ("sigstore/cosign", r"v(.+)", "cosign-linux-amd64"),
-    "cargo-audit": ("rustsec/rustsec", r"cargo-audit/v(.+)", "cargo-audit-x86_64-unknown-linux-musl-v{v}.tgz"),
-    "cargo-nextest": ("nextest-rs/nextest", r"cargo-nextest-(.+)", "cargo-nextest-{v}-x86_64-unknown-linux-gnu.tar.gz"),
-    "cargo-llvm-cov": ("taiki-e/cargo-llvm-cov", r"v(.+)", "cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz"),
-}
-
-
-def bump_ci_tools(f, out):
-    rel = "scripts/ci-tools.sh"
-    for name, (repo, tag_re, asset) in CI_TOOLS.items():
-        cur = f.find(rel, rf"^{re.escape(name)}\s+(\S+)\s+\S+$")
-        latest = github_latest(repo, tag_re)
-        if latest and key(latest[0]) > key(cur):
-            v, release = latest
-            sha = asset_sha(release, asset.format(v=v))
-            f.sub(rel, rf"^({re.escape(name)}\s+)\S+(\s+)\S+$", rf"\g<1>{v}\g<2>{sha}")
-            out.append((name, cur, v))
-    cur = f.find(rel, r"^cargo-fuzz\s+(\S+)\s+-$")
-    v = crate_latest("cargo-fuzz")
-    if v and key(v) > key(cur):
-        f.sub(rel, r"^(cargo-fuzz\s+)\S+", rf"\g<1>{v}")
-        out.append(("cargo-fuzz", cur, v))
-
-
-def bump_trunk(f, out):
-    cur = f.find("mise.toml", r'^"github:trunk-rs/trunk" = "([^"]+)"')
-    latest = github_latest("trunk-rs/trunk", r"v(.+)")
-    if not latest or key(latest[0]) <= key(cur):
-        return
-    v, rel = latest
-    f.sub("mise.toml", r'^("github:trunk-rs/trunk" = )"[^"]+"', rf'\g<1>"{v}"')
-    f.sub("Dockerfile", r"^ARG TRUNK_VERSION=\S+", f"ARG TRUNK_VERSION={v}")
-    f.sub("Dockerfile", r"releases/tag/v\S+, which match", f"releases/tag/v{v}, which match")
-    f.sub("Dockerfile", r"^ARG TRUNK_SHA256_AMD64=\S+", f"ARG TRUNK_SHA256_AMD64={asset_sha(rel, 'trunk-x86_64-unknown-linux-gnu.tar.gz')}")
-    f.sub("Dockerfile", r"^ARG TRUNK_SHA256_ARM64=\S+", f"ARG TRUNK_SHA256_ARM64={asset_sha(rel, 'trunk-aarch64-unknown-linux-gnu.tar.gz')}")
-    out.append(("trunk", cur, v))
+def bump_mise_tools(f, out, dry_run):
+    """Every tool in [tools] of mise.toml and mise.ci.toml (MISE_ENV=ci loads both; rust, which
+    is not a mise tool there, is bump_rust's). mise rewrites the pins and the lockfiles."""
+    days = f"{(NOW - CUTOFF).days}d"
+    env = {**os.environ, "MISE_ENV": "ci", "MISE_MINIMUM_RELEASE_AGE": days}
+    p = subprocess.run(["mise", "outdated", "--bump", "--json"], cwd=ROOT, env=env, text=True,
+                       capture_output=True)
+    if p.returncode != 0:
+        raise SystemExit(f"mise outdated: {p.stderr.strip()}")
+    bumps = [(name, v["requested"], v["bump"]) for name, v in sorted(json.loads(p.stdout or "{}").items())
+             if v.get("bump") and v["bump"] != v["requested"]]
+    if bumps and not dry_run:
+        subprocess.run(["mise", "upgrade", "--bump", "--minimum-release-age", days, *(b[0] for b in bumps)],
+                       cwd=ROOT, env=env, check=True)
+    out.extend(bumps)
 
 
 def bump_fnox(f, out):
-    cur = f.find("mise.toml", r'^tools\."github:jdx/fnox" = "([^"]+)"')
+    """fnox is a task tool (the up and down tasks), which `mise upgrade` leaves alone."""
+    cur = f.find("mise.toml", r'^tools\.fnox = "([^"]+)"')
     latest = github_latest("jdx/fnox", r"v(.+)")
     if latest and key(latest[0]) > key(cur):
-        f.sub("mise.toml", r'^(tools\."github:jdx/fnox" = )"[^"]+"', rf'\g<1>"{latest[0]}"', count=2)
+        f.sub("mise.toml", r'^(tools\.fnox = )"[^"]+"', rf'\g<1>"{latest[0]}"', count=2)
         out.append(("fnox", cur, latest[0]))
 
 
@@ -169,6 +138,14 @@ def bump_mise(f, out):
     if not latest or key(latest[0]) <= key(cur):
         return
     v = latest[0]
+    # The Dockerfile's build-tools stage uses the same version, from mise's own image.
+    suffix = f.find("Dockerfile", r"^FROM ghcr\.io/jdx/mise:[0-9.]+(-\w+)?@")
+    image = f"ghcr.io/jdx/mise:{v}{suffix or ''}"
+    digest = image_digest(image)
+    if digest is None:
+        print(f"mise {v}: {image} is not published yet; skipping", file=sys.stderr)
+        return
+    f.sub("Dockerfile", r"^FROM ghcr\.io/jdx/mise:\S+@sha256:[0-9a-f]{64} AS build-tools$", f"FROM {image}@{digest} AS build-tools")
     f.sub(".github/workflows/ci.yml", r"^(  MISE_VERSION: )\S+$", rf"\g<1>{v}")
     for wf in sorted((ROOT / ".github/workflows").glob("*.yml")):
         rel = str(wf.relative_to(ROOT))
@@ -176,15 +153,6 @@ def bump_mise(f, out):
         if n:
             f.sub(rel, r"^( +version: )\S+( # same as MISE_VERSION)", rf"\g<1>{v}\g<2>", count=n)
     out.append(("mise (CI)", cur, v))
-
-
-def bump_crate_args(f, out):
-    for crate, arg in [("cargo-chef", "CARGO_CHEF_VERSION"), ("cargo-auditable", "CARGO_AUDITABLE_VERSION")]:
-        cur = f.find("Dockerfile", rf"^ARG {arg}=(\S+)$")
-        v = crate_latest(crate)
-        if v and key(v) > key(cur):
-            f.sub("Dockerfile", rf"^ARG {arg}=\S+$", f"ARG {arg}={v}")
-            out.append((crate, cur, v))
 
 
 def bump_overpass(f, out):
@@ -215,12 +183,10 @@ def bump_rust(f, out):
         return
     suffix = f.find("Dockerfile", r"^FROM rust:[0-9.]+-(slim-\w+)@")
     image = f"rust:{v}-{suffix}"
-    p = subprocess.run(["docker", "buildx", "imagetools", "inspect", image, "--format", "{{json .Manifest.Digest}}"],
-                       text=True, capture_output=True)
-    if p.returncode != 0:
+    digest = image_digest(image)
+    if digest is None:
         print(f"rust {v}: {image} is not published yet; skipping", file=sys.stderr)
         return
-    digest = json.loads(p.stdout)
     f.sub("rust-toolchain.toml", r'^channel = "[^"]+"', f'channel = "{v}"')
     f.sub("Cargo.toml", r'^rust-version = "[^"]+"', f'rust-version = "{v}"')
     f.sub("Dockerfile", r"^FROM rust:[0-9.]+-slim-\w+@sha256:[0-9a-f]{64} AS chef$", f"FROM {image}@{digest} AS chef")
@@ -250,9 +216,10 @@ def bump_nightly(f, out):
         return
 
 
+# "tools" goes first: mise edits mise.toml itself, before bump_fnox reads it.
 BUMPS = {
-    "ci-tools": bump_ci_tools, "trunk": bump_trunk, "fnox": bump_fnox, "mise": bump_mise,
-    "crates": bump_crate_args, "overpass": bump_overpass, "rust": bump_rust, "nightly": bump_nightly,
+    "tools": bump_mise_tools, "fnox": bump_fnox, "mise": bump_mise, "overpass": bump_overpass,
+    "rust": bump_rust, "nightly": bump_nightly,
 }
 
 
@@ -272,7 +239,10 @@ def main():
     for name, fn in BUMPS.items():
         if a.only and name not in a.only:
             continue
-        fn(f, out)
+        if fn is bump_mise_tools:
+            fn(f, out, a.dry_run)
+        else:
+            fn(f, out)
     if not a.dry_run:
         f.save()
     lines = [f"- {name}: {old} -> {new}" for name, old, new in out]

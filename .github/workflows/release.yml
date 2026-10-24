@@ -16,6 +16,11 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml: cargo-deny, Trivy and cosign (pinned, checksum-verified through mise.ci.lock)
+# and the scan tasks.
+env:
+  MISE_ENV: ci
+
 jobs:
   # Tags only. A tag is published only if it names the workspace version, points at a commit
   # on main, and no RustSec advisory (other than deny.toml's ignores) affects its Cargo.lock.
@@ -40,11 +45,16 @@ jobs:
           [ "v${version}" = "${TAG}" ] || { echo "::error::tag ${TAG} does not match the workspace version ${version}"; exit 1; }
           git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
           echo "${TAG}: version ${version}, on main"
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          command: check
-          arguments: --locked
-          command-arguments: advisories
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: cargo-deny
+          cache: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: mise run ci:toolchain
+      - name: No unaccepted advisory
+        run: mise run deny advisories
 
   image:
     name: image (${{ matrix.image }})
@@ -109,19 +119,18 @@ jobs:
           SMOKE: ${{ matrix.smoke }}
         run: '"${SMOKE}" "${CANDIDATE}"'
 
-      - name: Install Trivy and cosign (pinned, checksum-verified)
-        run: scripts/ci-tools.sh install trivy cosign
+      # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: "trivy cosign"
+          cache: false
 
-      # Releases are not published with a fixable CRITICAL or HIGH vulnerability (the pull
-      # request gate in security.yml scans the same way).
+      # Releases are not published with a fixable CRITICAL or HIGH vulnerability (the same
+      # scan as the pull request gate in security.yml).
       - name: Trivy scan (release gate)
         if: env.IS_TAG == 'true'
-        env:
-          TRIVY_DISABLE_TELEMETRY: "true"
-          TRIVY_SKIP_VERSION_CHECK: "true"
-        run: |
-          trivy image --image-src docker --scanners vuln --severity CRITICAL,HIGH \
-            --ignore-unfixed --exit-code 1 "${CANDIDATE}"
+        run: mise run scan:image "${CANDIDATE}"
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

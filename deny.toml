@@ -1,5 +1,5 @@
 # cargo-deny configuration (current schema; see
-# https://embarkstudios.github.io/cargo-deny/). Run: cargo deny check
+# https://embarkstudios.github.io/cargo-deny/). Run: mise -E ci run deny
 
 [graph]
 # Resolve dependencies for every platform we actually ship for.

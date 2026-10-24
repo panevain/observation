@@ -29,6 +29,8 @@ jobs:
       matrix:
         language: [rust, actions]
     env:
+      # mise.ci.toml: CI's cargo settings and the ci:toolchain task.
+      MISE_ENV: ci
       # Rust: the extractor runs cargo (build scripts and proc macros) in this directory, which
       # rust-cache keeps between runs (saved from develop only, like ci.yml's caches) instead of
       # a fresh scratch directory each time.
@@ -37,9 +39,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        if: matrix.language == 'rust'
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install: false
+          cache_save: ${{ github.ref == 'refs/heads/develop' }}
       - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
         if: matrix.language == 'rust'
-        run: scripts/ci-rust-toolchain.sh
+        run: mise run ci:toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: matrix.language == 'rust'
         with:

@@ -1,7 +1,30 @@
 # syntax=docker/dockerfile:1.7
 
 # ---------------------------------------------------------------------------
-# Stage 1: chef -- toolchain, trunk and cargo-chef (rarely changes).
+# Stage 0: build-tools -- trunk (mise.toml), cargo-chef and cargo-auditable
+# (mise.ci.toml), at the versions those files pin, from their release binaries
+# checked against the checksums in mise.lock and mise.ci.lock. Installed with
+# `--locked`, so mise downloads only the locked URLs (no GitHub API calls).
+#   * mise from its official image, pinned by digest; the tag is the CI mise
+#     version (MISE_VERSION in ci.yml; mise run sync checks they agree).
+#   * The chef stage copies in only the binaries, so a change to the mise files
+#     that leaves them alone keeps every later layer cached.
+# ---------------------------------------------------------------------------
+FROM ghcr.io/jdx/mise:2026.10.18-debian@sha256:b20a78a5fa550f0bb9026bef92fa16cfdac7ee672b54565a32840185fbc78389 AS build-tools
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+WORKDIR /tools
+COPY mise.toml mise.lock mise.ci.toml mise.ci.lock ./
+ENV MISE_ENV=ci \
+    MISE_TRUSTED_CONFIG_PATHS=/tools
+RUN set -eux; \
+    mise install --locked trunk cargo-chef cargo-auditable; \
+    mkdir -p /out; \
+    for bin in trunk cargo-chef cargo-auditable; do cp "$(mise which "${bin}")" /out/; done
+
+# ---------------------------------------------------------------------------
+# Stage 1: chef -- toolchain, trunk, cargo-chef and cargo-auditable (rarely changes).
 #   * Rust 1.99.1 on Debian 13 (trixie) -- must match rust-toolchain.toml.
 #   * Pinned by digest (multi-arch index); the tag is kept for readability.
 #     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-trixie
@@ -16,43 +39,19 @@ FROM rust:1.99.1-slim-trixie@sha256:1a939748a7cbab172de91a014e3804a97af1394a8c84
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG TRUNK_VERSION=0.22.0
-# sha256 of the release tarballs: GitHub's digests of the assets of
-# https://github.com/trunk-rs/trunk/releases/tag/v0.22.0, which match the published
-# *.tar.gz.sha256 files. scripts/bump-pins.py updates these with the version.
-ARG TRUNK_SHA256_AMD64=f78c1989240c56592d8cfc4df5cc27399a3ff66a3f9cc819e16f1e3d809ce7c2
-ARG TRUNK_SHA256_ARM64=a05b519ad8ba8b3935772586c2f08f93dd8f9ce06c74c03e89d3c2d03cb628b1
-ARG CARGO_CHEF_VERSION=0.1.78
-ARG CARGO_AUDITABLE_VERSION=0.7.7
-
 # TRUNK_SKIP_VERSION_CHECK: trunk would otherwise query the crates.io API for a
 # newer trunk release on every build (builder stages only; not in the runtime image).
 ENV CARGO_TERM_COLOR=always \
     CARGO_INCREMENTAL=0 \
     TRUNK_SKIP_VERSION_CHECK=true
 
-# curl + ca-certificates: fetch trunk (and, at build time, trunk fetches the
-# wasm-bindgen / wasm-opt versions matching Cargo.lock).
+# ca-certificates: at build time, trunk fetches the wasm-bindgen / wasm-opt
+# versions matching Cargo.lock.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl
-
-# trunk: prebuilt release binary, sha256-verified.
-RUN set -eux; \
-    case "$(dpkg --print-architecture)" in \
-      amd64) arch=x86_64;  sha="${TRUNK_SHA256_AMD64}" ;; \
-      arm64) arch=aarch64; sha="${TRUNK_SHA256_ARM64}" ;; \
-      *) echo "unsupported architecture" >&2; exit 1 ;; \
-    esac; \
-    f="trunk-${arch}-unknown-linux-gnu.tar.gz"; \
-    curl --proto '=https' --tlsv1.2 -fsSL -o "/tmp/${f}" \
-      "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/${f}"; \
-    echo "${sha}  /tmp/${f}" | sha256sum -c -; \
-    tar -xzf "/tmp/${f}" -C /usr/local/bin trunk; \
-    rm "/tmp/${f}"; \
-    trunk --version
+    && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /build
 
@@ -63,13 +62,10 @@ RUN rustup toolchain install --profile minimal --no-self-update \
     && rustup target add wasm32-unknown-unknown \
     && rustc --version && cargo --version
 
-# cargo-chef and cargo-auditable, pinned and built from crates.io with their own lockfiles.
 # cargo-auditable embeds the dependency list in the native binaries (a few KB, kept by
 # `strip`), so Trivy, the image SBOM and `cargo audit bin` can see which crates they contain.
-RUN cargo install --locked --version "${CARGO_CHEF_VERSION}" cargo-chef \
-    && cargo install --locked --version "${CARGO_AUDITABLE_VERSION}" cargo-auditable \
-    && rm -rf /usr/local/cargo/registry \
-    && cargo chef --version && cargo auditable --version
+COPY --from=build-tools /out/ /usr/local/bin/
+RUN trunk --version && cargo chef --version && cargo auditable --version
 
 # ---------------------------------------------------------------------------
 # Stage 2: planner -- reduce the workspace to a dependency recipe.

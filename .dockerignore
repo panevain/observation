@@ -19,9 +19,12 @@ node_modules
 Dockerfile
 /lcov.info
 
-# Local secrets for docker compose
+# Local settings and secrets (mise, docker compose)
 .env
 mise.local.toml
 mise.local.lock
-fnox.local.toml
+mise.*.local.toml
+mise.*.local.lock
 .mise.local.toml
+.miserc.local.toml
+fnox.local.toml

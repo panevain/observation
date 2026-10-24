@@ -82,11 +82,24 @@ If you rename a job, update the rulesets in the same PR and apply them once it i
 Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 
 ```sh
-mise run check     # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
-mise run build     # release wasm build, as the CI wasm job does
-cargo deny check   # if installed
+mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
+mise run build          # release wasm build, as the CI wasm job does
+mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
+mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, zizmor, scan:repo, fuzz
 ```
 
-Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`scripts/check-toolchain-sync.sh` keeps `Cargo.toml` and the Dockerfile equal to it). `cargo nextest` is used for tests when installed, and `mise run coverage` needs `cargo-llvm-cov`. The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
+Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise run sync` keeps `Cargo.toml`, `mise.lock` and the Dockerfile equal to it). `cargo nextest` is used for tests when installed, and `mise run coverage` needs `cargo-llvm-cov` (both in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
+
+### Tools (mise)
+
+Every tool is pinned once, and mise installs it from a release asset that matches the checksum in a lockfile:
+
+| File | Holds | Loaded |
+| --- | --- | --- |
+| `mise.toml`, `mise.lock` | trunk (Rust comes from `rust-toolchain.toml`), the shared tasks, and task tools (fnox for `up` and `down`, uv for `fonts`) | always |
+| `mise.ci.toml`, `mise.ci.lock` | the tools only CI and the image build use, CI's environment, and the tasks behind the security, fuzz and scan steps | with `MISE_ENV=ci` (every workflow sets it) or `mise -E ci` |
+| `mise.local.toml` | your own settings (`OBS_CONTACT` and so on; gitignored) | always |
+
+To add or change a tool, edit `mise.toml` or `mise.ci.toml` (for an unusual GitHub release, a `[tool_alias]` entry names its backend), then `mise run lock` to record its checksums in both lockfiles. A workflow job installs only what it needs (`install_args` of `jdx/mise-action`). The Pins workflow bumps every tool in `[tools]` with `mise upgrade --bump` once a release is a week old (`minimum_release_age` in `mise.toml`); task tools other than fnox stay where they are until someone bumps them. The Dockerfile's build-tools stage installs trunk, cargo-chef and cargo-auditable from the same lockfiles.
 
 Keep colours, spacing and other UI constants in `crates/observation-client/src/theme.rs` (the design-token check fails otherwise). See [docs/design.md](docs/design.md) for architecture and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

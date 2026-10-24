@@ -96,20 +96,10 @@ updates:
       # digest updates come from Dependabot.
       - dependency-name: rust
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      # The build-tools stage's mise is the CI mise (MISE_VERSION in ci.yml), which the Pins
+      # workflow bumps together with this tag; only its digest comes from Dependabot.
+      - dependency-name: "*jdx/mise"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
-
-  # Hash-pinned requirements for tools run from PyPI in CI (zizmor).
-  - package-ecosystem: pip
-    directory: /.github
-    schedule:
-      interval: weekly
-      day: monday
-      time: "07:15"
-      timezone: Etc/UTC
-    open-pull-requests-limit: 2
-    cooldown:
-      default-days: 7
-    commit-message:
-      prefix: "ci"

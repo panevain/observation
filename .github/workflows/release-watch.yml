@@ -20,6 +20,9 @@ concurrency:
 
 permissions: {}
 
+env:
+  MISE_ENV: ci
+
 jobs:
   scan:
     name: scan latest release
@@ -59,13 +62,19 @@ jobs:
           ref: v${{ steps.state.outputs.latest }}
           path: release
           persist-credentials: false
+      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
+      # directories: without shims, nothing run in release/ resolves its own mise config.
+      # No cache: they are downloaded fresh and checked against mise.ci.lock.
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        if: steps.state.outputs.go == 'true'
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: cargo-audit trivy
+          cache: false
+          add_shims_to_path: false
       - name: Install toolchain (from the release's rust-toolchain.toml)
         if: steps.state.outputs.go == 'true'
-        working-directory: release
-        run: rustup toolchain install --profile minimal --no-self-update
-      - name: Install cargo-audit and Trivy (pinned, checksum-verified)
-        if: steps.state.outputs.go == 'true'
-        run: scripts/ci-tools.sh install cargo-audit trivy
+        run: mise run ci:toolchain -C release
       # Runs `cargo update` in the release checkout to see which advisories have a compatible
       # fix; nothing is pushed from here.
       - name: Check
@@ -73,8 +82,6 @@ jobs:
         if: steps.state.outputs.go == 'true'
         env:
           VERSION: ${{ steps.state.outputs.latest }}
-          TRIVY_DISABLE_TELEMETRY: "true"
-          TRIVY_SKIP_VERSION_CHECK: "true"
         run: |
           set -euo pipefail
           action="$(python3 scripts/security-patch.py check --repo release --version "${VERSION}" --out "${RUNNER_TEMP}/report")"

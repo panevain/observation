@@ -1,6 +1,0 @@
-# Hash-pinned zizmor for .github/workflows/security.yml. Dependabot's pip ecosystem
-# (see dependabot.yml) proposes updates; regenerate hashes with `pip hash` or PyPI's JSON API.
-zizmor==1.31.1 \
-    --hash=sha256:58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410 \
-    --hash=sha256:d8a5f86fbf93e65e9d42de9eb4c1855d195c5e9cdeef4f228093ad6711bd8ee4 \
-    --hash=sha256:d9b36840c560a8abe39d9ef3d077239aabf6d572c5c2b629c970592a617dbf6f

@@ -14,6 +14,9 @@ concurrency:
 
 permissions: {}
 
+env:
+  MISE_ENV: ci
+
 jobs:
   build:
     name: regenerate treemap
@@ -26,13 +29,13 @@ jobs:
         with:
           # The report stamps the tagged commit.
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install: true
+          install_args: trunk
           cache: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: mise run ci:toolchain
       # A release build makes trunk download the wasm-bindgen and wasm-opt versions matching
       # Cargo.lock into its cache (a dev build skips wasm-opt); the report script reuses them.
       #

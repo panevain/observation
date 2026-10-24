@@ -78,11 +78,11 @@ Every change is checked automatically (see `.github/workflows/`):
 
 - **cargo-deny** (`deny.toml`): RustSec advisories, yanked crates, licence
   allow-list, banned or wildcard dependencies, and allowed crate sources.
-- **cargo-audit** (pinned, checksum-verified binary): `Cargo.lock` and the fuzz
+- **cargo-audit**: `Cargo.lock` and the fuzz
   workspace's `fuzz/Cargo.lock`, on every change and daily; yanked crates fail too.
   Accepted advisories need a reason in `deny.toml` and are mirrored in
   `.cargo/audit.toml` and `osv-scanner.toml`.
-- **Trivy** (pinned, checksum-verified binary): scans the container image's
+- **Trivy**: scans the container image's
   operating system packages and the server binary's crates (the binaries are built
   with `cargo auditable`, which embeds their dependency list; the static client,
   which Trivy does not inspect, is a stub for this scan) and the repository
@@ -93,13 +93,17 @@ Every change is checked automatically (see `.github/workflows/`):
   starts the Hotfix workflow; everything found is tracked in a `Security: vX.Y.Z`
   issue.
 - **zizmor** audits the GitHub Actions workflows and the Dependabot configuration
-  (hash-pinned install, with its online audits); findings fail the check and are
-  uploaded to code scanning.
+  (with its online audits); findings fail the check and are uploaded to code
+  scanning.
 - **CodeQL** for Rust and GitHub Actions workflows.
 - **OpenSSF Scorecard**, published weekly and on branch-protection changes.
-- **Dependabot** for Cargo, GitHub Actions, Docker and PyPI updates (version and
-  security updates), and a weekly workflow for the pinned tools Dependabot does
-  not cover. All GitHub Actions are pinned to full commit SHAs.
+- **Dependabot** for Cargo, GitHub Actions and Docker updates (version and
+  security updates), and a weekly workflow for the pins Dependabot does not
+  cover. All GitHub Actions are pinned to full commit SHAs, and the tools the
+  checks run (cargo-audit, cargo-deny, Trivy, zizmor, cosign and the rest) are
+  pinned in `mise.ci.toml` and installed only from release assets that match the
+  checksums in `mise.ci.lock`, with the publisher's attestations or signatures
+  verified where they exist.
 - **Release provenance**: both images pushed to GHCR (`observation` and
   `observation-regions`) carry SLSA build provenance and an SBOM, are signed
   keylessly with cosign, and are attested with GitHub artifact attestations. A

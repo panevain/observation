@@ -34,8 +34,10 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml: cargo-fuzz (pinned, checksum-verified through mise.ci.lock), CI's cargo
+# settings, and the fuzz tasks (`mise -E ci run fuzz` runs them locally).
 env:
-  CARGO_TERM_COLOR: always
+  MISE_ENV: ci
 
 jobs:
   fuzz:
@@ -48,25 +50,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: cargo-fuzz
+          cache_save: ${{ github.ref == 'refs/heads/develop' }}
       - name: Install toolchain (from fuzz/rust-toolchain.toml; the only one left installed)
-        working-directory: fuzz
-        run: ../scripts/ci-rust-toolchain.sh
+        run: mise run ci:toolchain -C fuzz
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: fuzz -> target
           shared-key: fuzz
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - name: Install cargo-fuzz (pinned in scripts/ci-tools.sh)
-        working-directory: fuzz
-        run: |
-          ../scripts/ci-tools.sh install cargo-fuzz
-          cargo fuzz --version
-      - name: Lockfile is current
-        working-directory: fuzz
-        run: cargo metadata --locked --format-version 1 > /dev/null
-      - name: Build targets
-        working-directory: fuzz
-        run: cargo fuzz build
+      - name: Lockfile is current, build targets
+        run: mise run fuzz:build
       # The working corpus carries over between runs: every run starts from the newest saved
       # one, and the nightly run saves what it grew to (about 25 MB), so coverage builds up
       # instead of restarting from the seeds each night.
@@ -76,36 +73,19 @@ jobs:
           path: fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: fuzz-corpus-
+      # 30 s per target on pull requests and pushes, 10 min nightly (with the per-target times
+      # of `mise run fuzz --nightly`), or the chosen time on a manual run.
       - name: Run targets
-        working-directory: fuzz
         env:
           EVENT: ${{ github.event_name }}
           INPUT_SECONDS: ${{ inputs.seconds }}
         run: |
           set -euo pipefail
           case "${EVENT}" in
-            schedule) secs=600 ;;
-            workflow_dispatch) secs="${INPUT_SECONDS:-300}" ;;
-            *) secs=30 ;;
+            schedule) mise run fuzz 600 --nightly ;;
+            workflow_dispatch) mise run fuzz "${INPUT_SECONDS:-300}" ;;
+            *) mise run fuzz 30 ;;
           esac
-          [[ "${secs}" =~ ^[0-9]+$ ]] || { echo "::error::seconds must be a number"; exit 1; }
-          for t in $(cargo fuzz list); do
-            mkdir -p "corpus/${t}"
-            dirs=("corpus/${t}")
-            if [ -d "seeds/${t}" ]; then dirs+=("seeds/${t}"); fi
-            # On the nightly run, bbox_query's coverage stops growing within a minute (a small
-            # parser at ~250k execs/s), while coverage_geometry runs a few hundred execs/s.
-            t_secs="${secs}"
-            if [ "${EVENT}" = schedule ]; then
-              case "${t}" in
-                bbox_query) t_secs=60 ;;
-                coverage_geometry) t_secs=900 ;;
-              esac
-            fi
-            echo "::group::${t} (${t_secs}s)"
-            cargo fuzz run "${t}" "${dirs[@]}" -- -max_total_time="${t_secs}" -rss_limit_mb=2048
-            echo "::endgroup::"
-          done
       - name: Save corpus
         if: ${{ !cancelled() && github.event_name == 'schedule' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -1,5 +1,8 @@
 # Dev tooling and tasks: https://mise.jdx.dev
-# CI runs these same tasks (.github/workflows/ci.yml), so `mise run check` matches it.
+# CI runs these same tasks (.github/workflows/ci.yml), so `mise run check` matches it. CI loads
+# mise.ci.toml on top of this file (MISE_ENV=ci): the tools only CI and the image build use,
+# CI's environment, and the tasks behind the security, fuzz and scan steps. `mise -E ci install`
+# then `mise -E ci run <task>` runs one of those locally.
 # rust-toolchain.toml is the single source of truth for the Rust version, components and
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
 # [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
@@ -13,13 +16,23 @@
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
 # needs a [[tools.rust]] entry for that version, because `mise install --locked` (used in CI)
 # rejects any resolved tool that is missing from the lock; bump it with the toolchain
-# (`mise lock`).
+# (`mise run lock`).
 idiomatic_version_file_enable_tools = ["rust"]
+# A new release of any tool is taken once it is a week old, as Dependabot's cooldown does
+# (`mise upgrade --bump`, which the Pins workflow runs, and `latest`). Exact pins and
+# lockfile entries are not affected.
+minimum_release_age = "7d"
+# Don't report installs to mise-versions.jdx.dev (download statistics).
+use_versions_host_track = false
+
+[tool_alias]
+# The registry's `trunk` is a different tool (Trunk.io's launcher).
+trunk = "github:trunk-rs/trunk"
+fnox = "github:jdx/fnox"
 
 [tools]
-# mise.lock records the release checksums. scripts/check-toolchain-sync.sh keeps the
-# version in sync with TRUNK_VERSION in the Dockerfile.
-"github:trunk-rs/trunk" = "0.22.0"
+# mise.lock records the release checksums; the Dockerfile installs trunk from it.
+trunk = "0.22.0"
 
 [env]
 # trunk would otherwise query the crates.io API for a newer release on every build.
@@ -38,7 +51,7 @@ description = "Clippy on the wasm client"
 run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
 
 [tasks.test]
-description = "Unit tests (core + server, then client if it has a lib target); uses cargo-nextest when installed"
+description = "Unit tests (core + server, then client if it has a lib target); uses cargo-nextest when installed (`mise -E ci install cargo-nextest`)"
 run = '''
 if cargo nextest --version >/dev/null 2>&1; then
   cargo nextest run --locked --workspace --exclude observation-client
@@ -54,7 +67,7 @@ fi
 '''
 
 [tasks.coverage]
-description = "Line coverage of core + server (needs cargo-llvm-cov and the llvm-tools-preview component); writes lcov.info"
+description = "Line coverage of core + server (needs cargo-llvm-cov, `mise -E ci install cargo-llvm-cov`, and the llvm-tools-preview component); writes lcov.info"
 run = "cargo llvm-cov --locked --workspace --exclude observation-client --lcov --output-path lcov.info"
 
 [tasks.tokens]
@@ -62,8 +75,14 @@ description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "Rust, trunk and CI mise versions agree across rust-toolchain.toml, Cargo.toml, Dockerfile, mise.toml and the workflows, and the advisory ignore lists agree"
+description = "The Rust and mise versions agree across rust-toolchain.toml, Cargo.toml, mise.lock, the Dockerfile and the workflows, and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
+
+[tasks.lock]
+description = "Refresh mise.lock and mise.ci.lock (checksums for every platform they list) after changing a tool in mise.toml or mise.ci.toml"
+# Under MISE_ENV=ci, `mise lock` writes both: each tool into the lockfile beside the file that
+# declares it.
+run = "MISE_ENV=ci {{mise_bin}} lock"
 
 [tasks.treemap]
 description = "Regenerate docs/images/wasm-bundle-treemap.svg (fat-LTO build, 15-20 minutes)"
@@ -72,6 +91,22 @@ run = "scripts/wasm-size-report.sh"
 [tasks.build]
 description = "Release-build the wasm client into dist/ (as CI does)"
 run = "trunk build --release --locked"
+
+[tasks."build:sizes"]
+description = "Sizes of dist/*.wasm (raw, gzip -9 and, if brotli is installed, brotli -q 11) as a Markdown table"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+mib() { awk -v n="$1" 'BEGIN { printf "%.2f MiB", n / 1048576 }'; }
+echo "| file | raw | gzip -9 | brotli -q 11 |"
+echo "| --- | ---: | ---: | ---: |"
+for f in dist/*.wasm; do
+  br="n/a"
+  if command -v brotli >/dev/null 2>&1; then br="$(mib "$(brotli -q 11 -c "$f" | wc -c)")"; fi
+  printf '| `%s` | %s | %s | %s |\n' "$(basename "$f")" "$(mib "$(wc -c < "$f")")" \
+    "$(mib "$(gzip -9 -c "$f" | wc -c)")" "${br}"
+done
+'''
 
 [tasks."build:dev"]
 description = "Fast unoptimised wasm client build into dist/"
@@ -90,7 +125,7 @@ run = "cargo run --locked --release -p observation-server"
 [tasks.up]
 description = "Start the Docker Compose stack (app + region agent) from the released images, with the fnox secrets"
 # A task tool: installed and locked for this task only, so `mise install` and CI skip it.
-tools."github:jdx/fnox" = "1.42.1"
+tools.fnox = "1.42.1"
 usage = 'flag "--build" help="Build both images from this checkout (tagged :local) instead of pulling OBS_VERSION"'
 run = '''
 if [ "${usage_build:-false}" = true ]; then
@@ -116,9 +151,22 @@ OBS_REGIONS_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_REFRESH_DAYS', default=
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"
-tools."github:jdx/fnox" = "1.42.1"
+tools.fnox = "1.42.1"
 # Under fnox too: compose.yaml refuses to load without OBS_REGIONS_TOKEN, even to stop.
 run = "fnox exec -- docker compose down"
+
+[tasks.fonts]
+description = "Rebuild the UI fonts in crates/observation-client/assets/fonts/ from the Inter and Iosevka releases (scripts/subset-fonts.sh)"
+# uv is a task tool (installed and locked for this task only); it runs the two PyPI packages
+# at these versions.
+tools = { uv = "0.13.5" }
+env = { FONTTOOLS_VERSION = "4.67.0", FEATURE_FREEZER_VERSION = "1.32.2" }
+run = "scripts/subset-fonts.sh"
+
+[tasks."fixtures:demo"]
+description = "Re-record the demo street's Overpass response (one real request; OBS_OVERPASS_URL picks the interpreter)"
+dir = "{{config_root}}/crates/observation-server/fixtures"
+run = "./fetch.sh"
 
 [tasks."rulesets:check"]
 description = "Diff .github/rulesets/ against the repository's live rulesets (needs gh)"
