@@ -134,6 +134,15 @@ pub struct OsmRoad {
 /// `highway=*` values for ways people walk or cycle on rather than drive.
 pub const FOOT_WAYS: [&str; 5] = ["footway", "path", "pedestrian", "cycleway", "steps"];
 
+/// Whether a road of this `highway=*` type can give a house its street name:
+/// not motorways or their links, and of the ways people walk or cycle on, only
+/// pedestrian streets.
+fn names_addresses(highway: &str) -> bool {
+    !(highway == "motorway"
+        || highway.ends_with("_link")
+        || (FOOT_WAYS.contains(&highway) && highway != "pedestrian"))
+}
+
 /// Estimated carriageway width from OSM `highway`, `lanes` and `width` tags.
 /// Returns `None` for highway types that are not part of the street surface.
 pub fn road_width_m(highway: &str, lanes: Option<&str>, width: Option<&str>) -> Option<f32> {
@@ -211,7 +220,7 @@ pub fn build_bundle(
             });
         }
     }
-    let roads = roads
+    let roads: Vec<Road> = roads
         .iter()
         .filter(|r| r.points.len() >= 2)
         .map(|r| Road {
@@ -222,6 +231,18 @@ pub fn build_bundle(
             points: r.points.iter().map(to_w).collect(),
         })
         .collect();
+    let streets: Vec<(&str, &[[f32; 2]])> = roads
+        .iter()
+        .filter(|r| names_addresses(&r.highway))
+        .filter_map(|r| Some((r.name.as_deref()?, r.points.as_slice())))
+        .collect();
+    for b in &mut out {
+        if let Some(a) = &mut b.address {
+            let (lo, hi) = ring_bounds(&b.footprint.outer);
+            let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+            a.fill_street(centre, streets.iter().copied());
+        }
+    }
     let footprints: Vec<&Footprint> = out.iter().map(|b| &b.footprint).collect();
     let bounds: Vec<_> = footprints.iter().map(|f| ring_bounds(&f.outer)).collect();
     let addresses = addresses
@@ -229,8 +250,10 @@ pub fn build_bundle(
         .map(|a| {
             let position = to_w(&a.point);
             let building = building_of(position, &footprints, &bounds);
+            let mut address = a.address.clone();
+            address.fill_street(position, streets.iter().copied());
             AddressPoint {
-                address: a.address.clone(),
+                address,
                 position,
                 building: building.map(|i| i as u32),
             }

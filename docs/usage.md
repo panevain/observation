@@ -81,7 +81,7 @@ The list groups cameras by street address, worked out from OpenStreetMap as you 
 - an address mapped as a point inside a building (an entrance, or one of a terrace's houses). A camera on that building takes the closest of its points, or
 - an address point on its own.
 
-A building's own address wins over points inside it. The address is the house number (or house name), the street (or place) and any unit, such as "10011 Northeast 120th Street". City and postcode are left out because they rarely differ within one area. The number always comes before the street, so in countries that write it after the street it reads the other way round. If nothing in the loaded area has an address, there are no headings. A camera's **Group** field overrides its address, for example to list a camera on a detached garage with the house, or to group by owner.
+A building's own address wins over points inside it. The address is the house number (or house name), the street (or place; where OpenStreetMap gives neither, the nearest named road within 100 m) and any unit, such as "10011 Northeast 120th Street". City and postcode are left out because they rarely differ within one area. The number always comes before the street, so in countries that write it after the street it reads the other way round. If nothing in the loaded area has an address, there are no headings. A camera's **Group** field overrides its address, for example to list a camera on a detached garage with the house, or to group by owner.
 
 ## Read the coverage
 

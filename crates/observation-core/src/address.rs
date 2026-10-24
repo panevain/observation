@@ -1,6 +1,8 @@
 //! Street addresses from OSM `addr:*` tags, and which address a camera is at.
 
 use crate::building::Footprint;
+use crate::occlusion::point_in_ring;
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 /// A camera farther than this from every addressed building or address point
@@ -10,8 +12,16 @@ pub const MAX_ADDRESS_DISTANCE_M: f32 = 25.0;
 /// An address node this close to a building's outline lies on it, metres.
 pub const ON_OUTLINE_M: f32 = 0.5;
 
+/// An address with neither `addr:street` nor `addr:place` takes its street
+/// from the nearest named road within this distance, metres.
+pub const STREET_SEARCH_M: f32 = 100.0;
+
 /// Longest tag value kept; OSM allows 255 characters, addresses need far fewer.
 const MAX_TAG_CHARS: usize = 80;
+
+fn clip(v: &str) -> String {
+    v.chars().take(MAX_TAG_CHARS).collect()
+}
 
 /// The parts of an OSM address that tell neighbouring houses apart. City,
 /// postcode and country are left out: every address in an area shares them.
@@ -19,7 +29,8 @@ const MAX_TAG_CHARS: usize = 80;
 pub struct Address {
     /// `addr:housenumber`.
     pub housenumber: Option<String>,
-    /// `addr:street`, or `addr:place` where there is no street.
+    /// `addr:street`, or `addr:place` where there is no street, or else the
+    /// nearest road's name (see [`Address::fill_street`]).
     pub street: Option<String>,
     /// `addr:housename`.
     pub housename: Option<String>,
@@ -30,12 +41,7 @@ pub struct Address {
 impl Address {
     /// Reads `addr:*` tags; `None` unless there is a house number or house name.
     pub fn from_tags<'a>(tag: impl Fn(&str) -> Option<&'a str>) -> Option<Self> {
-        let get = |k: &str| {
-            tag(k)
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .map(|v| v.chars().take(MAX_TAG_CHARS).collect::<String>())
-        };
+        let get = |k: &str| tag(k).map(str::trim).filter(|v| !v.is_empty()).map(clip);
         let a = Self {
             housenumber: get("addr:housenumber"),
             street: get("addr:street").or_else(|| get("addr:place")),
@@ -43,6 +49,35 @@ impl Address {
             unit: get("addr:unit"),
         };
         (a.housenumber.is_some() || a.housename.is_some()).then_some(a)
+    }
+
+    /// Without a street, takes the name of the road nearest `p` within
+    /// [`STREET_SEARCH_M`], as geocoders such as Nominatim do. Some mappers put
+    /// the street on an `associatedStreet` relation instead, which the query
+    /// does not fetch; without this, two houses tagged only `12` would share
+    /// one label and so one group. `streets` are names with world polylines.
+    pub fn fill_street<'a>(
+        &mut self,
+        p: [f32; 2],
+        streets: impl IntoIterator<Item = (&'a str, &'a [[f32; 2]])>,
+    ) {
+        if self.street.is_some() {
+            return;
+        }
+        let mut best: Option<(f32, &str)> = None;
+        for (name, points) in streets {
+            let d = points
+                .windows(2)
+                .map(|w| distance_to_segment(p, w[0], w[1]))
+                .fold(f32::INFINITY, f32::min);
+            if d <= STREET_SEARCH_M && best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, name));
+            }
+        }
+        self.street = best
+            .map(|(_, n)| n.trim())
+            .filter(|n| !n.is_empty())
+            .map(clip);
     }
 
     /// One line, such as `10011 Northeast 120th Street` or `Rose Cottage`.
@@ -159,7 +194,7 @@ fn within_bounds(p: [f32; 2], (lo, hi): ([f32; 2], [f32; 2]), margin: f32) -> bo
 
 /// Plan-view distance from `p` to the footprint's outer ring; 0 inside it.
 pub fn distance_to_footprint(p: [f32; 2], f: &Footprint) -> f32 {
-    if point_in_ring(p, &f.outer) {
+    if point_in_ring(Vec2::from(p), &f.outer) {
         return 0.0;
     }
     distance_to_ring(p, &f.outer)
@@ -186,8 +221,8 @@ pub fn building_of(
     candidates()
         .find(|(_, (f, b))| {
             within_bounds(p, **b, 0.0)
-                && point_in_ring(p, &f.outer)
-                && !f.holes.iter().any(|h| point_in_ring(p, h))
+                && point_in_ring(Vec2::from(p), &f.outer)
+                && !f.holes.iter().any(|h| point_in_ring(Vec2::from(p), h))
         })
         .or_else(|| {
             candidates().find(|(_, (f, b))| {
@@ -195,19 +230,6 @@ pub fn building_of(
             })
         })
         .map(|(i, _)| i)
-}
-
-/// Even-odd test; the ring may or may not repeat its first point.
-pub fn point_in_ring(p: [f32; 2], ring: &[[f32; 2]]) -> bool {
-    let mut inside = false;
-    for (a, b) in ring_edges(ring) {
-        if (a[1] > p[1]) != (b[1] > p[1])
-            && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
-        {
-            inside = !inside;
-        }
-    }
-    inside
 }
 
 fn ring_edges(ring: &[[f32; 2]]) -> impl Iterator<Item = ([f32; 2], [f32; 2])> + '_ {
@@ -291,6 +313,28 @@ mod tests {
         let long = "9".repeat(500);
         let a = parse(&[("addr:housenumber", &long)]).unwrap();
         assert_eq!(a.housenumber.unwrap().len(), MAX_TAG_CHARS);
+    }
+
+    #[test]
+    fn missing_streets_come_from_the_nearest_road() {
+        let (main, high) = (
+            vec![[0.0, 0.0], [100.0, 0.0]],
+            vec![[0.0, 50.0], [100.0, 50.0]],
+        );
+        let streets = || [("Main St", &main[..]), ("High St", &high[..])];
+        let mut a = parse(&[("addr:housenumber", "12")]).unwrap();
+        let mut b = a.clone();
+        a.fill_street([30.0, 10.0], streets());
+        b.fill_street([30.0, 45.0], streets());
+        assert_eq!(a.label(), "12 Main St");
+        assert_eq!(b.label(), "12 High St");
+        // A tagged street or place is kept, and a road too far away is not used.
+        let mut c = parse(&[("addr:housenumber", "3"), ("addr:place", "Upton")]).unwrap();
+        c.fill_street([30.0, 10.0], streets());
+        assert_eq!(c.label(), "3 Upton");
+        let mut d = parse(&[("addr:housenumber", "4")]).unwrap();
+        d.fill_street([30.0, 200.0], streets());
+        assert_eq!(d.label(), "4");
     }
 
     #[test]
@@ -393,7 +437,7 @@ mod tests {
         let other = square(30.0, 0.0, 10.0);
         let fps = [&f, &other];
         let bounds: Vec<_> = fps.iter().map(|f| ring_bounds(&f.outer)).collect();
-        assert!(!point_in_ring([5.0, 20.0], &f.outer));
+        assert!(!point_in_ring(Vec2::new(5.0, 20.0), &f.outer));
         assert_eq!(building_of([5.0, 20.0], &fps, &bounds), Some(0));
         assert_eq!(building_of([5.0, 10.0], &fps, &bounds), Some(0));
         assert_eq!(building_of([35.0, 5.0], &fps, &bounds), Some(1));
