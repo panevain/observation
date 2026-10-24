@@ -120,6 +120,14 @@ tools."github:jdx/fnox" = "1.42.1"
 # Under fnox too: compose.yaml refuses to load without OBS_REGIONS_TOKEN, even to stop.
 run = "fnox exec -- docker compose down"
 
+[tasks."rulesets:check"]
+description = "Diff .github/rulesets/ against the repository's live rulesets (needs gh)"
+run = "scripts/rulesets.sh check"
+
+[tasks."rulesets:apply"]
+description = "Create or update the live rulesets from .github/rulesets/ (repository admin; `mise run rulesets:apply --prune` also deletes live ones with no file)"
+run = "scripts/rulesets.sh apply"
+
 [tasks.check]
 description = "fmt, clippy, tests, design tokens and version sync (the non-Docker CI checks; build is separate)"
 depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens", "sync"]

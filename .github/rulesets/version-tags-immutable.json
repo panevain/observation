@@ -1,5 +1,5 @@
 {
-  "name": "v* tags (immutable, admin-created)",
+  "name": "v* tags: never moved or deleted",
   "target": "tag",
   "enforcement": "active",
   "conditions": {
@@ -10,17 +10,8 @@
       "exclude": []
     }
   },
-  "bypass_actors": [
-    {
-      "actor_id": 5,
-      "actor_type": "RepositoryRole",
-      "bypass_mode": "always"
-    }
-  ],
+  "bypass_actors": [],
   "rules": [
-    {
-      "type": "creation"
-    },
     {
       "type": "update"
     },
