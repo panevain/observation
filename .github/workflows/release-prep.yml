@@ -2,7 +2,8 @@ name: Prepare release
 
 # Starts the git-flow release for you: creates release/<version> from develop, bumps the
 # workspace version, refreshes Cargo.lock, dates the CHANGELOG, and opens the PR into main.
-# The rest of the flow (merge, tag, back-merge) is in CONTRIBUTING.md.
+# Merging that PR is the release: release-tag.yml then tags main, Release publishes the
+# images and the GitHub release, and a back-merge PR into develop follows (CONTRIBUTING.md).
 on:
   workflow_dispatch:
     inputs:
@@ -18,9 +19,12 @@ jobs:
     name: open release PR
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The bot app's key lives in this environment (develop, main and v* tags only). The app
+    # pushes and opens the PR, so the PR's checks start (GITHUB_TOKEN-made ones wait for a
+    # manual approval).
+    environment: bot
     permissions:
-      contents: write # push release/<version>
-      pull-requests: write # open the pull request
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,29 +37,35 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "not a semver version: ${VERSION}" >&2; exit 1; }
-          sed -i -E '/^\[workspace\.package\]/,/^$/ s/^version = "[^"]+"/version = "'"${VERSION}"'"/' Cargo.toml
-          cargo update -w
-          cargo update -w --manifest-path fuzz/Cargo.toml
+          scripts/set-version.sh "${VERSION}"
           today="$(date -u +%F)"
           sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${VERSION}] - ${today}/" CHANGELOG.md
+      # Minted after the build steps above, so nothing they ran can read it.
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - name: Open pull request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           branch="release/${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/ci-git.sh identity "${BOT}"
           git switch -c "${branch}"
-          git commit -am "release: ${VERSION}"
+          git -c core.hooksPath=/dev/null commit -am "release: ${VERSION}"
           scripts/ci-git.sh push "${branch}"
           if ! gh pr create --base main --head "${branch}" \
             --title "release: ${VERSION}" \
-            --body "Release ${VERSION}. Merge with a merge commit, then tag \`main\` as described in CONTRIBUTING.md. Checks do not start automatically on pull requests opened with GITHUB_TOKEN; push any follow-up commit to the branch (for example the dated changelog edit) to run them."; then
+            --body "Release ${VERSION}. Merge with a merge commit when the checks pass: release-tag.yml then tags \`main\` as v${VERSION}, Release publishes the images and the GitHub release, and a back-merge PR into \`develop\` is opened."; then
             # Branch rulesets forbid force-pushes, so a leftover branch would block a re-run.
-            echo "could not open the pull request. Is 'Allow GitHub Actions to create and approve pull requests' enabled (Settings > Actions > General)? Removing ${branch} so the workflow can be re-run." >&2
+            echo "could not open the pull request; removing ${branch} so the workflow can be re-run." >&2
             scripts/ci-git.sh delete "${branch}"
             exit 1
           fi
