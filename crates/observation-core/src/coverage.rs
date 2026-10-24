@@ -6,7 +6,7 @@
 
 use crate::building::{Footprint, clean_ring, signed_area2};
 use crate::bundle::AreaBundle;
-use crate::camera::{DoriLevel, Lighting};
+use crate::camera::{DoriLevel, Lighting, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM};
 use crate::frustum::ViewCone;
 use crate::occlusion::{Occluders, point_in_ring};
 use glam::{Vec2, Vec3};
@@ -23,6 +23,22 @@ pub struct CoverageParams {
     /// Height above ground at which people are tested, metres
     /// (0 = ground, ~1.0 = torso, ~1.6 = face).
     pub subject_height_m: f32,
+    /// Pixel density used when `dori` is [`DoriLevel::Custom`], px/m.
+    #[serde(default = "default_custom_ppm")]
+    pub custom_ppm: f32,
+}
+
+fn default_custom_ppm() -> f32 {
+    250.0
+}
+
+impl CoverageParams {
+    /// Pixel density the analysis requires, px/m.
+    pub fn pixels_per_metre(&self) -> f32 {
+        self.dori
+            .pixels_per_metre()
+            .unwrap_or_else(|| self.custom_ppm.clamp(MIN_CUSTOM_PPM, MAX_CUSTOM_PPM))
+    }
 }
 
 impl Default for CoverageParams {
@@ -31,6 +47,7 @@ impl Default for CoverageParams {
             dori: DoriLevel::Detect,
             lighting: Lighting::Day,
             subject_height_m: 1.0,
+            custom_ppm: default_custom_ppm(),
         }
     }
 }

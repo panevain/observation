@@ -112,17 +112,17 @@ impl CameraModel {
         self.vfov_deg.clamp(1.0, MAX_FOV_DEG)
     }
 
-    /// Distance at which the horizontal pixel density drops to the DORI
-    /// threshold, using a rectilinear approximation (centre of frame).
-    pub fn dori_range_m(&self, level: DoriLevel) -> f32 {
+    /// Distance at which the horizontal pixel density drops to `ppm` pixels
+    /// per metre, using a rectilinear approximation (centre of frame).
+    pub fn dori_range_m(&self, ppm: f32) -> f32 {
         let half = (self.hfov_clamped() / 2.0).to_radians();
         let width_px = self.resolution[0].max(1) as f32;
-        (width_px / (2.0 * level.pixels_per_metre() * half.tan())).min(MAX_RANGE_M)
+        (width_px / (2.0 * ppm.max(MIN_CUSTOM_PPM) * half.tan())).min(MAX_RANGE_M)
     }
 
     /// Effective modelled range under the given conditions.
-    pub fn effective_range_m(&self, level: DoriLevel, lighting: Lighting) -> f32 {
-        let dori = self.dori_range_m(level);
+    pub fn effective_range_m(&self, ppm: f32, lighting: Lighting) -> f32 {
+        let dori = self.dori_range_m(ppm);
         match lighting {
             Lighting::Day => dori,
             Lighting::Night => dori.min(self.ir_range_m.unwrap_or(ASSUMED_IR_RANGE_M)),
@@ -194,7 +194,12 @@ pub fn is_https_url(s: &str) -> bool {
         && !authority.contains('@')
 }
 
-/// DORI (EN 62676-4) pixel-density thresholds.
+/// Allowed range for a user-chosen pixel density, px/m.
+pub const MIN_CUSTOM_PPM: f32 = 1.0;
+pub const MAX_CUSTOM_PPM: f32 = 2000.0;
+
+/// DORI (EN 62676-4) pixel-density thresholds, plus a user-chosen density
+/// (`CoverageParams::custom_ppm`) for calibrating against real footage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum DoriLevel {
     /// 25 px/m — can tell a person is present.
@@ -206,17 +211,27 @@ pub enum DoriLevel {
     Recognise,
     /// 250 px/m — identify a stranger.
     Identify,
+    /// User-chosen px/m.
+    Custom,
 }
 
 impl DoriLevel {
-    pub const ALL: [Self; 4] = [Self::Detect, Self::Observe, Self::Recognise, Self::Identify];
+    pub const ALL: [Self; 5] = [
+        Self::Detect,
+        Self::Observe,
+        Self::Recognise,
+        Self::Identify,
+        Self::Custom,
+    ];
 
-    pub fn pixels_per_metre(self) -> f32 {
+    /// The standard density; `None` for [`Self::Custom`].
+    pub fn pixels_per_metre(self) -> Option<f32> {
         match self {
-            Self::Detect => 25.0,
-            Self::Observe => 62.0,
-            Self::Recognise => 125.0,
-            Self::Identify => 250.0,
+            Self::Detect => Some(25.0),
+            Self::Observe => Some(62.0),
+            Self::Recognise => Some(125.0),
+            Self::Identify => Some(250.0),
+            Self::Custom => None,
         }
     }
 
@@ -226,6 +241,7 @@ impl DoriLevel {
             Self::Observe => "Observe",
             Self::Recognise => "Recognise",
             Self::Identify => "Identify",
+            Self::Custom => "Custom",
         }
     }
 }
@@ -388,12 +404,13 @@ mod tests {
     fn dori_ranges() {
         let m = model();
         // 1920 / (2 * 25 * tan 45°) = 38.4 m
-        assert!((m.dori_range_m(DoriLevel::Detect) - 38.4).abs() < 0.01);
-        assert!(m.dori_range_m(DoriLevel::Identify) < m.dori_range_m(DoriLevel::Recognise));
-        assert_eq!(
-            m.effective_range_m(DoriLevel::Detect, Lighting::Night),
-            10.0
-        );
+        assert!((m.dori_range_m(25.0) - 38.4).abs() < 0.01);
+        assert!(m.dori_range_m(250.0) < m.dori_range_m(125.0));
+        assert_eq!(m.effective_range_m(25.0, Lighting::Night), 10.0);
+        // A zero or negative density cannot yield an infinite or negative range
+        // (the 100 m cap alone would hide an infinite one, so test a negative).
+        assert_eq!(m.dori_range_m(0.0), m.dori_range_m(MIN_CUSTOM_PPM));
+        assert_eq!(m.dori_range_m(-25.0), m.dori_range_m(MIN_CUSTOM_PPM));
     }
 
     #[test]
