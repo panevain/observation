@@ -69,6 +69,7 @@ pub struct UiData<'w> {
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
+    pub addresses: Res<'w, crate::addresses::CameraAddresses>,
     pub area: Option<Res<'w, Area>>,
     pub loading: ResMut<'w, Loading>,
     pub history: Res<'w, crate::history::History>,

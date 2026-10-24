@@ -11,8 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use observation_core::address::Address;
 use observation_core::building::infer_heights;
-use observation_core::bundle::{OsmBuilding, OsmRoad, road_width_m};
+use observation_core::bundle::{OsmAddressPoint, OsmBuilding, OsmRoad, road_width_m};
 use observation_core::geo::{BBox, LatLon};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -25,11 +26,12 @@ use crate::error::ApiError;
 /// Largest Overpass response we are willing to buffer.
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
-/// Buildings and roads extracted from one Overpass response.
+/// Buildings, roads and address nodes extracted from one Overpass response.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct OsmData {
     pub buildings: Vec<OsmBuilding>,
     pub roads: Vec<OsmRoad>,
+    pub addresses: Vec<OsmAddressPoint>,
 }
 
 /// The Overpass response could not be used.
@@ -47,7 +49,7 @@ pub enum ParseError {
 pub fn build_query(bbox: &BBox) -> String {
     let b = bbox.overpass();
     format!(
-        "[out:json][timeout:25];\n(\n  way[\"building\"]({b});\n  relation[\"building\"][\"type\"=\"multipolygon\"]({b});\n  way[\"highway\"]({b});\n);\nout geom qt;\n"
+        "[out:json][timeout:25];\n(\n  way[\"building\"]({b});\n  relation[\"building\"][\"type\"=\"multipolygon\"]({b});\n  way[\"highway\"]({b});\n  node[\"addr:housenumber\"]({b});\n  node[\"addr:housename\"]({b});\n);\nout geom qt;\n"
     )
 }
 
@@ -72,6 +74,9 @@ struct Element {
     geometry: Vec<Option<Pt>>,
     #[serde(default)]
     members: Vec<Member>,
+    /// Node position.
+    lat: Option<f64>,
+    lon: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +119,8 @@ fn complete_geometry(g: &[Option<Pt>]) -> Option<Vec<LatLon>> {
 ///   id (all outers of one relation share it).
 /// * `highway` ways become roads when [`road_width_m`] knows the type; `area=yes`
 ///   highways (plazas, car parks) are skipped.
+/// * Buildings keep their `addr:*` tags, and nodes with a house number or
+///   house name become address points.
 pub fn parse_response(json: &[u8]) -> Result<OsmData, ParseError> {
     let resp: Response = serde_json::from_slice(json)?;
     if let Some(remark) = resp.remark.filter(|r| r.contains("runtime error")) {
@@ -150,6 +157,7 @@ pub fn parse_response(json: &[u8]) -> Result<OsmData, ParseError> {
                     holes: vec![],
                     min_height_m,
                     height_m,
+                    address: address(&e.tags),
                 });
             }
             "way" => {
@@ -158,6 +166,18 @@ pub fn parse_response(json: &[u8]) -> Result<OsmData, ParseError> {
                 }
             }
             "relation" if e.tags.contains_key("building") => parse_relation(e, &mut out.buildings),
+            "node" => {
+                let point = e
+                    .lat
+                    .zip(e.lon)
+                    .filter(|(a, b)| a.is_finite() && b.is_finite());
+                if let Some(((lat, lon), address)) = point.zip(address(&e.tags)) {
+                    out.addresses.push(OsmAddressPoint {
+                        address,
+                        point: LatLon::new(lat, lon),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -166,6 +186,10 @@ pub fn parse_response(json: &[u8]) -> Result<OsmData, ParseError> {
 
 fn heights(tags: &HashMap<String, String>) -> (f32, f32) {
     infer_heights(|k| tags.get(k).map(String::as_str))
+}
+
+fn address(tags: &HashMap<String, String>) -> Option<Address> {
+    Address::from_tags(|k| tags.get(k).map(String::as_str))
 }
 
 fn parse_road(e: &Element) -> Option<OsmRoad> {
@@ -205,6 +229,7 @@ fn parse_relation(e: &Element, out: &mut Vec<OsmBuilding>) {
     let outers = stitch_rings(ways("outer"));
     let inners = stitch_rings(ways("inner"));
     let (min_height_m, height_m) = heights(&e.tags);
+    let address = address(&e.tags);
 
     let mut holes: Vec<Vec<Vec<LatLon>>> = vec![Vec::new(); outers.len()];
     for inner in inners {
@@ -222,6 +247,7 @@ fn parse_relation(e: &Element, out: &mut Vec<OsmBuilding>) {
             holes,
             min_height_m,
             height_m,
+            address: address.clone(),
         });
     }
 }
@@ -601,6 +627,7 @@ mod tests {
         assert!(q.starts_with("[out:json][timeout:25];"));
         assert!(q.contains("way[\"building\"](1.0000000,2.0000000,1.1000000,2.1000000);"));
         assert!(q.contains("relation[\"building\"][\"type\"=\"multipolygon\"]"));
+        assert!(q.contains("node[\"addr:housenumber\"](1.0000000,2.0000000,1.1000000,2.1000000);"));
         assert!(q.trim_end().ends_with("out geom qt;"));
     }
 
@@ -620,7 +647,7 @@ mod tests {
 
     const MULTI: &str = r#"{
       "elements": [
-        {"type":"way","id":1,"tags":{"building":"yes","building:levels":"2"},
+        {"type":"way","id":1,"tags":{"building":"yes","building:levels":"2","addr:housenumber":"7","addr:street":"Main St"},
          "geometry":[{"lat":0,"lon":0},{"lat":0,"lon":1},{"lat":1,"lon":1},{"lat":1,"lon":0},{"lat":0,"lon":0}]},
         {"type":"way","id":2,"tags":{"building":"yes"},"geometry":[{"lat":0,"lon":0},{"lat":0,"lon":1},{"lat":1,"lon":1}]},
         {"type":"way","id":3,"tags":{"building":"yes"},"geometry":[{"lat":0,"lon":0},{"lat":0,"lon":1},{"lat":0,"lon":0}]},
@@ -639,7 +666,9 @@ mod tests {
          ]},
         {"type":"relation","id":101,"tags":{"type":"multipolygon","building":"yes"},
          "members":[{"type":"way","ref":60,"role":"outer","geometry":[{"lat":0,"lon":0},{"lat":0,"lon":1},{"lat":1,"lon":1}]}]},
-        {"type":"node","id":9,"lat":0,"lon":0}
+        {"type":"node","id":9,"lat":0,"lon":0},
+        {"type":"node","id":10,"lat":12,"lon":13,"tags":{"addr:housenumber":"3","addr:street":"Main St","entrance":"main"}},
+        {"type":"node","id":11,"lat":12,"lon":13,"tags":{"addr:street":"Main St"}}
       ]
     }"#;
 
@@ -656,6 +685,19 @@ mod tests {
         // The inner ring inside the outer is a hole; the stray one is dropped.
         assert_eq!(d.buildings[1].outer.len(), 5);
         assert_eq!(d.buildings[1].holes.len(), 1);
+        assert_eq!(
+            d.buildings[0]
+                .address
+                .as_ref()
+                .map(Address::label)
+                .as_deref(),
+            Some("7 Main St")
+        );
+        assert_eq!(d.buildings[1].address, None);
+        // Node 9 has no tags and node 11 no house number.
+        assert_eq!(d.addresses.len(), 1);
+        assert_eq!(d.addresses[0].address.label(), "3 Main St");
+        assert_eq!(d.addresses[0].point, LatLon::new(12.0, 13.0));
 
         assert_eq!(d.roads.len(), 1);
         let r = &d.roads[0];
@@ -703,5 +745,7 @@ mod tests {
                 .iter()
                 .all(|b| b.outer.len() >= 3 && b.height_m > 0.0)
         );
+        let addressed = d.buildings.iter().filter(|b| b.address.is_some()).count();
+        assert!(addressed > 50, "{addressed} addressed buildings");
     }
 }

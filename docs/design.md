@@ -128,11 +128,13 @@ The query is the same for every box:
   way["building"](s,w,n,e);
   relation["building"]["type"="multipolygon"](s,w,n,e);
   way["highway"](s,w,n,e);
+  node["addr:housenumber"](s,w,n,e);
+  node["addr:housename"](s,w,n,e);
 );
 out geom qt;
 ```
 
-**Parsing.** Closed `building` ways with at least four points and no missing nodes become buildings. Ways that are `outer` members of a building relation are skipped, because the relation covers them. Multipolygon relations have their outer and inner member ways **stitched** end to end (reversing where needed; shared nodes have identical coordinates, so exact comparison is correct) into closed rings. Unclosed fragments are dropped. Each outer ring becomes a building, and each inner ring becomes a hole of the outer ring that contains its first point. A relation's buildings carry the negated relation id so they cannot clash with way ids. `highway` ways become roads when the type has a known width; `area=yes` ways are skipped.
+**Parsing.** Closed `building` ways with at least four points and no missing nodes become buildings. Ways that are `outer` members of a building relation are skipped, because the relation covers them. Multipolygon relations have their outer and inner member ways **stitched** end to end (reversing where needed; shared nodes have identical coordinates, so exact comparison is correct) into closed rings. Unclosed fragments are dropped. Each outer ring becomes a building, and each inner ring becomes a hole of the outer ring that contains its first point. A relation's buildings carry the negated relation id so they cannot clash with way ids. `highway` ways become roads when the type has a known width; `area=yes` ways are skipped. Buildings keep their address (`addr:housenumber` or `addr:housename`, with `addr:street` or else `addr:place`, and `addr:unit`; each value trimmed and cut to 80 characters), and nodes with a house number or house name become **address points**. Each point records the building it lies in (outer ring, outside holes).
 
 **Height inference** (`building::infer_heights`), in priority order:
 
@@ -162,7 +164,7 @@ area bundle miss ──────────────────▶ bundl
 **The agent** runs in a Debian image with Overpass API 0.7.62 (built from the sha256-pinned release tarball) and `osmium-tool`. It keeps one Overpass database per region under its data volume and imports one region at a time from a queue:
 
 1. **Download** the extract's `-latest.osm.pbf` from the URL in Geofabrik's `index-v1-nogeom.json` (ids are only accepted if the index lists them, and downloads must be on the index's own host), refusing anything over `OBS_REGIONS_MAX_DOWNLOAD_MB`, and its `.poly` boundary.
-2. **Filter** with `osmium tags-filter w/building r/building w/highway` (referenced nodes and member ways are kept). This cuts the data to roughly a tenth.
+2. **Filter** with `osmium tags-filter w/building r/building w/highway n/addr:housenumber n/addr:housename` (referenced nodes and member ways are kept). Regions imported before address nodes were kept have building addresses only, until their next refresh. This cuts the data to roughly a tenth.
 3. **Import** with `osmium cat -f osm | update_database --meta=no` (lz4 compression) into a new directory under `work/`. Progress counts the `<node`, `<way` and `<relation` elements streamed against `osmium fileinfo`'s totals; download progress is bytes against `Content-Length`.
 4. **Swap.** The finished database moves to `db/<region>-<time>/` with its boundary, and replaces the old one in `regions.json`. Queries already running on the old database finish on it; its directory is removed when the last one ends.
 
@@ -198,14 +200,16 @@ A response body is:
 | Offset | Size | Field |
 | --- | --- | --- |
 | 0 | 4 bytes | Magic `OBSB` |
-| 4 | 2 bytes | Format version, `u16` little-endian (currently `1`) |
+| 4 | 2 bytes | Format version, `u16` little-endian (currently `2`; version 2 added addresses) |
 | 6 | rest | `AreaBundle`, encoded with [postcard](https://docs.rs/postcard) |
 
-`AreaBundle` fields, in order: `bbox` (south, west, north, east as f64), `origin` (lat, lon), `buildings`, `roads`, `mesh`, `attribution`, `generated_unix`.
+`AreaBundle` fields, in order: `bbox` (south, west, north, east as f64), `origin` (lat, lon), `buildings`, `roads`, `mesh`, `addresses`, `attribution`, `generated_unix`.
 
 | Type | Fields |
 | --- | --- |
-| `Building` | `osm_id` (i64; negative for relations), `footprint` (outer ring, holes, `min_height_m`, `height_m`; world `[x, z]` in f32), `index_range` (`[first_index, count]` into the mesh) |
+| `Building` | `osm_id` (i64; negative for relations), `footprint` (outer ring, holes, `min_height_m`, `height_m`; world `[x, z]` in f32), `index_range` (`[first_index, count]` into the mesh), optional `address` |
+| `Address` | Optional `housenumber`, `street` (or `addr:place`), `housename`, `unit` strings |
+| `AddressPoint` | `address`, `position` (world `[x, z]`), optional `building` (index into `buildings` of the building it lies in) |
 | `Road` | `osm_id`, `highway`, optional `name`, `width_m`, `points` (world `[x, z]` polyline) |
 | `MeshData` | `positions` (f32 x 3), `normals`, `indices` (u32) |
 
@@ -252,6 +256,7 @@ The client is a Bevy app (`DefaultPlugins` with WebGL2) whose UI is egui via `be
 | `NetPlugin` | `fetch` bundles and tiles from the page's origin, reply through a channel drained every frame. Tile queue: at most 6 requests in flight, newest first, soft cap of 400 tiles |
 | `WorldPlugin` | Builds the 3D area on load: building mesh, ground, map tiles draped on the ground (at most 64 tiles, plus a 150 m margin around the area), lights, coverage overlay assets |
 | `CamerasPlugin` | Camera bodies (a small coloured box with a lens) and view-cone gizmos |
+| `AddressesPlugin` | Each camera's address (`address::address_at` in core: the nearest addressed building or address point within 25 m, measuring a point inside a building to that building), recomputed only for cameras that moved and for a new area; the camera list groups by it unless the camera has its own `group` |
 | `CoveragePlugin` | Incremental coverage computation and overlay painting |
 | `InputPlugin` | Orbit camera, pointer and touch gestures, tool actions, shortcuts |
 | `PersistPlugin` | Autosave, restore, JSON export and import |
@@ -344,7 +349,7 @@ The minimum supported viewport is 768 x 600 CSS px, enforced twice: a CSS media 
 
 ## Persistence
 
-The scene is serialised with `SceneFile` (`format: "observation-scene"`, `version: 1`) to `localStorage` under `observation.scene.v1` whenever its JSON changes, checked every 1.5 s. At start-up the stored scene is restored (and its area re-fetched); a missing entry loads the demo and opens the help card; an unreadable entry shows an error and falls back to the demo. Export and import use the same format through a file download and a file picker. `SceneFile::from_json` is the single validation point (see the threat model). Camera positions are relative to the stored origin, which comes from the bundle, so a saved scene lines up with its buildings as long as the area is regenerated from the same box.
+The scene is serialised with `SceneFile` (`format: "observation-scene"`, `version: 1`) to `localStorage` under `observation.scene.v1` whenever its JSON changes, checked every 1.5 s. At start-up the stored scene is restored (and its area re-fetched); a missing entry loads the demo and opens the help card; an unreadable entry shows an error and falls back to the demo. Export and import use the same format through a file download and a file picker. `SceneFile::from_json` is the single validation point (see the threat model). Camera positions are relative to the stored origin, which comes from the bundle, so a saved scene lines up with its buildings as long as the area is regenerated from the same box. A camera's optional `group` is stored only when set by hand (trimmed, at most 80 characters, blank dropped on load); addresses are never saved, since they are worked out again from the area.
 
 ## Security and supply chain
 
@@ -384,7 +389,7 @@ There are no accounts, sessions or personal data. The assets worth protecting ar
 
 | Threat | Mitigations | Residual risk |
 | --- | --- | --- |
-| **Untrusted scene files** (imported JSON, or tampered `localStorage`) | Parsed with serde into typed structures; `format` and `version` checked; at most 256 cameras and 64 custom models; positions and angles must be finite and below 10,000; subject height 0-10 m; custom models validated (kebab-case id, field-of-view, resolution and IR ranges, and a `source` link that must be an `https://` URL with a host and no user info; a scene's non-https link is dropped on load, so a shared file cannot plant a `javascript:` or `data:` link and an older autosave still restores); labels are drawn as text, never as markup; a failed import changes nothing | No limit on the file's byte size; duplicate camera ids and unknown `model_id`s are not rejected (an unknown model just shows as "Unknown model" and is skipped); a stored bounding box is not range-checked on import, but the server validates it when the area is fetched |
+| **Untrusted scene files** (imported JSON, or tampered `localStorage`) | Parsed with serde into typed structures; `format` and `version` checked; at most 256 cameras and 64 custom models; positions and angles must be finite and below 10,000; subject height 0-10 m; custom models validated (kebab-case id, field-of-view, resolution and IR ranges, and a `source` link that must be an `https://` URL with a host and no user info; a scene's non-https link is dropped on load, so a shared file cannot plant a `javascript:` or `data:` link and an older autosave still restores); labels and group names are drawn as text, never as markup (group names are trimmed and cut to 80 characters); a failed import changes nothing | No limit on the file's byte size; duplicate camera ids and unknown `model_id`s are not rejected (an unknown model just shows as "Unknown model" and is skipped); a stored bounding box is not range-checked on import, but the server validates it when the area is fetched |
 | **Untrusted bounding-box input** (`/api/area`) | Strict parsing; ranges, ordering and 20-500 m size enforced server-side regardless of the UI; request body limit; coordinates are only ever formatted back as fixed-precision numbers into the query, so there is no injection into Overpass QL; cache file names come from a sanitised key | Distinct boxes make distinct cache entries, and bundles are never evicted or size-capped, so a client that sweeps many boxes can grow the cache directory |
 | **Abuse of the proxy** (tile and Overpass amplification) | Upstream URLs are fixed by operator configuration, never by request data; tile coordinates validated, so no path traversal or arbitrary URLs; single-flight and caching for bundles; one Overpass request at a time, at most one attempt per configured interpreter (two for a single one) and a per-interpreter cooldown after 429 or 504; at most 4 upstream tile fetches; 512 MiB tile cap; PNG magic and size checks; 80 s timeout; responses cached by browsers for a day or a week | No per-client rate limiting. A flood of distinct boxes is cut off by the 3-deep Overpass queue (503s), but one client can still occupy that queue. Once the tile cache is full every uncached tile request goes upstream (still limited to 4 at a time). Run it behind a reverse proxy that rate-limits per client |
 | **Browser-side injection** | Strict CSP (self-only connections, no framing, no objects, no `base`), `nosniff`, `X-Frame-Options: DENY`; the UI is a canvas and draws all text through egui; the only data-driven link (a model's spec sheet) must be `https://`, checked on load and again before it is shown | CSP allows inline scripts and styles because of trunk's output; no HSTS from the app itself |

@@ -631,6 +631,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 roll_deg: 0.0,
                 color: None,
                 enabled: true,
+                group: None,
             });
             ui.selected = Some(id);
             if yaw.is_none() {

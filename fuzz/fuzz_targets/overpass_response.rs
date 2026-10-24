@@ -13,6 +13,6 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let bbox = BBox::around(LatLon::new(47.7086, -122.206), 300.0);
-    let bundle = build_bundle(bbox, &osm.buildings, &osm.roads, "fuzz", 0);
+    let bundle = build_bundle(bbox, &osm.buildings, &osm.roads, &osm.addresses, "fuzz", 0);
     AreaBundle::decode(&bundle.encode()).expect("built bundle decodes");
 });

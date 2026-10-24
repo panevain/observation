@@ -169,6 +169,7 @@ pub fn example_cameras(
                 roll_deg: 0.0,
                 color: None,
                 enabled: true,
+                group: None,
             }
         })
         .collect()
@@ -227,6 +228,7 @@ mod tests {
                     holes: vec![],
                     min_height_m: 0.0,
                     height_m: 6.5,
+                    address: None,
                 });
             }
         }
@@ -237,7 +239,7 @@ mod tests {
             width_m: 6.0,
             points: vec![at(-150.0, 0.0), at(150.0, 0.0)],
         }];
-        build_bundle(bbox, &buildings, &roads, "test", 0)
+        build_bundle(bbox, &buildings, &roads, &[], "test", 0)
     }
 
     #[test]

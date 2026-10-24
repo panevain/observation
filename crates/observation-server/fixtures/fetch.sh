@@ -9,6 +9,8 @@ query="[out:json][timeout:25];
   way[\"building\"](${bbox});
   relation[\"building\"][\"type\"=\"multipolygon\"](${bbox});
   way[\"highway\"](${bbox});
+  node[\"addr:housenumber\"](${bbox});
+  node[\"addr:housename\"](${bbox});
 );
 out geom qt;"
 curl -fsS -m 60 -A "observation-fixture/0.1 (+https://github.com/panevain/observation)" \

@@ -3,13 +3,14 @@
 //! Layout: `b"OBSB"` magic, `u16` little-endian format version, then a
 //! postcard-encoded [`AreaBundle`].
 
+use crate::address::{Address, AddressPoint, AddressSource, point_in_ring};
 use crate::building::{Footprint, MeshData, extrude};
 use crate::geo::{BBox, LatLon, Projection};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const BUNDLE_MAGIC: [u8; 4] = *b"OBSB";
-pub const BUNDLE_VERSION: u16 = 1;
+pub const BUNDLE_VERSION: u16 = 2;
 /// MIME type used on the wire.
 pub const BUNDLE_CONTENT_TYPE: &str = "application/vnd.observation.bundle";
 
@@ -19,6 +20,8 @@ pub struct Building {
     pub footprint: Footprint,
     /// `[first_index, index_count]` into [`AreaBundle::mesh`] indices.
     pub index_range: [u32; 2],
+    /// From the building's own `addr:*` tags.
+    pub address: Option<Address>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,6 +44,8 @@ pub struct AreaBundle {
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
     pub mesh: MeshData,
+    /// Addresses mapped as nodes rather than on a building.
+    pub addresses: Vec<AddressPoint>,
     pub attribution: String,
     pub generated_unix: u64,
 }
@@ -83,6 +88,19 @@ impl AreaBundle {
     pub fn footprints(&self) -> impl Iterator<Item = &Footprint> {
         self.buildings.iter().map(|b| &b.footprint)
     }
+
+    /// The address a camera at world `[x, z]` belongs to (see
+    /// [`crate::address::address_at`]).
+    pub fn address_at(&self, p: [f32; 2]) -> Option<&Address> {
+        let footprints: Vec<&Footprint> = self.footprints().collect();
+        let buildings = self.buildings.iter().filter_map(|b| {
+            b.address
+                .as_ref()
+                .map(|a| AddressSource::Building(&b.footprint, a))
+        });
+        let points = self.addresses.iter().map(AddressSource::Point);
+        crate::address::address_at(p, &footprints, buildings.chain(points))
+    }
 }
 
 /// A building as parsed from OSM, before projection.
@@ -93,6 +111,14 @@ pub struct OsmBuilding {
     pub holes: Vec<Vec<LatLon>>,
     pub min_height_m: f32,
     pub height_m: f32,
+    pub address: Option<Address>,
+}
+
+/// An address node as parsed from OSM, before projection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OsmAddressPoint {
+    pub address: Address,
+    pub point: LatLon,
 }
 
 /// A road as parsed from OSM, before projection.
@@ -143,6 +169,7 @@ pub fn build_bundle(
     bbox: BBox,
     buildings: &[OsmBuilding],
     roads: &[OsmRoad],
+    addresses: &[OsmAddressPoint],
     attribution: impl Into<String>,
     generated_unix: u64,
 ) -> AreaBundle {
@@ -180,6 +207,7 @@ pub fn build_bundle(
                 osm_id: b.osm_id,
                 footprint,
                 index_range: [start, mesh.indices.len() as u32 - start],
+                address: b.address.clone(),
             });
         }
     }
@@ -194,12 +222,44 @@ pub fn build_bundle(
             points: r.points.iter().map(to_w).collect(),
         })
         .collect();
+    let bounds: Vec<([f32; 2], [f32; 2])> = out
+        .iter()
+        .map(|b| {
+            let ring = &b.footprint.outer;
+            let lo = ring
+                .iter()
+                .fold([f32::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+            let hi = ring.iter().fold([f32::NEG_INFINITY; 2], |m, p| {
+                [m[0].max(p[0]), m[1].max(p[1])]
+            });
+            (lo, hi)
+        })
+        .collect();
+    let addresses = addresses
+        .iter()
+        .map(|a| {
+            let position = to_w(&a.point);
+            let [x, z] = position;
+            let building = out.iter().zip(&bounds).position(|(b, (lo, hi))| {
+                (lo[0]..=hi[0]).contains(&x)
+                    && (lo[1]..=hi[1]).contains(&z)
+                    && point_in_ring(position, &b.footprint.outer)
+                    && !b.footprint.holes.iter().any(|h| point_in_ring(position, h))
+            });
+            AddressPoint {
+                address: a.address.clone(),
+                position,
+                building: building.map(|i| i as u32),
+            }
+        })
+        .collect();
     AreaBundle {
         bbox,
         origin,
         buildings: out,
         roads,
         mesh,
+        addresses,
         attribution: attribution.into(),
         generated_unix,
     }
@@ -225,6 +285,7 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 6.5,
+            address: None,
         };
         let r = OsmRoad {
             osm_id: 7,
@@ -236,10 +297,19 @@ mod tests {
                 LatLon::new(c.lat - d, c.lon + 2.0 * d),
             ],
         };
+        let a = OsmAddressPoint {
+            address: Address {
+                housenumber: Some("12".into()),
+                street: Some("Test St".into()),
+                ..Address::default()
+            },
+            point: LatLon::new(c.lat + d / 2.0, c.lon + d / 2.0),
+        };
         build_bundle(
             bbox,
             &[b],
             &[r],
+            &[a],
             "© OpenStreetMap contributors",
             1_700_000_000,
         )
@@ -251,6 +321,13 @@ mod tests {
         assert_eq!(b.buildings.len(), 1);
         assert_eq!(b.buildings[0].index_range[0], 0);
         assert_eq!(b.buildings[0].index_range[1] as usize, b.mesh.indices.len());
+        // The address node lies inside the building.
+        assert_eq!(b.addresses[0].building, Some(0));
+        let wall = b.buildings[0].footprint.outer[0];
+        assert_eq!(
+            b.address_at([wall[0], wall[1] + 0.15]).map(Address::label),
+            Some("12 Test St".to_owned())
+        );
         let bytes = b.encode();
         assert_eq!(&bytes[..4], b"OBSB");
         assert_eq!(AreaBundle::decode(&bytes).unwrap(), b);

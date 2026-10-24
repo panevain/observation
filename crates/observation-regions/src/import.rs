@@ -1,6 +1,7 @@
 //! One region import: download the extract and its boundary, keep only
-//! buildings and roads (`osmium tags-filter`), and load the result into a new
-//! Overpass database (`osmium cat | update_database`), reporting progress.
+//! buildings, roads and address nodes (`osmium tags-filter`), and load the
+//! result into a new Overpass database (`osmium cat | update_database`),
+//! reporting progress.
 //!
 //! Everything is written below `work/<slug>/` and only the finished database
 //! is moved into `db/`, so a cancelled or failed import leaves nothing behind
@@ -58,7 +59,13 @@ pub async fn run(
     filter
         .arg("tags-filter")
         .arg(&pbf)
-        .args(["w/building", "r/building", "w/highway"])
+        .args([
+            "w/building",
+            "r/building",
+            "w/highway",
+            "n/addr:housenumber",
+            "n/addr:housename",
+        ])
         .arg("-o")
         .arg(&filtered)
         .arg("--overwrite");

@@ -6,6 +6,7 @@ use super::widgets::{
     NUMBER_TIP, bar, compass_dial, danger, drag_speed, hint, primary, row, secondary, section,
     segmented, stat, subsection, swatch, swatch_button,
 };
+use crate::addresses::NO_ADDRESS;
 use crate::cameras::camera_color;
 use crate::icons;
 use crate::state::{OverlayMode, Tool};
@@ -13,7 +14,7 @@ use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
     ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, CatalogError, DoriLevel,
-    Lighting, forward_from_yaw_pitch, is_https_url,
+    Lighting, MAX_GROUP_CHARS, forward_from_yaw_pitch, is_https_url,
 };
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
@@ -244,56 +245,64 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let mut action = None;
     let mut hovered = None;
     ui.spacing_mut().item_spacing.y = 2.0;
-    for c in &d.scene.cameras {
-        let model = d
-            .models
-            .get(&c.model_id)
-            .map_or_else(|| "Unknown model".to_owned(), CameraModel::display_name);
-        let row = CameraRow {
-            label: &c.label,
-            model: &model,
-            glyph: icons::kind(d.models.kind_of(&c.model_id)),
-            color: camera_color(&d.scene, c, &d.models, t),
-            enabled: c.enabled,
-            selected: d.ui.selected == Some(c.id),
-            highlighted: d.ui.hover_scene == Some(c.id),
-        };
-        let (resp, eye) = camera_row(ui, t, &row);
-        if resp.hovered() || eye.hovered() {
-            hovered = Some(c.id);
+    let groups = d.addresses.groups(&d.scene.cameras);
+    // Headings only help once something has an address or a group.
+    let headed = !matches!(groups.as_slice(), [(NO_ADDRESS, _)] | []);
+    for (group, cameras) in &groups {
+        if headed {
+            group_heading(ui, t, group, cameras.len());
         }
-        if eye.clicked() {
-            action = Some((c.id, CameraAction::ToggleEnabled));
-        } else if resp.clicked() {
-            // Clicking the selected row deselects it.
-            if row.selected {
-                d.ui.selected = None;
-            } else {
-                action = Some((c.id, CameraAction::Select));
+        for &c in cameras {
+            let model = d
+                .models
+                .get(&c.model_id)
+                .map_or_else(|| "Unknown model".to_owned(), CameraModel::display_name);
+            let row = CameraRow {
+                label: &c.label,
+                model: &model,
+                glyph: icons::kind(d.models.kind_of(&c.model_id)),
+                color: camera_color(&d.scene, c, &d.models, t),
+                enabled: c.enabled,
+                selected: d.ui.selected == Some(c.id),
+                highlighted: d.ui.hover_scene == Some(c.id),
+            };
+            let (resp, eye) = camera_row(ui, t, &row);
+            if resp.hovered() || eye.hovered() {
+                hovered = Some(c.id);
             }
-        }
-        resp.on_hover_text(&model).context_menu(|ui| {
-            for a in [
-                CameraAction::Select,
-                CameraAction::Focus,
-                CameraAction::Aim,
-                CameraAction::Move,
-                CameraAction::Duplicate,
-                CameraAction::ToggleEnabled,
-                CameraAction::Delete,
-            ] {
-                let mut button = egui::Button::new(format!("{}  {}", a.icon(), a.label()));
-                if let Some(k) = a.shortcut() {
-                    button = button.shortcut_text(k);
-                }
-                if a == CameraAction::ToggleEnabled {
-                    button = button.selected(c.enabled);
-                }
-                if ui.add(button).clicked() {
-                    action = Some((c.id, a));
+            if eye.clicked() {
+                action = Some((c.id, CameraAction::ToggleEnabled));
+            } else if resp.clicked() {
+                // Clicking the selected row deselects it.
+                if row.selected {
+                    d.ui.selected = None;
+                } else {
+                    action = Some((c.id, CameraAction::Select));
                 }
             }
-        });
+            resp.on_hover_text(&model).context_menu(|ui| {
+                for a in [
+                    CameraAction::Select,
+                    CameraAction::Focus,
+                    CameraAction::Aim,
+                    CameraAction::Move,
+                    CameraAction::Duplicate,
+                    CameraAction::ToggleEnabled,
+                    CameraAction::Delete,
+                ] {
+                    let mut button = egui::Button::new(format!("{}  {}", a.icon(), a.label()));
+                    if let Some(k) = a.shortcut() {
+                        button = button.shortcut_text(k);
+                    }
+                    if a == CameraAction::ToggleEnabled {
+                        button = button.selected(c.enabled);
+                    }
+                    if ui.add(button).clicked() {
+                        action = Some((c.id, a));
+                    }
+                }
+            });
+        }
     }
     ui.spacing_mut().item_spacing.y = t.space.sm;
     if d.ui.hover_list != hovered {
@@ -302,6 +311,47 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     if let Some((id, a)) = action {
         actions::apply(d, id, a);
     }
+}
+
+/// The heading above a group of cameras: its address (or name) and count.
+fn group_heading(ui: &mut egui::Ui, t: &Tokens, group: &str, count: usize) {
+    ui.add_space(t.space.xs);
+    ui.horizontal(|ui| {
+        let glyph = if group == NO_ADDRESS {
+            icons::WARNING_CIRCLE
+        } else {
+            icons::MAP_PIN
+        };
+        ui.label(RichText::new(glyph).color(t.text_muted));
+        let count = RichText::new(count.to_string())
+            .size(t.font.caption)
+            .color(t.text_muted);
+        // Leave room for the count after a long address.
+        let count_w = ui.fonts_mut(|f| {
+            f.layout_no_wrap(
+                count.text().to_owned(),
+                egui::FontId::proportional(t.font.caption),
+                t.text_muted,
+            )
+            .size()
+            .x
+        });
+        let name_w = (ui.available_width() - count_w - ui.spacing().item_spacing.x).max(0.0);
+        ui.allocate_ui(egui::vec2(name_w, ui.spacing().interact_size.y), |ui| {
+            // Fill the width so the counts line up on the right.
+            ui.set_min_width(name_w);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(group)
+                        .size(t.font.caption)
+                        .family(strong_family())
+                        .color(t.text_muted),
+                )
+                .truncate(),
+            );
+        });
+        ui.label(count);
+    });
 }
 
 /// What one row of the camera list shows.
@@ -440,6 +490,7 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         &mut c.model_id,
     );
     color_row(ui, d, t, &mut c);
+    group_row(ui, d, t, &mut c);
 
     subsection(ui, t, "Position (m from the area centre)");
     ui.horizontal(|ui| {
@@ -627,6 +678,59 @@ fn color_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement)
         {
             c.color = None;
         }
+    });
+}
+
+/// The group the camera is listed under: its address from OpenStreetMap
+/// unless a name is typed or another nearby address is picked.
+fn group_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement) {
+    let automatic = d.addresses.automatic(c.id);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Group").color(t.text_muted));
+        let mut name = c.group.clone().unwrap_or_default();
+        let picker_w = t.layout.hit_target;
+        let resp = ui
+            .add(
+                TextEdit::singleline(&mut name)
+                    .hint_text(automatic.unwrap_or(NO_ADDRESS))
+                    .desired_width((ui.available_width() - picker_w).max(0.0))
+                    .char_limit(MAX_GROUP_CHARS),
+            )
+            .on_hover_text(match automatic {
+                Some(a) => format!(
+                    "Listed under {a}, the nearest address in OpenStreetMap. Type a name to list it elsewhere"
+                ),
+                None => "No address in OpenStreetMap is near this camera. Type a name to group it"
+                    .to_owned(),
+            });
+        if resp.changed() {
+            c.group = (!name.trim().is_empty()).then_some(name);
+        }
+        ui.menu_button(icons::MAP_PIN, |ui| {
+            if ui
+                .add(egui::Button::new("By address").selected(c.group.is_none()))
+                .on_hover_text("Group by the nearest address in OpenStreetMap")
+                .clicked()
+            {
+                c.group = None;
+                ui.close();
+            }
+            let known = d.addresses.known();
+            if !known.is_empty() {
+                ui.separator();
+            }
+            for a in known {
+                if ui
+                    .add(egui::Button::new(a).selected(c.group.as_deref() == Some(a)))
+                    .clicked()
+                {
+                    c.group = Some(a.to_owned());
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Pick an address nearby, or go back to grouping by address");
     });
 }
 

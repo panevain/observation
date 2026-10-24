@@ -4,6 +4,7 @@
 //! framed by egui panels. Heavy geometry work happens on the server; coverage
 //! is computed here with the shared `observation-core` logic.
 
+mod addresses;
 mod cameras;
 mod coverage;
 mod history;
@@ -68,6 +69,7 @@ fn main() {
             net::NetPlugin,
             world::WorldPlugin,
             cameras::CamerasPlugin,
+            addresses::AddressesPlugin,
             coverage::CoveragePlugin,
             input::InputPlugin,
             persist::PersistPlugin,
