@@ -55,16 +55,13 @@ jobs:
           version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
           install: false
           cache_save: ${{ github.ref == 'refs/heads/develop' }}
-      # cargo-fuzz is built from crates.io (mise.ci.toml), and mise builds it with the root
-      # rust-toolchain.toml's toolchain, which must be installed first. Restored from mise's
-      # cache, it is already there.
+      # cargo-fuzz is built from crates.io (mise.ci.toml) with the root rust-toolchain.toml's
+      # toolchain, which mise must have installed itself (a toolchain installed by rustup alone
+      # does not count). Restored from mise's cache, cargo-fuzz is already there.
       - name: Install cargo-fuzz
         run: |
           set -euo pipefail
-          if ! mise which cargo-fuzz >/dev/null 2>&1; then
-            mise run ci:toolchain
-            mise install --locked cargo-fuzz
-          fi
+          mise which cargo-fuzz >/dev/null 2>&1 || mise install --locked rust cargo-fuzz
           mise which cargo-fuzz
       - name: Install toolchain (from fuzz/rust-toolchain.toml; the only one left installed)
         run: mise run ci:toolchain -C fuzz
