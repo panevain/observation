@@ -19,7 +19,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG TRUNK_VERSION=0.22.0
 # sha256 of the release tarballs: GitHub's digests of the assets of
 # https://github.com/trunk-rs/trunk/releases/tag/v0.22.0, which match the published
-# *.tar.gz.sha256 files. scripts/bump-pins.sh updates these with the version.
+# *.tar.gz.sha256 files. scripts/bump-pins.py updates these with the version.
 ARG TRUNK_SHA256_AMD64=f78c1989240c56592d8cfc4df5cc27399a3ff66a3f9cc819e16f1e3d809ce7c2
 ARG TRUNK_SHA256_ARM64=a05b519ad8ba8b3935772586c2f08f93dd8f9ce06c74c03e89d3c2d03cb628b1
 ARG CARGO_CHEF_VERSION=0.1.78

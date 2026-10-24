@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pinned CI tools, installed from their release archives and checked against a pinned sha256.
 # This table is the only place their versions and checksums live: the workflows install
-# through this script, and scripts/bump-pins.sh (the Pins workflow) rewrites the table.
+# through this script, and scripts/bump-pins.py (the Pins workflow) rewrites the table.
 # The checksum is GitHub's sha256 digest of the linux x86_64 release asset, which matches
 # the checksum files the projects publish.
 #

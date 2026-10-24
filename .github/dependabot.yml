@@ -91,7 +91,7 @@ updates:
       prefix: "docker"
     ignore:
       # The builder image's Rust version must match rust-toolchain.toml (and Bevy's MSRV).
-      # The Pins workflow (scripts/bump-pins.sh) moves rust-toolchain.toml, Cargo.toml, the
+      # The Pins workflow (scripts/bump-pins.py) moves rust-toolchain.toml, Cargo.toml, the
       # Dockerfile tag and mise.lock together, and mise run sync checks they agree. Only
       # digest updates come from Dependabot.
       - dependency-name: rust

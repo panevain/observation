@@ -1,0 +1,120 @@
+name: Pins
+
+# Weekly bump of the pins Dependabot can't move (scripts/bump-pins.py): the CI tools in
+# scripts/ci-tools.sh, trunk, fnox, the CI mise version, cargo-chef, cargo-auditable and
+# Overpass in the Dockerfile, the Rust toolchain and the fuzz nightly. Each release must be a
+# week old first, as with Dependabot's cooldown. Opens one PR into develop (or updates it),
+# from its own branch chore/pin-bumps.
+on:
+  schedule:
+    # Mondays, after Dependabot's runs.
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  bump:
+    name: bump pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # For `mise lock` (trunk, fnox and the rust entry).
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install: false
+          cache: false
+      - name: Bump
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/pins"
+          mkdir -p "${out}"
+          python3 scripts/bump-pins.py --summary "${out}/summary.md"
+          if git diff --quiet; then
+            echo "Nothing to bump." >> "${GITHUB_STEP_SUMMARY}"
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          mise lock
+          scripts/check-toolchain-sync.sh
+          git diff --binary > "${out}/pins.patch"
+          {
+            echo "Pins that Dependabot does not cover, bumped by the Pins workflow (scripts/bump-pins.py):"
+            echo
+            cat "${out}/summary.md"
+            echo
+            echo "Checksums are GitHub's sha256 digests of the release assets (Overpass: hashed from its tarball). A Rust bump can bring new clippy lints; trunk and Overpass bumps are exercised by the docker and image (full build) checks."
+          } > "${out}/body.md"
+          cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          name: pins
+          path: |
+            ${{ runner.temp }}/pins/pins.patch
+            ${{ runner.temp }}/pins/body.md
+          if-no-files-found: error
+          retention-days: 7
+
+  pr:
+    name: open pins PR
+    needs: bump
+    if: needs.bump.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pins
+          path: ${{ runner.temp }}/pins
+      # workflows: write because MISE_VERSION lives in the workflow files.
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          branch="chore/pin-bumps"
+          git switch -c "${branch}"
+          git apply --index "${RUNNER_TEMP}/pins/pins.patch"
+          scripts/ci-git.sh identity "${BOT}"
+          git -c core.hooksPath=/dev/null commit -m "Bump pinned tools" -m "$(sed -n '3,$p' "${RUNNER_TEMP}/pins/body.md")"
+          # The branch is this workflow's own, so each run replaces it.
+          scripts/ci-git.sh push-force "${branch}"
+          if ! gh pr create --base develop --head "${branch}" --title "Bump pinned tools" \
+            --body-file "${RUNNER_TEMP}/pins/body.md"; then
+            gh pr edit "${branch}" --body-file "${RUNNER_TEMP}/pins/body.md"
+          fi
