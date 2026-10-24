@@ -65,8 +65,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
+        run: scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native
@@ -88,8 +88,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
+        run: scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: wasm-clippy
@@ -111,8 +111,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
+        run: scripts/ci-rust-toolchain.sh
       # Bevy's native audio/input backends need these headers to compile the
       # client's unit tests on Linux. The client has tests only once it has a
       # library target (the same condition `mise run test` uses).
@@ -130,17 +130,9 @@ jobs:
           version: ${{ env.MISE_VERSION }}
           install: false
           cache_save: ${{ env.SAVE_CACHE }}
-      # cargo-nextest from its release archive, checksum-verified (same approach as Trivy).
+      # From its release archive, checksum-verified (scripts/ci-tools.sh holds the pins).
       - name: Install cargo-nextest (pinned, checksum-verified)
-        env:
-          NEXTEST_VERSION: "0.9.148"
-          NEXTEST_SHA256: 223ba936714cc861a9cdedad5a8eb664dfdd69d6fbdf6cea6aa8184f523290dc
-        run: |
-          set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/nextest.tar.gz" \
-            "https://get.nexte.st/${NEXTEST_VERSION}/linux"
-          echo "${NEXTEST_SHA256}  ${RUNNER_TEMP}/nextest.tar.gz" | sha256sum -c -
-          tar -xzf "${RUNNER_TEMP}/nextest.tar.gz" -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+        run: scripts/ci-tools.sh install cargo-nextest
       - run: mise run test
         env:
           # .config/nextest.toml: report every failure, and end a hung test.
@@ -159,25 +151,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: |
-          rustup toolchain install --profile minimal --no-self-update
-          rustup component add llvm-tools-preview
+      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
+        run: scripts/ci-rust-toolchain.sh llvm-tools-preview
+      # Restores the test job's cache (registry and dependencies) and never saves one of its
+      # own: an instrumented build for an informational job is not worth ~1 GB of cache quota.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: coverage
-          save-if: ${{ env.SAVE_CACHE }}
+          shared-key: test
+          save-if: false
       - name: Install cargo-llvm-cov (pinned, checksum-verified)
-        env:
-          LLVM_COV_VERSION: "0.9.1"
-          LLVM_COV_SHA256: b3f68e625481fed9b16444174f3fa5ebcdbde4a1878803a35eabe2dcefcdc41a
-        run: |
-          set -euo pipefail
-          f="cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${f}" \
-            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${LLVM_COV_VERSION}/${f}"
-          echo "${LLVM_COV_SHA256}  ${RUNNER_TEMP}/${f}" | sha256sum -c -
-          tar -xzf "${RUNNER_TEMP}/${f}" -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+        run: scripts/ci-tools.sh install cargo-llvm-cov
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -229,8 +212,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
+        run: scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: wasm-release
@@ -243,7 +226,10 @@ jobs:
           version: ${{ env.MISE_VERSION }}
           install: true
           cache_save: ${{ env.SAVE_CACHE }}
+      # The size report (about a minute of gzip -9 and brotli -q 11) runs on pushes only, to
+      # keep it off the pull request critical path.
       - name: Install brotli (for the size report)
+        if: github.event_name == 'push'
         run: |
           command -v brotli >/dev/null || {
             sudo apt-get update
@@ -260,6 +246,7 @@ jobs:
           compgen -G 'dist/*.wasm' >/dev/null || { echo "::error::no .wasm in dist/"; exit 1; }
           compgen -G 'dist/*.js' >/dev/null || { echo "::error::no .js in dist/"; exit 1; }
       - name: Wasm size report
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           {
