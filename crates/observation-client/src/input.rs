@@ -13,6 +13,11 @@ use observation_core::coverage::{MAX_REGION_POINTS, Region};
 
 /// Pixels a press may travel and still count as a click/tap.
 const CLICK_SLOP_PX: f32 = 5.0;
+/// How far from a camera body's centre a click still picks it, in pixels.
+/// Bodies are only a few pixels across at street zoom.
+const PICK_RADIUS_MOUSE_PX: f32 = 14.0;
+/// As [`PICK_RADIUS_MOUSE_PX`], for a tap: about a 44 px fingertip target.
+const PICK_RADIUS_TOUCH_PX: f32 = 22.0;
 const MIN_DISTANCE: f32 = 8.0;
 const MAX_DISTANCE: f32 = 1200.0;
 const ORBIT_SPEED: f32 = 0.006;
@@ -247,7 +252,7 @@ struct RawInput<'w> {
 struct Targets<'w, 's> {
     buildings: Query<'w, 's, (), With<BuildingMesh>>,
     grounds: Query<'w, 's, (), With<GroundMesh>>,
-    bodies: Query<'w, 's, &'static CameraBody>,
+    bodies: Query<'w, 's, (&'static CameraBody, &'static GlobalTransform)>,
     area: Option<Res<'w, Area>>,
 }
 
@@ -294,7 +299,7 @@ fn pointer(
             .with_filter(&filter)
             .with_visibility(RayCastVisibility::Any);
         let (e, hit) = ray_cast.cast_ray(ray, &settings).first()?;
-        let target = if let Ok(b) = bodies.get(*e) {
+        let target = if let Ok((b, _)) = bodies.get(*e) {
             HitTarget::Camera(b.0)
         } else if buildings.contains(*e) {
             HitTarget::Building
@@ -306,6 +311,25 @@ fn pointer(
             normal: hit.normal.normalize_or(Vec3::Y),
             target,
         })
+    };
+
+    // The camera body nearest `screen` whose centre is within `radius` px. Its
+    // centre is cast to again, so a body behind a building is not picked.
+    let near_body = |cast: &mut dyn FnMut(Vec2, bool) -> Option<Hit>,
+                     screen: Vec2,
+                     radius: f32|
+     -> Option<Hit> {
+        let (id, centre) = bodies
+            .iter()
+            .filter_map(|(b, t)| {
+                let p = camera.world_to_viewport(cam_t, t.translation()).ok()?;
+                (p.distance_squared(screen) <= radius * radius).then_some((b.0, p))
+            })
+            .min_by(|a, b| {
+                a.1.distance_squared(screen)
+                    .total_cmp(&b.1.distance_squared(screen))
+            })?;
+        cast(centre, false).filter(|h| h.target == HitTarget::Camera(id))
     };
 
     // --- Two-finger touch: pinch zoom + pan (always camera navigation).
@@ -340,6 +364,7 @@ fn pointer(
     st.pinch_on_ui = None;
 
     // --- Unified single pointer (mouse or one finger).
+    let touch = !active.is_empty() || st.touch_id.is_some();
     let (pos, just_pressed, pressed, just_released, button) = if let Some(t) = active.first() {
         let first = st.touch_id != Some(t.id());
         st.touch_id = Some(t.id());
@@ -411,10 +436,14 @@ fn pointer(
             HitTarget::Camera(id) => Some(id),
             _ => None,
         };
-        let hover = if over_ui || camera_at(cast(pos, true)).is_none() {
+        let hover = if over_ui {
             None
-        } else {
+        } else if camera_at(cast(pos, true)).is_some() {
             camera_at(cast(pos, false))
+        } else if ui.tool != Tool::Place {
+            camera_at(near_body(&mut cast, pos, PICK_RADIUS_MOUSE_PX))
+        } else {
+            None
         };
         if ui.hover_scene != hover {
             ui.hover_scene = hover;
@@ -467,7 +496,25 @@ fn pointer(
                     region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
                 }
             } else {
-                let hit = cast(pos, false);
+                let mut hit = cast(pos, false);
+                // Placing near a camera should still place, so only the
+                // other tools reach for a body the press just missed.
+                if ui.tool != Tool::Place
+                    && !matches!(
+                        hit,
+                        Some(Hit {
+                            target: HitTarget::Camera(_),
+                            ..
+                        })
+                    )
+                {
+                    let radius = if touch {
+                        PICK_RADIUS_TOUCH_PX
+                    } else {
+                        PICK_RADIUS_MOUSE_PX
+                    };
+                    hit = near_body(&mut cast, pos, radius).or(hit);
+                }
                 click(&mut ui, &mut scene, &models, hit);
             }
         }

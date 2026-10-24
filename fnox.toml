@@ -1,0 +1,11 @@
+# Docker Compose secrets, loaded only by `mise run up` (which runs Compose under
+# `fnox exec`): https://fnox.jdx.dev. Other Compose settings are in mise.toml.
+# Only the names are committed. Put values in fnox.local.toml (gitignored), e.g.
+#   OBS_REGIONS_TOKEN = { default = "<openssl rand -hex 32>" }
+# or point a secret at a provider (1Password, age, ...) here instead. A variable
+# already exported in the shell is used when no value is set; compose.yaml stops
+# with an error if OBS_REGIONS_TOKEN is still missing.
+
+[secrets]
+OBS_REGIONS_TOKEN = { description = "Bearer token shared by the app and the region agent (required)", if_missing = "ignore" }
+OBS_ADMIN_TOKEN = { description = "Token the UI sends to manage regions; unset makes regions read-only", if_missing = "ignore" }

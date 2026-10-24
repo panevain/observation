@@ -33,9 +33,12 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - The loading card shows how long the request has taken, explains slow first loads, and offers Cancel and Use demo street instead.
 - A "No cameras yet" empty state with a Place camera button replaces the 0% figures.
 - The status bar shows whether the autosave reached browser storage (Saved, or Not saved with a hint to export).
+- `mise run down` stops and removes the Docker Compose stack, keeping the region and cache volumes (`mise run down -v` deletes them too).
 
 ### Changed
 
+- Cameras are easier to click and tap: a press that misses every camera picks the nearest one within 14 px (22 px for a tap), unless a building hides it. Hovering uses the same reach. The Place tool still needs a direct hit, so a camera can be placed next to another.
+- Docker Compose settings no longer use `.env`; `.env.example` is gone and `mise run up` starts the stack. The Compose tokens (`OBS_REGIONS_TOKEN`, `OBS_ADMIN_TOKEN`) are [fnox](https://fnox.jdx.dev) secrets declared in `fnox.toml`, with values in the gitignored `fnox.local.toml`; fnox is installed by mise for that task only. The other Compose settings (`OBS_PORT`, `OBS_LOG_FORMAT`, region limits) are set on the `up` task in `mise.toml` and can be overridden per run, e.g. `OBS_PORT=9090 mise run up`. `OBS_CONTACT` still comes from `mise.local.toml`, where it is now commented out by default. Move your values out of `.env`, or export them yourself before `docker compose up`.
 - Upstream hosts on private networks need `OBS_ALLOW_PRIVATE_UPSTREAMS=1` (server and region agent). `OBS_ALLOW_PRIVATE_UPSTREAMS` accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`; other values stop the server at startup.
 - Error messages say what went wrong and what to do next: failed area loads tell offline from a down server, a server error or damaged data; storage, import and export failures give the browser's reason (the status bar tooltip says why the autosave failed); scene, bundle, camera-model and bounding-box errors name the field and the allowed range; the server's replies name the limit (for example the size of a too-large box) and never include internal details.
 - Image tags: releases publish only `devel`, `X.Y.Z` and `latest`. The old `edge`, `main`, `X.Y` and `sha-*` tags are no longer pushed and are removed by the Prune images workflow once `PRUNE_IMAGES=true`; pin deployments to a version tag.
@@ -52,6 +55,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- Ctrl/Cmd+V pastes into text fields such as the admin token, and Ctrl/Cmd+C and X copy and cut from them. The browser's clipboard events were not wired up, and Bevy cancelled the key presses that fire them.
 - Loading an area no longer fails with 502 when Overpass answers 502/503 once or does not answer in time: transient failures are retried (on the next interpreter, or once on a lone one) within the request's time budget. An interpreter that answers 429/504 rests for 30 s on its own, and a final timeout is a 504 with a clear message.
 - Scrolling or clicking on the side panels no longer zooms or clicks the 3D view, and the Delete button removes the selected camera again.
 - Clicks in the 3D view land under the pointer; they were offset by the tool rail and top bar.
