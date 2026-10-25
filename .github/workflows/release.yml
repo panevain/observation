@@ -1,8 +1,10 @@
 name: Release
 
 on:
-  # develop -> :devel, v* tags -> :X.Y.Z and :latest. Pushes to main build
-  # nothing: a release is published by its tag.
+  # develop -> :devel, v* tags -> :X.Y.Z and :latest, for both images: the app
+  # (ghcr.io/panevain/observation) and the region agent (ghcr.io/panevain/observation-regions).
+  # Pushes to main build nothing: a release is published by its tag, which release-tag.yml
+  # creates when a release or hotfix branch is merged into main.
   push:
     branches: [develop]
     tags: ["v*"]
@@ -14,12 +16,51 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml: cargo-deny, Trivy and cosign (pinned, checksum-verified through mise.ci.lock)
+# and the scan tasks.
 env:
-  IMAGE_NAME: ghcr.io/panevain/observation
+  MISE_ENV: ci
 
 jobs:
+  # Tags only. A tag is published only if it names the workspace version, points at a commit
+  # on main, and no RustSec advisory (other than deny.toml's ignores) affects its Cargo.lock.
+  verify:
+    name: verify release tag
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # origin/main, for the ancestry check
+      - name: Tag matches the version and is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n '/^\[workspace\.package\]/,/^$/ s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          [ "v${version}" = "${TAG}" ] || { echo "::error::tag ${TAG} does not match the workspace version ${version}"; exit 1; }
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
+          echo "${TAG}: version ${version}, on main"
+      # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: cargo-deny
+          cache: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: mise run ci:toolchain
+      - name: No unaccepted advisory
+        run: mise run deny advisories
+
   image:
-    name: build and push image
+    name: image (${{ matrix.image }})
+    needs: verify
+    # verify only runs for tags; develop pushes go ahead without it.
+    if: ${{ !cancelled() && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -28,12 +69,68 @@ jobs:
       id-token: write # Sigstore OIDC signing for attestations
       attestations: write # store the provenance attestation
       artifact-metadata: write # attest-build-provenance v4 storage record
+    strategy:
+      matrix:
+        include:
+          - image: observation
+            target: runtime
+            smoke: scripts/smoke-test-image.sh
+            # Written here from develop; image-full.yml reads it.
+            cache: image
+            save-cache: true
+            # Every layer of the release image may come from the cache: the runtime has no
+            # packages of its own beyond the digest-pinned distroless base.
+            no-cache-filters: ""
+          - image: observation-regions
+            target: regions
+            smoke: scripts/smoke-test-regions.sh
+            # Written by ci.yml's docker job from develop; read here.
+            cache: image-regions
+            save-cache: false
+            # Tags rebuild the final stage (apt-get upgrade) so the release has the Debian
+            # security fixes published since the cache was written.
+            no-cache-filters: regions
+    env:
+      IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }}
+      CANDIDATE: ${{ matrix.image }}:candidate
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Built and tested locally first; the push below reuses this build from the builder's
+      # cache, so what is published is what was smoke-tested and scanned.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: ${{ env.CANDIDATE }}
+          cache-from: type=gha,scope=${{ matrix.cache }}
+          no-cache-filters: ${{ env.IS_TAG == 'true' && matrix.no-cache-filters || '' }}
+
+      - name: Smoke test
+        env:
+          SMOKE: ${{ matrix.smoke }}
+        run: '"${SMOKE}" "${CANDIDATE}"'
+
+      # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: "trivy cosign"
+          cache: false
+
+      # Releases are not published with a fixable CRITICAL or HIGH vulnerability (the same
+      # scan as the pull request gate in security.yml).
+      - name: Trivy scan (release gate)
+        if: env.IS_TAG == 'true'
+        run: mise run scan:image "${CANDIDATE}"
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -59,31 +156,22 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=image
-          cache-to: type=gha,scope=image,mode=max
+          cache-from: type=gha,scope=${{ matrix.cache }}
+          # Written from develop only: tag runs could not share it with anything.
+          cache-to: ${{ matrix.save-cache && github.ref == 'refs/heads/develop' && format('type=gha,scope={0},mode=max', matrix.cache) || '' }}
 
       # Keyless signature (Sigstore, GitHub OIDC identity) over the image digest, next to the
-      # provenance attestation below. cosign is pinned and checksum-verified, as Trivy is.
-      - name: Install cosign (pinned, checksum-verified)
-        env:
-          COSIGN_VERSION: "3.0.2"
-          COSIGN_SHA256: 46dbdcb5467a3dfec2526923d0b3365e40c8d9dc00ec23d5aca3437449e8cbfd
-        run: |
-          set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/cosign" \
-            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          echo "${COSIGN_SHA256}  ${RUNNER_TEMP}/cosign" | sha256sum -c -
-          chmod +x "${RUNNER_TEMP}/cosign"
-
+      # provenance attestation below.
       - name: Sign image (cosign, keyless)
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: '"${RUNNER_TEMP}/cosign" sign --yes "${IMAGE_NAME}@${DIGEST}"'
+        run: cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -91,3 +179,58 @@ jobs:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  # A GitHub release for each tag, with that version's CHANGELOG.md section and the image
+  # digests. Releases are immutable (repository setting), so this runs only once both images
+  # are published.
+  github-release:
+    name: GitHub release
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          {
+            awk -v h="## [${version}]" 'index($0, h) == 1 { f = 1; next } f && /^## \[/ { exit } f' CHANGELOG.md
+            echo
+            echo "## Images"
+            echo
+            echo "| Image | Digest |"
+            echo "| --- | --- |"
+            for name in observation observation-regions; do
+              digest="$(docker buildx imagetools inspect "ghcr.io/panevain/${name}:${version}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+              printf '| `ghcr.io/panevain/%s:%s` | `%s` |\n' "${name}" "${version}" "${digest}"
+            done
+            echo
+            echo "Verify an image with:"
+            echo
+            echo '```sh'
+            echo "gh attestation verify oci://ghcr.io/panevain/observation:${version} --repo ${REPO}"
+            echo "cosign verify ghcr.io/panevain/observation:${version} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${REPO}/\\.github/workflows/release\\.yml@' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } > "${RUNNER_TEMP}/notes.md"
+          cat "${RUNNER_TEMP}/notes.md"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          pre=()
+          if [[ "${TAG}" == *-* ]]; then pre=(--prerelease); fi
+          gh release create "${TAG}" --verify-tag --title "${TAG}" \
+            --notes-file "${RUNNER_TEMP}/notes.md" "${pre[@]}"

@@ -34,9 +34,10 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml: cargo-fuzz (pinned, checksum-verified through mise.ci.lock), CI's cargo
+# settings, and the fuzz tasks (`mise -E ci run fuzz` runs them locally).
 env:
-  CARGO_TERM_COLOR: always
-  CARGO_FUZZ_VERSION: "0.13.2"
+  MISE_ENV: ci
 
 jobs:
   fuzz:
@@ -49,48 +50,56 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from fuzz/rust-toolchain.toml)
-        working-directory: fuzz
-        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install: false
+          cache_save: ${{ github.ref == 'refs/heads/develop' }}
+      # cargo-fuzz is built from crates.io (mise.ci.toml) with the root rust-toolchain.toml's
+      # toolchain, which mise must have installed itself (a toolchain installed by rustup alone
+      # does not count). Restored from mise's cache, cargo-fuzz is already there.
+      - name: Install cargo-fuzz
+        run: |
+          set -euo pipefail
+          mise which cargo-fuzz >/dev/null 2>&1 || mise install --locked rust cargo-fuzz
+          mise which cargo-fuzz
+      - name: Install toolchain (from fuzz/rust-toolchain.toml; the only one left installed)
+        run: mise run ci:toolchain -C fuzz
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: fuzz -> target
           shared-key: fuzz
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - name: Install cargo-fuzz (pinned)
-        working-directory: fuzz
-        run: |
-          if ! cargo fuzz --version 2>/dev/null | grep -q "${CARGO_FUZZ_VERSION}"; then
-            cargo install --locked --version "${CARGO_FUZZ_VERSION}" cargo-fuzz
-          fi
-          cargo fuzz --version
-      - name: Lockfile is current
-        working-directory: fuzz
-        run: cargo metadata --locked --format-version 1 > /dev/null
-      - name: Build targets
-        working-directory: fuzz
-        run: cargo fuzz build
+      - name: Lockfile is current, build targets
+        run: mise run fuzz:build
+      # The working corpus carries over between runs: every run starts from the newest saved
+      # one, and the nightly run saves what it grew to (about 25 MB), so coverage builds up
+      # instead of restarting from the seeds each night.
+      - name: Restore corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+      # 30 s per target on pull requests and pushes, 10 min nightly (with the per-target times
+      # of `mise run fuzz --nightly`), or the chosen time on a manual run.
       - name: Run targets
-        working-directory: fuzz
         env:
           EVENT: ${{ github.event_name }}
           INPUT_SECONDS: ${{ inputs.seconds }}
         run: |
           set -euo pipefail
           case "${EVENT}" in
-            schedule) secs=600 ;;
-            workflow_dispatch) secs="${INPUT_SECONDS:-300}" ;;
-            *) secs=30 ;;
+            schedule) mise run fuzz 600 --nightly ;;
+            workflow_dispatch) mise run fuzz "${INPUT_SECONDS:-300}" ;;
+            *) mise run fuzz 30 ;;
           esac
-          [[ "${secs}" =~ ^[0-9]+$ ]] || { echo "::error::seconds must be a number"; exit 1; }
-          for t in $(cargo fuzz list); do
-            mkdir -p "corpus/${t}"
-            dirs=("corpus/${t}")
-            if [ -d "seeds/${t}" ]; then dirs+=("seeds/${t}"); fi
-            echo "::group::${t} (${secs}s)"
-            cargo fuzz run "${t}" "${dirs[@]}" -- -max_total_time="${secs}" -rss_limit_mb=2048
-            echo "::endgroup::"
-          done
+      - name: Save corpus
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
       - name: Upload crashing inputs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -99,3 +108,31 @@ jobs:
           path: fuzz/artifacts/
           if-no-files-found: ignore
           retention-days: 30
+
+  # A crash on the nightly run would otherwise only send an email. Separate from the fuzz job
+  # so that the job running the targets never holds a token that can write issues.
+  report:
+    name: report nightly crash
+    needs: fuzz
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write # open or comment on the crash issue
+    steps:
+      - name: Open or update the crash issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Fuzz: the nightly run found a crash"
+          body="The nightly fuzz run failed: ${RUN_URL}. Crashing inputs are in its fuzz-artifacts artifact (kept 30 days); reproduce with \`cargo fuzz run <target> <file>\` in fuzz/."
+          n="$(gh issue list --repo "${REPO}" --state open --search "in:title \"${title}\"" --json number,title \
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
+          if [ -n "${n}" ]; then
+            gh issue comment "${n}" --repo "${REPO}" --body "${body}"
+          else
+            gh issue create --repo "${REPO}" --title "${title}" --body "${body}"
+          fi

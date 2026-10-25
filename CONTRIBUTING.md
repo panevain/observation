@@ -7,25 +7,42 @@
 | `main` | Released code only. Every commit is a release or hotfix merge. | – | – | Protected; PRs from `release/*` and `hotfix/*` only |
 | `develop` | Integration branch and the GitHub default branch | `main` (once) | – | Protected; all other work lands here by PR |
 | `feature/<topic>`, `bugfix/<topic>` | Day-to-day work | `develop` | `develop` | PR, squash or merge commit |
-| `release/<x.y.z>` | Stabilising a release (version bump, docs, fixes only) | `develop` | `main`, then `develop` | Two PRs, merge commits |
-| `hotfix/<x.y.z>` | Urgent fix to a release | `main` | `main`, then `develop` | Two PRs, merge commits |
+| `release/<x.y.z>` | Stabilising a release (version bump, docs, fixes only) | `develop` | `main` | PR, merge commit; the back-merge into `develop` is opened for you (`backmerge/v<x.y.z>`) |
+| `hotfix/<x.y.z>` | Urgent fix to a release; security patch releases are opened by the Hotfix workflow | `main` | `main` | PR, merge commit; back-merge as for releases |
 
 Add user-visible changes under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
-Dependabot targets `develop` (see `.github/dependabot.yml`).
+Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`).
 
 ### Releasing
 
-1. Run the **Prepare release** workflow (Actions → Prepare release → version `0.2.0`). It creates `release/0.2.0` from `develop`, bumps `version` in the root `Cargo.toml`, updates `Cargo.lock`, dates the `CHANGELOG.md` entry and opens the PR into `main`. By hand: `git switch -c release/0.2.0 origin/develop`, make the same edits, and open the PR. Checks do not start on a PR created by the workflow's `GITHUB_TOKEN`; push a follow-up commit to the branch to start them.
-2. Review the PR `release/0.2.0` → `main`. When it is green, merge it with a merge commit.
-3. Tag the merge commit on `main` (admins only, see the tag ruleset): `git tag -a v0.2.0 -m "v0.2.0" origin/main && git push origin v0.2.0`. The Release workflow publishes `ghcr.io/panevain/observation:0.2.0` and `:latest` with a cosign signature, provenance and an SBOM, and the Treemap workflow opens a PR to `develop` to refresh the bundle-size chart (push a follow-up commit to that branch to start its checks, as for the release PR). Both workflows need Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
-4. Open a PR `release/0.2.0` → `develop` to bring the version bump back, then delete the release branch.
+1. Run the **Prepare release** workflow (Actions → Prepare release → version `0.2.0`). It creates `release/0.2.0` from `develop`, bumps `version` in the root `Cargo.toml`, updates `Cargo.lock`, dates the `CHANGELOG.md` entry and opens the PR into `main`. By hand: `git switch -c release/0.2.0 origin/develop`, make the same edits (`scripts/set-version.sh 0.2.0`), and open the PR.
+2. Review the PR `release/0.2.0` → `main` (stabilising fixes go on the branch). When it is green, merge it with a merge commit.
+3. The rest is automatic. **Release tag** tags the merge commit `v0.2.0`; **Release** publishes `ghcr.io/panevain/observation` and `ghcr.io/panevain/observation-regions` as `0.2.0` and `latest`, each with a cosign signature, provenance and an SBOM, and a GitHub release with the changelog section; **Treemap** opens a PR to `develop` to refresh the bundle-size chart; and Release tag opens `backmerge/v0.2.0` → `develop`, which merges itself once its checks pass. If the back-merge conflicts (usually `CHANGELOG.md` or `Cargo.lock`), merge `develop` into `backmerge/v0.2.0`, resolve, and push.
 
-Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`.
+Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`; Release tag waits for an approval before tagging them (below).
+
+### Security patch releases
+
+**Release watch** checks the latest release every day: cargo-audit on its `Cargo.lock` (then `cargo update` to see which advisories have a semver-compatible fix) and Trivy on its two images. If a patch release would fix something (a crate advisory, or a fixable critical or high OS vulnerability that a rebuild on the current base images clears), it starts **Hotfix**, which opens `hotfix/<x.y.z+1>` → `main` with those updates, re-pinned base images, the version bump and a `### Security` changelog entry. The PR merges itself when its checks pass. Release tag then waits for **one approval**: open its run (Actions → Release tag), choose **Review deployments**, tick `release` and approve; the tag, images, GitHub release and back-merge follow as above.
+
+Everything Release watch finds, fixable or not, is kept in an issue titled `Security: v<x.y.z>`, which it closes when there is nothing left. Advisories with no compatible fix (a semver-incompatible bump, or no fix yet) need a person: a code change on a hotfix branch, or an ignore with a reason in `deny.toml`, `.cargo/audit.toml` and `osv-scanner.toml` if the code is unreachable. Run Hotfix by hand with `force` to publish a patch release on fresh base images when nothing is flagged.
+
+### Bot app (one-time setup)
+
+Pull requests, pushes and tags made with a workflow's `GITHUB_TOKEN` do not start other workflows (pull request checks wait for a manual approval), so the release workflows act as a GitHub App:
+
+1. **Settings → Developer settings → GitHub Apps → New GitHub App**, on the account that owns the repository. Any name; homepage: the repository URL; **Webhook: Active** off. Repository permissions: **Contents**, **Pull requests** and **Workflows**: read and write; nothing else. Installable only on this account.
+2. **Generate a private key**, then **Install App** on this repository only.
+3. Store the key as the secret `BOT_PRIVATE_KEY` of the `bot` environment and the App's client ID as the repository variable `BOT_CLIENT_ID`, then delete the key file:
+   `gh secret set BOT_PRIVATE_KEY --env bot < key.pem` and `gh variable set BOT_CLIENT_ID --body <client ID>`.
+4. Put the App's numeric ID in `.github/rulesets/version-tags-create.json` (it may create `v*` tags) and apply the rulesets (below).
+
+The environments: `bot` holds the key and may only be used from `develop`, `main` and `v*` tags; `release` (branch `main`, a required reviewer) is the approval Release tag waits for on hotfixes. Workflows mint a token with only the permissions they need, after any build step or in a job that builds nothing.
 
 ### Images
 
-| Push to | Image tags |
+| Push to | Image tags (both images) |
 | --- | --- |
 | `develop` | `devel` |
 | tag `vX.Y.Z` | `X.Y.Z`, `latest` |
@@ -41,7 +58,7 @@ The rulesets live in [`.github/rulesets/`](.github/rulesets) and are applied by 
   - Review threads must be resolved, and no approving review is required.
   - `main` accepts merge commits only and requires the branch to be up to date with `main` before merging. `develop` accepts merge or squash.
 - **`release/**`, `hotfix/**`:** no force-pushes.
-- **`v*` tags:** only repository admins can create them, and nobody can move or delete them.
+- **`v*` tags:** only repository admins and the bot app can create them, and nobody (admins included) can move or delete them. These are two rulesets, since a bypass applies to every rule of its ruleset.
 
 These checks must pass, from GitHub Actions, before merging into `main` or `develop`:
 
@@ -52,12 +69,12 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
-If you rename a job, update the rulesets in the same PR and re-import them, or merges will block on a check that no longer exists.
+If you rename a job, update the rulesets in the same PR and apply them once it is merged, or merges will block on a check that no longer exists.
 
-### Applying the rulesets (one-time, repository admin)
+### Applying the rulesets (repository admin)
 
-1. **Settings → General → Default branch:** set to `develop`.
-2. **Settings → Rules → Rulesets → New ruleset ▾ → Import a ruleset.** Import each file in `.github/rulesets/`, check it, and save.
+1. **Settings → General → Default branch:** set to `develop` (once).
+2. `mise run rulesets:check` diffs `.github/rulesets/` against the live rulesets; `mise run rulesets:apply` creates or updates them, and `mise run rulesets:apply --prune` also deletes live rulesets that have no file. (Without mise: `scripts/rulesets.sh`, or import each file under **Settings → Rules → Rulesets → New ruleset ▾ → Import a ruleset**.)
 3. Optionally delete any classic branch protection rules so only the rulesets apply.
 
 ## Before opening a PR
@@ -65,11 +82,24 @@ If you rename a job, update the rulesets in the same PR and re-import them, or m
 Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 
 ```sh
-mise run check     # fmt, clippy (native + wasm), tests, design tokens, version sync
-mise run build     # release wasm build, as the CI wasm job does
-cargo deny check   # if installed
+mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
+mise run build          # release wasm build, as the CI wasm job does
+mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
+mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, zizmor, scan:repo, fuzz
 ```
 
-Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`scripts/check-toolchain-sync.sh` keeps `Cargo.toml` and the Dockerfile equal to it). `cargo nextest` is used for tests when installed, and `mise run coverage` needs `cargo-llvm-cov`. The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
+Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise run sync` keeps `Cargo.toml`, `mise.lock` and the Dockerfile equal to it). `cargo nextest` is used for tests when installed, and `mise run coverage` needs `cargo-llvm-cov` (both in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
+
+### Tools (mise)
+
+Every tool is pinned once, and mise installs it from a release asset that matches the checksum in a lockfile:
+
+| File | Holds | Loaded |
+| --- | --- | --- |
+| `mise.toml`, `mise.lock` | trunk (Rust comes from `rust-toolchain.toml`), the shared tasks, and task tools (fnox for `up` and `down`, uv for `fonts`) | always |
+| `mise.ci.toml`, `mise.ci.lock` | the tools only CI and the image build use, CI's environment, and the tasks behind the security, fuzz and scan steps | with `MISE_ENV=ci` (every workflow sets it) or `mise -E ci` |
+| `mise.local.toml` | your own settings (`OBS_CONTACT` and so on; gitignored) | always |
+
+To add or change a tool, edit `mise.toml` or `mise.ci.toml` (for an unusual GitHub release, a `[tool_alias]` entry names its backend), then `mise run lock` to record its checksums in both lockfiles. A workflow job installs only what it needs (`install_args` of `jdx/mise-action`). The Pins workflow bumps every tool in `[tools]` with `mise upgrade --bump` once a release is a week old (`minimum_release_age` in `mise.toml`); task tools other than fnox stay where they are until someone bumps them. The Dockerfile's build-tools stage installs trunk, cargo-chef and cargo-auditable from the same lockfiles.
 
 Keep colours, spacing and other UI constants in `crates/observation-client/src/theme.rs` (the design-token check fails otherwise). See [docs/design.md](docs/design.md) for architecture and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

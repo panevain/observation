@@ -17,8 +17,8 @@ Coverage is an estimate. It is modelled from published field of view, resolution
 ### Docker
 
 ```sh
-docker build -t observation .
-docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com observation
+docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com ghcr.io/panevain/observation   # the latest release
+docker build -t observation . && docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com observation   # or from source
 ```
 
 Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to OpenStreetMap services so they can reach you; set it to something real.
@@ -30,14 +30,14 @@ Public Overpass servers are often slow or busy. `compose.yaml` runs the app with
 ```sh
 cp mise.local.toml.example mise.local.toml   # set OBS_CONTACT
 # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
-mise run up                                  # fnox exec -- docker compose up -d --build
+mise run up                                  # the released images; `mise run up --build` builds them here
 ```
 
 The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits are in the `up` task in `mise.toml`. Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
 
 ### From source
 
-You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.21.14. [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
+You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) 0.22.0. [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
 
 ```sh
 mise install                          # Rust (via rustup) and trunk (checksum-verified via mise.lock)

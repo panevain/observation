@@ -14,13 +14,12 @@
 
 ## Running
 
-Fuzzing needs nightly. `rust-toolchain.toml` in this directory pins it, so run the commands from here:
+Fuzzing needs nightly, which `rust-toolchain.toml` in this directory pins. cargo-fuzz is pinned in the root `mise.ci.toml`:
 
 ```sh
-cd fuzz
-cargo install --locked cargo-fuzz --version 0.13.2
-cargo fuzz list
-cargo fuzz run scene_json corpus/scene_json seeds/scene_json -- -max_total_time=60
+mise -E ci install cargo-fuzz   # builds it with `cargo install --locked`
+mise -E ci run fuzz 60          # every target for 60 s, from corpus/ and seeds/, as CI runs them
+cd fuzz && cargo fuzz run scene_json corpus/scene_json seeds/scene_json -- -max_total_time=60
 ```
 
 To reproduce a crash, run `cargo fuzz run <target> artifacts/<target>/crash-...`. To print it as structured input, run `cargo fuzz fmt <target> <file>`. When you fix a finding, add a unit test next to the fix as well (see `occlusion.rs` and `coverage.rs`).

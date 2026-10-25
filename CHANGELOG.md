@@ -15,7 +15,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - A **Custom** detail level with a user-entered pixel density (1-2000 px/m, saved in scenes as `params.custom_ppm`) for calibrating ranges against real footage.
 - Opt-in Prometheus metrics (`OBS_METRICS_BIND`), JSON logs (`OBS_LOG_FORMAT=json`) and an `x-request-id` header on every response.
 - Release images are signed with cosign (keyless).
-- `image-full.yml` builds the in-image client path before release, and a `zizmor (workflow audit)` check (required in the rulesets: re-import them).
+- `image-full.yml` builds the in-image client path before release, and a `zizmor (workflow audit)` check (required in the rulesets: `mise run rulesets:apply`).
 - Treemap workflow that refreshes the bundle-size chart for each release tag.
 - `cargo-nextest` and `cargo-llvm-cov` support (`mise run coverage`), and a zizmor audit of the workflows.
 - A mode pill at the top left of the 3D view (Select, Place, Aim, Move, Region) with what a click does and the selected camera or the model being placed; the pointer changes with the tool, and the tool rail has icons.
@@ -35,9 +35,15 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - A "No cameras yet" empty state with a Place camera button replaces the 0% figures.
 - The status bar shows whether the autosave reached browser storage (Saved, or Not saved with a hint to export).
 - `mise run down` stops and removes the Docker Compose stack, keeping the region and cache volumes (`mise run down -v` deletes them too).
+- The region agent image is published as `ghcr.io/panevain/observation-regions` (signed and attested like the app image), and `mise run up` now runs the released images (`OBS_VERSION`, default `latest`) instead of building them; `mise run up --build` builds both from the checkout as before.
+- Each release gets a GitHub release with its changelog section and both image digests.
+- Security patch releases: Release watch checks the latest release every day, and when a dependency or base-image fix can be shipped, Hotfix opens the patch release, which is published after one approval. Release tag tags `main` and opens the back-merge into `develop` for every release, and Pins opens a weekly PR for the pinned tools Dependabot does not cover. They act as a GitHub App (setup in CONTRIBUTING.md).
 
 ### Changed
 
+- Images are based on Debian 13: distroless `cc-debian13` for the app and `debian:trixie-slim` for the region agent (the Debian 12 distroless images are no longer rebuilt). The server and region agent binaries are built with cargo-auditable, so image scanners and the SBOM see their crates.
+- Rust 1.99.1 and trunk 0.22.0.
+- Tooling is driven from mise. The tools only CI and the image build use (Trivy, cosign, cargo-audit, cargo-deny, zizmor, cargo-nextest, cargo-llvm-cov, cargo-fuzz, cargo-chef and cargo-auditable) are pinned in `mise.ci.toml` and locked with their checksums in `mise.ci.lock`, next to CI's environment and the security, fuzz and scan steps as tasks (`mise -E ci run <task>` runs one locally). The Dockerfile installs trunk, cargo-chef and cargo-auditable from the lockfiles, and the Pins workflow bumps the mise tools with `mise upgrade --bump`, each a week after its release. `mise run fonts` rebuilds the UI fonts with pinned fonttools and opentype-feature-freezer.
 - Cameras are easier to click and tap: a press that misses every camera picks the nearest one within 14 px (22 px for a tap), unless a building hides it. Hovering uses the same reach. The Place tool still needs a direct hit, so a camera can be placed next to another.
 - Docker Compose settings no longer use `.env`; `.env.example` is gone and `mise run up` starts the stack. The Compose tokens (`OBS_REGIONS_TOKEN`, `OBS_ADMIN_TOKEN`) are [fnox](https://fnox.jdx.dev) secrets declared in `fnox.toml`, with values in the gitignored `fnox.local.toml`; fnox is installed by mise for that task only. The other Compose settings (`OBS_PORT`, `OBS_LOG_FORMAT`, region limits) are set on the `up` task in `mise.toml` and can be overridden per run, e.g. `OBS_PORT=9090 mise run up`. `OBS_CONTACT` still comes from `mise.local.toml`, where it is now commented out by default. Move your values out of `.env`, or export them yourself before `docker compose up`.
 - Upstream hosts on private networks need `OBS_ALLOW_PRIVATE_UPSTREAMS=1` (server and region agent). `OBS_ALLOW_PRIVATE_UPSTREAMS` accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`; other values stop the server at startup.

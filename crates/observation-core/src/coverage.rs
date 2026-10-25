@@ -172,7 +172,7 @@ impl RegionMask {
                 }
             }
             xs.sort_by(f32::total_cmp);
-            for pair in xs.chunks_exact(2) {
+            for pair in xs.as_chunks::<2>().0 {
                 // Columns whose centre x lies in [pair[0], pair[1]).
                 let col = |x: f32| {
                     ((x - grid.min.x) / grid.cell_m - 0.5)

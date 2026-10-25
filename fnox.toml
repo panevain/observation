@@ -1,11 +1,16 @@
 # Docker Compose secrets, loaded only by `mise run up` (which runs Compose under
 # `fnox exec`): https://fnox.jdx.dev. Other Compose settings are in mise.toml.
-# Only the names are committed. Put values in fnox.local.toml (gitignored), e.g.
-#   OBS_REGIONS_TOKEN = { default = "<openssl rand -hex 32>" }
-# or point a secret at a provider (1Password, age, ...) here instead. A variable
-# already exported in the shell is used when no value is set; compose.yaml stops
-# with an error if OBS_REGIONS_TOKEN is still missing.
+# Only the names are committed. Put values in fnox.local.toml (gitignored), best encrypted
+# with age so the file holds no plain text:
+#   mise x aqua:FiloSottile/age -- age-keygen -o ~/.config/fnox/age.txt   # back this key up
+#   # in fnox.local.toml: [providers.age] type = "age"
+#   #   recipients = ["<the age1... key from: age-keygen -y ~/.config/fnox/age.txt>"]
+#   openssl rand -hex 32 | fnox -c fnox.local.toml set OBS_REGIONS_TOKEN --provider age
+# (`fnox set` keeps an existing plain `default = ...` beside the ciphertext; delete it). Or
+# in plain text: OBS_REGIONS_TOKEN = { default = "<openssl rand -hex 32>" }. A variable
+# already exported in the shell is used when no value is set. A missing OBS_REGIONS_TOKEN
+# stops `mise run up` before Compose starts; OBS_ADMIN_TOKEN is optional.
 
 [secrets]
-OBS_REGIONS_TOKEN = { description = "Bearer token shared by the app and the region agent (required)", if_missing = "ignore" }
+OBS_REGIONS_TOKEN = { description = "Bearer token shared by the app and the region agent (required)", if_missing = "error" }
 OBS_ADMIN_TOKEN = { description = "Token the UI sends to manage regions; unset makes regions read-only", if_missing = "ignore" }
