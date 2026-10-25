@@ -46,7 +46,7 @@ jobs:
           git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
           echo "${TAG}: version ${version}, on main"
       # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
           install_args: cargo-deny
@@ -120,7 +120,7 @@ jobs:
         run: '"${SMOKE}" "${CANDIDATE}"'
 
       # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
           install_args: "trivy cosign"
