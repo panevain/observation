@@ -32,7 +32,7 @@ fnox = "github:jdx/fnox"
 
 [tools]
 # mise.lock records the release checksums; the Dockerfile installs trunk from it.
-trunk = "0.22.0"
+trunk = "0.21.14"
 
 [env]
 # trunk would otherwise query the crates.io API for a newer release on every build.
