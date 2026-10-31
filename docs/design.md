@@ -467,7 +467,7 @@ The client has no unit tests yet. The CI step that would run them only runs if t
 - Coverage is computed on the main thread. A Web Worker, or a coarser first pass while dragging, would remove frame hitches for long-range cameras.
 - The bundle cache has no size limit or eviction, and the tile cache stops caching at its cap instead of evicting.
 - Per-client rate limiting belongs in the server (or a proxy in front of it).
-- Custom models cannot be edited or deleted in the app; there is no undo; there is a single autosave slot.
+- There is a single autosave slot, and undo history lasts for the visit only.
 - The theme follows the system setting at load only. The map dialog and the 3D scene do not respond to a later change.
 - Night modelling uses IR range only; it does not account for floodlights, street lighting or shutter behaviour.
 - The client hard-codes its API paths and the 20-500 m limits rather than reading them from `/api/config`.

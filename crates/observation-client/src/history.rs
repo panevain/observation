@@ -192,9 +192,7 @@ fn record(
     if ui.selected.is_none() && ui.tool.needs_selection() {
         ui.tool = Tool::Select;
     }
-    if models.get(&ui.place_model).is_none() {
-        ui.place_model = UiState::default().place_model;
-    }
+    ui.forget_missing_place_model(&models);
     h.last = Some(target);
     h.last_revision = scene.revision;
 }
@@ -210,6 +208,16 @@ fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
         return Some(format!("New area loaded; {lost} camera(s) removed"));
     }
     match lost {
+        // A custom model deleted in the inspector (only unused ones can be).
+        0 if before.cameras == after.cameras
+            && after.custom_models.len() + 1 == before.custom_models.len() =>
+        {
+            before
+                .custom_models
+                .iter()
+                .find(|m| !after.custom_models.iter().any(|a| a.id == m.id))
+                .map(|m| format!("Deleted model {}", m.display_name()))
+        }
         0 => None,
         1 => before
             .cameras

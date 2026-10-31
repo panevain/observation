@@ -271,6 +271,14 @@ impl UiState {
         self.hover_list.or(self.hover_scene)
     }
 
+    /// Goes back to the default model for the Place tool if its model is
+    /// gone (deleted, undone or left out of an imported scene).
+    pub fn forget_missing_place_model(&mut self, models: &Models) {
+        if models.get(&self.place_model).is_none() {
+            self.place_model = Self::default().place_model;
+        }
+    }
+
     pub fn info(&mut self, text: impl Into<String>) {
         self.push_toast(ToastKind::Info, text.into(), None, 4.0);
     }
@@ -333,6 +341,43 @@ impl Models {
     pub fn kind_of(&self, id: &str) -> CameraKind {
         self.get(id).map(|m| m.kind).unwrap_or_default()
     }
+
+    /// A user-defined model (catalogue models cannot be edited).
+    pub fn custom_model(&self, id: &str) -> Option<&CameraModel> {
+        self.custom.iter().find(|m| m.id == id)
+    }
+
+    /// Replaces the custom model with `model`'s id; false if there is none.
+    pub fn update_custom(&mut self, model: CameraModel) -> bool {
+        match self.custom.iter_mut().find(|m| m.id == model.id) {
+            Some(slot) => {
+                *slot = model;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn remove_custom(&mut self, id: &str) -> Option<CameraModel> {
+        let i = self.custom.iter().position(|m| m.id == id)?;
+        Some(self.custom.remove(i))
+    }
+
+    /// An id for a new custom model named `name`, `custom-<slug>-<n>`, that
+    /// no custom or catalogue model has (models can be deleted, so the count
+    /// alone can repeat one).
+    pub fn new_custom_id(&self, name: &str) -> String {
+        let slug: String = name
+            .to_ascii_lowercase()
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+            .collect();
+        let slug = slug.trim_matches('-');
+        (self.custom.len() + 1..)
+            .map(|n| format!("custom-{slug}-{n}"))
+            .find(|id| self.get(id).is_none())
+            .unwrap_or_default()
+    }
 }
 
 /// The user's document: what gets autosaved and exported.
@@ -392,6 +437,14 @@ impl Scene {
     pub fn remove_camera(&mut self, id: u32) {
         self.cameras.retain(|c| c.id != id);
         self.touch();
+    }
+
+    /// How many placed cameras use model `model_id`.
+    pub fn cameras_using(&self, model_id: &str) -> usize {
+        self.cameras
+            .iter()
+            .filter(|c| c.model_id == model_id)
+            .count()
     }
 
     pub fn to_file(&self, models: &Models) -> Option<SceneFile> {

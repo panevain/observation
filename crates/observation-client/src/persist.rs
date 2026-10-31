@@ -178,6 +178,7 @@ fn receive_imports(
                 let n = file.cameras.len();
                 scene.load_file(file, &mut models);
                 ui.selected = None;
+                ui.forget_missing_place_model(&models);
                 load.write(LoadArea {
                     area,
                     keep_cameras: true,
