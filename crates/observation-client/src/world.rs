@@ -71,8 +71,15 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_lights)
-            .add_systems(Update, (on_area_loaded, apply_ground_tiles).chain());
+        app.add_systems(Startup, setup_lights).add_systems(
+            Update,
+            (
+                on_area_loaded,
+                apply_ground_tiles,
+                follow_theme.run_if(resource_changed::<Tokens>),
+            )
+                .chain(),
+        );
     }
 }
 
@@ -339,6 +346,28 @@ fn apply_ground_tiles(
                     ..default()
                 })),
             ));
+        }
+    }
+}
+
+/// Recolours the sky, the buildings and the plain ground in place after a
+/// theme change.
+fn follow_theme(
+    tokens: Res<Tokens>,
+    mut clear: ResMut<ClearColor>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    buildings: Query<&MeshMaterial3d<StandardMaterial>, With<BuildingMesh>>,
+    plain: Query<&MeshMaterial3d<StandardMaterial>, (With<GroundTile>, Without<TileTextured>)>,
+) {
+    clear.0 = to_bevy(tokens.world.sky);
+    // Tiles without their map image share the plain ground material.
+    let recolor = buildings
+        .iter()
+        .map(|m| (m, tokens.world.building))
+        .chain(plain.iter().map(|m| (m, tokens.world.ground)));
+    for (m, color) in recolor {
+        if let Some(mut mat) = materials.get_mut(&m.0) {
+            mat.base_color = to_bevy(color);
         }
     }
 }

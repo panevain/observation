@@ -13,7 +13,9 @@ use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
-use crate::theme::{MIN_VIEWPORT, Tokens, UiFont, install_fonts, strong_family};
+use crate::theme::{
+    MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
+};
 use bevy::camera::Viewport;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -25,8 +27,9 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MapPicker>()
+            .init_resource::<SchemeChanges>()
             .add_systems(EguiPrimaryContextPass, (apply_theme, draw_ui).chain())
-            .add_systems(Update, tick_toasts);
+            .add_systems(Update, (follow_scheme, tick_toasts));
     }
 }
 

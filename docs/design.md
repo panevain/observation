@@ -262,7 +262,7 @@ The client is a Bevy app (`DefaultPlugins` with WebGL2) whose UI is egui via `be
 | `CoveragePlugin` | Incremental coverage computation and overlay painting |
 | `InputPlugin` | Orbit camera, pointer and touch gestures, tool actions, shortcuts |
 | `PersistPlugin` | Autosave, restore, JSON export and import |
-| `UiPlugin` | Panels, dialogs, toasts, theme application |
+| `UiPlugin` | Panels, dialogs, toasts, theme application and following the system light/dark setting |
 
 Resources: **`Scene`** is the user's document (area, origin, cameras, analysis parameters, a revision counter that drives sync, coverage and autosave). **`UiState`** is transient state (tool, selection, overlay mode, toggles, toasts). **`Models`** holds the shipped catalogue and the scene's custom models. **`Area`** holds the loaded bundle and the precomputed analysis layers.
 
@@ -337,7 +337,7 @@ The cost is CPU time. A camera's recompute is synchronous on the main thread and
 
 ## Design tokens and themes
 
-`theme.rs` defines a `Tokens` resource: the only place colours, spacing (4, 8, 12, 16, 24 px), radii (4, 6, 8), the type scale (12, 14, 16, 20 px) and layout sizes (32 px hit target, 64 px tool rail, 320 px inspector, 48 px top bar, 28 px status bar) are written down. It has a light and a dark variant, chosen from `prefers-color-scheme` once at start-up, and `apply` pushes it into egui's style. World colours (sky, ground, buildings, selection and aim markers with their dark casing, region outline), the camera colours and the four-step overlap ramp are tokens too. The overlap ramp owns the warm hues (yellow to purple); camera types use cool and neutral hues so a cone never reads as a coverage step, and each type also has an icon so colour is never the only cue.
+`theme.rs` defines a `Tokens` resource: the only place colours, spacing (4, 8, 12, 16, 24 px), radii (4, 6, 8), the type scale (12, 14, 16, 20 px) and layout sizes (32 px hit target, 64 px tool rail, 320 px inspector, 48 px top bar, 28 px status bar) are written down. It has a light and a dark variant, chosen from `prefers-color-scheme` at start-up and swapped when that setting changes (a `change` listener on the media query feeds a channel that `theme::follow_scheme` drains), and `apply` pushes it into egui's style. World colours (sky, ground, buildings, selection and aim markers with their dark casing, region outline), the camera colours and the four-step overlap ramp are tokens too. Systems that baked a token colour into an asset react to a swap: the world recolours the sky and the building and plain-ground materials in place, camera bodies pick up the new type colours, and the coverage overlay repaints. The overlap ramp owns the warm hues (yellow to purple); camera types use cool and neutral hues so a cone never reads as a coverage step, and each type also has an icon so colour is never the only cue.
 
 The UI font is Inter (with tabular digits frozen in, since egui cannot switch OpenType features on) or Iosevka, chosen in Settings and remembered in `localStorage`; Iosevka is always the monospace face. Both are subset to Latin-1 by `scripts/subset-fonts.sh` and embedded (about 100 KB together), with egui's bundled fonts kept as fallbacks. Icons are Phosphor (MIT) via `egui-phosphor`, subset at compile time in `icons.rs` to the glyphs the UI uses. egui has no font weights, so the semibold cut is its own family (`theme::strong_family`).
 
@@ -468,6 +468,5 @@ The client has no unit tests yet. The CI step that would run them only runs if t
 - The bundle cache has no size limit or eviction, and the tile cache stops caching at its cap instead of evicting.
 - Per-client rate limiting belongs in the server (or a proxy in front of it).
 - Custom models cannot be edited or deleted in the app; there is no undo; there is a single autosave slot.
-- The theme follows the system setting at load only. The map dialog and the 3D scene do not respond to a later change.
 - Night modelling uses IR range only; it does not account for floodlights, street lighting or shutter behaviour.
 - The client hard-codes its API paths and the 20-500 m limits rather than reading them from `/api/config`.

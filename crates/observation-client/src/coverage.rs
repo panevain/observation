@@ -183,20 +183,25 @@ fn paint_overlay(
             *v = want;
         }
     }
+    // A theme change can recolour either mode.
+    if tokens.is_changed() {
+        state.paint = true;
+    }
     let mode = (ui.overlay, ui.show_facades);
     // Per-camera colours can change without any visibility changing; repaint
     // only when one actually did.
-    let colors =
-        if ui.overlay == OverlayMode::PerCamera && (scene.is_changed() || models.is_changed()) {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            for c in &scene.cameras {
-                let color = crate::cameras::camera_color(&scene, c, &models, &tokens);
-                (c.id, rgba(color)).hash(&mut h);
-            }
-            h.finish()
-        } else {
-            state.painted_colors
-        };
+    let colors = if ui.overlay == OverlayMode::PerCamera
+        && (scene.is_changed() || models.is_changed() || tokens.is_changed())
+    {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for c in &scene.cameras {
+            let color = crate::cameras::camera_color(&scene, c, &models, &tokens);
+            (c.id, rgba(color)).hash(&mut h);
+        }
+        h.finish()
+    } else {
+        state.painted_colors
+    };
     let recolor = colors != state.painted_colors;
     if !state.paint && !recolor && state.painted_mode == Some(mode) && !overlay.is_changed() {
         return;
