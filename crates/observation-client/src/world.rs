@@ -77,12 +77,17 @@ struct WorldMaterials {
 
 pub struct WorldPlugin;
 
+/// Builds a newly loaded area and inserts [`Area`]; systems that need the new
+/// area in the same frame run after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AreaLoadSet;
+
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_lights).add_systems(
             Update,
             (
-                on_area_loaded,
+                on_area_loaded.in_set(AreaLoadSet),
                 apply_ground_tiles,
                 follow_theme.run_if(resource_changed::<Tokens>),
             )

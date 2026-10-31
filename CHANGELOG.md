@@ -41,6 +41,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Changed
 
+- Coverage is computed in a Web Worker, so moving or editing a camera no longer stalls the 3D view while its visibility is worked out; the overlay and figures update when the result arrives. The worker is built by trunk alongside the app (`coverage-worker` binary, loaded from `/coverage-worker_loader.js`); if it cannot start, coverage is computed on the main thread as before. The server now caches only files whose names carry trunk's content hash for a year and has browsers revalidate everything else, such as the worker's files.
 - The tile cache evicts instead of stopping at its 512 MiB cap: a tile that would take it over the cap first deletes the least recently written or revalidated tiles (oldest `.png` mtime, with their `.json` sidecars) down to 90 % of the cap, and each eviction recounts the cache from disk. A 304 revalidation now touches the tile's `.png` so tiles in use are evicted last.
 - Images are based on Debian 13: distroless `cc-debian13` for the app and `debian:trixie-slim` for the region agent (the Debian 12 distroless images are no longer rebuilt). The server and region agent binaries are built with cargo-auditable, so image scanners and the SBOM see their crates.
 - Rust 1.99.1 and trunk 0.22.0.

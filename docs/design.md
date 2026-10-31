@@ -65,7 +65,7 @@ Map tiles are Web Mercator. Each tile's corner coordinates are run through the s
 | `GET /api/regions/catalog` | Importable Geofabrik extracts, `[{id, name, parent}]` |
 | `POST /api/regions/{import,cancel,delete}` | `{"id": "<extract id>"}` with `Authorization: Bearer <OBS_ADMIN_TOKEN>`; answers the new status. 403 when `OBS_ADMIN_TOKEN` is unset, 401 for a missing or wrong token, 409 when an import of that region is already queued or running |
 | `/api/*` (anything else) | JSON 404, deliberately not the SPA page |
-| everything else | Static client from `OBS_STATIC_DIR`, with `index.html` as fallback. HTML is `no-cache`; other files are treated as content-hashed (trunk `filehash = true`) and get `public, max-age=31536000, immutable` |
+| everything else | Static client from `OBS_STATIC_DIR`, with `index.html` as fallback. Files whose names carry trunk's content hash (`filehash = true`: `<name>-<hex hash>` before `.js`, `_bg.wasm` or `.css`, such as `observation-client-50916e44830ffe5e.js`) get `public, max-age=31536000, immutable`; everything else, HTML and the coverage worker's files (which trunk does not hash) included, is `no-cache` |
 
 Errors are JSON `{"error": "..."}`: 400 bad request, 401 and 403 (region management), 404, 409 (region import already running), 502 upstream failure, 504 upstream timeout, 503 rate limited (with `Retry-After`), 500 internal (detail logged, never sent), 408 on request timeout.
 
@@ -259,7 +259,7 @@ The client is a Bevy app (`DefaultPlugins` with WebGL2) whose UI is egui via `be
 | `WorldPlugin` | Builds the 3D area on load: building mesh, ground, map tiles draped on the ground (at most 64 tiles, plus a 150 m margin around the area), lights, coverage overlay assets |
 | `CamerasPlugin` | Camera bodies (a small coloured box with a lens) and view-cone gizmos |
 | `AddressesPlugin` | Each camera's address (`address::address_at` in core: the nearest addressed building or address point within 25 m, measuring a point inside a building to that building), recomputed only for cameras that moved and for a new area; the camera list groups by it unless the camera has its own `group` |
-| `CoveragePlugin` | Incremental coverage computation and overlay painting |
+| `CoveragePlugin` | Incremental coverage computation (in a Web Worker in the browser, see [below](#coverage-worker)) and overlay painting |
 | `InputPlugin` | Orbit camera, pointer and touch gestures, tool actions, shortcuts |
 | `PersistPlugin` | Autosave, restore, JSON export and import |
 | `UiPlugin` | Panels, dialogs, toasts, theme application and following the system light/dark setting |
@@ -280,7 +280,8 @@ Resources: **`Scene`** is the user's document (area, origin, cameras, analysis p
  WorldPlugin: despawn old area entities, build StaticLayers + meshes,
               reset coverage state, set Scene.area / origin, insert Area
         v
- CoveragePlugin: compute per-camera visibility, update counts and stats, repaint
+ CoveragePlugin: send the area to the coverage worker, compute per-camera
+                visibility there, update counts and stats, repaint
 ```
 
 A failed load shows an error toast and leaves the previous area in place. Cameras are kept only when `keep_cameras` is set and the area is unchanged (restore and import); otherwise loading an area clears them.
@@ -323,6 +324,10 @@ Core code in `observation-core`; the client only schedules it and paints the res
 
 **Painting.** Counters become colours (overlap ramp for 1, 2, 3, 4+ cameras, or per-camera colours) and are written to an RGBA texture with one texel per ground cell, drawn unlit on a quad just above the ground, and to per-vertex colours of one quad per façade patch, offset 3 cm from the wall. Walls can be hidden without recomputing.
 
+### Coverage worker
+
+In the browser the per-camera computation runs in a dedicated worker: the `coverage-worker` binary of the client crate (`src/bin/coverage_worker.rs`, `observation-core` with plain wasm-bindgen and no Bevy). Trunk builds it from a second `rel="rust"` link in `web/index.html` (`data-type="worker"`, the `web` bindgen target and a loader shim, with the same profile and `wasm-opt` settings as the app). Trunk names worker files after the binary rather than by content hash, because the app has to know the URL, so the app starts a module worker from `/coverage-worker_loader.js`, and the server, which caches only names that carry a hash, has browsers revalidate these files. The messages (`observation_core::coverage_job`) are postcard behind a version byte, posted as `Uint8Array`s whose buffers are transferred. On each area load the client sends a new generation number and the inputs of `StaticLayers::from_parts` (ground grid, footprints, roads, façade cell size; not the render mesh), and the worker builds its own `StaticLayers` with the same function as the client; then the client sends one job (camera id, cache key, view cone, subject height) for each camera whose key changed, and the worker answers with its visibility, or with `Stale` if the job belongs to an area it does not hold. The client keeps the cache, the counters and the statistics. It has at most one job per camera in flight, keeps showing the previous visibility until the answer arrives, and drops answers for an earlier area or for a camera that has since been deleted or disabled. An answer for an earlier pose replaces only an even older visibility, never an up-to-date one, so the overlay of a dragged camera follows one job behind and catches up once it stops. Natively, and when the worker cannot be started, reports an error, has not said it is ready within 10 s, or answers `Stale` for the current area, the same jobs run inline on the main thread.
+
 ### Why CPU ray casting rather than GPU shadow maps
 
 The usual way to show "what a light or camera sees" is to render a depth map from the camera and compare. It was rejected for these reasons:
@@ -333,7 +338,7 @@ The usual way to show "what a light or camera sees" is to render a depth map fro
 - **No per-camera cap.** The cost per camera is only the cells it covers; there is no texture array to size, and up to 256 cameras are allowed in a scene.
 - **Testable.** Occlusion and coverage live in `observation-core` and are unit-tested natively with no GPU. The 3D view does use a shadow-mapped sun light, but only for appearance; it plays no part in coverage.
 
-The cost is CPU time. A camera's recompute is synchronous on the main thread and scales with the cells inside its range (at most about 160,000 ground cells for a 100 m range, each needing a ray cast only if it is inside the cone) plus a pass over all façade patches. Caching keeps this to the camera being edited, but dragging a camera recomputes it on every frame. Moving the work to a Web Worker is the obvious next step.
+The cost is CPU time. A camera's recompute scales with the cells inside its range (at most about 160,000 ground cells for a 100 m range, each needing a ray cast only if it is inside the cone) plus a pass over all façade patches. Caching keeps this to the camera being edited, and the [worker](#coverage-worker) keeps it off the main thread, so a long-range camera being dragged updates its overlay a little behind instead of stalling the frame. The price is a second copy of the static layers, in the worker.
 
 ## Design tokens and themes
 
@@ -464,7 +469,7 @@ The client has no unit tests yet. The CI step that would run them only runs if t
 ## Known limitations and future work
 
 - Flat-roofed boxes only: no pitched roofs, no building parts, no terrain, no vegetation, fences or vehicles. Roof geometry would need a different occlusion test.
-- Coverage is computed on the main thread. A Web Worker, or a coarser first pass while dragging, would remove frame hitches for long-range cameras.
+- Coverage is computed in a single worker, one camera at a time, so a change that touches every camera (subject height, lighting) fills in camera by camera. Several workers, or a coarser first pass, would shorten that. Without the worker (natively, or if it fails to start) the computation is back on the main thread.
 - The bundle cache has no size limit or eviction.
 - Per-client rate limiting belongs in the server (or a proxy in front of it).
 - Custom models cannot be edited or deleted in the app; there is no undo; there is a single autosave slot.
