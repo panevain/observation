@@ -157,7 +157,7 @@ fn handle_actions(
     }
 }
 
-fn receive_imports(
+pub fn receive_imports(
     p: Res<Persist>,
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,

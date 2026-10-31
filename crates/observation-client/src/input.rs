@@ -99,7 +99,18 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PointerState>()
             .add_systems(Startup, spawn_camera)
-            .add_systems(Update, (keyboard, pointer, apply_orbit).chain());
+            .add_systems(Update, (keyboard, pointer, apply_orbit).chain())
+            // Undo and import replace the custom models (and the inspector
+            // deletes them, after the frame's input): a click must never place
+            // a camera with a model that is gone.
+            .add_systems(
+                Update,
+                crate::state::forget_missing_place_model
+                    .run_if(resource_changed::<Models>)
+                    .after(crate::history::record)
+                    .after(crate::persist::receive_imports)
+                    .before(pointer),
+            );
     }
 }
 
