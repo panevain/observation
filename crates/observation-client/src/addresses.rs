@@ -73,6 +73,34 @@ impl CameraAddresses {
         out
     }
 
+    /// How many cameras are at the address with this label, whatever group
+    /// they are listed under.
+    pub fn count_at(&self, label: &str) -> usize {
+        self.by_camera
+            .values()
+            .filter(|(_, a)| a.as_deref() == Some(label))
+            .count()
+    }
+
+    /// The group to show for the address with this label: its own heading,
+    /// else the group of the first camera at it (one with a hand-set group).
+    pub fn group_for<'a>(
+        &self,
+        groups: &[(Option<&'a str>, Vec<&'a CameraPlacement>)],
+        label: &str,
+    ) -> Option<&'a str> {
+        let own = groups.iter().find_map(|(g, _)| g.filter(|g| *g == label));
+        own.or_else(|| {
+            groups.iter().find_map(|(g, cameras)| {
+                cameras
+                    .iter()
+                    .any(|c| self.automatic(c.id) == Some(label))
+                    .then_some(*g)
+                    .flatten()
+            })
+        })
+    }
+
     /// Address labels near the cameras, for suggestions when naming a group.
     pub fn known(&self) -> Vec<&str> {
         let mut v: Vec<&str> = self

@@ -129,6 +129,7 @@ impl Tool {
                 ("Click", "select address"),
                 ("Drag", "orbit"),
                 ("Right-drag", "pan"),
+                ("Del", "clear"),
                 ("Esc", "done"),
             ],
         }
@@ -198,11 +199,12 @@ pub struct UiState {
     /// What the Address tool shows by the pointer: `None` off the scene,
     /// `Some(None)` where there is no address.
     pub hover_address: Option<Option<String>>,
-    /// The address picked with the Address tool, as a group label (see
-    /// [`crate::addresses::address_label`]); its buildings are highlighted.
-    pub selected_address: Option<String>,
-    /// Scroll the camera list to this group once (consumed by the inspector).
-    pub scroll_to_group: Option<String>,
+    /// The address picked with the Address tool; its buildings are
+    /// highlighted.
+    pub selected_address: Option<observation_core::address::Address>,
+    /// Scroll the camera list to the picked address's group once (consumed by
+    /// the inspector).
+    pub jump_to_address: bool,
 }
 
 impl Default for UiState {
@@ -230,7 +232,7 @@ impl Default for UiState {
             region_snap_m: 1.0,
             hover_address: None,
             selected_address: None,
-            scroll_to_group: None,
+            jump_to_address: false,
         }
     }
 }

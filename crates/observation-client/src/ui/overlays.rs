@@ -3,6 +3,7 @@
 use super::UiData;
 use super::actions::CameraAction;
 use super::widgets::{hint, keycap, primary, secondary, swatch};
+use crate::addresses::address_label;
 use crate::cameras::camera_color;
 use crate::icons;
 use crate::state::{ToastAction, ToastKind, Tool, UiState};
@@ -227,10 +228,20 @@ fn selection_chip(
                     };
                     ui.label(RichText::new(text).strong());
                 } else if d.ui.tool == Tool::Address {
-                    match &d.ui.selected_address {
-                        Some(a) => ui.label(RichText::new(a).strong()),
-                        None => ui.label(RichText::new("No address selected").color(t.text_muted)),
-                    };
+                    match d.ui.selected_address.as_ref().map(address_label) {
+                        Some(a) => {
+                            let cameras = match d.addresses.count_at(&a) {
+                                0 => "no cameras".to_owned(),
+                                1 => "1 camera".to_owned(),
+                                n => format!("{n} cameras"),
+                            };
+                            ui.label(RichText::new(a).strong());
+                            ui.label(RichText::new(cameras).color(t.text_muted));
+                        }
+                        None => {
+                            ui.label(RichText::new("No address selected").color(t.text_muted));
+                        }
+                    }
                 } else if let Some(c) = selected {
                     swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
                     ui.label(RichText::new(&c.label).strong());

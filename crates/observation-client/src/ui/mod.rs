@@ -202,7 +202,7 @@ fn draw_ui(
     // Quick actions next to the selected camera, where the eye already is.
     let anchor =
         d.ui.selected
-            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region))
+            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region | Tool::Address))
             .and_then(|id| d.scene.camera(id))
             .zip(camera.single().ok())
             .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())

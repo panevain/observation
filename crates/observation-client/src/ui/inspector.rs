@@ -6,7 +6,7 @@ use super::widgets::{
     NUMBER_TIP, bar, compass_dial, danger, drag_speed, hint, primary, row, secondary, section,
     segmented, stat, subsection, swatch, swatch_button,
 };
-use crate::addresses::NO_ADDRESS;
+use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
 use crate::state::{OverlayMode, Tool};
@@ -263,20 +263,23 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let groups = d.addresses.groups(&d.scene.cameras);
     // Headings only help once something has an address or a group.
     let headed = !matches!(groups.as_slice(), [(None, _)] | []);
-    // An address clicked with the Address tool: scroll its group into view.
-    let jump = if d.ui.scroll_to_group.is_some() {
-        d.ui.scroll_to_group.take()
-    } else {
-        None
-    };
-    let mut jumped = false;
+    // The address picked with the Address tool: its group is shaded, and
+    // scrolled into view once after a click.
+    let picked =
+        d.ui.selected_address
+            .as_ref()
+            .map(address_label)
+            .and_then(|label| d.addresses.group_for(&groups, &label));
+    let jump = d.ui.jump_to_address;
+    if jump {
+        d.ui.jump_to_address = false;
+    }
     for (group, cameras) in &groups {
         if headed {
-            let picked = group.is_some() && *group == d.ui.selected_address.as_deref();
-            let heading = group_heading(ui, t, *group, cameras.len(), picked);
-            if group.is_some() && *group == jump.as_deref() {
+            let is_picked = group.is_some() && *group == picked;
+            let heading = group_heading(ui, t, *group, cameras.len(), is_picked);
+            if is_picked && jump {
                 heading.scroll_to_me(Some(egui::Align::TOP));
-                jumped = true;
             }
         }
         for &c in cameras {
@@ -332,9 +335,6 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         }
     }
     ui.spacing_mut().item_spacing.y = t.space.sm;
-    if let Some(address) = jump.filter(|_| !jumped) {
-        d.ui.info(format!("No cameras at {address} yet"));
-    }
     if d.ui.hover_list != hovered {
         d.ui.hover_list = hovered;
     }

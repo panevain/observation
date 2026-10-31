@@ -3,12 +3,14 @@
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
-use crate::world::{BuildingMesh, GroundMesh};
+use crate::world::{AreaLoadSet, BuildingMesh, GroundMesh};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::math::Affine3A;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
+use observation_core::address::{Address, ON_OUTLINE_M};
 use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
 use observation_core::coverage::{MAX_REGION_POINTS, Region};
 
@@ -92,6 +94,17 @@ struct PointerState {
     /// Touch id driving a one-finger gesture.
     touch_id: Option<u64>,
     last_pos: Option<Vec2>,
+    /// What the Address tool's card was last looked up for, and the address
+    /// found, so a click on a settled pointer need not cast again.
+    address_key: Option<AddressKey>,
+    address_found: Option<Address>,
+}
+
+/// Everything the address under the pointer depends on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AddressKey {
+    pos: Vec2,
+    view: Affine3A,
 }
 
 pub struct InputPlugin;
@@ -100,7 +113,12 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PointerState>()
             .add_systems(Startup, spawn_camera)
-            .add_systems(Update, (keyboard, pointer, apply_orbit).chain())
+            // After an area load, so the pointer never reads the old area
+            // once the address state has been cleared for the new one.
+            .add_systems(
+                Update,
+                (keyboard, pointer.after(AreaLoadSet), apply_orbit).chain(),
+            )
             // Undo and import replace the custom models (and the inspector
             // deletes them, after the frame's input): a click must never place
             // a camera with a model that is gone.
@@ -206,6 +224,11 @@ fn keyboard(
         }
         if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
             ui.region_draft.pop();
+        }
+    } else if ui.tool == Tool::Address {
+        // The picked address, not the camera selected before the tool.
+        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
+            ui.selected_address = None;
         }
     } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
         && let Some(id) = ui.selected.take()
@@ -346,17 +369,20 @@ fn pointer(
         cast(centre, false).filter(|h| h.target == HitTarget::Camera(id))
     };
 
-    // The address of whatever is under `screen`: the building or ground the
-    // ray meets, so pointing at a roof finds that house and not the ground
-    // behind it.
+    // The address under `screen`. The ray meets the buildings, so pointing
+    // at a roof or a wall gives that building's own address, not the ground
+    // behind it or a neighbour's.
     let address_under =
-        |cast: &mut dyn FnMut(Vec2, bool) -> Option<Hit>, screen: Vec2| -> Option<String> {
+        |cast: &mut dyn FnMut(Vec2, bool) -> Option<Hit>, screen: Vec2| -> Option<Address> {
             let area = area.as_deref()?;
             let at = cast(screen, false)
                 .map(|h| [h.point.x, h.point.z])
                 .or_else(|| ground_point(camera, cam_t, screen))?;
-            area.bundle.address_at(at).map(address_label)
+            area.bundle.address_pointed_at(at, ON_OUTLINE_M).cloned()
         };
+    if area.as_ref().is_some_and(|a| a.is_changed()) {
+        st.address_key = None;
+    }
 
     // --- Two-finger touch: pinch zoom + pan (always camera navigation).
     let active: Vec<_> = touches.iter().collect();
@@ -446,8 +472,7 @@ fn pointer(
         }
     }
 
-    if ui.tool != Tool::Address && (ui.hover_address.is_some() || ui.selected_address.is_some()) {
-        ui.hover_address = None;
+    if ui.tool != Tool::Address && ui.selected_address.is_some() {
         ui.selected_address = None;
     }
 
@@ -458,6 +483,7 @@ fn pointer(
         if ui.hover_address.is_some() {
             ui.hover_address = None;
         }
+        st.address_key = None;
         return;
     };
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
@@ -484,15 +510,26 @@ fn pointer(
         }
     }
 
-    // The address under an idle mouse, looked up again whenever the point
-    // under it may have changed; hidden while dragging.
-    if ui.tool == Tool::Address
-        && active.is_empty()
-        && (pressed || delta != Vec2::ZERO || scroll.delta.y != 0.0)
-    {
-        let hover = (!over_ui && !pressed).then(|| address_under(&mut cast, pos));
-        if ui.hover_address != hover {
-            ui.hover_address = hover;
+    // The address under an idle mouse, looked up again only when the
+    // pointer, the view or the area changes. Hidden while dragging and over
+    // the panels.
+    if ui.tool == Tool::Address && active.is_empty() && !pressed && !over_ui {
+        let key = AddressKey {
+            pos,
+            view: cam_t.affine(),
+        };
+        if st.address_key != Some(key) {
+            st.address_key = Some(key);
+            st.address_found = address_under(&mut cast, pos);
+            let hover = Some(st.address_found.as_ref().map(address_label));
+            if ui.hover_address != hover {
+                ui.hover_address = hover;
+            }
+        }
+    } else {
+        st.address_key = None;
+        if ui.hover_address.is_some() {
+            ui.hover_address = None;
         }
     }
 
@@ -542,15 +579,20 @@ fn pointer(
                     region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
                 }
             } else if ui.tool == Tool::Address {
-                // A click away from any address clears the selection.
-                let label = address_under(&mut cast, pos);
-                if jump.0 {
-                    ui.scroll_to_group.clone_from(&label);
-                }
-                ui.selected_address.clone_from(&label);
-                if !touch {
-                    ui.hover_address = Some(label);
-                }
+                // A click reuses the card's lookup for the same spot; a tap
+                // looks up afresh. A click away from any address clears
+                // the selection.
+                let here = AddressKey {
+                    pos,
+                    view: cam_t.affine(),
+                };
+                let picked = if st.address_key == Some(here) {
+                    st.address_found.clone()
+                } else {
+                    address_under(&mut cast, pos)
+                };
+                ui.jump_to_address = jump.0 && picked.is_some();
+                ui.selected_address = picked;
             } else {
                 let mut hit = cast(pos, false);
                 // Placing near a camera should still place, so only the
@@ -696,7 +738,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 ui.info("Click where the new camera should point");
             }
         }
-        // Handled by `region_click`.
+        // Handled in `pointer` (by `region_click` for Region).
         Tool::Region | Tool::Address => {}
         Tool::Aim | Tool::Move => {
             if ui.selected.is_none()

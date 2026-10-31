@@ -1,6 +1,5 @@
 //! 3D environment: buildings, ground, map tiles, lights and coverage overlays.
 
-use crate::addresses::address_label;
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
@@ -12,6 +11,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use observation_core::address::Address;
 use observation_core::camera::CameraModel;
 use observation_core::coverage::StaticLayers;
 use observation_core::example::example_cameras;
@@ -313,7 +313,7 @@ fn on_area_loaded(
     // An address picked in the old area means nothing in the new one.
     ui.selected_address = None;
     ui.hover_address = None;
-    ui.scroll_to_group = None;
+    ui.jump_to_address = false;
 
     // Document state.
     let area = msg.request.area;
@@ -398,9 +398,17 @@ fn follow_theme(
     }
 }
 
-/// Redraws the [`AddressHighlight`] when the picked address, the area or the
-/// theme changes: a copy of just those buildings' triangles in the highlight
-/// colour, drawn in front of the same triangles of the building mesh.
+/// The highlight as drawn: for which address, and its material.
+#[derive(Default)]
+struct HighlightShown {
+    address: Option<Address>,
+    material: Option<Handle<StandardMaterial>>,
+}
+
+/// Redraws the [`AddressHighlight`] when the picked address or the area
+/// changes: a copy of just those buildings' triangles in the highlight colour,
+/// drawn in front of the same triangles of the building mesh. A theme change
+/// only recolours it.
 #[allow(clippy::too_many_arguments)]
 fn highlight_address(
     mut commands: Commands,
@@ -410,39 +418,49 @@ fn highlight_address(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     old: Query<Entity, With<AddressHighlight>>,
-    mut shown: Local<Option<String>>,
+    mut shown: Local<HighlightShown>,
 ) {
     let area_changed = area.as_ref().is_some_and(|a| a.is_changed());
-    if *shown == ui.selected_address && !area_changed && !tokens.is_changed() {
+    if shown.address == ui.selected_address && !area_changed {
+        if tokens.is_changed()
+            && let Some(mut mat) = shown.material.as_ref().and_then(|h| materials.get_mut(h))
+        {
+            mat.base_color = to_bevy(tokens.world.address);
+        }
         return;
     }
-    shown.clone_from(&ui.selected_address);
+    shown.address.clone_from(&ui.selected_address);
+    shown.material = None;
     for e in &old {
         commands.entity(e).despawn();
     }
-    let (Some(label), Some(area)) = (&ui.selected_address, area) else {
+    let (Some(address), Some(area)) = (&ui.selected_address, area) else {
         return;
     };
     let b = &area.bundle;
     let m = &b.mesh;
-    // Only the vertices those buildings use, renumbered.
+    // Only the vertices those buildings use, renumbered. A triangle with an
+    // index out of range (a damaged bundle) is left out whole.
     let mut remap: HashMap<u32, u32> = HashMap::default();
     let (mut pos, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new());
-    for i in b.buildings_at(|a| address_label(a) == *label) {
+    for i in b.buildings_at(|a| a == address) {
         let [first, count] = b.buildings[i].index_range;
         let range = first as usize..(first as usize).saturating_add(count as usize);
-        for &v in m.indices.get(range).unwrap_or_default() {
-            let (Some(p), Some(n)) = (m.positions.get(v as usize), m.normals.get(v as usize))
-            else {
+        for tri in m.indices.get(range).unwrap_or_default().as_chunks::<3>().0 {
+            if tri.iter().any(|&v| {
+                m.positions.get(v as usize).is_none() || m.normals.get(v as usize).is_none()
+            }) {
                 continue;
-            };
-            let next = pos.len() as u32;
-            let at = *remap.entry(v).or_insert_with(|| {
-                pos.push(*p);
-                nrm.push(*n);
-                next
-            });
-            idx.push(at);
+            }
+            for &v in tri {
+                let next = pos.len() as u32;
+                let at = *remap.entry(v).or_insert_with(|| {
+                    pos.push(m.positions[v as usize]);
+                    nrm.push(m.normals[v as usize]);
+                    next
+                });
+                idx.push(at);
+            }
         }
     }
     if idx.is_empty() {
@@ -455,16 +473,18 @@ fn highlight_address(
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
     .with_inserted_indices(Indices::U32(idx));
+    let material = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.address),
+        perceptual_roughness: 0.9,
+        // In front of the building mesh, behind the coverage on its walls.
+        depth_bias: 5.0,
+        ..default()
+    });
+    shown.material = Some(material.clone());
     commands.spawn((
         AddressHighlight,
         Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: to_bevy(tokens.world.address),
-            perceptual_roughness: 0.9,
-            // In front of the building mesh, behind the coverage on its walls.
-            depth_bias: 5.0,
-            ..default()
-        })),
+        MeshMaterial3d(material),
         NotShadowCaster,
         Pickable::IGNORE,
     ));

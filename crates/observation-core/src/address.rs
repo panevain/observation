@@ -166,12 +166,12 @@ pub fn address_at<'a>(
     best.map(|(_, a)| a)
 }
 
-fn dist(a: [f32; 2], b: [f32; 2]) -> f32 {
+pub(crate) fn dist(a: [f32; 2], b: [f32; 2]) -> f32 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
 /// Cheap reject: `p` is more than `margin` outside the ring's bounding box.
-fn near_bounds(p: [f32; 2], ring: &[[f32; 2]], margin: f32) -> bool {
+pub(crate) fn near_bounds(p: [f32; 2], ring: &[[f32; 2]], margin: f32) -> bool {
     within_bounds(p, ring_bounds(ring), margin)
 }
 
