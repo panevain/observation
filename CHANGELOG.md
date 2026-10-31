@@ -42,6 +42,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 ### Changed
 
 - Coverage is computed in a Web Worker, so moving or editing a camera no longer stalls the 3D view while its visibility is worked out; the overlay and figures update when the result arrives. The worker is built by trunk alongside the app (`coverage-worker` binary, loaded from `/coverage-worker_loader.js`); if it cannot start, coverage is computed on the main thread as before. The server now caches only files whose names carry trunk's content hash for a year and has browsers revalidate everything else, such as the worker's files.
+- The tile cache evicts instead of stopping at its 512 MiB cap: a tile that would take it over the cap first deletes the least recently written or revalidated tiles (oldest `.png` mtime, with their `.json` sidecars) down to 90 % of the cap, and each eviction recounts the cache from disk. A 304 revalidation now touches the tile's `.png` so tiles in use are evicted last.
 - Images are based on Debian 13: distroless `cc-debian13` for the app and `debian:trixie-slim` for the region agent (the Debian 12 distroless images are no longer rebuilt). The server and region agent binaries are built with cargo-auditable, so image scanners and the SBOM see their crates.
 - Rust 1.99.1 and trunk 0.22.0.
 - Tooling is driven from mise. The tools only CI and the image build use (Trivy, cosign, cargo-audit, cargo-deny, zizmor, cargo-nextest, cargo-llvm-cov, cargo-fuzz, cargo-chef and cargo-auditable) are pinned in `mise.ci.toml` and locked with their checksums in `mise.ci.lock`, next to CI's environment and the security, fuzz and scan steps as tasks (`mise -E ci run <task>` runs one locally). The Dockerfile installs trunk, cargo-chef and cargo-auditable from the lockfiles, and the Pins workflow bumps the mise tools with `mise upgrade --bump`, each a week after its release. `mise run fonts` rebuilds the UI fonts with pinned fonttools and opentype-feature-freezer.
@@ -60,6 +61,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - The selection and aim markers are white over a dark casing, and the region outline is dark, so none of them reads as a camera or coverage colour.
 - Flatter widget style: buttons show hover and press by fill instead of an outline, input fields have a 3:1 edge, corners are smaller (4/6/8 px) and floating cards and menus have a shadow.
 - Selected camera is grouped into a name header, Position, Orientation and a collapsed Optics section; the face vector moved to the compass label's tooltip. Camera rows use an eye toggle instead of a checkbox, and the Cones and Walls toggles look different from the tools.
+- The light or dark theme follows a change of the system setting without a reload: the panels, the map dialog, the 3D scene (sky, buildings, ground, camera bodies) and the coverage overlay all switch over.
 
 ### Fixed
 

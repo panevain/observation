@@ -183,4 +183,4 @@ Treat the numbers as a rough guide, not a survey.
 - **Night.** The 7.5 m assumption applies only when no night-vision range is published; floodlights and street lights are ignored.
 - **One area at a time,** 20-500 m per side. Only the loaded area is analysed, so views beyond its edge are cut off.
 - **Single person-height sample.** A spot is judged by one point at the subject height; people of other heights or crouching behind low cover are not distinguished.
-- **Browser needs.** WebAssembly and WebGL2 are required. The light or dark theme follows your system setting at page load.
+- **Browser needs.** WebAssembly and WebGL2 are required. The light or dark theme follows your system setting, including when it changes while the page is open.
