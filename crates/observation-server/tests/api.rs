@@ -840,6 +840,11 @@ async fn static_files_spa_fallback_and_cache_headers() {
     .unwrap();
     std::fs::write(dir.path().join("app-abc123_bg.wasm"), b"\0asm\x01\0\0\0").unwrap();
     std::fs::write(dir.path().join("app-abc123.js"), "export {};").unwrap();
+    std::fs::write(
+        dir.path().join("coverage-worker_loader.js"),
+        "import init from './coverage-worker.js';await init();",
+    )
+    .unwrap();
     let h = harness_with(
         "http://127.0.0.1:9/o",
         "http://127.0.0.1:9/{z}/{x}/{y}.png",
@@ -880,6 +885,11 @@ async fn static_files_spa_fallback_and_cache_headers() {
         headers[header::CACHE_CONTROL],
         "public, max-age=31536000, immutable"
     );
+
+    // Trunk does not hash web worker files.
+    let (status, headers, _) = get_uri(&h.app, "/coverage-worker_loader.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
 }
 
 #[tokio::test]

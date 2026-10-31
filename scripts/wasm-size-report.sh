@@ -34,7 +34,7 @@ out_svg="docs/images/wasm-bundle-treemap.svg"
 
 if (( build )); then
   CARGO_PROFILE_WASM_RELEASE_STRIP=false CARGO_PROFILE_WASM_RELEASE_DEBUG=false \
-    cargo build --locked -p observation-client --target wasm32-unknown-unknown --profile "$profile"
+    cargo build --locked -p observation-client --bin observation-client --target wasm32-unknown-unknown --profile "$profile"
 fi
 [[ -f "$named" ]] || { echo "missing $named (run without --no-build)" >&2; exit 1; }
 

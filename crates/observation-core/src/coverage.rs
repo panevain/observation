@@ -467,7 +467,7 @@ pub fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
 }
 
 /// Cells seen by one camera (sorted, unique indices).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Visibility {
     pub ground: Vec<u32>,
     pub facade: Vec<u32>,
