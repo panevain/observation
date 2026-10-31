@@ -31,7 +31,7 @@ pub enum ConfigError {
     #[error("OBS_BUNDLE_TTL_DAYS `{0}` is not a non-negative number")]
     Ttl(String),
     #[error(
-        "OBS_BUNDLE_CACHE_MB `{0}` is not a whole number of megabytes from 1 to {MAX_BUNDLE_CACHE_MB}"
+        "OBS_BUNDLE_CACHE_MB `{0}` is not a whole number of MiB from 1 to {MAX_BUNDLE_CACHE_MB}"
     )]
     BundleCacheMb(String),
     #[error("OBS_OVERPASS_URL lists more than {MAX_OVERPASS_URLS} endpoints")]

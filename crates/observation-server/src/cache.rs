@@ -54,7 +54,6 @@ pub struct CacheCaps {
 /// Disk cache handle. Cheap to share behind an `Arc`.
 #[derive(Debug)]
 pub struct Cache {
-    root: PathBuf,
     bundle_ttl: Duration,
     bundles: Store,
     tiles: Store,
@@ -70,10 +69,18 @@ impl Cache {
         Self {
             bundles: Store::open(root.join("bundles"), Kind::Bundles, caps.bundle_bytes),
             tiles: Store::open(root.join("tiles"), Kind::Tiles, caps.tile_bytes),
-            root,
             bundle_ttl,
             tmp_counter: AtomicU64::new(0),
         }
+    }
+
+    /// Brings both caches under their caps (a cache directory from before a
+    /// cap, or from a larger one, can be far over it) and removes leftovers:
+    /// sidecars without a tile and temp files of interrupted writes. Run it in
+    /// the background at start, so the first write does not do it all.
+    pub async fn trim(&self) {
+        self.bundles.trim().await;
+        self.tiles.trim().await;
     }
 
     /// Current estimate of the bundle cache size in bytes.
@@ -89,7 +96,7 @@ impl Cache {
     // ----- bundles ---------------------------------------------------------
 
     fn bundle_path(&self, key: &str) -> Option<PathBuf> {
-        is_safe_key(key).then(|| self.root.join("bundles").join(format!("{key}.obsb")))
+        is_safe_key(key).then(|| self.bundles.dir.join(format!("{key}.obsb")))
     }
 
     /// Reads a cached bundle. The flag tells whether it is still within the TTL
@@ -120,26 +127,19 @@ impl Cache {
 
     /// Stores a bundle atomically. When that would take the bundle cache over
     /// its size cap, the least recently written bundles are evicted first (see
-    /// [`Store::evict`]). Returns `Ok(false)` (and logs) when that cannot make
-    /// enough room and nothing was written.
+    /// [`Store::make_room`]). Returns `Ok(false)` (and logs why) when the
+    /// bundle is larger than the cap or eviction cannot make enough room, and
+    /// nothing was written.
     pub async fn put_bundle(&self, key: &str, bytes: &[u8]) -> io::Result<bool> {
         let path = self
             .bundle_path(key)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsafe cache key"))?;
-        let previous = tokio::fs::metadata(&path).await.map_or(0, |m| m.len());
         let new = bytes.len() as u64;
-        if !self
-            .bundles
-            .make_room(&path, new.saturating_sub(previous))
-            .await
-        {
-            tracing::warn!(
-                cap = self.bundles.cap,
-                key,
-                "bundle cache is full, not caching the bundle"
-            );
+        if !self.bundles.make_room(&path, &[(&path, new)], key).await {
             return Ok(false);
         }
+        // Measured again: an eviction may have removed the old file meanwhile.
+        let previous = file_len(&path).await;
         self.write_atomic(&path, bytes).await?;
         self.bundles.resize(previous, new);
         Ok(true)
@@ -159,7 +159,7 @@ impl Cache {
                 "unsafe tile path",
             ));
         }
-        let base = self.root.join("tiles").join(rel);
+        let base = self.tiles.dir.join(rel);
         Ok((base.with_extension("png"), base.with_extension("json")))
     }
 
@@ -177,28 +177,27 @@ impl Cache {
 
     /// Stores a tile. When that would take the tile cache over its size cap, the
     /// least recently written or revalidated tiles are evicted first (see
-    /// [`Store::evict`]). Returns `Ok(false)` (and logs) when that cannot make
-    /// enough room and nothing was written.
+    /// [`Store::make_room`]). Returns `Ok(false)` (and logs why) when the tile
+    /// is larger than the cap or eviction cannot make enough room, and nothing
+    /// was written.
     pub async fn put_tile(&self, id: TileId, bytes: &[u8], meta: &TileMeta) -> io::Result<bool> {
         let (png, json) = self.tile_paths(id)?;
         let encoded = encode_meta(meta)?;
-        let previous_png = tokio::fs::metadata(&png).await.map_or(0, |m| m.len());
-        let previous_json = tokio::fs::metadata(&json).await.map_or(0, |m| m.len());
         let (new_png, new_json) = (bytes.len() as u64, encoded.len() as u64);
-        let growth = (new_png + new_json).saturating_sub(previous_png + previous_json);
-        if !self.tiles.make_room(&png, growth).await {
-            tracing::warn!(
-                cap = self.tiles.cap,
-                "tile cache is full, not caching {id:?}"
-            );
+        let what = format!("{id:?}");
+        let files = [(png.as_path(), new_png), (json.as_path(), new_json)];
+        if !self.tiles.make_room(&png, &files, &what).await {
             return Ok(false);
         }
-        // The size is updated after each rename, so a failed second write
-        // leaves the estimate in step with what is on disk.
+        // Each size is measured just before its write (an eviction may have
+        // removed the old file meanwhile) and updated after its rename, so a
+        // failed second write leaves the estimate in step with what is on disk.
+        let previous = file_len(&png).await;
         self.write_atomic(&png, bytes).await?;
-        self.tiles.resize(previous_png, new_png);
+        self.tiles.resize(previous, new_png);
+        let previous = file_len(&json).await;
         self.write_atomic(&json, &encoded).await?;
-        self.tiles.resize(previous_json, new_json);
+        self.tiles.resize(previous, new_json);
         Ok(true)
     }
 
@@ -207,7 +206,7 @@ impl Cache {
     pub async fn update_tile_meta(&self, id: TileId, meta: &TileMeta) -> io::Result<()> {
         let (png, json) = self.tile_paths(id)?;
         let encoded = encode_meta(meta)?;
-        let previous = tokio::fs::metadata(&json).await.map_or(0, |m| m.len());
+        let previous = file_len(&json).await;
         self.write_atomic(&json, &encoded).await?;
         self.tiles.resize(previous, encoded.len() as u64);
         let touch = move || {
@@ -240,6 +239,11 @@ impl Cache {
         }
         result
     }
+}
+
+/// Length of the file at `path`, 0 if there is none.
+async fn file_len(path: &Path) -> u64 {
+    tokio::fs::metadata(path).await.map_or(0, |m| m.len())
 }
 
 fn encode_meta(meta: &TileMeta) -> io::Result<Vec<u8>> {
@@ -327,10 +331,49 @@ impl Store {
             });
     }
 
-    /// Whether a write of `growth` more bytes to `keep` may go ahead, evicting
-    /// first if it would not fit.
-    async fn make_room(&self, keep: &Path, growth: u64) -> bool {
-        self.fits(growth) || self.evict(keep, growth).await
+    /// Whether an entry (`what`, for the log) may be written as `files`, each a
+    /// path with the size it is about to have; `keep` is its main file. Evicts
+    /// first if it would not fit. Logs why when it may not: the entry is larger
+    /// than the cap (nothing is evicted then), or eviction could not make room.
+    async fn make_room(&self, keep: &Path, files: &[(&Path, u64)], what: &str) -> bool {
+        let new: u64 = files.iter().map(|f| f.1).sum();
+        let cache = self.kind.name();
+        if new > self.cap {
+            tracing::warn!(
+                cache,
+                cap = self.cap,
+                bytes = new,
+                "{what} is larger than the {cache} cache cap, not caching it"
+            );
+            return false;
+        }
+        let mut previous = 0;
+        for (path, _) in files {
+            previous += file_len(path).await;
+        }
+        let growth = new.saturating_sub(previous);
+        if self.fits(growth) || self.evict(keep, growth).await {
+            return true;
+        }
+        tracing::warn!(
+            cache,
+            cap = self.cap,
+            bytes = new,
+            "{cache} cache is full and eviction could not make room, not caching {what}"
+        );
+        false
+    }
+
+    /// Removes leftovers (see [`evict_oldest`]) and, if the cache is over its
+    /// cap, evicts down to 90 % of it.
+    async fn trim(&self) {
+        let _guard = self.evicting.lock().await;
+        let target = if self.bytes() > self.cap {
+            self.cap - self.cap / 10
+        } else {
+            u64::MAX
+        };
+        self.run_eviction(PathBuf::new(), target).await;
     }
 
     /// Deletes the oldest entries (by the mtime of their main file, with their
@@ -341,11 +384,9 @@ impl Store {
     /// later write fail. Returns whether the write may go ahead: there is room
     /// now, or another write is already evicting (the write is then not held up
     /// and the cache may overshoot the cap briefly).
+    /// The caller makes sure `growth` is at most the cap.
     async fn evict(&self, keep: &Path, growth: u64) -> bool {
         let cap = self.cap;
-        if growth > cap {
-            return false;
-        }
         let Ok(_guard) = self.evicting.try_lock() else {
             return true;
         };
@@ -354,8 +395,14 @@ impl Store {
             return true;
         }
         // Below the low-water mark, and low enough to fit the new entry.
-        let target = (cap - cap / 10).min(cap - growth);
-        let (dir, kind, keep) = (self.dir.clone(), self.kind, keep.to_path_buf());
+        let target = (cap - cap / 10).min(cap.saturating_sub(growth));
+        self.run_eviction(keep.to_path_buf(), target).await && self.fits(growth)
+    }
+
+    /// Runs [`evict_oldest`] off the runtime with the evict lock held by the
+    /// caller, and resets the size estimate from its walk. False if it failed.
+    async fn run_eviction(&self, keep: PathBuf, target: u64) -> bool {
+        let (dir, kind) = (self.dir.clone(), self.kind);
         let evicted = match tokio::task::spawn_blocking(move || {
             evict_oldest(&dir, kind, &keep, target)
         })
@@ -363,20 +410,23 @@ impl Store {
         {
             Ok(evicted) => evicted,
             Err(e) => {
-                tracing::warn!(cache = self.kind.name(), error = %e, "could not evict");
+                tracing::warn!(cache = kind.name(), error = %e, "could not evict");
                 return false;
             }
         };
         // The walk is the truth; writes racing with it make this slightly off
         // until the next eviction.
         self.bytes.store(evicted.total, Ordering::Relaxed);
-        tracing::info!(
-            cache = self.kind.name(),
-            entries = evicted.entries,
-            bytes = evicted.bytes,
-            "evicted the oldest entries from the cache"
-        );
-        self.fits(growth)
+        if evicted.bytes > 0 || evicted.temps > 0 {
+            tracing::info!(
+                cache = kind.name(),
+                entries = evicted.entries,
+                bytes = evicted.bytes,
+                temp_files = evicted.temps,
+                "evicted the oldest entries from the cache"
+            );
+        }
+        true
     }
 }
 
@@ -391,14 +441,35 @@ struct Entry {
 }
 
 /// What is in a store's directory: entries, sidecars without their main file,
-/// and the size of both. Other files, such as `.tmp-*`, are neither listed
-/// nor counted.
+/// and the size of both, and temp files left by interrupted writes (not
+/// counted). Other files are neither listed nor counted.
 #[derive(Default)]
 struct Scan {
     entries: Vec<Entry>,
     /// `(path, length)` of the sidecars that have no main file.
     orphans: Vec<(PathBuf, u64)>,
+    /// `.tmp-*` files older than [`STALE_TEMP_AGE`].
+    stale_temps: Vec<PathBuf>,
     total: u64,
+}
+
+/// A temp file this old belongs to a write that was interrupted (a write
+/// renames its temp file as soon as it is written).
+const STALE_TEMP_AGE: Duration = Duration::from_secs(3600);
+
+/// Notes `path` in `scan` if it is a stale temp file.
+fn note_temp(path: &Path, m: &std::fs::Metadata, scan: &mut Scan) {
+    let is_temp = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with(".tmp-"));
+    let age = m
+        .modified()
+        .ok()
+        .and_then(|t| SystemTime::now().duration_since(t).ok());
+    if is_temp && age.is_some_and(|a| a > STALE_TEMP_AGE) {
+        scan.stale_temps.push(path.to_path_buf());
+    }
 }
 
 /// Walks `dir` (nothing is found if it does not exist): `bundles/` is flat,
@@ -433,8 +504,13 @@ fn scan_bundles(dir: &Path, scan: &mut Scan) {
         let (path, Ok(m)) = (e.path(), e.metadata()) else {
             continue;
         };
-        if m.is_file() && path.extension().and_then(|x| x.to_str()) == Some("obsb") {
+        if !m.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|x| x.to_str()) == Some("obsb") {
             scan.entries.push(entry(path, &m, 0));
+        } else {
+            note_temp(&path, &m, scan);
         }
     }
 }
@@ -458,7 +534,7 @@ fn scan_tiles(dir: &Path, scan: &mut Scan) {
                 Some("json") => {
                     sidecars.insert(path.with_extension("png"), (path, m.len()));
                 }
-                _ => {}
+                _ => note_temp(&path, &m, scan),
             }
         }
     }
@@ -475,14 +551,18 @@ struct Evicted {
     total: u64,
     entries: u64,
     bytes: u64,
+    /// Stale temp files removed.
+    temps: u64,
 }
 
-/// Scans `dir`, deletes sidecars without a main file, then the oldest entries
-/// until at most `target` bytes are left. Never deletes `keep` (a main file
-/// that is being written) or its sidecar.
+/// Scans `dir`, deletes stale temp files and sidecars without a main file,
+/// then the oldest entries until at most `target` bytes are left. Never
+/// deletes `keep` (a main file that is being written) or its sidecar, nor an
+/// entry whose main file was rewritten after the scan.
 fn evict_oldest(dir: &Path, kind: Kind, keep: &Path, target: u64) -> Evicted {
     let scan = scan(dir, kind);
     let mut total = scan.total;
+    let temps = scan.stale_temps.iter().filter(|t| remove_file(t)).count() as u64;
     let keep_sidecar = kind.sidecar(keep);
     for (path, len) in scan
         .orphans
@@ -500,6 +580,12 @@ fn evict_oldest(dir: &Path, kind: Kind, keep: &Path, target: u64) -> Evicted {
         if total <= target {
             break;
         }
+        // A write may have replaced the file since the scan; that entry is new.
+        let unchanged = std::fs::symlink_metadata(&e.path)
+            .is_ok_and(|m| m.len() == e.len && m.modified().ok() == Some(e.modified));
+        if !unchanged {
+            continue;
+        }
         // Sidecar first: an entry left without one is only an orphan main
         // file, which the next eviction still finds.
         if let Some(sidecar) = kind.sidecar(&e.path)
@@ -516,6 +602,7 @@ fn evict_oldest(dir: &Path, kind: Kind, keep: &Path, target: u64) -> Evicted {
         total,
         entries: count,
         bytes: scan.total.saturating_sub(total),
+        temps,
     }
 }
 
@@ -553,7 +640,7 @@ mod tests {
     #[tokio::test]
     async fn bundle_round_trip_and_ttl() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = Cache::open(dir.path(), Duration::from_secs(3600), tile_cap(1 << 20));
+        let cache = Cache::open(dir.path(), Duration::from_secs(3600), roomy());
         assert!(cache.get_bundle("1.0_2.0", None).await.is_none());
         cache.put_bundle("1.0_2.0", &bundle_bytes()).await.unwrap();
         let (bytes, fresh) = cache.get_bundle("1.0_2.0", None).await.unwrap();
@@ -567,7 +654,7 @@ mod tests {
         assert!(cache.get_bundle("1.0_2.0", Some(earlier)).await.unwrap().1);
         assert!(cache.put_bundle("../evil", b"x").await.is_err());
 
-        let expired = Cache::open(dir.path(), Duration::ZERO, tile_cap(1 << 20));
+        let expired = Cache::open(dir.path(), Duration::ZERO, roomy());
         let (_, fresh) = expired.get_bundle("1.0_2.0", None).await.unwrap();
         assert!(!fresh, "zero TTL bundles are stale but still readable");
     }
@@ -575,9 +662,28 @@ mod tests {
     #[tokio::test]
     async fn rejects_non_bundle_files() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = Cache::open(dir.path(), Duration::from_secs(3600), tile_cap(1 << 20));
+        let cache = Cache::open(dir.path(), Duration::from_secs(3600), roomy());
         cache.put_bundle("1.0", b"<html>oops</html>").await.unwrap();
         assert!(cache.get_bundle("1.0", None).await.is_none());
+    }
+
+    /// 1 MiB for both caches, more than any test fills.
+    fn roomy() -> CacheCaps {
+        CacheCaps {
+            bundle_bytes: 1 << 20,
+            tile_bytes: 1 << 20,
+        }
+    }
+
+    /// Sets the mtime of the file at `path`.
+    fn set_mtime(path: &Path, at: SystemTime) {
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(at).unwrap();
+    }
+
+    /// `i` seconds after a fixed time in the past.
+    fn old_time(i: u32) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 + u64::from(i))
     }
 
     /// A bundle cache of `bundle_bytes` and a 1 MiB tile cache.
@@ -610,10 +716,7 @@ mod tests {
                     .await
                     .unwrap()
             );
-            let path = root.join(format!("bundles/{i}.obsb"));
-            let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
-            let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 + u64::from(i));
-            file.set_modified(at).unwrap();
+            set_mtime(&root.join(format!("bundles/{i}.obsb")), old_time(i));
         }
     }
 
@@ -670,12 +773,7 @@ mod tests {
         assert!(cache.get_bundle("1", None).await.is_some());
 
         // Bundle 0 was the oldest, but is the one being replaced (larger), so 1 goes.
-        let touch = |i: u32| {
-            let path = dir.path().join(format!("bundles/{i}.obsb"));
-            let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
-            file.set_modified(SystemTime::UNIX_EPOCH).unwrap();
-        };
-        touch(0);
+        set_mtime(&dir.path().join("bundles/0.obsb"), SystemTime::UNIX_EPOCH);
         assert!(cache.put_bundle("0", &sized_bundle(150, 5)).await.unwrap());
         assert_eq!(cache.get_bundle("0", None).await.unwrap().0.len(), 150);
         assert!(cache.get_bundle("1", None).await.is_none());
@@ -702,6 +800,50 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(cache.bundle_cache_bytes(), 60);
+    }
+
+    #[tokio::test]
+    async fn rewriting_a_bundle_larger_than_the_cap_evicts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(dir.path(), Duration::from_secs(3600), bundle_cap(1000));
+        fill_bundles(&cache, dir.path(), 10, 100).await;
+        // Growth (950) is within the cap, but the bundle itself is not.
+        assert!(!cache.put_bundle("9", &sized_bundle(1050, 0)).await.unwrap());
+        for i in 0..10 {
+            assert!(
+                cache.get_bundle(&i.to_string(), None).await.is_some(),
+                "{i} was evicted"
+            );
+        }
+        assert_eq!(cache.get_bundle("9", None).await.unwrap().0.len(), 100);
+        assert_eq!(cache.bundle_cache_bytes(), 1000);
+    }
+
+    #[tokio::test]
+    async fn trim_brings_an_oversized_cache_under_its_cap_and_removes_stale_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = Cache::open(dir.path(), Duration::from_secs(3600), bundle_cap(10_000));
+        fill_bundles(&big, dir.path(), 30, 100).await;
+        let bundles = dir.path().join("bundles");
+        let (stale, fresh) = (bundles.join(".tmp-1-1"), bundles.join(".tmp-1-2"));
+        std::fs::write(&stale, [0u8; 50]).unwrap();
+        std::fs::write(&fresh, [0u8; 50]).unwrap();
+        set_mtime(&stale, SystemTime::now() - 2 * STALE_TEMP_AGE);
+
+        // Reopened with a smaller cap, as after an upgrade or a lower OBS_BUNDLE_CACHE_MB.
+        let cache = Cache::open(dir.path(), Duration::from_secs(3600), bundle_cap(2000));
+        assert_eq!(cache.bundle_cache_bytes(), 3000);
+        cache.trim().await;
+        assert_eq!(cache.bundle_cache_bytes(), 1800);
+        assert_eq!(bundle_disk_bytes(dir.path()), 1800);
+        assert!(cache.get_bundle("11", None).await.is_none());
+        assert!(cache.get_bundle("12", None).await.is_some());
+        assert!(!stale.exists());
+        assert!(fresh.exists(), "a write may still be using it");
+
+        // Under the cap, trim evicts nothing.
+        cache.trim().await;
+        assert_eq!(bundle_disk_bytes(dir.path()), 1800);
     }
 
     /// A 1 MiB bundle cache and a tile cache of `tile_bytes`.
@@ -758,10 +900,7 @@ mod tests {
         for i in 0..n {
             let id = TileId::new(10, 0, i).unwrap();
             assert!(cache.put_tile(id, &vec![1u8; len], &meta).await.unwrap());
-            let png = root.join(format!("tiles/10/0/{i}.png"));
-            let file = std::fs::OpenOptions::new().write(true).open(png).unwrap();
-            let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 + u64::from(i));
-            file.set_modified(at).unwrap();
+            set_mtime(&root.join(format!("tiles/10/0/{i}.png")), old_time(i));
             ids.push(id);
         }
         ids
@@ -843,6 +982,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rewriting_a_tile_larger_than_the_cap_evicts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let unit = tile_len(100);
+        let cache = Cache::open(dir.path(), Duration::from_secs(1), tile_cap(10 * unit));
+        let ids = fill_tiles(&cache, dir.path(), 10, 100).await;
+        let big = vec![0u8; 10 * unit as usize];
+        assert!(
+            !cache
+                .put_tile(ids[9], &big, &TileMeta::default())
+                .await
+                .unwrap()
+        );
+        for id in &ids {
+            assert!(cache.get_tile(*id).await.is_some(), "{id:?} was evicted");
+        }
+        assert_eq!(cache.tile_cache_bytes(), 10 * unit);
+    }
+
+    #[tokio::test]
     async fn tile_larger_than_the_cap_is_refused_without_evicting() {
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::open(dir.path(), Duration::from_secs(1), tile_cap(200));
@@ -905,7 +1063,7 @@ mod tests {
     #[tokio::test]
     async fn revalidating_a_tile_refreshes_its_mtime_and_size() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = Cache::open(dir.path(), Duration::from_secs(1), tile_cap(1 << 20));
+        let cache = Cache::open(dir.path(), Duration::from_secs(1), roomy());
         let ids = fill_tiles(&cache, dir.path(), 2, 50).await;
         let meta = TileMeta {
             etag: Some("x".repeat(100)),
@@ -968,7 +1126,7 @@ mod tests {
     #[tokio::test]
     async fn no_temp_files_left_behind() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = Cache::open(dir.path(), Duration::from_secs(1), tile_cap(1 << 20));
+        let cache = Cache::open(dir.path(), Duration::from_secs(1), roomy());
         cache.put_bundle("1.0", &bundle_bytes()).await.unwrap();
         let names: Vec<_> = std::fs::read_dir(dir.path().join("bundles"))
             .unwrap()

@@ -121,6 +121,11 @@ impl AppState {
                 tile_bytes: config.tile_cache_cap_bytes,
             },
         ));
+        // Off the request path: a cache from before a cap can be far over it.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let cache = Arc::clone(&cache);
+            runtime.spawn(async move { cache.trim().await });
+        }
         let overpass = Arc::new(OverpassClient::new(overpass_client, &config));
         let regions = match &config.regions_url {
             Some(url) => {
