@@ -472,6 +472,6 @@ The client has no unit tests yet. The CI step that would run them only runs if t
 - Coverage is computed in a single worker, one camera at a time, so a change that touches every camera (subject height, lighting) fills in camera by camera. Several workers, or a coarser first pass, would shorten that. Without the worker (natively, or if it fails to start) the computation is back on the main thread.
 - The bundle cache has no size limit or eviction.
 - Per-client rate limiting belongs in the server (or a proxy in front of it).
-- Custom models cannot be edited or deleted in the app; there is no undo; there is a single autosave slot.
+- There is a single autosave slot, and undo history lasts for the visit only.
 - Night modelling uses IR range only; it does not account for floodlights, street lighting or shutter behaviour.
 - The client hard-codes its API paths and the 20-500 m limits rather than reading them from `/api/config`.
