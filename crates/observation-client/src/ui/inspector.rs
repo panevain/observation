@@ -17,6 +17,7 @@ use observation_core::camera::{
     Lighting, MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, forward_from_yaw_pitch,
     is_https_url,
 };
+use observation_core::scene::MAX_CUSTOM_MODELS;
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
@@ -847,14 +848,27 @@ fn matches_query(m: &CameraModel, query: &str) -> bool {
         .all(|w| hay.contains(w))
 }
 
-/// Draft state for the custom-model form. Its id is empty for a new model,
-/// otherwise the custom model being edited.
+/// Draft state for the custom-model form.
 #[derive(Clone)]
-struct Draft(CameraModel);
+struct Draft {
+    /// The form's values; the id is empty for a new model.
+    model: CameraModel,
+    /// The custom model as it was when editing began; `None` for a new model.
+    base: Option<CameraModel>,
+}
+
+impl Draft {
+    fn editing(model: CameraModel) -> Self {
+        Self {
+            model: model.clone(),
+            base: Some(model),
+        }
+    }
+}
 
 impl Default for Draft {
     fn default() -> Self {
-        Self(CameraModel {
+        let model = CameraModel {
             id: String::new(),
             vendor: String::new(),
             name: "My camera".to_owned(),
@@ -865,12 +879,15 @@ impl Default for Draft {
             ir_range_m: Some(10.0),
             source: None,
             notes: Some("Custom model".to_owned()),
-        })
+        };
+        Self { model, base: None }
     }
 }
 
-/// What the custom-model form's buttons asked for.
+/// What the custom-model form asked for.
 enum DraftAction {
+    /// Edit this custom model, or start a new one if the id is empty.
+    Pick(String),
     Add,
     Save,
     Delete,
@@ -879,10 +896,14 @@ enum DraftAction {
 fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let id = egui::Id::new("custom-model-draft");
     let mut draft: Draft = ui.data_mut(|m| m.get_temp(id)).unwrap_or_default();
-    // The model being edited went away (deleted, undone or replaced by an
-    // import): start a new one.
-    if !draft.0.id.is_empty() && d.models.custom_model(&draft.0.id).is_none() {
-        draft = Draft::default();
+    // The model being edited changed under the form (saved, deleted, undone
+    // or replaced by an import, perhaps by another model with the same id):
+    // start again from what is there now.
+    if let Some(base) = &draft.base {
+        let current = d.models.custom_model(&base.id);
+        if current != Some(base) {
+            draft = current.cloned().map(Draft::editing).unwrap_or_default();
+        }
     }
     let mut action = None;
     egui::CollapsingHeader::new(
@@ -893,7 +914,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     )
     .open(d.ui.custom_model_open.then_some(true))
     .show(ui, |ui| {
-        let m = &mut draft.0;
+        let m = &mut draft.model;
         egui::Grid::new("custom-grid")
             .num_columns(2)
             .spacing([t.space.md, t.space.sm])
@@ -921,11 +942,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                             .response
                             .on_hover_text("Pick one of your models to change or delete it");
                         if editing != m.id {
-                            *m = d
-                                .models
-                                .custom_model(&editing)
-                                .cloned()
-                                .unwrap_or_else(|| Draft::default().0);
+                            action = Some(DraftAction::Pick(editing));
                         }
                     });
                 }
@@ -941,10 +958,14 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                             }
                         });
                 });
+                // The ranges limit only what is typed or dragged: a picked
+                // model may come from a file, where `CameraModel::validate`
+                // allows wider values, and showing it must not change it.
                 row(ui, t, "Horizontal FOV", |ui| {
                     ui.add(
                         DragValue::new(&mut m.hfov_deg)
                             .range(10.0..=180.0)
+                            .clamp_existing_to_range(false)
                             .speed(drag_speed(ui, 1.0))
                             .suffix("°"),
                     )
@@ -954,6 +975,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                     ui.add(
                         DragValue::new(&mut m.vfov_deg)
                             .range(10.0..=180.0)
+                            .clamp_existing_to_range(false)
                             .speed(drag_speed(ui, 1.0))
                             .suffix("°"),
                     )
@@ -965,6 +987,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                         ui.add(
                             DragValue::new(&mut m.resolution[0])
                                 .range(160..=8192)
+                                .clamp_existing_to_range(false)
                                 .speed(speed),
                         )
                         .on_hover_text(NUMBER_TIP);
@@ -972,6 +995,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                         ui.add(
                             DragValue::new(&mut m.resolution[1])
                                 .range(120..=8192)
+                                .clamp_existing_to_range(false)
                                 .speed(speed),
                         )
                         .on_hover_text(NUMBER_TIP);
@@ -983,6 +1007,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                         .add(
                             DragValue::new(&mut r)
                                 .range(0.0..=60.0)
+                                .clamp_existing_to_range(false)
                                 .speed(drag_speed(ui, 1.0))
                                 .suffix(" m"),
                         )
@@ -993,13 +1018,13 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                     }
                 });
             });
-        if m.id.is_empty() {
+        if draft.base.is_none() {
             if ui.add(primary(t, "Add model")).clicked() {
                 action = Some(DraftAction::Add);
             }
         } else {
             ui.horizontal_wrapped(|ui| {
-                let changed = d.models.custom_model(&m.id) != Some(&*m);
+                let changed = draft.base.as_ref() != Some(&draft.model);
                 if ui
                     .add_enabled(changed, primary(t, "Save changes"))
                     .on_hover_text("Cameras with this model use the new values")
@@ -1018,15 +1043,33 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         }
     });
     match action {
-        Some(DraftAction::Add) => add_custom_model(d, draft.0.clone()),
-        Some(DraftAction::Save) => save_custom_model(d, draft.0.clone()),
-        Some(DraftAction::Delete) => delete_custom_model(d, &draft.0.id),
+        Some(DraftAction::Pick(id)) => {
+            draft = d
+                .models
+                .custom_model(&id)
+                .cloned()
+                .map(Draft::editing)
+                .unwrap_or_default();
+        }
+        Some(DraftAction::Add) => add_custom_model(d, &mut draft),
+        Some(DraftAction::Save) => save_custom_model(d, draft.model.clone()),
+        Some(DraftAction::Delete) => delete_custom_model(d, &draft.model.id),
         None => {}
     }
     ui.data_mut(|m| m.insert_temp(id, draft));
 }
 
-fn add_custom_model(d: &mut UiData, mut model: CameraModel) {
+/// Adds the draft as a new custom model and goes on to edit it, so a second
+/// click cannot add a copy.
+fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
+    // A scene with more could not be restored or imported.
+    if d.models.custom.len() >= MAX_CUSTOM_MODELS {
+        d.ui.error(format!(
+            "Cannot add this model: a scene holds at most {MAX_CUSTOM_MODELS} custom models. Delete one you no longer use first"
+        ));
+        return;
+    }
+    let mut model = draft.model.clone();
     model.id = d.models.new_custom_id(&model.name);
     match model.validate() {
         Ok(()) => {
@@ -1035,8 +1078,9 @@ fn add_custom_model(d: &mut UiData, mut model: CameraModel) {
                 "Added “{}” — it is now the model for new cameras",
                 model.name
             ));
-            d.models.custom.push(model);
+            d.models.custom.push(model.clone());
             d.scene.touch();
+            *draft = Draft::editing(model);
         }
         Err(e) => {
             d.ui.error(format!("Cannot add this model: {}", invalid_reason(e)))
@@ -1077,7 +1121,6 @@ fn delete_custom_model(d: &mut UiData, id: &str) {
         return;
     }
     d.models.remove_custom(id);
-    d.ui.forget_missing_place_model(&d.models);
     d.scene.touch();
 }
 

@@ -272,7 +272,7 @@ impl UiState {
     }
 
     /// Goes back to the default model for the Place tool if its model is
-    /// gone (deleted, undone or left out of an imported scene).
+    /// gone (deleted, undone, or left out of a restored or imported scene).
     pub fn forget_missing_place_model(&mut self, models: &Models) {
         if models.get(&self.place_model).is_none() {
             self.place_model = Self::default().place_model;
@@ -332,10 +332,7 @@ pub struct Models {
 
 impl Models {
     pub fn get(&self, id: &str) -> Option<&CameraModel> {
-        self.custom
-            .iter()
-            .find(|m| m.id == id)
-            .or_else(|| self.catalog.get(id))
+        self.custom_model(id).or_else(|| self.catalog.get(id))
     }
 
     pub fn kind_of(&self, id: &str) -> CameraKind {
@@ -358,9 +355,11 @@ impl Models {
         }
     }
 
-    pub fn remove_custom(&mut self, id: &str) -> Option<CameraModel> {
-        let i = self.custom.iter().position(|m| m.id == id)?;
-        Some(self.custom.remove(i))
+    /// Removes a custom model; false if there is none with this id.
+    pub fn remove_custom(&mut self, id: &str) -> bool {
+        let before = self.custom.len();
+        self.custom.retain(|m| m.id != id);
+        self.custom.len() != before
     }
 
     /// An id for a new custom model named `name`, `custom-<slug>-<n>`, that
@@ -378,6 +377,11 @@ impl Models {
             .find(|id| self.get(id).is_none())
             .unwrap_or_default()
     }
+}
+
+/// Keeps the Place tool's model valid whenever the custom models change.
+pub fn forget_missing_place_model(models: Res<Models>, mut ui: ResMut<UiState>) {
+    ui.forget_missing_place_model(&models);
 }
 
 /// The user's document: what gets autosaved and exported.

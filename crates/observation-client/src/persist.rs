@@ -157,7 +157,7 @@ fn handle_actions(
     }
 }
 
-fn receive_imports(
+pub fn receive_imports(
     p: Res<Persist>,
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
@@ -178,7 +178,6 @@ fn receive_imports(
                 let n = file.cameras.len();
                 scene.load_file(file, &mut models);
                 ui.selected = None;
-                ui.forget_missing_place_model(&models);
                 load.write(LoadArea {
                     area,
                     keep_cameras: true,

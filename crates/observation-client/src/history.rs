@@ -12,6 +12,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy_egui::input::EguiWantsInput;
+use observation_core::camera::CameraModel;
 
 /// Steps kept in each direction.
 const MAX_STEPS: usize = 100;
@@ -100,7 +101,7 @@ fn shortcuts(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn record(
+pub fn record(
     mut history: ResMut<History>,
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
@@ -192,7 +193,6 @@ fn record(
     if ui.selected.is_none() && ui.tool.needs_selection() {
         ui.tool = Tool::Select;
     }
-    ui.forget_missing_place_model(&models);
     h.last = Some(target);
     h.last_revision = scene.revision;
 }
@@ -208,17 +208,7 @@ fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
         return Some(format!("New area loaded; {lost} camera(s) removed"));
     }
     match lost {
-        // A custom model deleted in the inspector (only unused ones can be).
-        0 if before.cameras == after.cameras
-            && after.custom_models.len() + 1 == before.custom_models.len() =>
-        {
-            before
-                .custom_models
-                .iter()
-                .find(|m| !after.custom_models.iter().any(|a| a.id == m.id))
-                .map(|m| format!("Deleted model {}", m.display_name()))
-        }
-        0 => None,
+        0 => deleted_model(before, after).map(|m| format!("Deleted model {}", m.display_name())),
         1 => before
             .cameras
             .iter()
@@ -226,6 +216,32 @@ fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
             .map(|c| format!("Deleted {}", c.label)),
         n => Some(format!("{n} cameras removed")),
     }
+}
+
+/// The custom model a step deleted, if deleting it is all the step did (as
+/// the inspector does; an import that drops a model changes more).
+fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a CameraModel> {
+    // Exhaustive, so a new field cannot be left out of the comparison.
+    let Snapshot {
+        area,
+        origin,
+        cameras,
+        params,
+        region,
+        custom_models: b,
+    } = before;
+    let a = &after.custom_models;
+    let rest_equal = *area == after.area
+        && *origin == after.origin
+        && *cameras == after.cameras
+        && *params == after.params
+        && *region == after.region;
+    if !rest_equal || b.len() != a.len() + 1 {
+        return None;
+    }
+    // The first difference is the deleted model; the rest must follow in order.
+    let i = b.iter().zip(a).take_while(|(x, y)| x == y).count();
+    b.get(i).filter(|_| b.get(i + 1..) == a.get(i..))
 }
 
 /// A short name for the change from `before` to `after`.
