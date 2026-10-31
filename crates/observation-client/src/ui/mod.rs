@@ -27,9 +27,12 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MapPicker>()
-            .init_resource::<SchemeChanges>()
+            .insert_resource(SchemeChanges::watch())
+            // Before every `Tokens` reader, so the panels and the scene switch
+            // in the same frame.
+            .add_systems(PreUpdate, follow_scheme)
             .add_systems(EguiPrimaryContextPass, (apply_theme, draw_ui).chain())
-            .add_systems(Update, (follow_scheme, tick_toasts));
+            .add_systems(Update, tick_toasts);
     }
 }
 

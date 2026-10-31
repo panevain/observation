@@ -531,8 +531,10 @@ pub fn rgba(c: Color32) -> [u8; 4] {
 #[derive(Resource)]
 pub struct SchemeChanges(Receiver<bool>);
 
-impl Default for SchemeChanges {
-    fn default() -> Self {
+impl SchemeChanges {
+    /// Starts listening to the browser. Call once: each call adds a listener
+    /// that lives as long as the page.
+    pub fn watch() -> Self {
         let (tx, rx) = unbounded();
         watch_scheme(tx);
         Self(rx)
@@ -575,7 +577,15 @@ fn watch_scheme(tx: Sender<bool>) {
             let _ = tx.send(query.matches());
         })
     };
-    let _ = query.add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref());
+    if let Err(e) =
+        query.add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+    {
+        warn!(
+            "cannot follow the system theme: {}",
+            crate::net::js_cause(&e)
+        );
+        return;
+    }
     // The handler (and the query it holds, which must stay alive to keep
     // firing) lives as long as the page.
     on_change.forget();

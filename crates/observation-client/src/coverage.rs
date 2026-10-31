@@ -190,8 +190,9 @@ fn paint_overlay(
     let mode = (ui.overlay, ui.show_facades);
     // Per-camera colours can change without any visibility changing; repaint
     // only when one actually did.
-    let colors = if ui.overlay == OverlayMode::PerCamera
-        && (scene.is_changed() || models.is_changed() || tokens.is_changed())
+    let colors = if (ui.overlay == OverlayMode::PerCamera
+        && (scene.is_changed() || models.is_changed()))
+        || tokens.is_changed()
     {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for c in &scene.cameras {

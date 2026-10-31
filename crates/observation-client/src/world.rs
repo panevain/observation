@@ -67,6 +67,14 @@ pub struct Overlay {
     pub facade_mesh: Handle<Mesh>,
 }
 
+/// Materials of the current area that take a theme colour.
+#[derive(Resource)]
+struct WorldMaterials {
+    building: Handle<StandardMaterial>,
+    /// Ground tiles without their map image.
+    plain: Handle<StandardMaterial>,
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -173,15 +181,16 @@ fn on_area_loaded(
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, m.positions.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals.clone())
     .with_inserted_indices(Indices::U32(m.indices.clone()));
+    let building = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.building),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
     commands.spawn((
         AreaEntity,
         BuildingMesh,
         Mesh3d(meshes.add(building_mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: to_bevy(tokens.world.building),
-            perceptual_roughness: 0.9,
-            ..default()
-        })),
+        MeshMaterial3d(building.clone()),
     ));
 
     // Pick target for ground clicks. It is not drawn: the tiles below cover
@@ -218,6 +227,7 @@ fn on_area_loaded(
             Pickable::IGNORE,
         ));
     }
+    commands.insert_resource(WorldMaterials { building, plain });
 
     // Ground coverage overlay texture (one texel per ground cell).
     let ground_image = images.add(Image::new_fill(
@@ -355,18 +365,16 @@ fn apply_ground_tiles(
 fn follow_theme(
     tokens: Res<Tokens>,
     mut clear: ResMut<ClearColor>,
+    world: Option<Res<WorldMaterials>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    buildings: Query<&MeshMaterial3d<StandardMaterial>, With<BuildingMesh>>,
-    plain: Query<&MeshMaterial3d<StandardMaterial>, (With<GroundTile>, Without<TileTextured>)>,
 ) {
     clear.0 = to_bevy(tokens.world.sky);
-    // Tiles without their map image share the plain ground material.
-    let recolor = buildings
-        .iter()
-        .map(|m| (m, tokens.world.building))
-        .chain(plain.iter().map(|m| (m, tokens.world.ground)));
-    for (m, color) in recolor {
-        if let Some(mut mat) = materials.get_mut(&m.0) {
+    let Some(world) = world else { return };
+    for (handle, color) in [
+        (&world.building, tokens.world.building),
+        (&world.plain, tokens.world.ground),
+    ] {
+        if let Some(mut mat) = materials.get_mut(handle) {
             mat.base_color = to_bevy(color);
         }
     }
