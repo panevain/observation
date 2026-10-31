@@ -1,12 +1,13 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
 use crate::camera::{
-    CUSTOM_ID_PREFIX, CameraModel, CameraPlacement, CatalogError, MAX_CUSTOM_PPM, MAX_GROUP_CHARS,
-    MIN_CUSTOM_PPM, is_https_url,
+    CUSTOM_ID_PREFIX, CameraModel, CameraPlacement, MAX_CUSTOM_PPM, MAX_GROUP_CHARS,
+    MIN_CUSTOM_PPM, fresh_custom_id, is_https_url,
 };
 use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 pub const SCENE_FORMAT: &str = "observation-scene";
@@ -51,7 +52,7 @@ pub enum SceneError {
     )]
     TooNew(u32),
     #[error("a custom model in the file is invalid: {0}")]
-    Model(#[from] CatalogError),
+    Model(#[from] crate::camera::CatalogError),
     #[error("scene has invalid values: {0}")]
     Invalid(String),
 }
@@ -144,7 +145,21 @@ impl SceneFile {
                 "custom pixel density is {ppm} px/m, but must be {MIN_CUSTOM_PPM} to {MAX_CUSTOM_PPM} px/m"
             )));
         }
-        for m in &mut scene.custom_models {
+        // The app looks models up by id, custom models first: a second custom
+        // model with an id cannot be reached (the editor would pick, save and
+        // delete the first), and one with a catalogue id replaces that model.
+        // The app only makes unique `custom-` ids, so this is a hand-edited
+        // file; give each offender a fresh id rather than refusing the scene
+        // (as with regions and links, an older autosave still restores).
+        let mut taken: HashSet<String> = scene
+            .custom_models
+            .iter()
+            .map(|m| m.id.clone())
+            .chain(scene.cameras.iter().map(|c| c.model_id.clone()))
+            .collect();
+        let mut seen = HashSet::new();
+        let mut renamed = HashMap::new();
+        for (i, m) in scene.custom_models.iter_mut().enumerate() {
             // Drop a non-https spec-sheet link rather than the whole scene: a
             // planted `javascript:` link is neutralised, and a scene autosaved
             // before links were checked still restores (losing only the link).
@@ -152,22 +167,22 @@ impl SceneFile {
                 m.source = None;
             }
             m.validate()?;
-        }
-        // The app looks models up by id, so a second model with an id is
-        // unreachable (the editor would pick, save and delete the first), and
-        // one with a catalogue id would replace that catalogue model. The app
-        // only makes unique `custom-` ids; this catches hand-edited files.
-        let mut seen = std::collections::HashSet::new();
-        for m in &scene.custom_models {
-            if !m.id.starts_with(CUSTOM_ID_PREFIX) {
-                return Err(CatalogError::Invalid {
-                    id: m.id.clone(),
-                    why: format!("custom model ids must start with `{CUSTOM_ID_PREFIX}`"),
-                }
-                .into());
+            let first = seen.insert(m.id.clone());
+            if first && m.id.starts_with(CUSTOM_ID_PREFIX) {
+                continue;
             }
-            if !seen.insert(m.id.as_str()) {
-                return Err(CatalogError::Duplicate(m.id.clone()).into());
+            let id = fresh_custom_id(&m.name, i + 1, |id| taken.contains(id));
+            taken.insert(id.clone());
+            let old = std::mem::replace(&mut m.id, id);
+            // Cameras showed the first model with an id, so they follow it;
+            // a later duplicate starts out unused.
+            if first {
+                renamed.insert(old, m.id.clone());
+            }
+        }
+        for c in &mut scene.cameras {
+            if let Some(id) = renamed.get(&c.model_id) {
+                c.model_id.clone_from(id);
             }
         }
         Ok(scene)
@@ -237,7 +252,7 @@ mod tests {
     fn drops_script_links_from_custom_models() {
         let json = r#"{"format":"observation-scene","version":1,"area":{"kind":"demo"},
             "origin":{"lat":0.0,"lon":0.0},
-            "custom_models":[{"id":"custom-evil","vendor":"","name":"x","kind":"Bullet",
+            "custom_models":[{"id":"evil","vendor":"","name":"x","kind":"Bullet",
               "hfov_deg":90.0,"vfov_deg":50.0,"resolution":[1920,1080],
               "source":"javascript:alert(document.domain)"}]}"#;
         let s = SceneFile::from_json(json).unwrap();
@@ -268,26 +283,47 @@ mod tests {
     }
 
     #[test]
-    fn custom_model_ids_are_unique_and_prefixed() {
+    fn custom_model_ids_are_made_unique_and_prefixed() {
         let mut s = scene();
         s.custom_models = vec![custom_model("custom-a-1"), custom_model("custom-a-2")];
-        assert_eq!(SceneFile::from_json(&s.to_json()).unwrap(), s);
+        assert_eq!(SceneFile::from_json(&s.to_json()).unwrap(), s, "left alone");
 
+        // A duplicate is renamed; cameras keep the first model, which they showed.
         s.custom_models[1].id = "custom-a-1".into();
-        let err = SceneFile::from_json(&s.to_json()).unwrap_err();
-        assert!(
-            matches!(&err, SceneError::Model(CatalogError::Duplicate(id)) if id == "custom-a-1"),
-            "{err}"
-        );
+        s.cameras[0].model_id = "custom-a-1".into();
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        let ids: Vec<&str> = loaded.custom_models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["custom-a-1", "custom-mine-2"]);
+        assert_eq!(loaded.cameras[0].model_id, "custom-a-1");
 
-        // Would shadow the catalogue model the scene's camera uses.
-        s.custom_models[1].id = "generic-doorbell-160".into();
-        let err = SceneFile::from_json(&s.to_json()).unwrap_err();
-        assert!(
-            matches!(&err, SceneError::Model(CatalogError::Invalid { id, .. }) if id == "generic-doorbell-160"),
-            "{err}"
-        );
-        assert!(err.to_string().contains(CUSTOM_ID_PREFIX), "{err}");
+        // An id without the prefix (here a catalogue id, which the custom model
+        // replaced) is renamed, and the cameras that showed it follow.
+        s.custom_models[1].id = "custom-mine-3".into();
+        s.custom_models[0].id = "generic-doorbell-160".into();
+        s.cameras[0].model_id = "generic-doorbell-160".into();
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        let ids: Vec<&str> = loaded.custom_models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["custom-mine-1", "custom-mine-3"]);
+        assert_eq!(loaded.cameras[0].model_id, "custom-mine-1");
+        assert_eq!(SceneFile::from_json(&loaded.to_json()).unwrap(), loaded);
+
+        // A fresh id skips every id in the file, used by a model or a camera,
+        // and a duplicated unprefixed id: cameras follow the first copy only.
+        s.custom_models = vec![
+            custom_model("acme"),
+            custom_model("acme"),
+            custom_model("custom-mine-2"),
+        ];
+        s.cameras[0].model_id = "custom-mine-1".into();
+        let mut second = s.cameras[0].clone();
+        second.id = 2;
+        second.model_id = "acme".into();
+        s.cameras.push(second);
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        let ids: Vec<&str> = loaded.custom_models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["custom-mine-3", "custom-mine-4", "custom-mine-2"]);
+        let used: Vec<&str> = loaded.cameras.iter().map(|c| c.model_id.as_str()).collect();
+        assert_eq!(used, ["custom-mine-1", "custom-mine-3"]);
     }
 
     #[test]

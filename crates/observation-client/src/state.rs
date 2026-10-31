@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use observation_core::bundle::AreaBundle;
 use observation_core::camera::{
-    CUSTOM_ID_PREFIX, CameraKind, CameraModel, CameraPlacement, Catalog,
+    CameraKind, CameraModel, CameraPlacement, Catalog, fresh_custom_id,
 };
 use observation_core::coverage::{CoverageParams, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
@@ -364,20 +364,14 @@ impl Models {
         self.custom.len() != before
     }
 
-    /// An id for a new custom model named `name`, `custom-<slug>-<n>`, that
-    /// no custom or catalogue model has (models can be deleted, so the count
-    /// alone can repeat one).
+    /// An id for a new custom model named `name` that no custom model has
+    /// (models can be deleted, so the count alone can repeat one). Catalogue
+    /// ids never start with
+    /// [`observation_core::camera::CUSTOM_ID_PREFIX`], so they cannot clash.
     pub fn new_custom_id(&self, name: &str) -> String {
-        let slug: String = name
-            .to_ascii_lowercase()
-            .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-            .collect();
-        let slug = slug.trim_matches('-');
-        (self.custom.len() + 1..)
-            .map(|n| format!("{CUSTOM_ID_PREFIX}{slug}-{n}"))
-            .find(|id| self.get(id).is_none())
-            .unwrap_or_default()
+        fresh_custom_id(name, self.custom.len() + 1, |id| {
+            self.custom_model(id).is_some()
+        })
     }
 }
 

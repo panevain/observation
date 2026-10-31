@@ -336,6 +336,21 @@ pub enum CatalogError {
 /// model can never shadow a catalogue one (custom models win the lookup).
 pub const CUSTOM_ID_PREFIX: &str = "custom-";
 
+/// An id `custom-<slug>-<n>` for a custom model named `name`, with the
+/// smallest `n` from `first` up for which `taken` is false.
+pub fn fresh_custom_id(name: &str, first: usize, taken: impl Fn(&str) -> bool) -> String {
+    let slug: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-');
+    (first..)
+        .map(|n| format!("{CUSTOM_ID_PREFIX}{slug}-{n}"))
+        .find(|id| !taken(id))
+        .unwrap_or_default()
+}
+
 /// The curated model list shipped with the app.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Catalog {
@@ -453,14 +468,41 @@ mod tests {
             Err(CatalogError::Duplicate(_))
         ));
         // The prefix is kept for custom models, so they never shadow one.
-        let reserved = ron.replace("\"a-b\"", "\"custom-a-b\"");
-        assert!(matches!(
-            Catalog::from_ron(&reserved),
-            Err(CatalogError::Invalid { .. })
-        ));
-        let parts = Catalog::from_ron_parts(&[r#"[(id: "custom-x", vendor: "", name: "N",
-            kind: Bullet, hfov_deg: 90.0, vfov_deg: 50.0, resolution: (1920, 1080))]"#]);
-        assert!(matches!(parts, Err(CatalogError::Invalid { .. })));
+        let reserved = |r: Result<Catalog, CatalogError>, want: &str| match r {
+            Err(CatalogError::Invalid { id, why }) => {
+                assert_eq!(id, want);
+                assert!(why.contains(CUSTOM_ID_PREFIX), "{why}");
+            }
+            other => panic!("expected the reserved prefix to be refused, got {other:?}"),
+        };
+        reserved(
+            Catalog::from_ron(&ron.replace("\"a-b\"", "\"custom-a-b\"")),
+            "custom-a-b",
+        );
+        reserved(
+            Catalog::from_ron_parts(&[r#"[(id: "custom-x", vendor: "", name: "N",
+                kind: Bullet, hfov_deg: 90.0, vfov_deg: 50.0, resolution: (1920, 1080))]"#]),
+            "custom-x",
+        );
+    }
+
+    #[test]
+    fn fresh_custom_ids() {
+        assert_eq!(
+            fresh_custom_id("Front Cam!", 1, |_| false),
+            "custom-front-cam-1"
+        );
+        let taken = |id: &str| id == "custom-x-2" || id == "custom-x-3";
+        assert_eq!(fresh_custom_id("X", 2, taken), "custom-x-4");
+        let id = fresh_custom_id("Größe", 1, |_| false);
+        assert!(model_with_id(&id).validate().is_ok(), "{id}");
+    }
+
+    fn model_with_id(id: &str) -> CameraModel {
+        CameraModel {
+            id: id.into(),
+            ..model()
+        }
     }
 
     #[test]
