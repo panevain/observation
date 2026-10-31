@@ -196,7 +196,7 @@ impl RegionMask {
 }
 
 /// Regular raster over the ground plane, row-major with rows along `+Z` (south).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct GroundGrid {
     /// North-west (min x, min z) corner, metres.
     pub min: Vec2,
@@ -360,6 +360,17 @@ pub struct StaticLayers {
 
 impl StaticLayers {
     pub fn new(bundle: &AreaBundle, ground_cell_m: f32, facade_cell_m: f32) -> Self {
+        let footprints: Vec<&Footprint> = bundle.footprints().collect();
+        Self::from_parts(
+            Self::grid_for(bundle, ground_cell_m),
+            &footprints,
+            &bundle.roads,
+            facade_cell_m,
+        )
+    }
+
+    /// The ground grid covering a bundle's bounding box.
+    pub fn grid_for(bundle: &AreaBundle, ground_cell_m: f32) -> GroundGrid {
         let proj = bundle.projection();
         let corner = |lat, lon| {
             Vec2::from_array(
@@ -369,9 +380,7 @@ impl StaticLayers {
         };
         let nw = corner(bundle.bbox.north, bundle.bbox.west);
         let se = corner(bundle.bbox.south, bundle.bbox.east);
-        let grid = GroundGrid::covering(nw.min(se), nw.max(se), ground_cell_m);
-        let footprints: Vec<&Footprint> = bundle.footprints().collect();
-        Self::from_parts(grid, &footprints, &bundle.roads, facade_cell_m)
+        GroundGrid::covering(nw.min(se), nw.max(se), ground_cell_m)
     }
 
     pub fn from_parts(

@@ -16,7 +16,6 @@ fn main() {}
 
 #[cfg(target_arch = "wasm32")]
 mod worker {
-    use observation_core::bundle::AreaBundle;
     use observation_core::coverage::StaticLayers;
     use observation_core::coverage_job::{JobRequest, JobResponse};
     use wasm_bindgen::JsCast;
@@ -39,24 +38,20 @@ mod worker {
         let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
             let bytes = js_sys::Uint8Array::new(&e.data()).to_vec();
             match JobRequest::decode(&bytes) {
-                Ok(JobRequest::LoadArea {
-                    generation,
-                    bundle,
-                    ground_cell_m,
-                    facade_cell_m,
-                }) => match AreaBundle::decode(&bundle) {
-                    Ok(bundle) => {
-                        let layers = StaticLayers::new(&bundle, ground_cell_m, facade_cell_m);
-                        area = Some((generation, layers));
-                    }
-                    Err(e) => reply(JobResponse::Failed(e.to_string())),
-                },
-                Ok(JobRequest::Compute(job)) => {
-                    // Jobs for an area that has since been replaced are dropped.
-                    if let Some((_, layers)) = area.as_ref().filter(|(g, _)| *g == job.generation) {
+                Ok(JobRequest::LoadArea { generation, inputs }) => {
+                    area = Some((generation, inputs.build()));
+                }
+                Ok(JobRequest::Compute(job)) => match &area {
+                    Some((g, layers)) if *g == job.generation => {
                         reply(JobResponse::Done(job.run(layers)));
                     }
-                }
+                    // Sent for another area: say so, so the client does not wait for it.
+                    _ => reply(JobResponse::Stale {
+                        generation: job.generation,
+                        camera_id: job.camera_id,
+                        key: job.key,
+                    }),
+                },
                 Err(e) => reply(JobResponse::Failed(e.to_string())),
             }
         });

@@ -13,9 +13,9 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use observation_core::bundle::AreaBundle;
 use observation_core::coverage::StaticLayers;
-#[cfg(target_arch = "wasm32")]
-use observation_core::coverage_job::JobRequest;
 use observation_core::coverage_job::{Job, JobResult};
+#[cfg(target_arch = "wasm32")]
+use observation_core::coverage_job::{JobRequest, JobResponse, LayerInputs};
 use observation_core::frustum::ViewCone;
 
 /// Runs coverage jobs. A non-send resource: in the browser it owns the `Worker`.
@@ -49,9 +49,7 @@ impl CoverageBackend {
         if let Some(worker) = &mut self.worker {
             worker.send(&JobRequest::LoadArea {
                 generation: self.generation,
-                bundle: bundle.encode(),
-                ground_cell_m: GROUND_CELL_M,
-                facade_cell_m: FACADE_CELL_M,
+                inputs: LayerInputs::new(bundle, GROUND_CELL_M, FACADE_CELL_M),
             });
         }
     }
@@ -90,32 +88,46 @@ impl CoverageBackend {
     /// Results that came back since the last call. If the worker failed, the
     /// jobs it still owed are computed here instead, and it is not used again.
     pub fn drain(&mut self, layers: &StaticLayers) -> Vec<JobResult> {
+        let mut out = Vec::new();
         #[cfg(target_arch = "wasm32")]
         if let Some(worker) = &mut self.worker {
-            match worker.receive() {
-                Ok(results) => {
-                    let mut out = Vec::new();
-                    for r in results {
-                        let current = r.generation == self.generation
-                            && self.in_flight.get(&r.camera_id).map(|j| j.key) == Some(r.key);
-                        if current {
-                            self.in_flight.remove(&r.camera_id);
-                            out.push(r);
+            let failure = match worker.receive() {
+                Ok(responses) => {
+                    let mut failure = None;
+                    for response in responses {
+                        match response {
+                            JobResponse::Done(r) => {
+                                let current = r.generation == self.generation
+                                    && self.in_flight.get(&r.camera_id).map(|j| j.key)
+                                        == Some(r.key);
+                                if current {
+                                    self.in_flight.remove(&r.camera_id);
+                                    out.push(r);
+                                }
+                            }
+                            // Jobs of earlier areas left `in_flight` when the
+                            // area changed. A job of this area means the worker
+                            // missed it and would answer every resubmission the
+                            // same way, so stop using it.
+                            JobResponse::Stale { generation, .. }
+                                if generation == self.generation =>
+                            {
+                                failure = Some("it does not hold the current area".to_owned());
+                            }
+                            _ => {}
                         }
                     }
-                    return out;
+                    failure
                 }
-                Err(e) => {
-                    warn!("coverage worker failed ({e}); computing coverage on the main thread");
-                    self.worker = None;
-                }
-            }
+                Err(e) => Some(e),
+            };
+            let Some(e) = failure else { return out };
+            warn!("coverage worker failed ({e}); computing coverage on the main thread");
+            self.worker = None;
         }
         // Running inline: only jobs a failed worker still owed can be left.
-        self.in_flight
-            .drain()
-            .map(|(_, job)| job.run(layers))
-            .collect()
+        out.extend(self.in_flight.drain().map(|(_, job)| job.run(layers)));
+        out
     }
 }
 
@@ -124,7 +136,7 @@ mod web {
     use crate::net::js_cause;
     use bevy::prelude::*;
     use crossbeam_channel::{Receiver, unbounded};
-    use observation_core::coverage_job::{JobRequest, JobResponse, JobResult};
+    use observation_core::coverage_job::{JobRequest, JobResponse};
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
     use web_sys::{ErrorEvent, Event, MessageEvent, Worker, WorkerOptions, WorkerType};
@@ -134,6 +146,11 @@ mod web {
     /// content hash, so the server has browsers revalidate these files.
     const LOADER_URL: &str = "/coverage-worker_loader.js";
 
+    /// How long the worker may take to load and say it is ready, ms. A module
+    /// worker whose script loads but whose wasm does not (an HTML page in its
+    /// place, say) may never report an error.
+    const READY_WITHIN_MS: f64 = 10_000.0;
+
     /// A message from the worker, or why it stopped.
     type Reply = Result<Vec<u8>, String>;
 
@@ -142,6 +159,8 @@ mod web {
         rx: Receiver<Reply>,
         /// Whether the worker has said it is listening.
         ready: bool,
+        /// When the worker was started (`Date.now()`, ms).
+        started_ms: f64,
         /// Encoded requests waiting for the worker to be ready.
         queue: Vec<Vec<u8>>,
         /// A request that could not be posted.
@@ -189,6 +208,7 @@ mod web {
                 worker,
                 rx,
                 ready: false,
+                started_ms: js_sys::Date::now(),
                 queue: Vec::new(),
                 failed: None,
                 _on_message: on_message,
@@ -214,9 +234,9 @@ mod web {
             }
         }
 
-        /// Results received since the last call, or why the worker can no
-        /// longer be used.
-        pub fn receive(&mut self) -> Result<Vec<JobResult>, String> {
+        /// Answers to jobs (`Done` and `Stale`) received since the last call,
+        /// or why the worker can no longer be used.
+        pub fn receive(&mut self) -> Result<Vec<JobResponse>, String> {
             let mut out = Vec::new();
             while let Ok(reply) = self.rx.try_recv() {
                 match JobResponse::decode(&reply?).map_err(|e| e.to_string())? {
@@ -227,9 +247,15 @@ mod web {
                             self.post(&bytes);
                         }
                     }
-                    JobResponse::Done(result) => out.push(result),
                     JobResponse::Failed(e) => return Err(e),
+                    answer => out.push(answer),
                 }
+            }
+            if !self.ready && js_sys::Date::now() - self.started_ms > READY_WITHIN_MS {
+                return Err(format!(
+                    "it did not start within {} s",
+                    READY_WITHIN_MS / 1000.0
+                ));
             }
             self.failed.take().map_or(Ok(out), Err)
         }

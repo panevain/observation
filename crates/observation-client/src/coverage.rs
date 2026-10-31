@@ -8,7 +8,7 @@ mod backend;
 
 use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState};
 use crate::theme::{Tokens, rgba, to_bevy};
-use crate::world::{CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
+use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
 use backend::CoverageBackend;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -65,7 +65,14 @@ impl Plugin for CoveragePlugin {
             )
             .add_systems(
                 Update,
-                (update_coverage, paint_overlay, draw_region).chain(),
+                (
+                    // After a new area's state reset and `Area` insert, which
+                    // Bevy applies in between (an automatic sync point).
+                    update_coverage.after(AreaLoadSet),
+                    paint_overlay,
+                    draw_region,
+                )
+                    .chain(),
             );
     }
 }
@@ -108,10 +115,9 @@ fn update_coverage(
 ) {
     let Some(area) = area else { return };
     if area.is_changed() {
-        // `Area` is only ever inserted, so this is a new area. on_area_loaded
-        // resets the state too, but may run before the new `Area` arrives.
+        // `Area` is only ever inserted, so this is a new area (on_area_loaded
+        // has reset the state).
         backend.load_area(&area.bundle);
-        *state = CoverageState::default();
     }
     let layers = &area.layers;
     let results = backend.drain(layers);
@@ -124,33 +130,30 @@ fn update_coverage(
         .get_or_insert_with(|| CoverageCounts::new(layers));
     let mut changed = false;
 
-    let live: Vec<u32> = scene
-        .cameras
-        .iter()
-        .filter(|c| c.enabled)
-        .map(|c| c.id)
-        .collect();
-    state.cams.retain(|id, (_, vis)| {
-        let keep = live.contains(id);
-        if !keep {
-            counts.remove(vis);
-            changed = true;
-        }
-        keep
-    });
     state.ranges.clear();
+    // Enabled cameras with a known model, and their current keys.
     let mut current = Vec::new();
+    let mut keys = HashMap::new();
     for c in scene.cameras.iter().filter(|c| c.enabled) {
         let Some(m) = models.get(&c.model_id) else {
             continue;
         };
         let range = m.effective_range_m(scene.params.pixels_per_metre(), scene.params.lighting);
         state.ranges.insert(c.id, range);
-        current.push((c, m, range, key(c, m, range, scene.params.subject_height_m)));
+        let k = key(c, m, range, scene.params.subject_height_m);
+        keys.insert(c.id, k);
+        current.push((c, m, range, k));
     }
-    let key_of = |id: u32| current.iter().find(|(c, ..)| c.id == id).map(|e| e.3);
+    state.cams.retain(|id, (_, vis)| {
+        let keep = keys.contains_key(id);
+        if !keep {
+            counts.remove(vis);
+            changed = true;
+        }
+        keep
+    });
     for r in results {
-        changed |= apply(&mut state.cams, counts, key_of(r.camera_id), r);
+        changed |= apply(&mut state.cams, counts, keys.get(&r.camera_id).copied(), r);
     }
     for &(c, m, range, k) in &current {
         // One job per camera at a time: a camera dragged faster than its jobs
@@ -181,10 +184,10 @@ fn update_coverage(
 }
 
 /// Puts a computed visibility into the cache and the counts, given the
-/// camera's current key (`None` once it is deleted or disabled). A result for
-/// an earlier pose still replaces an older visibility, so the overlay follows
-/// a dragged camera one job behind, but never an up-to-date one. Returns
-/// whether anything changed.
+/// camera's current key (`None` once it is deleted, disabled or without a
+/// model). A result for an earlier pose still replaces an older visibility, so
+/// the overlay follows a dragged camera one job behind, but never an
+/// up-to-date one. Returns whether anything changed.
 fn apply(
     cams: &mut HashMap<u32, (u64, CellVisibility)>,
     counts: &mut CoverageCounts,
@@ -197,11 +200,9 @@ fn apply(
     if r.key != current && cams.get(&r.camera_id).is_some_and(|(k, _)| *k == current) {
         return false;
     }
+    counts.add(&r.visibility);
     if let Some((_, old)) = cams.insert(r.camera_id, (r.key, r.visibility)) {
         counts.remove(&old);
-    }
-    if let Some((_, new)) = cams.get(&r.camera_id) {
-        counts.add(new);
     }
     true
 }
