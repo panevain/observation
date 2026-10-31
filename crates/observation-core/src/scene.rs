@@ -1,7 +1,8 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
 use crate::camera::{
-    CameraModel, CameraPlacement, MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, is_https_url,
+    CUSTOM_ID_PREFIX, CameraModel, CameraPlacement, CatalogError, MAX_CUSTOM_PPM, MAX_GROUP_CHARS,
+    MIN_CUSTOM_PPM, is_https_url,
 };
 use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
@@ -50,7 +51,7 @@ pub enum SceneError {
     )]
     TooNew(u32),
     #[error("a custom model in the file is invalid: {0}")]
-    Model(#[from] crate::camera::CatalogError),
+    Model(#[from] CatalogError),
     #[error("scene has invalid values: {0}")]
     Invalid(String),
 }
@@ -152,6 +153,23 @@ impl SceneFile {
             }
             m.validate()?;
         }
+        // The app looks models up by id, so a second model with an id is
+        // unreachable (the editor would pick, save and delete the first), and
+        // one with a catalogue id would replace that catalogue model. The app
+        // only makes unique `custom-` ids; this catches hand-edited files.
+        let mut seen = std::collections::HashSet::new();
+        for m in &scene.custom_models {
+            if !m.id.starts_with(CUSTOM_ID_PREFIX) {
+                return Err(CatalogError::Invalid {
+                    id: m.id.clone(),
+                    why: format!("custom model ids must start with `{CUSTOM_ID_PREFIX}`"),
+                }
+                .into());
+            }
+            if !seen.insert(m.id.as_str()) {
+                return Err(CatalogError::Duplicate(m.id.clone()).into());
+            }
+        }
         Ok(scene)
     }
 }
@@ -159,7 +177,7 @@ impl SceneFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera::DoriLevel;
+    use crate::camera::{CameraKind, DoriLevel};
 
     fn scene() -> SceneFile {
         let mut s = SceneFile::new(AreaRef::Demo, LatLon::new(1.0, 2.0));
@@ -219,7 +237,7 @@ mod tests {
     fn drops_script_links_from_custom_models() {
         let json = r#"{"format":"observation-scene","version":1,"area":{"kind":"demo"},
             "origin":{"lat":0.0,"lon":0.0},
-            "custom_models":[{"id":"evil","vendor":"","name":"x","kind":"Bullet",
+            "custom_models":[{"id":"custom-evil","vendor":"","name":"x","kind":"Bullet",
               "hfov_deg":90.0,"vfov_deg":50.0,"resolution":[1920,1080],
               "source":"javascript:alert(document.domain)"}]}"#;
         let s = SceneFile::from_json(json).unwrap();
@@ -232,6 +250,44 @@ mod tests {
                 .as_deref(),
             Some("https://example.com")
         );
+    }
+
+    fn custom_model(id: &str) -> CameraModel {
+        CameraModel {
+            id: id.into(),
+            vendor: String::new(),
+            name: "Mine".into(),
+            kind: CameraKind::Bullet,
+            hfov_deg: 90.0,
+            vfov_deg: 50.0,
+            resolution: [1920, 1080],
+            ir_range_m: None,
+            source: None,
+            notes: None,
+        }
+    }
+
+    #[test]
+    fn custom_model_ids_are_unique_and_prefixed() {
+        let mut s = scene();
+        s.custom_models = vec![custom_model("custom-a-1"), custom_model("custom-a-2")];
+        assert_eq!(SceneFile::from_json(&s.to_json()).unwrap(), s);
+
+        s.custom_models[1].id = "custom-a-1".into();
+        let err = SceneFile::from_json(&s.to_json()).unwrap_err();
+        assert!(
+            matches!(&err, SceneError::Model(CatalogError::Duplicate(id)) if id == "custom-a-1"),
+            "{err}"
+        );
+
+        // Would shadow the catalogue model the scene's camera uses.
+        s.custom_models[1].id = "generic-doorbell-160".into();
+        let err = SceneFile::from_json(&s.to_json()).unwrap_err();
+        assert!(
+            matches!(&err, SceneError::Model(CatalogError::Invalid { id, .. }) if id == "generic-doorbell-160"),
+            "{err}"
+        );
+        assert!(err.to_string().contains(CUSTOM_ID_PREFIX), "{err}");
     }
 
     #[test]

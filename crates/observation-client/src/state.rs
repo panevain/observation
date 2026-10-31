@@ -2,7 +2,9 @@
 
 use bevy::prelude::*;
 use observation_core::bundle::AreaBundle;
-use observation_core::camera::{CameraKind, CameraModel, CameraPlacement, Catalog};
+use observation_core::camera::{
+    CUSTOM_ID_PREFIX, CameraKind, CameraModel, CameraPlacement, Catalog,
+};
 use observation_core::coverage::{CoverageParams, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::scene::{AreaRef, SceneFile};
@@ -373,7 +375,7 @@ impl Models {
             .collect();
         let slug = slug.trim_matches('-');
         (self.custom.len() + 1..)
-            .map(|n| format!("custom-{slug}-{n}"))
+            .map(|n| format!("{CUSTOM_ID_PREFIX}{slug}-{n}"))
             .find(|id| self.get(id).is_none())
             .unwrap_or_default()
     }
