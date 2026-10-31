@@ -101,6 +101,27 @@ impl AreaBundle {
         let points = self.addresses.iter().map(AddressSource::Point);
         crate::address::address_at(p, footprint, buildings.chain(points))
     }
+
+    /// Indices of the buildings at an address `is` accepts: those tagged with
+    /// it, and those holding an address point with it. Ascending, no repeats.
+    pub fn buildings_at(&self, is: impl Fn(&Address) -> bool) -> Vec<usize> {
+        let tagged = self
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.address.as_ref().is_some_and(&is))
+            .map(|(i, _)| i);
+        let holding = self
+            .addresses
+            .iter()
+            .filter(|p| is(&p.address))
+            .filter_map(|p| p.building.map(|i| i as usize))
+            .filter(|&i| i < self.buildings.len());
+        let mut out: Vec<usize> = tagged.chain(holding).collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
 }
 
 /// A building as parsed from OSM, before projection.
@@ -334,6 +355,8 @@ pub(crate) mod tests {
             b.address_at([wall[0], wall[1] + 0.15]).map(Address::label),
             Some("12 Test St".to_owned())
         );
+        assert_eq!(b.buildings_at(|a| a.label() == "12 Test St"), vec![0]);
+        assert!(b.buildings_at(|a| a.label() == "14 Test St").is_empty());
         let bytes = b.encode();
         assert_eq!(&bytes[..4], b"OBSB");
         assert_eq!(AreaBundle::decode(&bytes).unwrap(), b);

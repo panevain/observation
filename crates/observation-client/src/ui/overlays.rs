@@ -159,7 +159,44 @@ pub fn tool_cursor(ctx: &egui::Context, vp: egui::Rect, tool: Tool) {
         Tool::Aim => egui::CursorIcon::Crosshair,
         Tool::Move => egui::CursorIcon::Move,
         Tool::Region => egui::CursorIcon::Cell,
+        Tool::Address => egui::CursorIcon::Help,
     });
+}
+
+/// The Address tool's card by the pointer: the address under it, or that
+/// there is none.
+pub fn address_card(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, ui_state: &UiState) {
+    let (Tool::Address, Some(address)) = (ui_state.tool, &ui_state.hover_address) else {
+        return;
+    };
+    let Some(at) = ctx
+        .pointer_hover_pos()
+        .filter(|p| vp.contains(*p) && !ctx.is_pointer_over_egui())
+    else {
+        return;
+    };
+    egui::Area::new(Id::new("address-card"))
+        .order(Order::Tooltip)
+        .fixed_pos(at + vec2(t.space.lg, t.space.lg))
+        .constrain_to(vp)
+        .interactable(false)
+        .show(ctx, |ui| {
+            t.card()
+                .inner_margin(egui::Margin::symmetric(t.space.md as i8, t.space.sm as i8))
+                .show(ui, |ui| {
+                    ui.set_max_width(vp.width() / 2.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = t.space.sm;
+                        ui.label(RichText::new(icons::SIGNPOST).color(t.text_muted));
+                        match address {
+                            Some(a) => {
+                                ui.label(RichText::new(a).family(strong_family()).color(t.text))
+                            }
+                            None => ui.label(RichText::new("No address here").color(t.text_muted)),
+                        };
+                    });
+                });
+        });
 }
 
 /// What the pill says about the selection (or, for Place, the model).
@@ -189,6 +226,11 @@ fn selection_chip(
                         n => format!("{n} corners"),
                     };
                     ui.label(RichText::new(text).strong());
+                } else if d.ui.tool == Tool::Address {
+                    match &d.ui.selected_address {
+                        Some(a) => ui.label(RichText::new(a).strong()),
+                        None => ui.label(RichText::new("No address selected").color(t.text_muted)),
+                    };
                 } else if let Some(c) = selected {
                     swatch(ui, t, camera_color(&d.scene, c, &d.models, t));
                     ui.label(RichText::new(&c.label).strong());
@@ -375,6 +417,7 @@ pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {
                 for (k, v) in [
                     ("V / P / A / M", "Select / Place / Aim / Move tool"),
                     ("R", "Draw a region to limit the coverage figures to"),
+                    ("L", "Address tool: point at a building to see its address"),
                     ("Drag", "Orbit (or aim/move with those tools)"),
                     ("Right-drag · Shift-drag", "Pan"),
                     ("Scroll · pinch", "Zoom"),

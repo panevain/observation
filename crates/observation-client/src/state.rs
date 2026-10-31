@@ -26,15 +26,18 @@ pub enum Tool {
     Move,
     /// Draw the coverage region.
     Region,
+    /// Show the street address under the pointer; click to select it.
+    Address,
 }
 
 impl Tool {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Select,
         Self::Place,
         Self::Aim,
         Self::Move,
         Self::Region,
+        Self::Address,
     ];
 
     pub fn label(self) -> &'static str {
@@ -44,6 +47,7 @@ impl Tool {
             Self::Aim => "Aim",
             Self::Move => "Move",
             Self::Region => "Region",
+            Self::Address => "Address",
         }
     }
 
@@ -54,6 +58,7 @@ impl Tool {
             Self::Aim => "A",
             Self::Move => "M",
             Self::Region => "R",
+            Self::Address => "L",
         }
     }
 
@@ -70,6 +75,9 @@ impl Tool {
             Self::Region => {
                 "Click to add corners · click the first corner or press Enter to finish · Backspace undoes a corner"
             }
+            Self::Address => {
+                "Point at a building to see its address · click to select it and the buildings at it"
+            }
         }
     }
 
@@ -81,6 +89,7 @@ impl Tool {
             Self::Aim => "Click where the selected camera should look",
             Self::Move => "Click a wall or the ground to move the selected camera",
             Self::Region => "Click corners of the area to measure, then the first corner",
+            Self::Address => "Point at a building to see its address",
         }
     }
 
@@ -116,11 +125,28 @@ impl Tool {
                 ("Backspace", "remove corner"),
                 ("Esc", "cancel"),
             ],
+            Self::Address => &[
+                ("Click", "select address"),
+                ("Drag", "orbit"),
+                ("Right-drag", "pan"),
+                ("Esc", "done"),
+            ],
         }
     }
 
     pub fn needs_selection(self) -> bool {
         matches!(self, Self::Aim | Self::Move)
+    }
+}
+
+/// Whether a click with the Address tool also scrolls the camera list to that
+/// address (a setting, remembered in this browser).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Resource)]
+pub struct AddressJump(pub bool);
+
+impl Default for AddressJump {
+    fn default() -> Self {
+        Self(true)
     }
 }
 
@@ -169,6 +195,14 @@ pub struct UiState {
     pub region_hover: Option<[f32; 2]>,
     /// How close to the first corner a click closes the region, metres.
     pub region_snap_m: f32,
+    /// What the Address tool shows by the pointer: `None` off the scene,
+    /// `Some(None)` where there is no address.
+    pub hover_address: Option<Option<String>>,
+    /// The address picked with the Address tool, as a group label (see
+    /// [`crate::addresses::address_label`]); its buildings are highlighted.
+    pub selected_address: Option<String>,
+    /// Scroll the camera list to this group once (consumed by the inspector).
+    pub scroll_to_group: Option<String>,
 }
 
 impl Default for UiState {
@@ -194,6 +228,9 @@ impl Default for UiState {
             region_draft: Vec::new(),
             region_hover: None,
             region_snap_m: 1.0,
+            hover_address: None,
+            selected_address: None,
+            scroll_to_group: None,
         }
     }
 }

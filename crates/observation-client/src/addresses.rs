@@ -5,10 +5,17 @@ use crate::state::{Area, Scene};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy_egui::EguiPostUpdateSet;
+use observation_core::address::Address;
 use observation_core::camera::{CameraPlacement, MAX_GROUP_CHARS};
 
 /// Heading for cameras with neither a hand-set group nor an address nearby.
 pub const NO_ADDRESS: &str = "No address";
+
+/// An address as the camera list heads its group: the label, cut to a group
+/// name's length so picking it as a group matches.
+pub fn address_label(a: &Address) -> String {
+    a.label().chars().take(MAX_GROUP_CHARS).collect()
+}
 
 pub struct AddressesPlugin;
 
@@ -108,11 +115,7 @@ fn resolve_addresses(
         if cache.by_camera.get(&c.id).is_some_and(|(p, _)| *p == at) {
             continue;
         }
-        // Cut to a group name's length, so picking it as a group matches.
-        let address = area
-            .bundle
-            .address_at(at)
-            .map(|a| a.label().chars().take(MAX_GROUP_CHARS).collect());
+        let address = area.bundle.address_at(at).map(address_label);
         cache.by_camera.insert(c.id, (at, address));
     }
 }

@@ -1,5 +1,6 @@
 //! 3D environment: buildings, ground, map tiles, lights and coverage overlays.
 
+use crate::addresses::address_label;
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
@@ -8,6 +9,7 @@ use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use observation_core::camera::CameraModel;
@@ -60,6 +62,11 @@ struct TileTextured;
 #[derive(Component)]
 pub struct FacadeOverlay;
 
+/// The buildings at the address picked with the Address tool, drawn over the
+/// building mesh.
+#[derive(Component)]
+struct AddressHighlight;
+
 /// Handles of the coverage overlay assets.
 #[derive(Resource)]
 pub struct Overlay {
@@ -90,6 +97,7 @@ impl Plugin for WorldPlugin {
                 on_area_loaded.in_set(AreaLoadSet),
                 apply_ground_tiles,
                 follow_theme.run_if(resource_changed::<Tokens>),
+                highlight_address,
             )
                 .chain(),
         );
@@ -302,6 +310,11 @@ fn on_area_loaded(
         facade_mesh,
     });
 
+    // An address picked in the old area means nothing in the new one.
+    ui.selected_address = None;
+    ui.hover_address = None;
+    ui.scroll_to_group = None;
+
     // Document state.
     let area = msg.request.area;
     if !msg.request.keep_cameras || scene.area != Some(area) {
@@ -383,6 +396,78 @@ fn follow_theme(
             mat.base_color = to_bevy(color);
         }
     }
+}
+
+/// Redraws the [`AddressHighlight`] when the picked address, the area or the
+/// theme changes: a copy of just those buildings' triangles in the highlight
+/// colour, drawn in front of the same triangles of the building mesh.
+#[allow(clippy::too_many_arguments)]
+fn highlight_address(
+    mut commands: Commands,
+    ui: Res<UiState>,
+    area: Option<Res<Area>>,
+    tokens: Res<Tokens>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    old: Query<Entity, With<AddressHighlight>>,
+    mut shown: Local<Option<String>>,
+) {
+    let area_changed = area.as_ref().is_some_and(|a| a.is_changed());
+    if *shown == ui.selected_address && !area_changed && !tokens.is_changed() {
+        return;
+    }
+    shown.clone_from(&ui.selected_address);
+    for e in &old {
+        commands.entity(e).despawn();
+    }
+    let (Some(label), Some(area)) = (&ui.selected_address, area) else {
+        return;
+    };
+    let b = &area.bundle;
+    let m = &b.mesh;
+    // Only the vertices those buildings use, renumbered.
+    let mut remap: HashMap<u32, u32> = HashMap::default();
+    let (mut pos, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new());
+    for i in b.buildings_at(|a| address_label(a) == *label) {
+        let [first, count] = b.buildings[i].index_range;
+        let range = first as usize..(first as usize).saturating_add(count as usize);
+        for &v in m.indices.get(range).unwrap_or_default() {
+            let (Some(p), Some(n)) = (m.positions.get(v as usize), m.normals.get(v as usize))
+            else {
+                continue;
+            };
+            let next = pos.len() as u32;
+            let at = *remap.entry(v).or_insert_with(|| {
+                pos.push(*p);
+                nrm.push(*n);
+                next
+            });
+            idx.push(at);
+        }
+    }
+    if idx.is_empty() {
+        return;
+    }
+    let mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+    .with_inserted_indices(Indices::U32(idx));
+    commands.spawn((
+        AddressHighlight,
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: to_bevy(tokens.world.address),
+            perceptual_roughness: 0.9,
+            // In front of the building mesh, behind the coverage on its walls.
+            depth_bias: 5.0,
+            ..default()
+        })),
+        NotShadowCaster,
+        Pickable::IGNORE,
+    ));
 }
 
 fn world2(proj: &Projection, p: LatLon) -> Vec2 {

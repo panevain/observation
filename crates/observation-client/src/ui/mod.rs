@@ -84,6 +84,7 @@ pub struct UiData<'w> {
     pub config: Res<'w, crate::net::ServerConfig>,
     pub layout: ResMut<'w, crate::state::UiLayout>,
     pub font: ResMut<'w, UiFont>,
+    pub address_jump: ResMut<'w, crate::state::AddressJump>,
     pub regions: ResMut<'w, crate::regions::Regions>,
 }
 
@@ -213,6 +214,7 @@ fn draw_ui(
         actions::apply(&mut d, id, a);
     }
     overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
+    overlays::address_card(&ctx, &t, viewport_rect, &d.ui);
     match overlays::toasts(&ctx, &t, viewport_rect, &d.ui) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
             d.ui.history_request = Some(HistoryOp::Undo);

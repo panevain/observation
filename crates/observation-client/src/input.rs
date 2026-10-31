@@ -1,7 +1,8 @@
 //! Orbit camera, pointer/touch handling and tool actions.
 
+use crate::addresses::address_label;
 use crate::cameras::CameraBody;
-use crate::state::{Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
+use crate::state::{AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
 use crate::world::{BuildingMesh, GroundMesh};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
@@ -183,6 +184,7 @@ fn keyboard(
         (KeyCode::KeyA, Tool::Aim),
         (KeyCode::KeyM, Tool::Move),
         (KeyCode::KeyR, Tool::Region),
+        (KeyCode::KeyL, Tool::Address),
     ] {
         if keys.just_pressed(key) {
             ui.tool = tool;
@@ -277,6 +279,7 @@ fn pointer(
     mut ui: ResMut<UiState>,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
+    jump: Res<AddressJump>,
 ) {
     let RawInput {
         mouse,
@@ -342,6 +345,18 @@ fn pointer(
             })?;
         cast(centre, false).filter(|h| h.target == HitTarget::Camera(id))
     };
+
+    // The address of whatever is under `screen`: the building or ground the
+    // ray meets, so pointing at a roof finds that house and not the ground
+    // behind it.
+    let address_under =
+        |cast: &mut dyn FnMut(Vec2, bool) -> Option<Hit>, screen: Vec2| -> Option<String> {
+            let area = area.as_deref()?;
+            let at = cast(screen, false)
+                .map(|h| [h.point.x, h.point.z])
+                .or_else(|| ground_point(camera, cam_t, screen))?;
+            area.bundle.address_at(at).map(address_label)
+        };
 
     // --- Two-finger touch: pinch zoom + pan (always camera navigation).
     let active: Vec<_> = touches.iter().collect();
@@ -431,9 +446,17 @@ fn pointer(
         }
     }
 
+    if ui.tool != Tool::Address && (ui.hover_address.is_some() || ui.selected_address.is_some()) {
+        ui.hover_address = None;
+        ui.selected_address = None;
+    }
+
     let Some(pos) = pos else {
         if ui.hover_scene.is_some() {
             ui.hover_scene = None;
+        }
+        if ui.hover_address.is_some() {
+            ui.hover_address = None;
         }
         return;
     };
@@ -458,6 +481,18 @@ fn pointer(
         };
         if ui.hover_scene != hover {
             ui.hover_scene = hover;
+        }
+    }
+
+    // The address under an idle mouse, looked up again whenever the point
+    // under it may have changed; hidden while dragging.
+    if ui.tool == Tool::Address
+        && active.is_empty()
+        && (pressed || delta != Vec2::ZERO || scroll.delta.y != 0.0)
+    {
+        let hover = (!over_ui && !pressed).then(|| address_under(&mut cast, pos));
+        if ui.hover_address != hover {
+            ui.hover_address = hover;
         }
     }
 
@@ -505,6 +540,16 @@ fn pointer(
             if ui.tool == Tool::Region {
                 if let Some(p) = ground_point(camera, cam_t, pos) {
                     region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
+                }
+            } else if ui.tool == Tool::Address {
+                // A click away from any address clears the selection.
+                let label = address_under(&mut cast, pos);
+                if jump.0 {
+                    ui.scroll_to_group.clone_from(&label);
+                }
+                ui.selected_address.clone_from(&label);
+                if !touch {
+                    ui.hover_address = Some(label);
                 }
             } else {
                 let mut hit = cast(pos, false);
@@ -652,7 +697,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
             }
         }
         // Handled by `region_click`.
-        Tool::Region => {}
+        Tool::Region | Tool::Address => {}
         Tool::Aim | Tool::Move => {
             if ui.selected.is_none()
                 && let Some(Hit {

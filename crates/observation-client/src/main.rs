@@ -58,6 +58,7 @@ fn main() {
         .add_plugins((MeshPickingPlugin, EguiPlugin::default()))
         .insert_resource(theme::Tokens::from_environment())
         .insert_resource(persist::load_font())
+        .insert_resource(persist::load_address_jump())
         .insert_resource(state::Models {
             catalog,
             custom: Vec::new(),

@@ -17,9 +17,9 @@ egui_phosphor::subset! {
             ARROW_COUNTER_CLOCKWISE, ARROW_CLOCKWISE, EYE, EYE_SLASH, TRASH, COPY,
             DOTS_THREE_VERTICAL, CHECK, WARNING, WARNING_CIRCLE, X, MAGNIFYING_GLASS,
             CLOUD_CHECK, CLOUD_WARNING, INFO, PLUS, KEYBOARD, CROSSHAIR_SIMPLE,
-            DATABASE, MAP_PIN,
+            DATABASE, MAP_PIN, SIGNPOST,
         };
-        use fill::{CURSOR, MAP_PIN_PLUS, CROSSHAIR, ARROWS_OUT_CARDINAL, POLYGON};
+        use fill::{CURSOR, MAP_PIN_PLUS, CROSSHAIR, ARROWS_OUT_CARDINAL, POLYGON, SIGNPOST};
     }
 }
 
@@ -41,6 +41,7 @@ pub fn tool(tool: Tool) -> &'static str {
         Tool::Aim => CROSSHAIR,
         Tool::Move => ARROWS_OUT_CARDINAL,
         Tool::Region => POLYGON,
+        Tool::Address => SIGNPOST,
     }
 }
 

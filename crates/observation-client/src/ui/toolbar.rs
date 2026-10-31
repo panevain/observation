@@ -333,5 +333,17 @@ fn settings_menu(ui: &mut egui::Ui, d: &mut UiData) {
                     *d.font = f;
                 }
             }
+            ui.separator();
+            hint(ui, &t, "Address tool");
+            let mut jump = d.address_jump.0;
+            if ui
+                .checkbox(&mut jump, "Click jumps to the camera list")
+                .on_hover_text(
+                    "Clicking an address also scrolls the camera list to the cameras at it",
+                )
+                .changed()
+            {
+                d.address_jump.0 = jump;
+            }
         });
 }
