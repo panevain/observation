@@ -67,12 +67,32 @@ pub struct Overlay {
     pub facade_mesh: Handle<Mesh>,
 }
 
+/// Materials of the current area that take a theme colour.
+#[derive(Resource)]
+struct WorldMaterials {
+    building: Handle<StandardMaterial>,
+    /// Ground tiles without their map image.
+    plain: Handle<StandardMaterial>,
+}
+
 pub struct WorldPlugin;
+
+/// Builds a newly loaded area and inserts [`Area`]; systems that need the new
+/// area in the same frame run after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AreaLoadSet;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_lights)
-            .add_systems(Update, (on_area_loaded, apply_ground_tiles).chain());
+        app.add_systems(Startup, setup_lights).add_systems(
+            Update,
+            (
+                on_area_loaded.in_set(AreaLoadSet),
+                apply_ground_tiles,
+                follow_theme.run_if(resource_changed::<Tokens>),
+            )
+                .chain(),
+        );
     }
 }
 
@@ -166,15 +186,16 @@ fn on_area_loaded(
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, m.positions.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals.clone())
     .with_inserted_indices(Indices::U32(m.indices.clone()));
+    let building = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.building),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
     commands.spawn((
         AreaEntity,
         BuildingMesh,
         Mesh3d(meshes.add(building_mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: to_bevy(tokens.world.building),
-            perceptual_roughness: 0.9,
-            ..default()
-        })),
+        MeshMaterial3d(building.clone()),
     ));
 
     // Pick target for ground clicks. It is not drawn: the tiles below cover
@@ -211,6 +232,7 @@ fn on_area_loaded(
             Pickable::IGNORE,
         ));
     }
+    commands.insert_resource(WorldMaterials { building, plain });
 
     // Ground coverage overlay texture (one texel per ground cell).
     let ground_image = images.add(Image::new_fill(
@@ -339,6 +361,26 @@ fn apply_ground_tiles(
                     ..default()
                 })),
             ));
+        }
+    }
+}
+
+/// Recolours the sky, the buildings and the plain ground in place after a
+/// theme change.
+fn follow_theme(
+    tokens: Res<Tokens>,
+    mut clear: ResMut<ClearColor>,
+    world: Option<Res<WorldMaterials>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    clear.0 = to_bevy(tokens.world.sky);
+    let Some(world) = world else { return };
+    for (handle, color) in [
+        (&world.building, tokens.world.building),
+        (&world.plain, tokens.world.ground),
+    ] {
+        if let Some(mut mat) = materials.get_mut(handle) {
+            mat.base_color = to_bevy(color);
         }
     }
 }

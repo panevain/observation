@@ -113,8 +113,14 @@ fn sync_bodies(
         &mut MeshMaterial3d<StandardMaterial>,
     )>,
 ) {
-    if !scene.is_changed() && !models.is_changed() {
+    if !scene.is_changed() && !models.is_changed() && !tokens.is_changed() {
         return;
+    }
+    // Type colours and the lens follow the theme.
+    if tokens.is_changed()
+        && let Some(mut lens) = materials.get_mut(&assets.lens_material)
+    {
+        lens.base_color = to_bevy(tokens.text);
     }
     let mut existing: HashMap<u32, Entity> = HashMap::default();
     for (e, body, mut t, mut mat) in &mut bodies {

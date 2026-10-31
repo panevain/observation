@@ -10,6 +10,7 @@ use bevy_egui::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow,
     Stroke, TextStyle,
 };
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::camera::CameraKind;
 
 /// Smallest supported viewport (CSS px). Below this the app shows a gate.
@@ -276,11 +277,11 @@ impl Tokens {
 
     /// Picks light/dark from the browser's `prefers-color-scheme`.
     pub fn from_environment() -> Self {
-        if prefers_dark() {
-            Self::dark()
-        } else {
-            Self::light()
-        }
+        Self::for_scheme(prefers_dark())
+    }
+
+    fn for_scheme(dark: bool) -> Self {
+        if dark { Self::dark() } else { Self::light() }
     }
 
     /// Default colour of the `nth` camera (from 0) of a type without a colour
@@ -525,14 +526,76 @@ pub fn rgba(c: Color32) -> [u8; 4] {
     c.to_srgba_unmultiplied()
 }
 
+/// Light/dark changes of the system setting after load, reported by the
+/// browser through a channel.
+#[derive(Resource)]
+pub struct SchemeChanges(Receiver<bool>);
+
+impl SchemeChanges {
+    /// Starts listening to the browser. Call once: each call adds a listener
+    /// that lives as long as the page.
+    pub fn watch() -> Self {
+        let (tx, rx) = unbounded();
+        watch_scheme(tx);
+        Self(rx)
+    }
+}
+
+/// Swaps [`Tokens`] for the other variant when the system setting flips.
+/// `Tokens` is only replaced on an actual flip, so its change detection (which
+/// re-themes egui and the 3D scene) does not fire every frame.
+pub fn follow_scheme(changes: Res<SchemeChanges>, mut tokens: ResMut<Tokens>) {
+    // Only the latest setting matters.
+    if let Some(dark) = changes.0.try_iter().last()
+        && dark != tokens.dark
+    {
+        *tokens = Tokens::for_scheme(dark);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn dark_query() -> Option<web_sys::MediaQueryList> {
+    web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
+}
+
 #[cfg(target_arch = "wasm32")]
 fn prefers_dark() -> bool {
-    web_sys::window()
-        .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
-        .is_some_and(|m| m.matches())
+    dark_query().is_some_and(|m| m.matches())
+}
+
+/// Sends the new setting whenever the media query's `change` event fires.
+#[cfg(target_arch = "wasm32")]
+fn watch_scheme(tx: Sender<bool>) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let Some(query) = dark_query() else { return };
+    let on_change = {
+        let query = query.clone();
+        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            // The receiver lives as long as the app; a send error means shutdown.
+            let _ = tx.send(query.matches());
+        })
+    };
+    if let Err(e) =
+        query.add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+    {
+        warn!(
+            "cannot follow the system theme: {}",
+            crate::net::js_cause(&e)
+        );
+        return;
+    }
+    // The handler (and the query it holds, which must stay alive to keep
+    // firing) lives as long as the page.
+    on_change.forget();
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn prefers_dark() -> bool {
     true
 }
+
+/// Native builds stay dark: there is no system setting to follow.
+#[cfg(not(target_arch = "wasm32"))]
+fn watch_scheme(_: Sender<bool>) {}

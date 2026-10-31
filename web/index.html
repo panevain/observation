@@ -7,6 +7,8 @@
     <meta name="description" content="See how much of your street home security cameras can see." />
     <title>Observation</title>
     <link data-trunk rel="rust" href="../crates/observation-client/Cargo.toml" data-bin="observation-client" data-cargo-profile="wasm-release" data-wasm-opt="s" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
+    <!-- Coverage worker: started by the app from /coverage-worker_loader.js (trunk names worker output without a hash). -->
+    <link data-trunk rel="rust" href="../crates/observation-client/Cargo.toml" data-bin="coverage-worker" data-type="worker" data-bindgen-target="web" data-loader-shim data-cargo-profile="wasm-release" data-wasm-opt="s" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
     <style>
       /* Mirrors crates/observation-client/src/theme.rs — keep in sync. */
       :root {
