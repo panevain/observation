@@ -9,7 +9,8 @@
 //!
 //! Paths are only ever built from validated tile numbers or a sanitised cache
 //! key, never from raw request strings. Writes are atomic (temp file in the
-//! same directory, then rename).
+//! same directory, then rename). The tile cache is capped: a write that would
+//! exceed the cap first evicts the least recently written tiles.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ use axum::body::Bytes;
 use observation_core::bundle::{BUNDLE_MAGIC, BUNDLE_VERSION};
 use observation_core::tiles::TileId;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 /// Validators and expiry stored next to every cached tile.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,8 +47,11 @@ pub struct Cache {
     root: PathBuf,
     bundle_ttl: Duration,
     tile_cap_bytes: u64,
-    /// Approximate size of `tiles/`, scanned at start and kept up to date.
+    /// Approximate size of the `.png` files in `tiles/` (the sidecars are not
+    /// counted), scanned at start and kept up to date.
     tile_bytes: AtomicU64,
+    /// Held while tiles are being evicted, so that only one put does it at a time.
+    evicting: Mutex<()>,
     tmp_counter: AtomicU64,
 }
 
@@ -55,12 +60,13 @@ impl Cache {
     /// initialise the size estimate, so call it outside of request handling.
     pub fn open(root: impl Into<PathBuf>, bundle_ttl: Duration, tile_cap_bytes: u64) -> Self {
         let root = root.into();
-        let tile_bytes = AtomicU64::new(dir_size(&root.join("tiles")));
+        let tile_bytes = AtomicU64::new(png_size(&root.join("tiles")));
         Self {
             root,
             bundle_ttl,
             tile_cap_bytes,
             tile_bytes,
+            evicting: Mutex::new(()),
             tmp_counter: AtomicU64::new(0),
         }
     }
@@ -140,18 +146,27 @@ impl Cache {
         })
     }
 
-    /// Stores a tile. Returns `Ok(false)` (and logs) when the tile cache is over
-    /// its size cap and nothing was written.
+    /// Stores a tile. When that would take the tile cache over its size cap, the
+    /// least recently written tiles are evicted first (see [`Cache::evict_tiles`]).
+    /// Returns `Ok(false)` (and logs) when that cannot make enough room and
+    /// nothing was written.
     pub async fn put_tile(&self, id: TileId, bytes: &[u8], meta: &TileMeta) -> io::Result<bool> {
-        if self.tile_bytes.load(Ordering::Relaxed) >= self.tile_cap_bytes {
+        let (png, json) = self.tile_paths(id)?;
+        let previous = tokio::fs::metadata(&png).await.map_or(0, |m| m.len());
+        let growth = (bytes.len() as u64).saturating_sub(previous);
+        if self
+            .tile_bytes
+            .load(Ordering::Relaxed)
+            .saturating_add(growth)
+            > self.tile_cap_bytes
+            && !self.evict_tiles(&png, growth).await
+        {
             tracing::warn!(
                 cap = self.tile_cap_bytes,
                 "tile cache is full, not caching {id:?}"
             );
             return Ok(false);
         }
-        let (png, json) = self.tile_paths(id)?;
-        let previous = tokio::fs::metadata(&png).await.map_or(0, |m| m.len());
         self.write_atomic(&png, bytes).await?;
         self.write_atomic(&json, &encode_meta(meta)?).await?;
         let _ = self
@@ -172,6 +187,69 @@ impl Cache {
     }
 
     // ----- helpers ---------------------------------------------------------
+
+    /// Deletes the oldest tiles (by `.png` mtime, with their sidecars) to make
+    /// room for a write of `growth` more bytes, never touching `keep`. It evicts
+    /// in a batch, down to 90 % of the cap, so that the next puts do not have to
+    /// walk `tiles/` again. Returns whether the write may go ahead: there is room
+    /// now, or another put is already evicting (the write is then not held up and
+    /// the cache may overshoot the cap briefly).
+    async fn evict_tiles(&self, keep: &Path, growth: u64) -> bool {
+        let cap = self.tile_cap_bytes;
+        if growth > cap {
+            return false;
+        }
+        let Ok(_guard) = self.evicting.try_lock() else {
+            return true;
+        };
+        // Another put may have evicted while this one waited for the guard.
+        if self
+            .tile_bytes
+            .load(Ordering::Relaxed)
+            .saturating_add(growth)
+            <= cap
+        {
+            return true;
+        }
+        // Below the low-water mark, and low enough to fit the new tile.
+        let target = (cap - cap / 10).min(cap - growth);
+        let tiles_dir = self.root.join("tiles");
+        let mut files = match tokio::task::spawn_blocking(move || tile_files(&tiles_dir)).await {
+            Ok(files) => files,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not list tiles to evict");
+                return false;
+            }
+        };
+        files.sort_unstable_by(|a, b| (a.modified, &a.path).cmp(&(b.modified, &b.path)));
+        let (mut tiles, mut bytes) = (0u64, 0u64);
+        for file in files.iter().filter(|f| f.path != keep) {
+            if self.tile_bytes.load(Ordering::Relaxed) <= target {
+                break;
+            }
+            // Sidecar first: a tile left without one is only an orphan `.png`,
+            // which the next eviction still finds.
+            let _ = tokio::fs::remove_file(file.path.with_extension("json")).await;
+            match tokio::fs::remove_file(&file.path).await {
+                Ok(()) => {
+                    let _ = self
+                        .tile_bytes
+                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            Some(v.saturating_sub(file.len))
+                        });
+                    tiles += 1;
+                    bytes += file.len;
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => tracing::warn!(error = %e, "could not evict a cached tile"),
+            }
+        }
+        tracing::info!(tiles, bytes, "evicted old tiles from the tile cache");
+        self.tile_bytes
+            .load(Ordering::Relaxed)
+            .saturating_add(growth)
+            <= cap
+    }
 
     async fn write_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         let dir = path
@@ -207,19 +285,41 @@ pub fn is_safe_key(key: &str) -> bool {
             .all(|c| c.is_ascii_digit() || matches!(c, '-' | '.' | '_'))
 }
 
-/// Total size of all files below `dir` (0 if it does not exist).
-fn dir_size(dir: &Path) -> u64 {
+/// A cached tile image found by [`tile_files`].
+struct TileFile {
+    path: PathBuf,
+    len: u64,
+    modified: SystemTime,
+}
+
+/// The `.png` files below `dir` (none if it does not exist). Everything else,
+/// such as sidecars and `.tmp-*` files, is skipped, and so are symlinks.
+fn tile_files(dir: &Path) -> Vec<TileFile> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
+        return Vec::new();
     };
-    entries
-        .flatten()
-        .map(|e| match e.metadata() {
-            Ok(m) if m.is_dir() => dir_size(&e.path()),
-            Ok(m) => m.len(),
-            Err(_) => 0,
-        })
-        .sum()
+    let mut files = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        match e.metadata() {
+            Ok(m) if m.is_dir() => files.extend(tile_files(&path)),
+            Ok(m) if m.is_file() && path.extension().is_some_and(|x| x == "png") => {
+                files.push(TileFile {
+                    path,
+                    len: m.len(),
+                    modified: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                });
+            }
+            _ => {}
+        }
+    }
+    files
+}
+
+/// Total size of the `.png` files below `dir` (0 if it does not exist), the
+/// same files [`Cache::put_tile`] counts.
+fn png_size(dir: &Path) -> u64 {
+    tile_files(dir).iter().map(|f| f.len).sum()
 }
 
 #[cfg(test)]
@@ -272,7 +372,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tiles_store_meta_and_respect_cap() {
+    async fn tiles_store_meta_and_count_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let id = TileId::new(3, 2, 1).unwrap();
         let meta = TileMeta {
@@ -292,12 +392,148 @@ mod tests {
         assert!(cache.put_tile(id, &[0u8; 80], &meta).await.unwrap());
         assert_eq!(cache.tile_cache_bytes(), 80);
 
-        // A scan on open picks up existing files; at the cap nothing is written.
+        // A scan on open counts the `.png` files only, as puts do.
         let reopened = Cache::open(dir.path(), Duration::from_secs(1), 80);
-        assert!(reopened.tile_cache_bytes() >= 80);
-        let other = TileId::new(3, 3, 3).unwrap();
-        assert!(!reopened.put_tile(other, &[1], &meta).await.unwrap());
-        assert!(reopened.get_tile(other).await.is_none());
+        assert_eq!(reopened.tile_cache_bytes(), 80);
+    }
+
+    /// Writes `n` tiles of `len` bytes (`10/0/0` to `10/0/<n-1>`) with the mtime of
+    /// tile `i` set to `i` seconds after a fixed time, oldest first.
+    async fn fill_tiles(cache: &Cache, root: &Path, n: u32, len: usize) -> Vec<TileId> {
+        let meta = TileMeta::default();
+        let mut ids = Vec::new();
+        for i in 0..n {
+            let id = TileId::new(10, 0, i).unwrap();
+            assert!(cache.put_tile(id, &vec![1u8; len], &meta).await.unwrap());
+            let png = root.join(format!("tiles/10/0/{i}.png"));
+            let file = std::fs::OpenOptions::new().write(true).open(png).unwrap();
+            let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 + u64::from(i));
+            file.set_modified(at).unwrap();
+            ids.push(id);
+        }
+        ids
+    }
+
+    /// Bytes of the tiles in `ids` that are on disk.
+    fn png_bytes_on_disk(root: &Path, ids: &[TileId]) -> u64 {
+        ids.iter()
+            .filter_map(|id| std::fs::metadata(root.join(format!("tiles/10/0/{}.png", id.y))).ok())
+            .map(|m| m.len())
+            .sum()
+    }
+
+    #[tokio::test]
+    async fn full_tile_cache_evicts_the_oldest_tiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(dir.path(), Duration::from_secs(1), 1000);
+        let mut ids = fill_tiles(&cache, dir.path(), 20, 50).await;
+        assert_eq!(cache.tile_cache_bytes(), 1000);
+
+        // One more tile does not fit: evicts down to 90 % (two tiles), then writes.
+        let new = TileId::new(10, 0, 20).unwrap();
+        assert!(
+            cache
+                .put_tile(new, &[2u8; 50], &TileMeta::default())
+                .await
+                .unwrap()
+        );
+        ids.push(new);
+        for id in &ids[..2] {
+            assert!(cache.get_tile(*id).await.is_none(), "{id:?} survived");
+            assert!(
+                !dir.path()
+                    .join(format!("tiles/10/0/{}.json", id.y))
+                    .exists()
+            );
+        }
+        for id in &ids[2..] {
+            assert!(cache.get_tile(*id).await.is_some(), "{id:?} was evicted");
+        }
+        assert_eq!(cache.get_tile(new).await.unwrap().bytes.as_ref(), [2u8; 50]);
+        assert_eq!(cache.tile_cache_bytes(), 950);
+        assert_eq!(png_bytes_on_disk(dir.path(), &ids), 950);
+
+        // The batch left room: the next put needs no eviction.
+        let next = TileId::new(10, 0, 21).unwrap();
+        assert!(
+            cache
+                .put_tile(next, &[3u8; 50], &TileMeta::default())
+                .await
+                .unwrap()
+        );
+        assert!(cache.get_tile(ids[2]).await.is_some());
+        assert_eq!(cache.tile_cache_bytes(), 1000);
+    }
+
+    #[tokio::test]
+    async fn eviction_keeps_the_tile_being_rewritten_and_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(dir.path(), Duration::from_secs(1), 1000);
+        let ids = fill_tiles(&cache, dir.path(), 10, 100).await;
+        let tiles = dir.path().join("tiles");
+        std::fs::write(tiles.join("10/0/.tmp-1-1"), [0u8; 500]).unwrap();
+        cache.put_bundle("1.0", &bundle_bytes()).await.unwrap();
+
+        // Tile 0 is the oldest but is the one being replaced (larger), so tile 1 goes.
+        assert!(
+            cache
+                .put_tile(ids[0], &[4u8; 150], &TileMeta::default())
+                .await
+                .unwrap()
+        );
+        assert_eq!(cache.get_tile(ids[0]).await.unwrap().bytes.len(), 150);
+        assert!(cache.get_tile(ids[1]).await.is_none());
+        assert!(cache.get_tile(ids[2]).await.is_some());
+        assert_eq!(
+            cache.tile_cache_bytes(),
+            png_bytes_on_disk(dir.path(), &ids)
+        );
+        assert!(tiles.join("10/0/.tmp-1-1").exists());
+        assert!(dir.path().join("bundles/1.0.obsb").exists());
+    }
+
+    #[tokio::test]
+    async fn tile_larger_than_the_cap_is_refused_without_evicting() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(dir.path(), Duration::from_secs(1), 100);
+        let ids = fill_tiles(&cache, dir.path(), 1, 60).await;
+        let big = TileId::new(10, 0, 9).unwrap();
+        assert!(
+            !cache
+                .put_tile(big, &[0u8; 101], &TileMeta::default())
+                .await
+                .unwrap()
+        );
+        assert!(cache.get_tile(big).await.is_none());
+        assert!(cache.get_tile(ids[0]).await.is_some());
+        assert_eq!(cache.tile_cache_bytes(), 60);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_puts_on_a_full_cache_keep_the_byte_count_in_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = std::sync::Arc::new(Cache::open(dir.path(), Duration::from_secs(1), 1000));
+        fill_tiles(&cache, dir.path(), 20, 50).await;
+        let tasks: Vec<_> = (20..60)
+            .map(|i| {
+                let cache = cache.clone();
+                tokio::spawn(async move {
+                    let id = TileId::new(10, 0, i).unwrap();
+                    cache.put_tile(id, &[1u8; 50], &TileMeta::default()).await
+                })
+            })
+            .collect();
+        for t in tasks {
+            t.await.unwrap().unwrap();
+        }
+        let ids: Vec<_> = (0..60).map(|i| TileId::new(10, 0, i).unwrap()).collect();
+        let on_disk = png_bytes_on_disk(dir.path(), &ids);
+        assert_eq!(cache.tile_cache_bytes(), on_disk);
+        assert!(on_disk < 60 * 50, "nothing was evicted");
+        assert!(
+            cache.get_tile(ids[0]).await.is_none(),
+            "the oldest tile stayed"
+        );
     }
 
     #[tokio::test]
