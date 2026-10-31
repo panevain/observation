@@ -13,7 +13,9 @@ use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
-use crate::theme::{MIN_VIEWPORT, Tokens, UiFont, install_fonts, strong_family};
+use crate::theme::{
+    MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
+};
 use bevy::camera::Viewport;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -25,6 +27,10 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MapPicker>()
+            .insert_resource(SchemeChanges::watch())
+            // Before every `Tokens` reader, so the panels and the scene switch
+            // in the same frame.
+            .add_systems(PreUpdate, follow_scheme)
             .add_systems(EguiPrimaryContextPass, (apply_theme, draw_ui).chain())
             .add_systems(Update, tick_toasts);
     }
