@@ -272,10 +272,10 @@ pub fn build_bundle(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn sample() -> AreaBundle {
+    pub(crate) fn sample() -> AreaBundle {
         let bbox = BBox::around(LatLon::new(51.5, -0.12), 200.0);
         let c = bbox.center();
         let d = 0.0001;

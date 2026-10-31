@@ -1,17 +1,22 @@
 //! Incremental coverage computation and overlay painting.
 //!
 //! Each camera's visibility is cached under a key derived from everything
-//! that affects it, so moving one camera only recomputes that camera.
+//! that affects it, so moving one camera only recomputes that camera. The
+//! computing itself happens in [`backend`]: a Web Worker in the browser.
+
+mod backend;
 
 use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState};
 use crate::theme::{Tokens, rgba, to_bevy};
-use crate::world::{CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
+use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
+use backend::CoverageBackend;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::{
     CoverageCounts, CoverageParams, CoverageStats, RegionMask, Visibility as CellVisibility,
 };
+use observation_core::coverage_job::JobResult;
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
 
@@ -44,6 +49,7 @@ pub struct CoveragePlugin;
 impl Plugin for CoveragePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CoverageState>()
+            .init_non_send::<CoverageBackend>()
             .insert_gizmo_config(
                 RegionGizmos,
                 GizmoConfig {
@@ -59,7 +65,14 @@ impl Plugin for CoveragePlugin {
             )
             .add_systems(
                 Update,
-                (update_coverage, paint_overlay, draw_region).chain(),
+                (
+                    // After a new area's state reset and `Area` insert, which
+                    // Bevy applies in between (an automatic sync point).
+                    update_coverage.after(AreaLoadSet),
+                    paint_overlay,
+                    draw_region,
+                )
+                    .chain(),
             );
     }
 }
@@ -98,33 +111,29 @@ fn update_coverage(
     models: Res<Models>,
     area: Option<Res<Area>>,
     mut state: ResMut<CoverageState>,
+    mut backend: NonSendMut<CoverageBackend>,
 ) {
     let Some(area) = area else { return };
-    if !scene.is_changed() && !models.is_changed() && !area.is_changed() && state.counts.is_some() {
-        return;
+    if area.is_changed() {
+        // `Area` is only ever inserted, so this is a new area (on_area_loaded
+        // has reset the state).
+        backend.load_area(&area.bundle);
     }
     let layers = &area.layers;
+    let results = backend.drain(layers);
+    if results.is_empty() && !scene.is_changed() && !models.is_changed() && state.counts.is_some() {
+        return;
+    }
     let state = &mut *state;
     let counts = state
         .counts
         .get_or_insert_with(|| CoverageCounts::new(layers));
     let mut changed = false;
 
-    let live: Vec<u32> = scene
-        .cameras
-        .iter()
-        .filter(|c| c.enabled)
-        .map(|c| c.id)
-        .collect();
-    state.cams.retain(|id, (_, vis)| {
-        let keep = live.contains(id);
-        if !keep {
-            counts.remove(vis);
-            changed = true;
-        }
-        keep
-    });
     state.ranges.clear();
+    // Enabled cameras with a known model, and their current keys.
+    let mut current = Vec::new();
+    let mut keys = HashMap::new();
     for c in scene.cameras.iter().filter(|c| c.enabled) {
         let Some(m) = models.get(&c.model_id) else {
             continue;
@@ -132,17 +141,30 @@ fn update_coverage(
         let range = m.effective_range_m(scene.params.pixels_per_metre(), scene.params.lighting);
         state.ranges.insert(c.id, range);
         let k = key(c, m, range, scene.params.subject_height_m);
-        if state.cams.get(&c.id).is_some_and(|(old, _)| *old == k) {
+        keys.insert(c.id, k);
+        current.push((c, m, range, k));
+    }
+    state.cams.retain(|id, (_, vis)| {
+        let keep = keys.contains_key(id);
+        if !keep {
+            counts.remove(vis);
+            changed = true;
+        }
+        keep
+    });
+    for r in results {
+        changed |= apply(&mut state.cams, counts, keys.get(&r.camera_id).copied(), r);
+    }
+    for &(c, m, range, k) in &current {
+        // One job per camera at a time: a camera dragged faster than its jobs
+        // finish gets its latest pose computed when the previous job is back.
+        if state.cams.get(&c.id).is_some_and(|(old, _)| *old == k) || backend.busy(c.id) {
             continue;
         }
-        let vis = layers.visibility(&ViewCone::new(c, m, range), scene.params.subject_height_m);
-        if let Some((_, old)) = state.cams.insert(c.id, (k, vis)) {
-            counts.remove(&old);
+        let cone = ViewCone::new(c, m, range);
+        if let Some(r) = backend.submit(c.id, k, cone, scene.params.subject_height_m, layers) {
+            changed |= apply(&mut state.cams, counts, Some(k), r);
         }
-        if let Some((_, new)) = state.cams.get(&c.id) {
-            counts.add(new);
-        }
-        changed = true;
     }
     let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
     if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
@@ -159,6 +181,30 @@ fn update_coverage(
         state.stats = CoverageStats::compute_in(layers, counts, mask);
         state.paint = true;
     }
+}
+
+/// Puts a computed visibility into the cache and the counts, given the
+/// camera's current key (`None` once it is deleted, disabled or without a
+/// model). A result for an earlier pose still replaces an older visibility, so
+/// the overlay follows a dragged camera one job behind, but never an
+/// up-to-date one. Returns whether anything changed.
+fn apply(
+    cams: &mut HashMap<u32, (u64, CellVisibility)>,
+    counts: &mut CoverageCounts,
+    current: Option<u64>,
+    r: JobResult,
+) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if r.key != current && cams.get(&r.camera_id).is_some_and(|(k, _)| *k == current) {
+        return false;
+    }
+    counts.add(&r.visibility);
+    if let Some((_, old)) = cams.insert(r.camera_id, (r.key, r.visibility)) {
+        counts.remove(&old);
+    }
+    true
 }
 
 fn paint_overlay(

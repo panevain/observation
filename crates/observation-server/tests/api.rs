@@ -838,8 +838,17 @@ async fn static_files_spa_fallback_and_cache_headers() {
         "<!doctype html><title>Observation</title>",
     )
     .unwrap();
-    std::fs::write(dir.path().join("app-abc123_bg.wasm"), b"\0asm\x01\0\0\0").unwrap();
-    std::fs::write(dir.path().join("app-abc123.js"), "export {};").unwrap();
+    std::fs::write(
+        dir.path().join("app-50916e44830ffe5e_bg.wasm"),
+        b"\0asm\x01\0\0\0",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("app-50916e44830ffe5e.js"), "export {};").unwrap();
+    std::fs::write(
+        dir.path().join("coverage-worker_loader.js"),
+        "import init from './coverage-worker.js';await init();",
+    )
+    .unwrap();
     let h = harness_with(
         "http://127.0.0.1:9/o",
         "http://127.0.0.1:9/{z}/{x}/{y}.png",
@@ -865,7 +874,7 @@ async fn static_files_spa_fallback_and_cache_headers() {
         assert_eq!(headers["x-content-type-options"], "nosniff");
     }
 
-    let (status, headers, body) = get_uri(&h.app, "/app-abc123_bg.wasm").await;
+    let (status, headers, body) = get_uri(&h.app, "/app-50916e44830ffe5e_bg.wasm").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_TYPE], "application/wasm");
     assert_eq!(
@@ -874,12 +883,17 @@ async fn static_files_spa_fallback_and_cache_headers() {
     );
     assert_eq!(body.as_ref(), b"\0asm\x01\0\0\0");
 
-    let (status, headers, _) = get_uri(&h.app, "/app-abc123.js").await;
+    let (status, headers, _) = get_uri(&h.app, "/app-50916e44830ffe5e.js").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         headers[header::CACHE_CONTROL],
         "public, max-age=31536000, immutable"
     );
+
+    // Files without trunk's content hash, such as the web worker's, are revalidated.
+    let (status, headers, _) = get_uri(&h.app, "/coverage-worker_loader.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
 }
 
 #[tokio::test]

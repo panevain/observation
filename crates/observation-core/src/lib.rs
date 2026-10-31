@@ -11,6 +11,7 @@ pub mod building;
 pub mod bundle;
 pub mod camera;
 pub mod coverage;
+pub mod coverage_job;
 pub mod example;
 pub mod frustum;
 pub mod geo;

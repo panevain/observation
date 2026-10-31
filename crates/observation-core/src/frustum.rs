@@ -2,8 +2,9 @@
 
 use crate::camera::{CameraModel, CameraPlacement};
 use glam::{Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ViewCone {
     pub eye: Vec3,
     pub forward: Vec3,
