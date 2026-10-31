@@ -41,6 +41,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Changed
 
+- The tile cache evicts instead of stopping at its 512 MiB cap: a tile that would take it over the cap first deletes the least recently written or revalidated tiles (oldest `.png` mtime, with their `.json` sidecars) down to 90 % of the cap, and each eviction recounts the cache from disk. A 304 revalidation now touches the tile's `.png` so tiles in use are evicted last.
 - Images are based on Debian 13: distroless `cc-debian13` for the app and `debian:trixie-slim` for the region agent (the Debian 12 distroless images are no longer rebuilt). The server and region agent binaries are built with cargo-auditable, so image scanners and the SBOM see their crates.
 - Rust 1.99.1 and trunk 0.22.0.
 - Tooling is driven from mise. The tools only CI and the image build use (Trivy, cosign, cargo-audit, cargo-deny, zizmor, cargo-nextest, cargo-llvm-cov, cargo-fuzz, cargo-chef and cargo-auditable) are pinned in `mise.ci.toml` and locked with their checksums in `mise.ci.lock`, next to CI's environment and the security, fuzz and scan steps as tasks (`mise -E ci run <task>` runs one locally). The Dockerfile installs trunk, cargo-chef and cargo-auditable from the lockfiles, and the Pins workflow bumps the mise tools with `mise upgrade --bump`, each a week after its release. `mise run fonts` rebuilds the UI fonts with pinned fonttools and opentype-feature-freezer.
