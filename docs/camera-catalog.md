@@ -21,7 +21,7 @@ for cameras that are not in the list.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | Stable, unique kebab-case id (`[a-z0-9-]`). Saved scenes refer to it, so never rename a shipped id. |
+| `id` | string | Stable, unique kebab-case id (`[a-z0-9-]`) that does not start with `custom-` (kept for custom models). Saved scenes refer to it, so never rename a shipped id. |
 | `vendor` | string | Manufacturer. Empty for generic archetypes. |
 | `name` | string | Product name without the vendor prefix. |
 | `kind` | enum | `Doorbell`, `Floodlight`, `Spotlight`, `Bullet`, `Turret`, `Dome` or `Indoor`. Sets default mount height and tilt. |
@@ -90,7 +90,7 @@ range = width_px / (2 * ppm * tan(hfov / 2))      capped at 100 m
    night-vision range from it.
 2. Add the entry to the manufacturer's file (for a new manufacturer, create
    `catalog/<vendor>.ron`; no registration is needed), with a unique kebab-case
-   `id` of the form `vendor-product-name`.
+   `id` of the form `vendor-product-name` (never starting with `custom-`).
 3. Update the table below so that it matches the RON.
 4. Run `cargo test -p observation-core --test catalog`.
 5. Bump the "Last verified" month in the `generic.ron` header if you re-checked other entries.
@@ -102,7 +102,7 @@ PR checklist:
 - [ ] feet converted to metres, 1 decimal
 - [ ] derived values say "derived from diagonal" in `notes`
 - [ ] lens or SKU variant named in `notes` where the page lists several
-- [ ] entry in the right manufacturer file; `id` unique and kebab-case
+- [ ] entry in the right manufacturer file; `id` unique, kebab-case and not starting with `custom-`
 - [ ] this document's table updated
 - [ ] catalog test passes
 

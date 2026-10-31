@@ -147,11 +147,11 @@ Scene files are plain JSON:
 | `area` | `{"kind": "demo"}` or `{"kind": "osm", "bbox": {"south", "west", "north", "east"}}` |
 | `origin` | `{"lat", "lon"}` of the area centre that camera positions are relative to |
 | `cameras` | Optional list. Each has `id`, `label`, `model_id`, `position` as `[east, up, south]` in metres, `yaw_deg` (compass bearing), `pitch_deg`, `roll_deg`, `enabled`, and optionally `color` as `[r, g, b]` (0-255; absent means the default for the model's type). The `color_index` field of older files is ignored |
-| `custom_models` | Optional list of models: `id`, `vendor`, `name`, `kind`, `hfov_deg`, `vfov_deg`, `resolution` as `[w, h]`, and optionally `ir_range_m`, `source`, `notes` |
+| `custom_models` | Optional list of models: `id` (unique, starting with `custom-`; see below), `vendor`, `name`, `kind`, `hfov_deg`, `vfov_deg`, `resolution` as `[w, h]`, and optionally `ir_range_m`, `source`, `notes` |
 | `params` | Optional: `dori` (`Detect`, `Observe`, `Recognise`, `Identify`, `Custom`), `custom_ppm` (1-2000, default 250; used with `Custom`), `lighting` (`Day`, `Night`), `subject_height_m` |
 | `region` | Optional: `points` (corners as `[east, south]` in metres, at most 256) and `enabled` |
 
-Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, custom pixel density 1-2000 px/m, and valid custom models. A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and a region with more than 256 corners or corners beyond 10,000 m is removed from the scene, rather than failing the import. A bad file shows an error toast and leaves the current scene untouched.
+Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, custom pixel density 1-2000 px/m, and valid custom models. A custom model whose `id` repeats an earlier one or does not start with `custom-` is given a new `custom-` id (cameras that used it follow it). A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and a region with more than 256 corners or corners beyond 10,000 m is removed from the scene, rather than failing the import. A bad file shows an error toast and leaves the current scene untouched.
 
 ## Keyboard, mouse and touch
 
