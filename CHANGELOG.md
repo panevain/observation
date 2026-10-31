@@ -60,6 +60,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - The selection and aim markers are white over a dark casing, and the region outline is dark, so none of them reads as a camera or coverage colour.
 - Flatter widget style: buttons show hover and press by fill instead of an outline, input fields have a 3:1 edge, corners are smaller (4/6/8 px) and floating cards and menus have a shadow.
 - Selected camera is grouped into a name header, Position, Orientation and a collapsed Optics section; the face vector moved to the compass label's tooltip. Camera rows use an eye toggle instead of a checkbox, and the Cones and Walls toggles look different from the tools.
+- The light or dark theme follows a change of the system setting without a reload: the panels, the map dialog, the 3D scene (sky, buildings, ground, camera bodies) and the coverage overlay all switch over.
 
 ### Fixed
 
