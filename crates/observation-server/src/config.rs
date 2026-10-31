@@ -14,6 +14,10 @@ pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.p
 pub const DEFAULT_OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
 /// Most Overpass endpoints accepted in `OBS_OVERPASS_URL`.
 pub const MAX_OVERPASS_URLS: usize = 4;
+/// Default bundle cache cap (`OBS_BUNDLE_CACHE_MB`), in MiB.
+pub const DEFAULT_BUNDLE_CACHE_MB: u64 = 1024;
+/// Largest `OBS_BUNDLE_CACHE_MB` accepted (1 PiB), so the byte count cannot overflow.
+pub const MAX_BUNDLE_CACHE_MB: u64 = 1 << 30;
 /// Default attribution string shown by the client and embedded in bundles.
 pub const DEFAULT_ATTRIBUTION: &str = "© OpenStreetMap contributors";
 /// Default contact URL placed in the `User-Agent`.
@@ -26,6 +30,10 @@ pub enum ConfigError {
     Bind(String),
     #[error("OBS_BUNDLE_TTL_DAYS `{0}` is not a non-negative number")]
     Ttl(String),
+    #[error(
+        "OBS_BUNDLE_CACHE_MB `{0}` is not a whole number of MiB from 1 to {MAX_BUNDLE_CACHE_MB}"
+    )]
+    BundleCacheMb(String),
     #[error("OBS_OVERPASS_URL lists more than {MAX_OVERPASS_URLS} endpoints")]
     OverpassUrls,
     #[error("OBS_OVERPASS_URL entry `{0}` is not an http(s) URL")]
@@ -75,9 +83,12 @@ pub struct Config {
     pub attribution: String,
     /// How long a cached bundle is considered fresh (`OBS_BUNDLE_TTL_DAYS`).
     pub bundle_ttl: Duration,
+    /// Bundle cache size cap (`OBS_BUNDLE_CACHE_MB`); the oldest bundles are
+    /// evicted to stay below it.
+    pub bundle_cache_cap_bytes: u64,
     /// Lower bound for tile freshness, required by the OSM tile usage policy.
     pub tile_min_ttl: Duration,
-    /// Tiles are no longer written once the tile cache exceeds this size.
+    /// Tile cache size cap; the least recently used tiles are evicted to stay below it.
     pub tile_cache_cap_bytes: u64,
     /// Pause before retrying Overpass after a busy or failed attempt.
     pub overpass_retry_wait: Duration,
@@ -156,6 +167,14 @@ impl Config {
                 .filter(|d| d.is_finite() && *d >= 0.0)
                 .ok_or(ConfigError::Ttl(raw))?,
         };
+        let bundle_cache_mb = match get("OBS_BUNDLE_CACHE_MB") {
+            None => DEFAULT_BUNDLE_CACHE_MB,
+            Some(raw) => raw
+                .parse::<u64>()
+                .ok()
+                .filter(|mb| (1..=MAX_BUNDLE_CACHE_MB).contains(mb))
+                .ok_or(ConfigError::BundleCacheMb(raw))?,
+        };
         let mut overpass_urls: Vec<String> = or("OBS_OVERPASS_URL", DEFAULT_OVERPASS_URL)
             .split(',')
             .map(str::trim)
@@ -214,6 +233,7 @@ impl Config {
             allow_private_upstreams,
             attribution: or("OBS_TILE_ATTRIBUTION", DEFAULT_ATTRIBUTION),
             bundle_ttl: Duration::from_secs_f64(ttl_days * 86_400.0),
+            bundle_cache_cap_bytes: bundle_cache_mb * 1024 * 1024,
             ..Self::defaults()
         };
         config.validate()?;
@@ -277,6 +297,7 @@ impl Config {
             allow_private_upstreams: false,
             attribution: DEFAULT_ATTRIBUTION.into(),
             bundle_ttl: Duration::from_secs(7 * 86_400),
+            bundle_cache_cap_bytes: DEFAULT_BUNDLE_CACHE_MB * 1024 * 1024,
             tile_min_ttl: Duration::from_secs(7 * 86_400),
             tile_cache_cap_bytes: 512 * 1024 * 1024,
             overpass_retry_wait: Duration::from_secs(2),
@@ -392,16 +413,19 @@ mod tests {
         assert_eq!(c.bind.port(), 8080);
         assert_eq!(c.static_dir, PathBuf::from("dist"));
         assert_eq!(c.bundle_ttl, Duration::from_secs(7 * 86_400));
+        assert_eq!(c.bundle_cache_cap_bytes, 1024 * 1024 * 1024);
         assert!(c.user_agent().starts_with("observation/"));
 
         let c = Config::from_lookup(lookup(&[
             ("OBS_BIND", "127.0.0.1:9"),
             ("OBS_BUNDLE_TTL_DAYS", "1"),
+            ("OBS_BUNDLE_CACHE_MB", " 64 "),
             ("OBS_CACHE_DIR", " "),
         ]))
         .unwrap();
         assert_eq!(c.bind.port(), 9);
         assert_eq!(c.bundle_ttl, Duration::from_secs(86_400));
+        assert_eq!(c.bundle_cache_cap_bytes, 64 * 1024 * 1024);
         assert_eq!(c.cache_dir, PathBuf::from("cache"));
         assert_eq!(c.overpass_urls, vec![DEFAULT_OVERPASS_URL.to_owned()]);
         assert_eq!(c.regions_url, None);
@@ -441,6 +465,15 @@ mod tests {
             Config::from_lookup(lookup(&[("OBS_BUNDLE_TTL_DAYS", "-1")])),
             Err(ConfigError::Ttl(_))
         ));
+        for bad in ["0", "-1", "1.5", "lots", "1073741825"] {
+            assert_eq!(
+                Config::from_lookup(lookup(&[("OBS_BUNDLE_CACHE_MB", bad)])).unwrap_err(),
+                ConfigError::BundleCacheMb(bad.into()),
+                "{bad}"
+            );
+        }
+        let c = Config::from_lookup(lookup(&[("OBS_BUNDLE_CACHE_MB", "1073741824")])).unwrap();
+        assert_eq!(c.bundle_cache_cap_bytes, 1 << 50);
         assert!(matches!(
             Config::from_lookup(lookup(&[("OBS_REGIONS_URL", "regions:8090")])),
             Err(ConfigError::RegionsUrl(_))

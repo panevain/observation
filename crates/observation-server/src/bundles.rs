@@ -140,6 +140,7 @@ impl BundleService {
         );
         let bytes = Bytes::from(bundle.encode());
         metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);
+        // `Ok(false)` (not cached) is logged by the cache with the reason.
         if let Err(e) = self.cache.put_bundle(key, &bytes).await {
             tracing::warn!(key, error = %e, "could not cache bundle");
         }

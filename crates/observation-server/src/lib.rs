@@ -33,7 +33,7 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::bundles::BundleService;
-use crate::cache::Cache;
+use crate::cache::{Cache, CacheCaps};
 use crate::config::Config;
 use crate::overpass::OverpassClient;
 use crate::regions::Regions;
@@ -116,8 +116,16 @@ impl AppState {
         let cache = Arc::new(Cache::open(
             &config.cache_dir,
             config.bundle_ttl,
-            config.tile_cache_cap_bytes,
+            CacheCaps {
+                bundle_bytes: config.bundle_cache_cap_bytes,
+                tile_bytes: config.tile_cache_cap_bytes,
+            },
         ));
+        // Off the request path: a cache from before a cap can be far over it.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let cache = Arc::clone(&cache);
+            runtime.spawn(async move { cache.trim().await });
+        }
         let overpass = Arc::new(OverpassClient::new(overpass_client, &config));
         let regions = match &config.regions_url {
             Some(url) => {
