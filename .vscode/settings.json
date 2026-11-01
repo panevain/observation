@@ -1,6 +1,4 @@
 {
-  "$schema": "vscode://schemas/settings/folder",
-
   // Group a config file's companions (locks, local overrides, related tool configs) under it.
   // Patterns match within the same directory, so fuzz/Cargo.toml nests its own lock and toolchain.
   "explorer.fileNesting.enabled": true,

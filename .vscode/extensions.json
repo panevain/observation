@@ -1,10 +1,8 @@
 {
-  "$schema": "vscode://schemas/extensions",
   "recommendations": [
     // Rust
     "rust-lang.rust-analyzer",
     "vadimcn.vscode-lldb",
-    "fill-labs.dependi",
     // Config files
     "tamasfe.even-better-toml",
     "redhat.vscode-yaml",
