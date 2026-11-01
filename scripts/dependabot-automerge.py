@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Lists the open Dependabot pull requests that may merge themselves. Used by
-dependabot-automerge.yml, which enables auto-merge on them as the bot app.
+"""Lists the open Dependabot pull requests that may merge themselves, and those on hold. Used
+by dependabot-automerge.yml, which enables or disables auto-merge on them as the bot app.
 
   list --repo OWNER/NAME
-      Prints a JSON array of {"number", "sha"} for each open, non-draft Dependabot PR into
-      develop, without auto-merge yet, whose commits are all Dependabot's and whose every
-      updated dependency (from the commit's `updated-dependencies` metadata) is a semver patch
-      update, or a Docker base image digest refresh (no update type: dependabot.yml lets only
-      digests through for the pinned images). Reads PR metadata only; checks out nothing.
-      Needs gh with pull-requests: read.
+      Prints {"merge": [...], "hold": [...]} (JSON, each item {"number", "sha"}).
+      merge: each open, non-draft Dependabot PR into develop, without auto-merge yet and not
+        labelled `hold`, whose commits are all Dependabot's and whose every updated dependency
+        (from the commit's `updated-dependencies` metadata) is a semver patch update, or a
+        Docker base image digest refresh (no update type: dependabot.yml lets only digests
+        through for the pinned images).
+      hold: each Dependabot PR labelled `hold` that has auto-merge on, to switch it off.
+      Reads PR metadata only; checks out nothing. Needs gh with pull-requests: read.
 """
 
 import argparse
@@ -18,6 +20,7 @@ import subprocess
 import sys
 
 BOT = "dependabot[bot]"
+HOLD = "hold"
 PATCH = "version-update:semver-patch"
 ENTRY = re.compile(r"^- dependency-name: (?P<name>.+)$")
 
@@ -44,8 +47,14 @@ def dependencies(body):
     return [tuple(d) for d in deps]
 
 
+def labels(pr):
+    return {label["name"] for label in pr["labels"]}
+
+
 def eligible(pr):
     """None if pr may auto-merge, else the reason it may not."""
+    if HOLD in labels(pr):
+        return f"labelled {HOLD}"
     if pr["isDraft"] or pr["autoMergeRequest"] or pr["baseRefName"] != "develop":
         return "draft, already set to auto-merge, or not into develop"
     commits = pr["commits"]
@@ -62,16 +71,24 @@ def eligible(pr):
 
 
 def cmd_list(a):
-    prs = gh("pr", "list", "--repo", a.repo, "--author", "app/dependabot", "--state", "open",
-             "--limit", "100", "--json",
-             "number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,commits")
-    out = []
+    # Commits are fetched per PR: asking for them in the list exceeds GitHub's GraphQL node
+    # limit beyond about 20 pull requests.
+    listed = gh("pr", "list", "--repo", a.repo, "--author", "app/dependabot", "--state", "open",
+                "--limit", "200", "--json", "number")
+    fields = "number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"
+    prs = [gh("pr", "view", str(p["number"]), "--repo", a.repo, "--json", fields) for p in listed]
+    out = {"merge": [], "hold": []}
     for pr in prs:
+        item = {"number": pr["number"], "sha": pr["headRefOid"]}
+        if HOLD in labels(pr) and pr["autoMergeRequest"]:
+            print(f"#{pr['number']} {pr['title']}: labelled {HOLD}, disable auto-merge", file=sys.stderr)
+            out["hold"].append(item)
+            continue
         why = eligible(pr)
         print(f"#{pr['number']} {pr['title']}: {why or 'auto-merge'}", file=sys.stderr)
         if why is None:
-            out.append({"number": pr["number"], "sha": pr["headRefOid"]})
-    print(json.dumps(out))
+            out["merge"].append(item)
+    print(json.dumps(out, separators=(",", ":")))  # compact: the workflow compares it as text
 
 
 def main():

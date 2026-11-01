@@ -10,6 +10,12 @@ name: Prepare release
 #   (scripts/release-plan.py).
 #   By hand: the same, or a given version, or a dev pre-release (X.Y.Z-dev.N).
 # Nothing starts while a release or hotfix is open, waits for its tag or for its back-merge.
+#
+# Pre-releases (a version with a -suffix) never go through main, so main always holds the
+# latest stable release and a hotfix can start from it at any time: the bot commits the
+# version bump on top of develop and pushes only the vX.Y.Z-dev.N tag (no branch, PR or
+# back-merge), which starts Release. CHANGELOG.md is left alone; the GitHub release takes its
+# notes from [Unreleased].
 on:
   schedule:
     # Tuesdays: after Monday's Dependabot and Pins pull requests have had a day to merge.
@@ -46,6 +52,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,18 +71,21 @@ jobs:
           # shellcheck disable=SC1091
           . "${RUNNER_TEMP}/state"
           skip() { echo "$1" | tee -a "${GITHUB_STEP_SUMMARY}"; exit 0; }
-          # Before the first tag (stable or pre-release), main's initial version was never
-          # tagged, so that alone is not a release waiting for its tag.
-          [ "${pending}" = false ] || [ -z "$(git tag -l 'v*')" ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
-          # Until the back-merge lands, develop's [Unreleased] still holds what v${latest} shipped.
-          [ -z "${latest}" ] || git merge-base --is-ancestor "v${latest}" HEAD || skip "develop does not contain v${latest} yet (its back-merge is still open); skipping."
-          [ "${hotfix}" = false ] || skip "A hotfix/* branch exists (a hotfix is in progress); skipping."
-          [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || skip "A release/* branch exists (a release is in progress); skipping."
           args=()
           if [ -n "${VERSION}" ]; then
             args=(--version "${VERSION}")
           elif [ "${PRERELEASE:-none}" != none ]; then
             args=(--prerelease "${PRERELEASE}")
+          fi
+          # A stable release goes through main; a pre-release does not, so these do not apply.
+          if [[ "${VERSION}" != *-* ]] && [ "${PRERELEASE:-none}" = none ]; then
+            # Before the first release main's initial version was never tagged, so that alone
+            # is not a release waiting for its tag.
+            [ "${pending}" = false ] || [ -z "${latest}" ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
+            # Until the back-merge lands, develop's [Unreleased] still holds what v${latest} shipped.
+            [ -z "${latest}" ] || git merge-base --is-ancestor "v${latest}" HEAD || skip "develop does not contain v${latest} yet (its back-merge is still open); skipping."
+            [ "${hotfix}" = false ] || skip "A hotfix/* branch exists (a hotfix is in progress); skipping."
+            [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || skip "A release/* branch exists (a release is in progress); skipping."
           fi
           python3 scripts/release-plan.py plan --repo . "${args[@]}" > "${RUNNER_TEMP}/plan"
           cat "${RUNNER_TEMP}/plan"
@@ -84,46 +94,26 @@ jobs:
           version="$(get version)"; kind="$(get kind)"; reason="$(get reason)"
           [ -n "${version}" ] || skip "${reason}"
           echo "Release **${version}** (${kind}): ${reason}." | tee -a "${GITHUB_STEP_SUMMARY}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          prerelease=false
+          [[ "${version}" != *-* ]] || prerelease=true
+          {
+            echo "version=${version}"
+            echo "prerelease=${prerelease}"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "${GITHUB_OUTPUT}"
 
-  # The bundle-size chart for the release, committed on the release branch below. The build is
-  # a separate fat-LTO compile with symbol names kept (15-20 minutes), with no token at hand.
+  # The bundle-size chart for the release, committed on the release branch below (stable
+  # releases only: a pre-release ships develop's chart).
   treemap:
-    name: regenerate treemap
+    name: treemap
     needs: plan
-    if: needs.plan.outputs.version != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    if: needs.plan.outputs.version != '' && needs.plan.outputs.prerelease == 'false'
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The report stamps the develop commit the release starts from.
-          ref: ${{ needs.plan.outputs.sha }}
-          persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
-        with:
-          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install_args: trunk
-          cache: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: mise run ci:toolchain
-      # As in treemap.yml: one fat-LTO compile with symbols kept serves both trunk and the report.
-      - name: Build (release, symbols kept)
-        env:
-          CARGO_PROFILE_WASM_RELEASE_STRIP: "false"
-          CARGO_PROFILE_WASM_RELEASE_DEBUG: "false"
-        run: mise run build
-      - name: Build report
-        run: scripts/wasm-size-report.sh --no-build
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: treemap
-          path: docs/images/wasm-bundle-treemap.svg
-          if-no-files-found: error
-          retention-days: 7
+    uses: $/.github/workflows/treemap-build.yml
+    with:
+      # The report stamps the develop commit the release starts from.
+      ref: ${{ needs.plan.outputs.sha }}
 
   prepare:
     name: open release PR
@@ -188,3 +178,51 @@ jobs:
           fi
           echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
           gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url}; merge it by hand when it is green."
+
+  # Pre-releases: a version-bump commit on top of develop, reachable only from its tag.
+  # Release (release.yml) checks that the tag's parent is on develop and that the commit only
+  # moves versions, then publishes it as a GitHub pre-release.
+  pretag:
+    name: tag pre-release
+    needs: plan
+    if: needs.plan.outputs.prerelease == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The app pushes the tag (it may create v* tags), so the push starts Release.
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false # the token is added to the push below only
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Bump version and lockfiles
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/set-version.sh "${VERSION}"
+          git diff --stat
+      # Minted after the build steps above, so nothing they ran can read it.
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Commit and tag
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/ci-git.sh identity "${BOT}"
+          git -c core.hooksPath=/dev/null commit -am "release: ${VERSION}"
+          git -c core.hooksPath=/dev/null tag -a "v${VERSION}" -m "v${VERSION}"
+          scripts/ci-git.sh push-tag "v${VERSION}"
+          echo "### Tagged v${VERSION} (pre-release, on top of develop)" >> "${GITHUB_STEP_SUMMARY}"

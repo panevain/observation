@@ -1,0 +1,57 @@
+name: Treemap build
+
+# Reusable: regenerates docs/images/wasm-bundle-treemap.svg at a commit and uploads it as the
+# `treemap` artifact of the calling run. Called by treemap.yml (by hand, then a PR to develop)
+# and release-prep.yml (committed on the release branch). The build is a separate fat-LTO
+# compile with symbol names kept (15-20 minutes), so it does not run on every push. It runs
+# with no token at hand: callers commit the SVG from a job of their own.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build (the report stamps it)
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  MISE_ENV: ci
+
+jobs:
+  build:
+    name: regenerate treemap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: trunk
+          cache: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: mise run ci:toolchain
+      # A release build makes trunk download the wasm-bindgen and wasm-opt versions matching
+      # Cargo.lock into its cache (a dev build skips wasm-opt); the report script reuses them.
+      #
+      # Symbols are kept (strip and debug off, as scripts/wasm-size-report.sh does) so this one
+      # fat-LTO compile serves both: trunk builds it, and the report reuses it with --no-build.
+      - name: Build (release, symbols kept)
+        env:
+          CARGO_PROFILE_WASM_RELEASE_STRIP: "false"
+          CARGO_PROFILE_WASM_RELEASE_DEBUG: "false"
+        run: mise run build
+      - name: Build report
+        run: scripts/wasm-size-report.sh --no-build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: treemap
+          path: docs/images/wasm-bundle-treemap.svg
+          if-no-files-found: error
+          retention-days: 7
