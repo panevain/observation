@@ -5,6 +5,7 @@
 //! ```text
 //! bundles/<cache_key>.obsb          (freshness = file mtime + TTL)
 //! tiles/<z>/<x>/<y>.png             (+ <y>.json with [`TileMeta`])
+//! dem/<z>/<x>/<y>.png               (elevation tiles, laid out as `tiles/`)
 //! ```
 //!
 //! Paths are only ever built from validated tile numbers or a sanitised cache
@@ -44,11 +45,19 @@ pub struct CachedTile {
     pub meta: TileMeta,
 }
 
-/// Size caps of the two caches, in bytes.
+/// Size caps of the caches, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheCaps {
     pub bundle_bytes: u64,
     pub tile_bytes: u64,
+    pub dem_bytes: u64,
+}
+
+/// Which set of proxied tiles: map images or elevation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileSet {
+    Map,
+    Dem,
 }
 
 /// Disk cache handle. Cheap to share behind an `Arc`.
@@ -57,30 +66,33 @@ pub struct Cache {
     bundle_ttl: Duration,
     bundles: Store,
     tiles: Store,
+    dem: Store,
     tmp_counter: AtomicU64,
 }
 
 impl Cache {
-    /// Opens (without creating) the cache at `root`. Scans `bundles/` and
-    /// `tiles/` once to initialise the size estimates, so call it outside of
+    /// Opens (without creating) the cache at `root`. Scans `bundles/`,
+    /// `tiles/` and `dem/` once to initialise the size estimates, so call it outside of
     /// request handling.
     pub fn open(root: impl Into<PathBuf>, bundle_ttl: Duration, caps: CacheCaps) -> Self {
         let root = root.into();
         Self {
             bundles: Store::open(root.join("bundles"), Kind::Bundles, caps.bundle_bytes),
             tiles: Store::open(root.join("tiles"), Kind::Tiles, caps.tile_bytes),
+            dem: Store::open(root.join("dem"), Kind::Tiles, caps.dem_bytes),
             bundle_ttl,
             tmp_counter: AtomicU64::new(0),
         }
     }
 
-    /// Brings both caches under their caps (a cache directory from before a
+    /// Brings every cache under their caps (a cache directory from before a
     /// cap, or from a larger one, can be far over it) and removes leftovers:
     /// sidecars without a tile and temp files of interrupted writes. Run it in
     /// the background at start, so the first write does not do it all.
     pub async fn trim(&self) {
         self.bundles.trim().await;
         self.tiles.trim().await;
+        self.dem.trim().await;
     }
 
     /// Current estimate of the bundle cache size in bytes.
@@ -91,6 +103,18 @@ impl Cache {
     /// Current estimate of the tile cache size in bytes.
     pub fn tile_cache_bytes(&self) -> u64 {
         self.tiles.bytes()
+    }
+
+    /// Current estimate of the elevation tile cache size in bytes.
+    pub fn dem_cache_bytes(&self) -> u64 {
+        self.dem.bytes()
+    }
+
+    fn store(&self, set: TileSet) -> &Store {
+        match set {
+            TileSet::Map => &self.tiles,
+            TileSet::Dem => &self.dem,
+        }
     }
 
     // ----- bundles ---------------------------------------------------------
@@ -147,11 +171,11 @@ impl Cache {
 
     // ----- tiles -----------------------------------------------------------
 
-    /// `tiles/<z>/<x>/<y>.{png,json}`. The relative part is digits and `/` by
-    /// construction; the `..` check (the same rule as [`is_safe_key`]) keeps the
-    /// path inside `tiles/` even if that ever changes, and lets path-injection
-    /// analysis see the guard.
-    fn tile_paths(&self, id: TileId) -> io::Result<(PathBuf, PathBuf)> {
+    /// `tiles/<z>/<x>/<y>.{png,json}` (or under `dem/`). The relative part is
+    /// digits and `/` by construction; the `..` check (the same rule as
+    /// [`is_safe_key`]) keeps the path inside `tiles/` even if that ever
+    /// changes, and lets path-injection analysis see the guard.
+    fn tile_paths(&self, set: TileSet, id: TileId) -> io::Result<(PathBuf, PathBuf)> {
         let rel = format!("{}/{}/{}", id.z, id.x, id.y);
         if rel.contains("..") {
             return Err(io::Error::new(
@@ -159,13 +183,18 @@ impl Cache {
                 "unsafe tile path",
             ));
         }
-        let base = self.tiles.dir.join(rel);
+        let base = self.store(set).dir.join(rel);
         Ok((base.with_extension("png"), base.with_extension("json")))
     }
 
-    /// Reads a cached tile together with its metadata.
+    /// Reads a cached map tile together with its metadata.
     pub async fn get_tile(&self, id: TileId) -> Option<CachedTile> {
-        let (png, json) = self.tile_paths(id).ok()?;
+        self.get_tile_in(TileSet::Map, id).await
+    }
+
+    /// Reads a cached tile of `set` together with its metadata.
+    pub async fn get_tile_in(&self, set: TileSet, id: TileId) -> Option<CachedTile> {
+        let (png, json) = self.tile_paths(set, id).ok()?;
         let bytes = tokio::fs::read(&png).await.ok()?;
         let meta = tokio::fs::read(&json).await.ok()?;
         let meta = serde_json::from_slice(&meta).ok()?;
@@ -181,12 +210,24 @@ impl Cache {
     /// is larger than the cap or eviction cannot make enough room, and nothing
     /// was written.
     pub async fn put_tile(&self, id: TileId, bytes: &[u8], meta: &TileMeta) -> io::Result<bool> {
-        let (png, json) = self.tile_paths(id)?;
+        self.put_tile_in(TileSet::Map, id, bytes, meta).await
+    }
+
+    /// [`Self::put_tile`] for a tile of `set`.
+    pub async fn put_tile_in(
+        &self,
+        set: TileSet,
+        id: TileId,
+        bytes: &[u8],
+        meta: &TileMeta,
+    ) -> io::Result<bool> {
+        let store = self.store(set);
+        let (png, json) = self.tile_paths(set, id)?;
         let encoded = encode_meta(meta)?;
         let (new_png, new_json) = (bytes.len() as u64, encoded.len() as u64);
         let what = format!("{id:?}");
         let files = [(png.as_path(), new_png), (json.as_path(), new_json)];
-        if !self.tiles.make_room(&png, &files, &what).await {
+        if !store.make_room(&png, &files, &what).await {
             return Ok(false);
         }
         // Each size is measured just before its write (an eviction may have
@@ -194,21 +235,31 @@ impl Cache {
         // failed second write leaves the estimate in step with what is on disk.
         let previous = file_len(&png).await;
         self.write_atomic(&png, bytes).await?;
-        self.tiles.resize(previous, new_png);
+        store.resize(previous, new_png);
         let previous = file_len(&json).await;
         self.write_atomic(&json, &encoded).await?;
-        self.tiles.resize(previous, new_json);
+        store.resize(previous, new_json);
         Ok(true)
     }
 
     /// Rewrites only the metadata of an already cached tile (after a 304). Also
     /// touches the `.png`, so that tiles that are still in use are evicted last.
     pub async fn update_tile_meta(&self, id: TileId, meta: &TileMeta) -> io::Result<()> {
-        let (png, json) = self.tile_paths(id)?;
+        self.update_tile_meta_in(TileSet::Map, id, meta).await
+    }
+
+    /// [`Self::update_tile_meta`] for a tile of `set`.
+    pub async fn update_tile_meta_in(
+        &self,
+        set: TileSet,
+        id: TileId,
+        meta: &TileMeta,
+    ) -> io::Result<()> {
+        let (png, json) = self.tile_paths(set, id)?;
         let encoded = encode_meta(meta)?;
         let previous = file_len(&json).await;
         self.write_atomic(&json, &encoded).await?;
-        self.tiles.resize(previous, encoded.len() as u64);
+        self.store(set).resize(previous, encoded.len() as u64);
         let touch = move || {
             std::fs::OpenOptions::new()
                 .write(true)
@@ -672,6 +723,7 @@ mod tests {
         CacheCaps {
             bundle_bytes: 1 << 20,
             tile_bytes: 1 << 20,
+            dem_bytes: 1 << 20,
         }
     }
 
@@ -691,6 +743,7 @@ mod tests {
         CacheCaps {
             bundle_bytes,
             tile_bytes: 1 << 20,
+            dem_bytes: 1 << 20,
         }
     }
 
@@ -851,6 +904,7 @@ mod tests {
         CacheCaps {
             bundle_bytes: 1 << 20,
             tile_bytes,
+            dem_bytes: 1 << 20,
         }
     }
 

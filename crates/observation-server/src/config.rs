@@ -10,6 +10,17 @@ use thiserror::Error;
 
 /// Default tile URL template (OpenStreetMap standard tiles).
 pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+/// Default elevation tile URL template (Terrarium tiles from the AWS Open Data
+/// "Terrain Tiles" set).
+pub const DEFAULT_DEM_URL: &str =
+    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+/// Default credit for the elevation data, embedded in bundles. The sources
+/// behind it are listed at
+/// <https://github.com/tilezen/joerd/blob/master/docs/attribution.md>.
+pub const DEFAULT_DEM_ATTRIBUTION: &str =
+    "Elevation: Mapzen Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, Copernicus EU-DEM and others)";
+/// `OBS_DEM_URL` value that turns elevation off (flat ground).
+pub const DEM_OFF: &str = "off";
 /// Default Overpass interpreter endpoint.
 pub const DEFAULT_OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
 /// Most Overpass endpoints accepted in `OBS_OVERPASS_URL`.
@@ -44,6 +55,12 @@ pub enum ConfigError {
         "OBS_TILE_URL `{0}` uses {{x}}, {{y}} or {{z}} in the host name; only {{s}} may appear there"
     )]
     TileUrlHost(String),
+    #[error("OBS_DEM_URL `{0}` is not an http(s) URL or `off`")]
+    DemUrl(String),
+    #[error(
+        "OBS_DEM_URL `{0}` uses {{x}}, {{y}} or {{z}} in the host name; only {{s}} may appear there"
+    )]
+    DemUrlHost(String),
     #[error(
         "{var} `{url}` points at a loopback, private or link-local address; \
          set OBS_ALLOW_PRIVATE_UPSTREAMS=1 if that is intended"
@@ -76,6 +93,11 @@ pub struct Config {
     pub overpass_urls: Vec<String>,
     /// Upstream tile URL template (`OBS_TILE_URL`).
     pub tile_url: String,
+    /// Upstream Terrarium elevation tile URL template (`OBS_DEM_URL`); `None`
+    /// (`off`) builds every area on flat ground.
+    pub dem_url: Option<String>,
+    /// Credit for the elevation data (`OBS_DEM_ATTRIBUTION`).
+    pub dem_attribution: String,
     /// Allow upstreams on loopback, private or link-local addresses
     /// (`OBS_ALLOW_PRIVATE_UPSTREAMS`).
     pub allow_private_upstreams: bool,
@@ -90,6 +112,10 @@ pub struct Config {
     pub tile_min_ttl: Duration,
     /// Tile cache size cap; the least recently used tiles are evicted to stay below it.
     pub tile_cache_cap_bytes: u64,
+    /// Lower bound for elevation tile freshness: the data rarely changes.
+    pub dem_min_ttl: Duration,
+    /// Elevation tile cache size cap, like `tile_cache_cap_bytes`.
+    pub dem_cache_cap_bytes: u64,
     /// Pause before retrying Overpass after a busy or failed attempt.
     pub overpass_retry_wait: Duration,
     /// Time allowed for one Overpass attempt (the query itself asks for 25 s).
@@ -131,6 +157,45 @@ fn check_upstream(
             url: redact(url),
         },
     })
+}
+
+/// Checks a `{z}/{x}/{y}` tile URL template (`var`): an http(s) URL that is
+/// not private unless allowed, and whose host only `{s}` may vary.
+fn check_template(
+    var: &'static str,
+    template: &str,
+    allow_private: bool,
+    malformed: fn(String) -> ConfigError,
+    host: impl FnOnce() -> ConfigError,
+) -> Result<(), ConfigError> {
+    // Only `{s}` (always `a`) may vary the host; `{x}` and friends could steer
+    // the request to another address at run time. Parse the way the HTTP client
+    // will, with a marker for the placeholders, rather than splitting the text.
+    const MARK: &str = "placeholdermark";
+    let marked = template
+        .replace("{s}", "a")
+        .replace("{x}", MARK)
+        .replace("{y}", MARK)
+        .replace("{z}", MARK);
+    let in_host = match reqwest::Url::parse(&marked) {
+        Ok(u) => u.host_str().is_some_and(|h| h.contains(MARK)),
+        // E.g. `{x}.0.0.1`: a numeric last label makes the host an invalid IPv4
+        // address once the marker is in. Fall back to the text before the path.
+        Err(_) => {
+            let rest = template.split_once(':').map_or("", |(_, r)| r);
+            let authority = rest
+                .trim_start_matches(['/', '\\'])
+                .split(['/', '\\', '?', '#'])
+                .next()
+                .unwrap_or("");
+            authority.replace("{s}", "a").contains('{')
+        }
+    };
+    if in_host {
+        return Err(host());
+    }
+    let probe = crate::tiles::tile_url(template, TileId::new(0, 0, 0).expect("tile 0/0/0"));
+    check_upstream(var, &probe, allow_private, || malformed(redact(template)))
 }
 
 /// How tracing events are written (to stdout).
@@ -196,6 +261,10 @@ impl Config {
             },
         };
         let tile_url = or("OBS_TILE_URL", DEFAULT_TILE_URL);
+        let dem_url = match get("OBS_DEM_URL") {
+            Some(u) if u.eq_ignore_ascii_case(DEM_OFF) => None,
+            other => Some(other.unwrap_or_else(|| DEFAULT_DEM_URL.to_owned())),
+        };
         let metrics_bind = get("OBS_METRICS_BIND")
             .map(|raw| raw.parse().map_err(|_| ConfigError::MetricsBind(raw)))
             .transpose()?;
@@ -230,6 +299,8 @@ impl Config {
             contact: or("OBS_CONTACT", DEFAULT_CONTACT),
             overpass_urls,
             tile_url,
+            dem_url,
+            dem_attribution: or("OBS_DEM_ATTRIBUTION", DEFAULT_DEM_ATTRIBUTION),
             allow_private_upstreams,
             attribution: or("OBS_TILE_ATTRIBUTION", DEFAULT_ATTRIBUTION),
             bundle_ttl: Duration::from_secs_f64(ttl_days * 86_400.0),
@@ -251,38 +322,19 @@ impl Config {
                 ConfigError::OverpassUrl(redact(u))
             })?;
         }
-        // Only `{s}` (always `a`) may vary the host; `{x}` and friends could steer
-        // the request to another address at run time. Parse the way the HTTP client
-        // will, with a marker for the placeholders, rather than splitting the text.
-        const MARK: &str = "placeholdermark";
-        let marked = self
-            .tile_url
-            .replace("{s}", "a")
-            .replace("{x}", MARK)
-            .replace("{y}", MARK)
-            .replace("{z}", MARK);
-        let in_host = match reqwest::Url::parse(&marked) {
-            Ok(u) => u.host_str().is_some_and(|h| h.contains(MARK)),
-            // E.g. `{x}.0.0.1`: a numeric last label makes the host an invalid IPv4
-            // address once the marker is in. Fall back to the text before the path.
-            Err(_) => {
-                let rest = self.tile_url.split_once(':').map_or("", |(_, r)| r);
-                let authority = rest
-                    .trim_start_matches(['/', '\\'])
-                    .split(['/', '\\', '?', '#'])
-                    .next()
-                    .unwrap_or("");
-                authority.replace("{s}", "a").contains('{')
-            }
-        };
-        if in_host {
-            return Err(ConfigError::TileUrlHost(redact(&self.tile_url)));
+        check_template(
+            "OBS_TILE_URL",
+            &self.tile_url,
+            allow,
+            ConfigError::TileUrl,
+            || ConfigError::TileUrlHost(redact(&self.tile_url)),
+        )?;
+        match &self.dem_url {
+            Some(dem) => check_template("OBS_DEM_URL", dem, allow, ConfigError::DemUrl, || {
+                ConfigError::DemUrlHost(redact(dem))
+            }),
+            None => Ok(()),
         }
-        let probe =
-            crate::tiles::tile_url(&self.tile_url, TileId::new(0, 0, 0).expect("tile 0/0/0"));
-        check_upstream("OBS_TILE_URL", &probe, allow, || {
-            ConfigError::TileUrl(redact(&self.tile_url))
-        })
     }
 
     /// Fixed (non-environment) settings shared by production and tests.
@@ -294,12 +346,16 @@ impl Config {
             contact: DEFAULT_CONTACT.into(),
             overpass_urls: vec![DEFAULT_OVERPASS_URL.into()],
             tile_url: DEFAULT_TILE_URL.into(),
+            dem_url: Some(DEFAULT_DEM_URL.into()),
+            dem_attribution: DEFAULT_DEM_ATTRIBUTION.into(),
             allow_private_upstreams: false,
             attribution: DEFAULT_ATTRIBUTION.into(),
             bundle_ttl: Duration::from_secs(7 * 86_400),
             bundle_cache_cap_bytes: DEFAULT_BUNDLE_CACHE_MB * 1024 * 1024,
             tile_min_ttl: Duration::from_secs(7 * 86_400),
             tile_cache_cap_bytes: 512 * 1024 * 1024,
+            dem_min_ttl: Duration::from_secs(30 * 86_400),
+            dem_cache_cap_bytes: 256 * 1024 * 1024,
             overpass_retry_wait: Duration::from_secs(2),
             overpass_timeout: Duration::from_secs(35),
             overpass_cooldown: Duration::from_secs(30),
@@ -313,8 +369,8 @@ impl Config {
         }
     }
 
-    /// Configuration for tests: loopback upstreams, no minimum tile TTL and a
-    /// short retry pause.
+    /// Configuration for tests: loopback upstreams, no elevation data (set
+    /// `dem_url` to test it), no minimum tile TTL and a short retry pause.
     pub fn for_tests(
         cache_dir: impl Into<PathBuf>,
         static_dir: impl Into<PathBuf>,
@@ -326,9 +382,11 @@ impl Config {
             static_dir: static_dir.into(),
             overpass_urls: vec![overpass_url.into()],
             tile_url: tile_url.into(),
+            dem_url: None,
             // The mock upstreams listen on loopback.
             allow_private_upstreams: true,
             tile_min_ttl: Duration::ZERO,
+            dem_min_ttl: Duration::ZERO,
             overpass_retry_wait: Duration::from_millis(50),
             overpass_timeout: Duration::from_secs(5),
             overpass_cooldown: Duration::from_secs(30),
@@ -550,6 +608,38 @@ mod tests {
             )]))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn elevation_source_settings() {
+        let c = Config::from_lookup(lookup(&[])).unwrap();
+        assert_eq!(c.dem_url.as_deref(), Some(DEFAULT_DEM_URL));
+        assert_eq!(c.dem_attribution, DEFAULT_DEM_ATTRIBUTION);
+        let c = Config::from_lookup(lookup(&[("OBS_DEM_URL", " Off ")])).unwrap();
+        assert_eq!(c.dem_url, None);
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_DEM_URL", "https://dem.example/{z}/{x}/{y}.png"),
+            ("OBS_DEM_ATTRIBUTION", "Elevation: somebody"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.dem_url.as_deref(),
+            Some("https://dem.example/{z}/{x}/{y}.png")
+        );
+        assert_eq!(c.dem_attribution, "Elevation: somebody");
+        let bad = |v: &str| Config::from_lookup(lookup(&[("OBS_DEM_URL", v)])).unwrap_err();
+        assert!(matches!(bad("dem.example/{z}"), ConfigError::DemUrl(_)));
+        assert!(matches!(
+            bad("https://{x}.dem.example/{z}.png"),
+            ConfigError::DemUrlHost(_)
+        ));
+        assert!(matches!(
+            bad("http://10.0.0.5/{z}/{x}/{y}.png"),
+            ConfigError::PrivateUpstream {
+                var: "OBS_DEM_URL",
+                ..
+            }
+        ));
     }
 
     #[test]

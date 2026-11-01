@@ -11,11 +11,12 @@ use crate::building::Footprint;
 use crate::bundle::{AreaBundle, Road};
 use crate::coverage::{GroundGrid, StaticLayers, Visibility};
 use crate::frustum::ViewCone;
+use crate::terrain::Terrain;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const JOB_VERSION: u8 = 1;
+pub const JOB_VERSION: u8 = 2;
 
 /// Client to worker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,6 +40,7 @@ pub struct LayerInputs {
     pub footprints: Vec<Footprint>,
     pub roads: Vec<Road>,
     pub facade_cell_m: f32,
+    pub terrain: Terrain,
 }
 
 impl LayerInputs {
@@ -48,12 +50,19 @@ impl LayerInputs {
             footprints: bundle.footprints().cloned().collect(),
             roads: bundle.roads.clone(),
             facade_cell_m,
+            terrain: bundle.terrain.clone(),
         }
     }
 
     pub fn build(&self) -> StaticLayers {
         let footprints: Vec<&Footprint> = self.footprints.iter().collect();
-        StaticLayers::from_parts(self.grid, &footprints, &self.roads, self.facade_cell_m)
+        StaticLayers::from_parts(
+            self.grid,
+            &footprints,
+            &self.roads,
+            self.facade_cell_m,
+            self.terrain.clone(),
+        )
     }
 }
 
@@ -232,9 +241,10 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 6.0,
+            base_m: 0.0,
         };
         let grid = GroundGrid::covering(Vec2::new(-40.0, -40.0), Vec2::new(40.0, 40.0), 1.0);
-        let layers = StaticLayers::from_parts(grid, &[&wall], &[], 1.0);
+        let layers = StaticLayers::from_parts(grid, &[&wall], &[], 1.0, Terrain::default());
         let j = job();
         let r = j.run(&layers);
         assert_eq!((r.generation, r.camera_id, r.key), (3, 7, j.key));
@@ -244,7 +254,7 @@ mod tests {
 
     #[test]
     fn layer_inputs_build_the_same_layers() {
-        let bundle = crate::bundle::tests::sample();
+        let bundle = crate::bundle::tests::sample_on(crate::terrain::tests::slope());
         let direct = StaticLayers::new(&bundle, 0.5, 1.0);
         let inputs = LayerInputs::new(&bundle, 0.5, 1.0);
         let built = JobRequest::decode(
@@ -262,6 +272,8 @@ mod tests {
         assert_eq!(built.building_mask, direct.building_mask);
         assert_eq!(built.street_mask, direct.street_mask);
         assert_eq!(built.facades, direct.facades);
+        assert_eq!(built.terrain, direct.terrain);
+        assert!(!built.terrain.is_flat());
         assert!(direct.building_mask.contains(&true) && direct.street_mask.contains(&true));
     }
 }

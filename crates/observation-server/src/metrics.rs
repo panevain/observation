@@ -25,6 +25,8 @@ pub const BUNDLE_CACHE: &str = "observation_bundle_cache_total";
 /// Tile lookups: `result` is `hit`, `miss` (nothing cached), `refreshed` (expired copy
 /// replaced), `revalidated` (304), `stale_served` or `error` (upstream failed, no copy).
 pub const TILE_CACHE: &str = "observation_tile_cache_total";
+/// Elevation tile lookups while building bundles, with the same `result` values.
+pub const DEM_CACHE: &str = "observation_dem_cache_total";
 /// Overpass fetches: `outcome` is `ok`, `error` or `rate_limited` (including our own cooldown).
 pub const OVERPASS_FETCH: &str = "observation_overpass_fetches_total";
 /// Bundle builds tried against a local region: `outcome` is `ok`, `not_covered`

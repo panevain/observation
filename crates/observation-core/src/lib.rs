@@ -18,6 +18,7 @@ pub mod geo;
 pub mod occlusion;
 pub mod regions;
 pub mod scene;
+pub mod terrain;
 pub mod tiles;
 
 pub use glam;

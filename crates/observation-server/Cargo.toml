@@ -25,6 +25,8 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 httpdate = "1.0"
+# Decodes the Terrarium elevation tiles areas are built on.
+png = "0.18"
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

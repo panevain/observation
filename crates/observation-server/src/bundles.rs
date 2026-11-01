@@ -1,5 +1,6 @@
 //! Bundle production: disk cache, single-flight de-duplication, and the data
-//! source: a local region when one holds the area, else public Overpass.
+//! sources: a local region when one holds the area, else public Overpass,
+//! and the elevation tiles for the terrain.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -13,6 +14,7 @@ use observation_core::geo::BBox;
 use tracing::Instrument;
 
 use crate::cache::Cache;
+use crate::elevation::Elevation;
 use crate::error::ApiError;
 use crate::overpass::{OsmData, OverpassClient};
 use crate::regions::Regions;
@@ -33,6 +35,7 @@ pub struct BundleService {
     cache: Arc<Cache>,
     overpass: Arc<OverpassClient>,
     regions: Option<Arc<Regions>>,
+    elevation: Arc<Elevation>,
     attribution: String,
     in_flight: Mutex<HashMap<String, Flight>>,
 }
@@ -42,12 +45,14 @@ impl BundleService {
         cache: Arc<Cache>,
         overpass: Arc<OverpassClient>,
         regions: Option<Arc<Regions>>,
+        elevation: Arc<Elevation>,
         attribution: String,
     ) -> Self {
         Self {
             cache,
             overpass,
             regions,
+            elevation,
             attribution,
             in_flight: Mutex::new(HashMap::new()),
         }
@@ -99,8 +104,8 @@ impl BundleService {
         shared
     }
 
-    /// Cache re-check, Overpass fetch, bundle build, cache write. Falls back to
-    /// an expired cached bundle when the upstream fails.
+    /// Cache re-check, Overpass and elevation fetches, bundle build, cache
+    /// write. Falls back to an expired cached bundle when an upstream fails.
     async fn produce(&self, key: &str, bbox: BBox) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
         if let Some((bytes, true)) = self.cache.get_bundle(key, self.valid_after(&bbox)).await {
@@ -109,13 +114,15 @@ impl BundleService {
         }
         // One budget for both sources: Overpass gets what the local try left.
         let started = std::time::Instant::now();
-        let local = self.fetch_local(&bbox).await;
-        let fetched = match local {
-            Some(d) => Ok(d),
-            None => self.overpass.fetch_since(&bbox, started).await,
+        let osm = async {
+            match self.fetch_local(&bbox).await {
+                Some(d) => Ok(d),
+                None => self.overpass.fetch_since(&bbox, started).await,
+            }
         };
-        let data = match fetched {
-            Ok(d) => d,
+        let (fetched, terrain) = tokio::join!(osm, self.elevation.terrain(&bbox));
+        let (data, terrain) = match fetched.and_then(|d| Ok((d, terrain?))) {
+            Ok(both) => both,
             Err(e) => {
                 if let Some((stale, _)) = self.cache.get_bundle(key, None).await {
                     metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "stale_served")
@@ -135,6 +142,7 @@ impl BundleService {
             &data.buildings,
             &data.roads,
             &data.addresses,
+            terrain,
             self.attribution.as_str(),
             generated,
         );

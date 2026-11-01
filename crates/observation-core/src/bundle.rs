@@ -2,6 +2,8 @@
 //!
 //! Layout: `b"OBSB"` magic, `u16` little-endian format version, then a
 //! postcard-encoded [`AreaBundle`].
+//!
+//! Version 3 added the [`Terrain`] grid and [`Footprint::base_m`].
 
 use crate::address::{
     Address, AddressPoint, AddressSource, MAX_ADDRESS_DISTANCE_M, building_of, dist,
@@ -9,11 +11,12 @@ use crate::address::{
 };
 use crate::building::{Footprint, MeshData, extrude};
 use crate::geo::{BBox, LatLon, Projection};
+use crate::terrain::Terrain;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const BUNDLE_MAGIC: [u8; 4] = *b"OBSB";
-pub const BUNDLE_VERSION: u16 = 2;
+pub const BUNDLE_VERSION: u16 = 3;
 /// MIME type used on the wire.
 pub const BUNDLE_CONTENT_TYPE: &str = "application/vnd.observation.bundle";
 
@@ -49,6 +52,9 @@ pub struct AreaBundle {
     pub mesh: MeshData,
     /// Addresses mapped as nodes rather than on a building.
     pub addresses: Vec<AddressPoint>,
+    /// Ground heights over the area and its margin (flat without
+    /// elevation data).
+    pub terrain: Terrain,
     pub attribution: String,
     pub generated_unix: u64,
 }
@@ -80,7 +86,13 @@ impl AreaBundle {
         if v != BUNDLE_VERSION {
             return Err(BundleError::Version(v));
         }
-        postcard::from_bytes(&bytes[6..]).map_err(|e| BundleError::Decode(e.to_string()))
+        let bundle: Self =
+            postcard::from_bytes(&bytes[6..]).map_err(|e| BundleError::Decode(e.to_string()))?;
+        bundle
+            .terrain
+            .validate()
+            .map_err(|_| BundleError::Decode("inconsistent terrain grid".to_owned()))?;
+        Ok(bundle)
     }
 
     pub fn projection(&self) -> Projection {
@@ -258,12 +270,14 @@ pub fn road_width_m(highway: &str, lanes: Option<&str>, width: Option<&str>) -> 
     Some(base)
 }
 
-/// Projects, extrudes and packs OSM features into a bundle.
+/// Projects, extrudes and packs OSM features into a bundle, standing each
+/// building on the lowest ground under it.
 pub fn build_bundle(
     bbox: BBox,
     buildings: &[OsmBuilding],
     roads: &[OsmRoad],
     addresses: &[OsmAddressPoint],
+    terrain: Terrain,
     attribution: impl Into<String>,
     generated_unix: u64,
 ) -> AreaBundle {
@@ -276,8 +290,10 @@ pub fn build_bundle(
     let mut mesh = MeshData::default();
     let mut out = Vec::with_capacity(buildings.len());
     for b in buildings {
+        let outer: Vec<[f32; 2]> = b.outer.iter().map(to_w).collect();
         let footprint = Footprint {
-            outer: b.outer.iter().map(to_w).collect(),
+            base_m: terrain.min_under(&outer),
+            outer,
             holes: b
                 .holes
                 .iter()
@@ -351,6 +367,7 @@ pub fn build_bundle(
         roads,
         mesh,
         addresses,
+        terrain,
         attribution: attribution.into(),
         generated_unix,
     }
@@ -361,6 +378,11 @@ pub(crate) mod tests {
     use super::*;
 
     pub(crate) fn sample() -> AreaBundle {
+        sample_on(Terrain::default())
+    }
+
+    /// [`sample`] on the given ground.
+    pub(crate) fn sample_on(terrain: Terrain) -> AreaBundle {
         let bbox = BBox::around(LatLon::new(51.5, -0.12), 200.0);
         let c = bbox.center();
         let d = 0.0001;
@@ -401,6 +423,7 @@ pub(crate) mod tests {
             &[b],
             &[r],
             &[a],
+            terrain,
             "© OpenStreetMap contributors",
             1_700_000_000,
         )
@@ -436,6 +459,33 @@ pub(crate) mod tests {
         assert_eq!(AreaBundle::decode(&bytes).unwrap(), b);
     }
 
+    #[test]
+    fn buildings_stand_on_the_lowest_ground_under_them() {
+        // Falling 1 m per 10 m eastward; the house spans x = 0 to about 7.4.
+        let terrain = Terrain::sample_from(
+            glam::Vec2::splat(-300.0),
+            glam::Vec2::splat(300.0),
+            |p| Some(50.0 - p.x / 10.0),
+            "dem",
+        )
+        .unwrap();
+        let b = sample_on(terrain);
+        let fp = &b.buildings[0].footprint;
+        let east = fp.outer.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        assert!((fp.base_m + east / 10.0).abs() < 0.06, "{}", fp.base_m);
+        let ys = || b.mesh.positions.iter().map(|p| p[1]);
+        assert!((ys().fold(f32::MAX, f32::min) - fp.base_m).abs() < 1e-4);
+        assert!((ys().fold(f32::MIN, f32::max) - fp.roof_y()).abs() < 1e-4);
+        assert_eq!(AreaBundle::decode(&b.encode()).unwrap(), b);
+        // A grid whose size does not match its samples is refused.
+        let mut bad = b.clone();
+        bad.terrain.heights_dm.pop();
+        assert!(matches!(
+            AreaBundle::decode(&bad.encode()),
+            Err(BundleError::Decode(_))
+        ));
+    }
+
     /// Two houses side by side: `1` tagged on its building, `2` only as a
     /// node in its yard, nearer house 1's wall than the node is.
     fn neighbours() -> AreaBundle {
@@ -444,6 +494,7 @@ pub(crate) mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 6.0,
+            base_m: 0.0,
         };
         let addr = |n: &str| Address {
             housenumber: Some(n.into()),
@@ -467,6 +518,7 @@ pub(crate) mod tests {
                 position: [17.0, -6.0],
                 building: None,
             }],
+            terrain: Terrain::default(),
             attribution: String::new(),
             generated_unix: 0,
         }
