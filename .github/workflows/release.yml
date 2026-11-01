@@ -43,7 +43,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version="$(sed -n '/^\[workspace\.package\]/,/^$/ s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          version="$(scripts/workspace-version.sh)"
           [ "v${version}" = "${TAG}" ] || { echo "::error::tag ${TAG} does not match the workspace version ${version}"; exit 1; }
           if [[ "${version}" == *-* ]]; then
             # Pre-releases stay off main, so that main is always the latest stable release.

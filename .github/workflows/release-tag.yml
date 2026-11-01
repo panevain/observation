@@ -40,8 +40,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          version="$(sed -n '/^\[workspace\.package\]/,/^$/ s/^version = "\(.*\)"/\1/p' Cargo.toml)"
-          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::bad workspace version '${version}'"; exit 1; }
+          version="$(scripts/workspace-version.sh)"
           if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
             echo "v${version} already exists; nothing to tag."
             exit 0
