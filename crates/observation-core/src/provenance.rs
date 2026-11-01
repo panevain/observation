@@ -22,7 +22,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Bumped whenever [`CAVEATS_SUMMARY`], [`CAVEATS`] or [`CAVEATS_BOUND`]
-/// change, so a saved scene says which statement its figures were shown with.
+/// change, so a saved scene says which statement its figures were shown with
+/// (a test pins a hash of the text, so a change without a bump fails it).
 pub const CAVEATS_VERSION: u32 = 1;
 
 /// The one line shown under the figures.
@@ -184,6 +185,11 @@ impl DataChange {
     /// "Map data has changed since this scene was saved (saved: X, now: Y)",
     /// with dates, or times when both fall on the same day.
     pub fn message(&self) -> String {
+        if self.same_data() {
+            return "This app reads the map data differently from when this scene was \
+                    saved (same data date)"
+                .to_owned();
+        }
         let same_day =
             matches!((self.saved, self.now), (Some(a), Some(b)) if a / 86_400 == b / 86_400);
         let show = |t: Option<u64>| match t {
@@ -198,8 +204,22 @@ impl DataChange {
         )
     }
 
+    /// Whether both sides have the same known data date: the same OSM data,
+    /// so the fingerprint changed because the app reads it differently
+    /// (height inference, road widths), not because the map did.
+    pub fn same_data(&self) -> bool {
+        self.saved.is_some() && self.saved == self.now
+    }
+
     /// Longer explanation, for a tooltip.
     pub fn details(&self) -> String {
+        if self.same_data() {
+            return "The map data has the same date as when the scene was saved, but this \
+                    version of the app builds the area from it differently (for example \
+                    building heights or street widths), so the figures may differ from the \
+                    ones saved with it."
+                .to_owned();
+        }
         let mut out = String::from(
             "The buildings, streets or addresses in this area differ from when the scene \
              was saved, so its figures may differ from the ones saved with it.",
@@ -522,6 +542,15 @@ mod tests {
             "Map data has changed since this scene was saved \
              (saved: 2026-10-31 19:43 UTC, now: 2026-10-31 21:00 UTC)"
         );
+        // The same data date: the app, not the map, changed.
+        let reread = saved("00000000000000bb", "2026-10-31T19:43:02Z");
+        let c = a.data_change(&reread).unwrap();
+        assert!(c.same_data());
+        assert!(
+            c.message()
+                .starts_with("This app reads the map data differently")
+        );
+        assert!(c.details().contains("same date"), "{}", c.details());
         // An unknown date.
         let mut undated = changed.clone();
         undated.osm_data_unix = None;
@@ -603,5 +632,21 @@ mod tests {
         }
         assert!(text.contains("not a strict upper bound"));
         assert_eq!(text.matches('•').count(), CAVEATS.len());
+    }
+
+    #[test]
+    fn caveats_version_follows_the_text() {
+        // Saved scenes record CAVEATS_VERSION as the statement their figures
+        // were shown with. If this fails, the caveats changed: bump
+        // CAVEATS_VERSION and pin the new hash here.
+        let mut h = Fnv64::default();
+        h.str(CAVEATS_SUMMARY).str(CAVEATS_BOUND);
+        for c in CAVEATS {
+            h.str(c);
+        }
+        assert_eq!(
+            (CAVEATS_VERSION, fingerprint_hex(h.finish())),
+            (1, "46ff2a019c5ab692".to_owned())
+        );
     }
 }

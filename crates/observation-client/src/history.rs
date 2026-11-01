@@ -189,6 +189,9 @@ pub fn record(
     }
     to.push(current);
     scene.restore(&target, &mut models);
+    // The notice described a restored or imported file; once undo or redo
+    // moves away from that step it no longer describes the scene.
+    ui.data_change = None;
     // UI state that pointed into the old document.
     if ui.selected.is_some_and(|id| scene.camera(id).is_none()) {
         ui.selected = None;

@@ -478,8 +478,8 @@ pub struct Scene {
     pub on_flat_ground: bool,
     /// Where the figures come from: the loaded area's data date and
     /// fingerprint, and the app and catalogue versions. Saved with the
-    /// scene. Until a loaded file's area arrives it is the file's own, so an
-    /// autosave in between keeps it.
+    /// scene. Until a loaded file's area arrives it is the file's own (unless
+    /// that area is already loaded), so an autosave in between keeps it.
     pub provenance: Option<Provenance>,
     /// The provenance a restored or imported file was saved with, checked
     /// against its area once that loads (see
@@ -599,6 +599,13 @@ impl Scene {
 
     /// Replaces the document with a loaded file (custom models go to `models`).
     pub fn load_file(&mut self, file: SceneFile, models: &mut Models) {
+        // Over the area already loaded, the provenance stays that of the data
+        // on screen until the reload replaces it (should the reload fail,
+        // the figures are still from that data). Otherwise the file's own is
+        // kept, so an autosave before its area arrives does not drop it.
+        if self.area != Some(file.area) {
+            self.provenance.clone_from(&file.provenance);
+        }
         self.area = Some(file.area);
         self.on_flat_ground = file.on_flat_ground();
         self.origin = file.origin;
@@ -606,7 +613,6 @@ impl Scene {
         self.cameras = file.cameras;
         self.params = file.params;
         self.region = file.region;
-        self.provenance.clone_from(&file.provenance);
         self.saved_provenance = file.provenance;
         models.custom = file.custom_models;
         self.touch();
@@ -776,8 +782,26 @@ mod tests {
 
         // A file without provenance has nothing to compare.
         scene.load_file(file(None), &mut models);
-        assert_eq!(scene.provenance, None);
+        assert_eq!(scene.saved_provenance, None);
         assert_eq!(scene.area_loaded(changed, true), None);
+    }
+
+    #[test]
+    fn importing_over_the_loaded_area_keeps_its_provenance_until_reload() {
+        let mut models = Models::new(Catalog::default());
+        let mut scene = Scene::default();
+        scene.load_file(file(None), &mut models);
+        let on_screen = provenance("00000000000000aa", 1_794_000_000);
+        scene.area_loaded(on_screen.clone(), true);
+        // A file for the same area: if its reload fails, the figures are
+        // still from the data on screen, and so is what gets saved.
+        scene.load_file(
+            file(Some(provenance("00000000000000bb", 1_793_475_782))),
+            &mut models,
+        );
+        assert_eq!(scene.provenance, Some(on_screen.clone()));
+        // When the reload arrives, the file is checked against it.
+        assert!(scene.area_loaded(on_screen, true).is_some());
     }
 
     #[test]

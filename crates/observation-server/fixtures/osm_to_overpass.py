@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 def main(path, timestamp=None):
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", timestamp):
         sys.exit(f"timestamp must look like 2026-10-31T19:43:02Z, not {timestamp!r}")
     root = ET.parse(path).getroot()
     nodes = {n.get("id"): (float(n.get("lat")), float(n.get("lon"))) for n in root.iter("node")}

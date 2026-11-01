@@ -3,6 +3,8 @@
 //! figures, and the notice that a restored or imported scene's map data has
 //! changed since it was saved.
 //!
+//! Tooltips are built only while hovered (`on_hover_ui`), not every frame.
+//!
 //! The caveat text itself lives in [`observation_core::provenance`], so
 //! anything else that prints figures says exactly the same.
 
@@ -44,7 +46,9 @@ pub fn data_date_tip(bundle: &AreaBundle) -> String {
 pub fn status_data_date(ui: &mut egui::Ui, t: &Tokens, bundle: &AreaBundle) {
     if let Some(text) = data_date(bundle) {
         ui.label(RichText::new(text).size(t.font.caption).color(t.text_muted))
-            .on_hover_text(data_date_tip(bundle));
+            .on_hover_ui(|ui| {
+                ui.label(data_date_tip(bundle));
+            });
     }
 }
 
@@ -56,7 +60,9 @@ pub fn card_data_date(ui: &mut egui::Ui, t: &Tokens, bundle: &AreaBundle) {
             .size(t.font.caption)
             .color(t.text_muted),
     )
-    .on_hover_text(data_date_tip(bundle));
+    .on_hover_ui(|ui| {
+        ui.label(data_date_tip(bundle));
+    });
 }
 
 /// The one line of what the figures leave out; hovering it shows the full
@@ -67,7 +73,9 @@ pub fn caveats(ui: &mut egui::Ui, t: &Tokens) {
             .size(t.font.caption)
             .color(t.text_muted),
     )
-    .on_hover_text(caveats_text());
+    .on_hover_ui(|ui| {
+        ui.label(caveats_text());
+    });
 }
 
 /// "Map data has changed since this scene was saved (…)", in the warning
@@ -90,7 +98,9 @@ pub fn data_change_notice(ui: &mut egui::Ui, t: &Tokens, state: &mut UiState) {
             )
             .wrap(),
         )
-        .on_hover_text(change.details());
+        .on_hover_ui(|ui| {
+            ui.label(change.details());
+        });
     });
     if dismiss {
         state.data_change = None;

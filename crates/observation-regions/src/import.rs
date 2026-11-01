@@ -222,18 +222,12 @@ async fn file_info(tools: &Tools, file: &Path) -> Result<FileInfo, String> {
     serde_json::from_slice(&out).map_err(|e| format!("osmium fileinfo output unreadable: {e}"))
 }
 
-/// Whether `s` has the form `YYYY-MM-DDTHH:MM:SSZ` (ASCII digits and the
-/// fixed separators only, 20 characters), as Overpass reports its data date.
-/// Checked before a timestamp reaches a command line or a response header.
+/// Whether `s` is an OSM data date as Overpass reports it,
+/// `YYYY-MM-DDTHH:MM:SSZ` with a real date and time (the same check the
+/// server applies: [`observation_core::provenance::parse_utc`]). Checked
+/// before a timestamp reaches a command line or a response header.
 pub fn is_osm_timestamp(s: &str) -> bool {
-    s.len() == 20
-        && s.bytes().enumerate().all(|(i, b)| match i {
-            4 | 7 => b == b'-',
-            10 => b == b'T',
-            13 | 16 => b == b':',
-            19 => b == b'Z',
-            _ => b.is_ascii_digit(),
-        })
+    observation_core::provenance::parse_utc(s).is_some()
 }
 
 /// Pipes `osmium cat -f osm` into `update_database`, counting elements on the
@@ -448,6 +442,8 @@ mod tests {
             "2026-10-31T19:43:02Z --db-dir=/",
             "２０２６-10-31T19:43:02Z",
             "2026-10-31T19:43:02\nZ",
+            "2026-02-30T12:00:00Z",
+            "2026-10-31T25:61:61Z",
         ] {
             assert!(!is_osm_timestamp(bad), "{bad:?}");
         }
