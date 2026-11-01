@@ -278,8 +278,9 @@ impl Config {
         if in_host {
             return Err(ConfigError::TileUrlHost(redact(&self.tile_url)));
         }
-        let probe =
-            crate::tiles::tile_url(&self.tile_url, TileId::new(0, 0, 0).expect("tile 0/0/0"));
+        let probe = TileId::new(0, 0, 0)
+            .expect("tile 0/0/0")
+            .url(&self.tile_url);
         check_upstream("OBS_TILE_URL", &probe, allow, || {
             ConfigError::TileUrl(redact(&self.tile_url))
         })

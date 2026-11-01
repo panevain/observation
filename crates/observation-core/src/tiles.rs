@@ -18,6 +18,15 @@ impl TileId {
         (z <= MAX_ZOOM && x < n && y < n).then_some(Self { z, x, y })
     }
 
+    /// Expands `{z}`, `{x}`, `{y}` and `{s}` (always `a`) in a URL template.
+    pub fn url(&self, template: &str) -> String {
+        template
+            .replace("{z}", &self.z.to_string())
+            .replace("{x}", &self.x.to_string())
+            .replace("{y}", &self.y.to_string())
+            .replace("{s}", "a")
+    }
+
     /// The four tiles one zoom level down, row-major from the north-west.
     pub fn children(&self) -> Option<[Self; 4]> {
         (self.z < MAX_ZOOM).then(|| {

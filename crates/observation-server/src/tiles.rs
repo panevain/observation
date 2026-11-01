@@ -111,7 +111,7 @@ impl TileProxy {
             .acquire()
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let mut req = self.client.get(tile_url(&self.template, id));
+        let mut req = self.client.get(id.url(&self.template));
         if let Some(r) = referer {
             req = req.header(header::REFERER, r);
         }
@@ -188,15 +188,6 @@ enum Upstream {
     NotModified(TileMeta),
 }
 
-/// Expands `{z}`, `{x}`, `{y}` and `{s}` (always `a`) in the template.
-pub fn tile_url(template: &str, id: TileId) -> String {
-    template
-        .replace("{z}", &id.z.to_string())
-        .replace("{x}", &id.x.to_string())
-        .replace("{y}", &id.y.to_string())
-        .replace("{s}", "a")
-}
-
 /// Expiry (unix seconds) from `Cache-Control: max-age` or `Expires`, floored at
 /// `min_ttl` from now.
 fn expiry_unix(headers: &HeaderMap, min_ttl: Duration) -> u64 {
@@ -243,7 +234,7 @@ mod tests {
     fn template_substitution() {
         let id = TileId::new(17, 3, 5).unwrap();
         assert_eq!(
-            tile_url("https://{s}.t/{z}/{x}/{y}.png", id),
+            id.url("https://{s}.t/{z}/{x}/{y}.png"),
             "https://a.t/17/3/5.png"
         );
     }
