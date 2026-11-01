@@ -2,7 +2,7 @@ name: Pins
 
 # Weekly bump of the pins Dependabot can't move (scripts/bump-pins.py): the tools in mise.toml
 # and mise.ci.toml (`mise upgrade --bump`, with their lockfiles), fnox, the CI mise version,
-# Overpass in the Dockerfile, the Rust toolchain and the fuzz nightly. Each release must be a
+# and Overpass in the Dockerfile (Dependabot moves the Rust toolchains). Each release must be a
 # week old first, as with Dependabot's cooldown. Opens one PR into develop (or updates it),
 # from its own branch chore/pin-bumps.
 on:
@@ -61,7 +61,7 @@ jobs:
             echo
             cat "${out}/summary.md"
             echo
-            echo "mise.lock and mise.ci.lock hold the new checksums (and provenance, where published); Overpass is hashed from its tarball. A Rust bump can bring new clippy lints; trunk, cargo-chef, cargo-auditable and Overpass bumps are exercised by the docker and image (full build) checks."
+            echo "mise.lock and mise.ci.lock hold the new checksums (and provenance, where published); Overpass is hashed from its tarball. trunk, cargo-chef, cargo-auditable and Overpass bumps are exercised by the docker and image (full build) checks."
           } > "${out}/body.md"
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
           echo "changed=true" >> "${GITHUB_OUTPUT}"

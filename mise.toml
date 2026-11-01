@@ -3,10 +3,9 @@
 # mise.ci.toml on top of this file (MISE_ENV=ci): the tools only CI and the image build use,
 # CI's environment, and the tasks behind the security, fuzz and scan steps. `mise -E ci install`
 # then `mise -E ci run <task>` runs one of those locally.
-# rust-toolchain.toml is the single source of truth for the Rust version, components and
-# targets: rustup reads it directly, mise reads it through idiomatic version files (see
-# [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
-# aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
+# rust-toolchain.toml is the only place the Rust version, components and targets are set, and
+# Dependabot bumps it: rustup reads it directly (install rustup; cargo then fetches the
+# toolchain itself). mise does not manage Rust.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start. Docker Compose settings are on the
 # `up` task below; its tokens are fnox secrets (fnox.toml; values in the gitignored
@@ -20,11 +19,6 @@
 min_version = { hard = "2026.7.15", soft = "2026.10.18" }
 
 [settings]
-# Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
-# needs a [[tools.rust]] entry for that version, because `mise install --locked` (used in CI)
-# rejects any resolved tool that is missing from the lock; bump it with the toolchain
-# (`mise run lock`).
-idiomatic_version_file_enable_tools = ["rust"]
 # A new release of any tool is taken once it is a week old, as Dependabot's cooldown does
 # (`mise upgrade --bump`, which the Pins workflow runs, and `latest`). Exact pins and
 # lockfile entries are not affected.
@@ -90,7 +84,7 @@ description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "The Rust and mise versions agree across rust-toolchain.toml, Cargo.toml, mise.lock, the Dockerfile and the workflows, and the advisory ignore lists agree"
+description = "The CI mise version agrees across setup-mise, the Dockerfile and min_version, cosign with its task pins, and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
 
 [tasks.lock]

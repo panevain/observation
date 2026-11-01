@@ -53,6 +53,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Changed
 
+- Rust is no longer installed by mise: install rustup, which reads `rust-toolchain.toml`. That file is now the only place the Rust version is set (`rust-version` is gone from the manifests, and the Docker builder's `rust` tag no longer has to match), so Dependabot bumps the toolchain and the fuzz nightly instead of the Pins workflow.
 - Scene files are version 2: camera positions are over the terrain, with `y = 0` at the ground at the area's centre. Version 1 files and autosaves still load, and their cameras are raised onto the terrain once the area arrives, keeping their height above the ground. The coverage worker's message version is 2.
 - mise 2026.7.15 or newer is required for every task, including `mise run up` and `down`: task scripts now run under bash with errexit, nounset and pipefail (`[task_config] shell`), which an older mise ignores. A mise older than CI's (2026.10.18) still only warns.
 - `mise run serve --release` replaces `mise run serve:release`, which still works; `mise run rulesets:apply` asks before changing the live rulesets.

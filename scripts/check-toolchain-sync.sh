@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Fails when the pinned Rust, CI mise or cosign version differs between the files that repeat it,
-# or when the advisory ignore lists disagree. rust-toolchain.toml is the source of truth for
-# Rust, .github/actions/setup-mise for the mise that the workflows, the Dockerfile and
-# mise.toml's min_version use, and
+# Fails when the pinned CI mise or cosign version differs between the files that repeat it, when
+# the Rust version is set anywhere but rust-toolchain.toml (which Dependabot bumps alone), or when
+# the advisory ignore lists disagree. .github/actions/setup-mise is the source of truth for the
+# mise that the workflows, the Dockerfile and mise.toml's min_version use, and
 # deny.toml for advisory ignores (mirrored in .cargo/audit.toml and osv-scanner.toml). Every
 # other tool is pinned once, in mise.toml or mise.ci.toml. Needs only POSIX tools plus grep -E.
 set -euo pipefail
@@ -11,20 +11,20 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # First match of an extended regex in a file; empty (not a failure) when absent.
 first() { grep -Eom1 "$1" "$2" | head -n1 || true; }
 
-rust="$(first '^channel *= *"[^"]+"' rust-toolchain.toml | sed -E 's/.*"([^"]+)"/\1/')"
 mise="$(first '^ +version: *[0-9.]+$' .github/actions/setup-mise/action.yml | sed -E 's/.*: *//')"
-[[ -n "$rust" && -n "$mise" ]] || { echo "could not read pinned versions" >&2; exit 1; }
+[[ -n "$mise" ]] || { echo "could not read the CI mise version" >&2; exit 1; }
 
 fail=0
 check() { # expected actual label
   if [[ "$2" != "$1" ]]; then echo "mismatch: $3 has '${2:-<nothing>}', expected '$1'" >&2; fail=1; fi
 }
 
-check "$rust" "$(first '^rust-version *= *"[^"]+"' Cargo.toml | sed -E 's/.*"([^"]+)"/\1/')" "Cargo.toml rust-version"
-check "$rust" "$(first '^FROM rust:[0-9.]+' Dockerfile | sed -E 's/FROM rust:([0-9.]+)/\1/')" "Dockerfile FROM rust:"
-# mise.lock records the idiomatic rust version; `mise install --locked` fails if it is behind.
-lock_rust="$(awk '/^\[\[tools\.rust\]\]/ {f=1; next} f && /^version = / {gsub(/[^0-9.]/, ""); print; exit}' mise.lock)"
-check "$rust" "$lock_rust" "mise.lock [[tools.rust]]"
+# Rust only in rust-toolchain.toml: a second copy would go stale on every Dependabot bump. (The
+# Dockerfile's rust image tag is not one: the build installs rust-toolchain.toml's toolchain.)
+rust_copies="$(grep -lE '^rust-version *=|^rust-version\.workspace' Cargo.toml crates/*/Cargo.toml fuzz/Cargo.toml 2>/dev/null || true;
+  grep -lE '^\[\[tools\.rust\]\]' mise.lock mise.ci.lock || true;
+  grep -lE '^idiomatic_version_file_enable_tools.*"rust"' mise*.toml || true)"
+check "" "$(paste -sd' ' - <<<"$rust_copies")" "files repeating the Rust version (only rust-toolchain.toml sets it)"
 check "$mise" "$(first '^FROM ghcr.io/jdx/mise:[0-9.]+' Dockerfile | sed -E 's/.*://')" "Dockerfile FROM ghcr.io/jdx/mise:"
 check "$mise" "$(first '^min_version = \{ hard = "[0-9.]+", soft = "[0-9.]+" \}' mise.toml | sed -E 's/.*"([0-9.]+)".*/\1/')" "mise.toml min_version"
 # Workflows and other composite actions set up mise only through setup-mise, so its version is
@@ -52,4 +52,4 @@ check "$deny_ids" "$(ignores .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/a
 check "$deny_ids" "$(sed -n '/^id *=/p' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
 
 if (( fail )); then exit 1; fi
-echo "versions in sync: rust $rust, mise $mise, cosign $cosign; advisory ignores: ${deny_ids:-none}"
+echo "versions in sync: mise $mise, cosign $cosign (Rust only in rust-toolchain.toml); advisory ignores: ${deny_ids:-none}"

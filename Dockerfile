@@ -25,10 +25,10 @@ RUN set -eux; \
 
 # ---------------------------------------------------------------------------
 # Stage 1: chef -- toolchain, trunk, cargo-chef and cargo-auditable (rarely changes).
-#   * Rust 1.99.1 on Debian 13 (trixie) -- must match rust-toolchain.toml.
+#   * The rust image (Debian 13, trixie) provides rustup; the toolchain itself is the one
+#     rust-toolchain.toml pins, installed below, so the image's own Rust version does not
+#     matter and Dependabot moves its tag and digest on their own.
 #   * Pinned by digest (multi-arch index); the tag is kept for readability.
-#     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-trixie
-#     (Dependabot refreshes the digest; the tag moves with rust-toolchain.toml.)
 #
 # Layer caching strategy: dependencies are compiled from a cargo-chef recipe
 # (only Cargo.toml/Cargo.lock data), so the expensive Bevy/axum dependency
