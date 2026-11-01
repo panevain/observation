@@ -3,8 +3,9 @@
 #
 # A crate version that a pull request adds to Cargo.lock or fuzz/Cargo.lock, directly used or
 # pulled in by another crate, must have been on crates.io for at least `days`. This matches
-# Dependabot's cooldown (dependabot.yml), which only covers the crate it bumps. Versions that
-# replace one with a RustSec vulnerability are exempt (as Dependabot's security updates are).
+# Dependabot's cooldown (dependabot.yml), which only covers the crate it bumps. A version that
+# fixes a RustSec vulnerability its crate has at the base (it is in the advisory's patched
+# range) is exempt, as Dependabot's security updates are; other new releases of that crate wait.
 days = 7
 
 # Exemptions, each with a reason. `version` limits one to that version (otherwise every
