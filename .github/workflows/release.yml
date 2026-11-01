@@ -67,8 +67,14 @@ jobs:
   image:
     name: image (${{ matrix.image }})
     needs: verify
-    # verify only runs for tags; develop pushes go ahead without it.
-    if: ${{ !cancelled() && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    # verify only runs for tags; develop pushes go ahead without it. Images are published only
+    # from a push to develop or a v* tag: the signature names the ref (release.yml@<ref>), and
+    # scripts/verify-image.sh accepts no other, so an image published from anywhere else would
+    # fail verification anyway; this keeps it from being published at all.
+    if: >-
+      ${{ !cancelled() && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
+      && github.event_name == 'push'
+      && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -103,6 +109,23 @@ jobs:
       CANDIDATE: ${{ matrix.image }}:candidate
       IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
+      # The same rule as the job's `if`, checked against the workflow file that is running: a
+      # copy of release.yml under another name, or one started by another event, stops here.
+      - name: Publishing ref
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [ "${EVENT}" = push ] || { echo "::error::images are published only on push, not ${EVENT}"; exit 1; }
+          [[ "${REF}" =~ ^refs/(heads/develop|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)$ ]] ||
+            { echo "::error::images are published only from develop and vX.Y.Z tags, not ${REF}"; exit 1; }
+          [ "${WORKFLOW_REF}" = "${REPO}/.github/workflows/release.yml@${REF}" ] ||
+            { echo "::error::images are published only by .github/workflows/release.yml, not ${WORKFLOW_REF}"; exit 1; }
+          echo "Publishing from ${REF} (${WORKFLOW_REF})."
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -187,6 +210,15 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
+      # What users run (`mise run verify`, `mise run up`): the signature and the attestation must
+      # both name release.yml on this ref, so the documented check is exercised on every publish.
+      - name: Verify the published image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_ATTESTATION: required
+        run: scripts/verify-image.sh "${IMAGE_NAME}@${DIGEST}" "${GITHUB_REF}"
+
   # A GitHub release for each tag, with that version's CHANGELOG.md section and the image
   # digests. Releases are immutable (repository setting), so this runs only once both images
   # are published.
@@ -225,13 +257,15 @@ jobs:
               printf '| `ghcr.io/panevain/%s:%s` | `%s` |\n' "${name}" "${version}" "${digest}"
             done
             echo
-            echo "Verify an image with:"
+            echo "Verify an image (from a checkout, \`mise run verify ghcr.io/panevain/observation:${version}\`; \`mise run up\` does this for both) with:"
             echo
             echo '```sh'
-            echo "gh attestation verify oci://ghcr.io/panevain/observation:${version} --repo ${REPO}"
             echo "cosign verify ghcr.io/panevain/observation:${version} \\"
-            echo "  --certificate-identity-regexp '^https://github.com/${REPO}/\\.github/workflows/release\\.yml@' \\"
+            echo "  --certificate-identity 'https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${TAG}' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo "gh attestation verify oci://ghcr.io/panevain/observation:${version} --repo ${REPO} \\"
+            echo "  --cert-identity 'https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${TAG}' \\"
+            echo "  --source-ref refs/tags/${TAG} --deny-self-hosted-runners"
             echo '```'
           } > "${RUNNER_TEMP}/notes.md"
           cat "${RUNNER_TEMP}/notes.md"

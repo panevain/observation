@@ -80,6 +80,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Security
 
+- `mise run up` checks both released images against Release's signature and provenance for the version's tag before starting them, and runs them by the digest it checked. `mise run verify <image>` (`scripts/verify-image.sh`) does the same check on its own. The verification commands in SECURITY.md and the release notes now pin the signing identity to the release tag (`release.yml@refs/tags/v<version>`); the earlier pattern also accepted images signed by a copy of the workflow on any branch. Release publishes only on a push to `develop` or a `v*` tag, and verifies every image it publishes.
 - Upstream requests (tile server, Overpass, region downloads) go through a resolver that refuses loopback, private, link-local and similar addresses, including names that resolve to them and IPv6 forms that embed an IPv4 address (NAT64, 6to4, mapped). `OBS_OVERPASS_URL`, `OBS_TILE_URL` and `OBS_REGIONS_CATALOG_URL` are also checked at startup.
 - The server no longer follows redirects from the tile and Overpass upstreams, and the region agent follows them only within the original host, so an upstream cannot send them to an internal address. A 3xx from Overpass now fails over to the next interpreter and is logged with its `Location`.
 - Proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`) are ignored for upstream requests unless `OBS_ALLOW_PRIVATE_UPSTREAMS=1`, since a proxy resolves names past the filter.

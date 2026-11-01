@@ -108,12 +108,24 @@ Every change is checked automatically (see `.github/workflows/`):
   `observation-regions`) carry SLSA build provenance and an SBOM, are signed
   keylessly with cosign, and are attested with GitHub artifact attestations. A
   release is published only from a tag on `main` that passes the advisory check,
-  a smoke test and the Trivy gate; its GitHub release is immutable. Verify with
-  (likewise for `observation-regions`):
+  a smoke test and the Trivy gate; its GitHub release is immutable. Images are
+  published only from a push to `develop` (`:devel`) or a `v*` tag, and each one
+  is verified as below before the workflow finishes.
+
+  Verify an image against the **tag it was released from**, not just the
+  workflow: the signing identity is `release.yml@<ref>`, and an identity that
+  matches `release.yml@` alone would also accept an image signed by a copy of
+  the workflow pushed on a branch. Only admins and the release bot can create
+  `v*` tags, and nobody can move them. From a checkout,
+  `mise run verify ghcr.io/panevain/observation:<version>` runs both checks and
+  prints the image pinned by digest (`mise run up` does this for both images and
+  runs them by that digest). By hand (likewise for `observation-regions`):
 
   ```sh
-  gh attestation verify oci://ghcr.io/panevain/observation:<tag> --repo panevain/observation
-  cosign verify ghcr.io/panevain/observation:<tag> \
-    --certificate-identity-regexp '^https://github.com/panevain/observation/\.github/workflows/release\.yml@' \
+  cosign verify ghcr.io/panevain/observation:<version> \
+    --certificate-identity 'https://github.com/panevain/observation/.github/workflows/release.yml@refs/tags/v<version>' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  gh attestation verify oci://ghcr.io/panevain/observation:<version> --repo panevain/observation \
+    --cert-identity 'https://github.com/panevain/observation/.github/workflows/release.yml@refs/tags/v<version>' \
+    --source-ref refs/tags/v<version> --deny-self-hosted-runners
   ```
