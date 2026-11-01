@@ -3,9 +3,9 @@ rules:
   cache-poisoning:
     ignore:
       # ci.yml publishes nothing but a 14-day artifact: images and tags come from release.yml,
-      # which uses its own cache scope. rust-cache, mise-action and the Docker GHA cache only
-      # save from develop (.github/actions/build-image); pull request runs only read them. Revisit if a publish
-      # or deploy step is ever added to ci.yml.
+      # which uses its own cache scope. rust-cache, mise-action and the Docker GHA cache
+      # (.github/actions/build-image) only save from develop; pull request runs only read them.
+      # Revisit if a publish or deploy step is ever added to ci.yml.
       - ci.yml
   dangerous-triggers:
     ignore:

@@ -3,8 +3,8 @@ description: >-
   Builds one of the Dockerfile's images into the local Docker daemon (never pushed), reading and
   optionally writing a GitHub Actions layer cache. For target runtime-prebuilt it passes the
   client-dist build context: a finished trunk dist/, or a stub index.html when none is given
-  (enough for the smoke test and Trivy, which never look at the client). Release builds its own
-  images (release.yml), since its push reuses the builder of its candidate build.
+  (enough for the smoke test and Trivy, which never look at the client). Release's candidate
+  build uses it too (with setup-buildx false: its push then reuses the same builder).
 
 inputs:
   tag:
@@ -28,21 +28,29 @@ inputs:
     required: false
     default: "false"
   setup-buildx:
-    description: Set up Buildx first; false for a second build in the same job
+    description: Set up Buildx first; false when the job already has (a second build, or Release)
     required: false
     default: "true"
+  no-cache-filters:
+    description: Stages to rebuild without the cache (build-push-action's no-cache-filters)
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
     - name: Client dist
       id: dist
-      if: inputs.target == 'runtime-prebuilt'
       shell: bash
       env:
+        TARGET: ${{ inputs.target }}
         DIST: ${{ inputs.client-dist }}
       run: |
         set -euo pipefail
+        if [ "${TARGET}" != runtime-prebuilt ]; then
+          [ -z "${DIST}" ] || { echo "::error::client-dist is only for target runtime-prebuilt, not '${TARGET:-the default}'"; exit 1; }
+          exit 0
+        fi
         if [ -z "${DIST}" ]; then
           DIST="${RUNNER_TEMP}/stub-dist"
           mkdir -p "${DIST}"
@@ -60,4 +68,5 @@ runs:
         load: true
         tags: ${{ inputs.tag }}
         cache-from: type=gha,scope=${{ inputs.cache-scope }}
+        no-cache-filters: ${{ inputs.no-cache-filters }}
         cache-to: ${{ inputs.cache-save == 'true' && github.ref == 'refs/heads/develop' && format('type=gha,scope={0},mode=max', inputs.cache-scope) || '' }}
