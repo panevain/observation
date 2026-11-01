@@ -16,10 +16,10 @@ task.run_auto_install = false
 # binary (see cargo-fuzz below).
 cargo.binstall = false
 
-# Plain names for the tools below, each from a backend that verifies its download.
+# Plain names for the tools below, each from a backend that verifies its download (cosign's is in
+# mise.toml, whose verify and up tasks use it too).
 [tool_alias]
 trivy = "aqua:aquasecurity/trivy"
-cosign = "aqua:sigstore/cosign"
 cargo-audit = "github:rustsec/rustsec"
 cargo-deny = "aqua:EmbarkStudios/cargo-deny"
 zizmor = "aqua:zizmorcore/zizmor"

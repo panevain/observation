@@ -21,6 +21,8 @@ docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com ghcr.io/panevain/obs
 docker build -t observation . && docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com observation   # or from source
 ```
 
+Released images are signed: from a checkout, `mise run verify ghcr.io/panevain/observation:<version>` checks one and prints it pinned by digest, which you can then `docker run` (see [SECURITY.md](SECURITY.md)).
+
 Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to OpenStreetMap services so they can reach you; set it to something real.
 
 ### Docker Compose, with local map data
@@ -30,7 +32,7 @@ Public Overpass servers are often slow or busy. `compose.yaml` runs the app with
 ```sh
 cp mise.local.toml.example mise.local.toml   # set OBS_CONTACT
 # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
-mise run up                                  # the released images; `mise run up --build` builds them here
+mise run up                                  # the released images, signature-checked; `mise run up --build` builds them here
 ```
 
 The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits are in the `up` task in `mise.toml`. Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).

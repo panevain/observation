@@ -1,16 +1,20 @@
 # Observation with its optional region agent, for production on one host.
 #
 #   # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
-#   mise run up            # the released images (OBS_VERSION, default latest), pulled
+#   mise run up            # the released images (OBS_VERSION, default latest), verified
 #   mise run up --build    # both images built from this checkout instead
 #
-# Released images are signed and attested (SECURITY.md); a patch release reaches a running
-# stack with another `mise run up`, which pulls the tag again.
+# Released images are signed and attested (SECURITY.md). `mise run up` checks both against
+# Release's signature for OBS_VERSION's tag (scripts/verify-image.sh) and runs them by the
+# digest it checked; a patch release reaches a running stack with another `mise run up`.
 #
 # The variables below come from the environment: `mise run up` loads the tokens
 # from fnox.local.toml (gitignored), the other settings from its task env in
 # mise.toml and OBS_CONTACT from mise.local.toml. Without mise, export them
-# before `docker compose up -d --build`; unset ones use the defaults here.
+# before `docker compose up -d --build`; unset ones use the defaults here. To run
+# the released images without mise, set OBS_IMAGE and OBS_REGIONS_IMAGE to what
+# `scripts/verify-image.sh ghcr.io/panevain/observation:<version>` (and
+# `...observation-regions:<version>`) print.
 #
 # The app listens on http://localhost:8080. The region agent has no published
 # port: only the app reaches it, over the compose network. Imported regions
@@ -21,7 +25,8 @@
 
 services:
   observation:
-    image: ghcr.io/panevain/observation:${OBS_VERSION:-latest}
+    # `mise run up` sets OBS_IMAGE to the image it verified, pinned by digest.
+    image: ${OBS_IMAGE:-ghcr.io/panevain/observation:${OBS_VERSION:-latest}}
     build:
       context: .
       target: runtime
@@ -41,7 +46,7 @@ services:
       - regions
 
   regions:
-    image: ghcr.io/panevain/observation-regions:${OBS_VERSION:-latest}
+    image: ${OBS_REGIONS_IMAGE:-ghcr.io/panevain/observation-regions:${OBS_VERSION:-latest}}
     build:
       context: .
       target: regions
