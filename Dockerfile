@@ -25,7 +25,7 @@ RUN set -eux; \
 
 # ---------------------------------------------------------------------------
 # Stage 1: chef -- toolchain, trunk, cargo-chef and cargo-auditable (rarely changes).
-#   * Rust 1.99.1 on Debian 13 (trixie) -- must match rust-toolchain.toml.
+#   * Rust on Debian 13 (trixie), at rust-toolchain.toml's version (mise run sync checks).
 #   * Pinned by digest (multi-arch index); the tag is kept for readability.
 #     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-trixie
 #     (Dependabot refreshes the digest; the tag moves with rust-toolchain.toml.)
