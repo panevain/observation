@@ -1,6 +1,6 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
-use crate::state::{LoadArea, Models, SaveState, Scene, UiState};
+use crate::state::{AddressJump, LoadArea, Models, SaveState, Scene, UiState};
 use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -9,6 +9,8 @@ use observation_core::scene::SceneFile;
 const STORAGE_KEY: &str = "observation.scene.v1";
 /// The chosen UI font (a [`UiFont::key`]).
 const FONT_KEY: &str = "observation.font";
+/// Whether an Address tool click scrolls the camera list (`on` or `off`).
+const ADDRESS_JUMP_KEY: &str = "observation.address-jump";
 /// Seconds between autosave checks.
 const AUTOSAVE_INTERVAL: f32 = 1.5;
 
@@ -54,6 +56,7 @@ impl Plugin for PersistPlugin {
                     receive_imports,
                     autosave,
                     save_font.run_if(resource_changed::<UiFont>),
+                    save_address_jump.run_if(resource_changed::<AddressJump>),
                 ),
             );
     }
@@ -72,6 +75,23 @@ fn save_font(font: Res<UiFont>) {
         && let Err(why) = storage_set(FONT_KEY, font.key())
     {
         bevy::log::warn!("could not store the font choice: {why:?}");
+    }
+}
+
+/// The Address tool's jump setting saved in this browser, else on.
+pub fn load_address_jump() -> AddressJump {
+    match storage_get(ADDRESS_JUMP_KEY).as_deref() {
+        Some("off") => AddressJump(false),
+        _ => AddressJump::default(),
+    }
+}
+
+fn save_address_jump(jump: Res<AddressJump>) {
+    let value = if jump.0 { "on" } else { "off" };
+    if !jump.is_added()
+        && let Err(why) = storage_set(ADDRESS_JUMP_KEY, value)
+    {
+        bevy::log::warn!("could not store the address jump setting: {why:?}");
     }
 }
 

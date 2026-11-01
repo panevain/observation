@@ -6,7 +6,7 @@ use super::widgets::{
     NUMBER_TIP, bar, compass_dial, danger, drag_speed, hint, primary, row, secondary, section,
     segmented, stat, subsection, swatch, swatch_button,
 };
-use crate::addresses::NO_ADDRESS;
+use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
 use crate::state::{OverlayMode, Tool};
@@ -263,9 +263,24 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let groups = d.addresses.groups(&d.scene.cameras);
     // Headings only help once something has an address or a group.
     let headed = !matches!(groups.as_slice(), [(None, _)] | []);
+    // The address picked with the Address tool: its group is shaded, and
+    // scrolled into view once after a click.
+    let picked =
+        d.ui.selected_address
+            .as_ref()
+            .map(address_label)
+            .and_then(|label| d.addresses.group_for(&groups, &label));
+    let jump = d.ui.jump_to_address;
+    if jump {
+        d.ui.jump_to_address = false;
+    }
     for (group, cameras) in &groups {
         if headed {
-            group_heading(ui, t, *group, cameras.len());
+            let is_picked = group.is_some() && *group == picked;
+            let heading = group_heading(ui, t, *group, cameras.len(), is_picked);
+            if is_picked && jump {
+                heading.scroll_to_me(Some(egui::Align::TOP));
+            }
         }
         for &c in cameras {
             let model = d
@@ -329,15 +344,41 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
 }
 
 /// The heading above a group of cameras: its address (or name) and count;
-/// `None` for the cameras with neither.
-fn group_heading(ui: &mut egui::Ui, t: &Tokens, group: Option<&str>, count: usize) {
+/// `None` for the cameras with neither. `picked` marks the address selected
+/// with the Address tool.
+fn group_heading(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    group: Option<&str>,
+    count: usize,
+    picked: bool,
+) -> egui::Response {
     ui.add_space(t.space.xs);
+    let (fill, name_color) = if picked {
+        (t.hover, t.text)
+    } else {
+        (NO_FILL, t.text_muted)
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(egui::CornerRadius::same(t.radius.md))
+        .show(ui, |ui| group_heading_row(ui, t, group, count, name_color))
+        .response
+}
+
+fn group_heading_row(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    group: Option<&str>,
+    count: usize,
+    name_color: egui::Color32,
+) {
     ui.horizontal(|ui| {
         let (glyph, group) = match group {
             Some(g) => (icons::MAP_PIN, g),
             None => (icons::WARNING_CIRCLE, NO_ADDRESS),
         };
-        ui.label(RichText::new(glyph).color(t.text_muted));
+        ui.label(RichText::new(glyph).color(name_color));
         let count = RichText::new(count.to_string())
             .size(t.font.caption)
             .color(t.text_muted);
@@ -360,7 +401,7 @@ fn group_heading(ui: &mut egui::Ui, t: &Tokens, group: Option<&str>, count: usiz
                     RichText::new(group)
                         .size(t.font.caption)
                         .family(strong_family())
-                        .color(t.text_muted),
+                        .color(name_color),
                 )
                 .truncate(),
             );

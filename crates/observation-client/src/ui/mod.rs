@@ -84,6 +84,7 @@ pub struct UiData<'w> {
     pub config: Res<'w, crate::net::ServerConfig>,
     pub layout: ResMut<'w, crate::state::UiLayout>,
     pub font: ResMut<'w, UiFont>,
+    pub address_jump: ResMut<'w, crate::state::AddressJump>,
     pub regions: ResMut<'w, crate::regions::Regions>,
 }
 
@@ -201,7 +202,7 @@ fn draw_ui(
     // Quick actions next to the selected camera, where the eye already is.
     let anchor =
         d.ui.selected
-            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region))
+            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region | Tool::Address))
             .and_then(|id| d.scene.camera(id))
             .zip(camera.single().ok())
             .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
@@ -213,6 +214,7 @@ fn draw_ui(
         actions::apply(&mut d, id, a);
     }
     overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
+    overlays::address_card(&ctx, &t, viewport_rect, &d.ui);
     match overlays::toasts(&ctx, &t, viewport_rect, &d.ui) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
             d.ui.history_request = Some(HistoryOp::Undo);

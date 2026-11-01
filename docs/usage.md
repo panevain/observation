@@ -8,9 +8,9 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 
 | Region | What is in it |
 | --- | --- |
-| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, remembered in this browser) and **?** |
-| Tool rail (left) | Five tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move** and **Region**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, or in Region the corners so far). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move and a cell cursor for Region. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
+| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
+| Tool rail (left) | Six tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move**, **Region** and **Address**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
+| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, in Region the corners so far, or in Address the selected address). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move, a cell cursor for Region and a question-mark cursor for Address. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
 | Status bar | The active tool's keys and gestures as keycaps on the left (dropped from the end when the window is narrow); on the right the three coverage figures (street, 2+ cameras, walls), so they stay in view while the inspector scrolls, and the OpenStreetMap attribution link |
 
@@ -82,6 +82,10 @@ The list groups cameras by street address, worked out from OpenStreetMap as you 
 - an address point on its own.
 
 A building's own address wins over points inside it. The address is the house number (or house name), the street (or place; where OpenStreetMap gives neither, the nearest named road within 100 m) and any unit, such as "10011 Northeast 120th Street". City and postcode are left out because they rarely differ within one area. The number always comes before the street, so in countries that write it after the street it reads the other way round. If nothing in the loaded area has an address, there are no headings. A camera's **Group** field overrides its address, for example to list a camera on a detached garage with the house, or to group by owner.
+
+### Look up an address
+
+The **Address** tool (**L**) shows the address under the pointer in a small card beside it. Pointing at a building (its roof or a wall) gives that building's own address: its tags, else an address point inside it, else an address point in its yard (one whose nearest building it is, as some imports place them). It never borrows a neighbour's, so a building with none says **No address here**. Pointing at a yard or the street gives the nearest address within 25 m, as for cameras. Click to select that address: every building at it is highlighted, and the mode pill says how many cameras are there. The group those cameras are listed under is shaded in the camera list (its address heading, or a hand-set group). With **Settings → Click jumps to the camera list** on (the default), the click also scrolls the list to that group. **Delete** or a click where there is no address clears the selection, as does leaving the tool. Dragging orbits and pans as in Select.
 
 ## Read the coverage
 
@@ -157,7 +161,7 @@ Imports are checked: at most 256 cameras and 64 custom models, finite positions 
 
 | Input | Action |
 | --- | --- |
-| **V** / **P** / **A** / **M** / **R** | Select / Place / Aim / Move / Region tool |
+| **V** / **P** / **A** / **M** / **R** / **L** | Select / Place / Aim / Move / Region / Address tool |
 | **Enter**, **Backspace** (Region tool) | Close the region; remove the last corner |
 | Left-drag | Orbit the view (with Aim or Move and a camera selected: aim or move it) |
 | Right-drag, or **Shift** + left-drag | Pan (Shift-drag does not pan while Aim or Move is driving a camera; use right-drag) |
