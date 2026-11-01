@@ -4719,6 +4719,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "observation-core",
+ "observation-tokens",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -4778,6 +4779,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "observation-tokens"
+version = "0.1.0"
 
 [[package]]
 name = "observation-upstream"

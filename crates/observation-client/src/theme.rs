@@ -1,9 +1,10 @@
 //! Design tokens: the single source of colours, spacing, radii and type scale.
 //!
 //! No other module may contain colour literals (enforced in CI by
-//! `scripts/check-design-tokens.sh`). The same values are mirrored as CSS
-//! custom properties in `web/index.html` for the loading screen and the
-//! small-viewport gate.
+//! `scripts/check-design-tokens.sh`). The scales, the minimum viewport and
+//! the UI colour roles come from `observation-tokens`, which also writes them
+//! as the CSS of the loading screen and the small-viewport gate in
+//! `web/index.html`.
 
 use bevy::prelude::*;
 use bevy_egui::egui::{
@@ -13,46 +14,11 @@ use bevy_egui::egui::{
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::camera::CameraKind;
 
+use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE};
+pub use observation_tokens::{Layout, Radius, Space, TypeScale};
+
 /// Smallest supported viewport (CSS px). Below this the app shows a gate.
-pub const MIN_VIEWPORT: Vec2 = Vec2::new(768.0, 600.0);
-
-/// Spacing scale, px.
-#[derive(Debug, Clone, Copy)]
-pub struct Space {
-    pub xs: f32,
-    pub sm: f32,
-    pub md: f32,
-    pub lg: f32,
-    pub xl: f32,
-}
-
-/// Corner radii, px.
-#[derive(Debug, Clone, Copy)]
-pub struct Radius {
-    pub sm: u8,
-    pub md: u8,
-    pub lg: u8,
-}
-
-/// Type scale, px.
-#[derive(Debug, Clone, Copy)]
-pub struct TypeScale {
-    pub caption: f32,
-    pub body: f32,
-    pub title: f32,
-    pub heading: f32,
-}
-
-/// Layout sizes, px.
-#[derive(Debug, Clone, Copy)]
-pub struct Layout {
-    /// Minimum interactive target (touch friendly).
-    pub hit_target: f32,
-    pub toolbar_width: f32,
-    pub inspector_width: f32,
-    pub topbar_height: f32,
-    pub statusbar_height: f32,
-}
+pub const MIN_VIEWPORT: Vec2 = Vec2::from_array(observation_tokens::MIN_VIEWPORT);
 
 /// Colour roles for the 3D scene (sRGB, straight alpha).
 #[derive(Debug, Clone, Copy)]
@@ -110,32 +76,6 @@ pub struct Tokens {
     pub layout: Layout,
     pub stroke_width: f32,
 }
-
-const SPACE: Space = Space {
-    xs: 4.0,
-    sm: 8.0,
-    md: 12.0,
-    lg: 16.0,
-    xl: 24.0,
-};
-const RADIUS: Radius = Radius {
-    sm: 4,
-    md: 6,
-    lg: 8,
-};
-const FONT: TypeScale = TypeScale {
-    caption: 12.0,
-    body: 14.0,
-    title: 16.0,
-    heading: 20.0,
-};
-const LAYOUT: Layout = Layout {
-    hit_target: 32.0,
-    toolbar_width: 76.0,
-    inspector_width: 320.0,
-    topbar_height: 48.0,
-    statusbar_height: 28.0,
-};
 
 /// Quick picks for camera colours: the type colours plus a bluish green, all
 /// clear of the coverage ramp.
@@ -198,23 +138,24 @@ const COVERAGE_RAMP: [Color32; 4] = [
 
 impl Tokens {
     pub fn light() -> Self {
+        let ui = &observation_tokens::LIGHT;
         Self {
             dark: false,
-            bg: Color32::from_rgb(0xF4, 0xF5, 0xF7),
-            surface: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            surface_raised: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            surface_sunken: Color32::from_rgb(0xEC, 0xEE, 0xF1),
-            border: Color32::from_rgb(0xD9, 0xDC, 0xE1),
-            border_strong: Color32::from_rgb(0x8A, 0x91, 0x9C),
-            hover: Color32::from_rgb(0xE3, 0xE6, 0xEA),
-            shadow: Color32::from_rgba_unmultiplied_const(0x10, 0x14, 0x1A, 40),
-            text: Color32::from_rgb(0x1B, 0x1F, 0x24),
-            text_muted: Color32::from_rgb(0x5F, 0x67, 0x72),
-            accent: Color32::from_rgb(0x3B, 0x5B, 0xDB),
-            on_accent: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            danger: Color32::from_rgb(0xC9, 0x2A, 0x2A),
-            warning: Color32::from_rgb(0xA1, 0x5F, 0x00),
-            scrim: Color32::from_rgba_unmultiplied_const(0x10, 0x14, 0x1A, 150),
+            bg: color(ui.bg),
+            surface: color(ui.surface),
+            surface_raised: color(ui.surface_raised),
+            surface_sunken: color(ui.surface_sunken),
+            border: color(ui.border),
+            border_strong: color(ui.border_strong),
+            hover: color(ui.hover),
+            shadow: color(ui.shadow),
+            text: color(ui.text),
+            text_muted: color(ui.text_muted),
+            accent: color(ui.accent),
+            on_accent: color(ui.on_accent),
+            danger: color(ui.danger),
+            warning: color(ui.warning),
+            scrim: color(ui.scrim),
             camera_palette: CAMERA_PALETTE,
             kind_colors: KIND_COLORS_LIGHT,
             coverage_ramp: COVERAGE_RAMP,
@@ -237,23 +178,24 @@ impl Tokens {
     }
 
     pub fn dark() -> Self {
+        let ui = &observation_tokens::DARK;
         Self {
             dark: true,
-            bg: Color32::from_rgb(0x12, 0x14, 0x17),
-            surface: Color32::from_rgb(0x1B, 0x1E, 0x23),
-            surface_raised: Color32::from_rgb(0x24, 0x28, 0x2E),
-            surface_sunken: Color32::from_rgb(0x15, 0x17, 0x1B),
-            border: Color32::from_rgb(0x33, 0x38, 0x40),
-            border_strong: Color32::from_rgb(0x64, 0x6D, 0x79),
-            hover: Color32::from_rgb(0x2C, 0x31, 0x38),
-            shadow: Color32::from_rgba_unmultiplied_const(0x00, 0x00, 0x00, 90),
-            text: Color32::from_rgb(0xE8, 0xEA, 0xED),
-            text_muted: Color32::from_rgb(0x9A, 0xA2, 0xAD),
-            accent: Color32::from_rgb(0x7C, 0x95, 0xF2),
-            on_accent: Color32::from_rgb(0x0E, 0x12, 0x1E),
-            danger: Color32::from_rgb(0xF0, 0x6A, 0x6A),
-            warning: Color32::from_rgb(0xF0, 0xB0, 0x4A),
-            scrim: Color32::from_rgba_unmultiplied_const(0x00, 0x00, 0x00, 170),
+            bg: color(ui.bg),
+            surface: color(ui.surface),
+            surface_raised: color(ui.surface_raised),
+            surface_sunken: color(ui.surface_sunken),
+            border: color(ui.border),
+            border_strong: color(ui.border_strong),
+            hover: color(ui.hover),
+            shadow: color(ui.shadow),
+            text: color(ui.text),
+            text_muted: color(ui.text_muted),
+            accent: color(ui.accent),
+            on_accent: color(ui.on_accent),
+            danger: color(ui.danger),
+            warning: color(ui.warning),
+            scrim: color(ui.scrim),
             camera_palette: CAMERA_PALETTE_DARK,
             kind_colors: KIND_COLORS_DARK,
             coverage_ramp: COVERAGE_RAMP,
@@ -490,6 +432,11 @@ pub fn install_fonts(ctx: &egui::Context, font: UiFont) {
     }
     crate::icons::install(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// A colour from `observation-tokens` as a token colour.
+const fn color([r, g, b, a]: Rgba) -> Color32 {
+    Color32::from_rgba_unmultiplied_const(r, g, b, a)
 }
 
 /// Converts a token colour to a Bevy colour.

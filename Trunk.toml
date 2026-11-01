@@ -5,3 +5,14 @@ filehash = true
 # wasm-opt already runs in release builds: web/index.html sets data-wasm-opt="s" (with the
 # feature flags Bevy's output needs) on the rust link, and `trunk build --release` honours it.
 # The remaining size levers are listed in docs/design.md#bundle-size.
+
+# web/index.html inlines web/tokens.css: the design tokens as CSS custom properties, written
+# from crates/observation-tokens (dependency-free, so this builds in seconds, without Bevy).
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = ["run", "--quiet", "--locked", "-p", "observation-tokens", "--bin", "token-css", "--", "web/tokens.css"]
+
+[watch]
+# Written by the hook above; crates/observation-tokens is what to edit.
+ignore = ["web/tokens.css"]
