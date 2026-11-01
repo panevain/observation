@@ -27,6 +27,7 @@ issuer="https://token.actions.githubusercontent.com"
 semver='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
 
 image="${1:?usage: $0 IMAGE [REF]}"
+command -v cosign >/dev/null 2>&1 || { echo "cosign is not installed (\`mise run verify\` installs it)" >&2; exit 2; }
 ref="${2:-}"
 
 name="${image%%@*}"
@@ -93,8 +94,10 @@ gh_ready() {
 }
 if gh_ready; then
   if ! gh attestation verify "oci://${name}@${signed}" --repo "${repo}" --bundle-from-oci \
-    "${gh_identity[@]}" --cert-oidc-issuer "${issuer}" --deny-self-hosted-runners >/dev/null; then
+    "${gh_identity[@]}" --cert-oidc-issuer "${issuer}" --deny-self-hosted-runners >/dev/null 2>"${errors}"; then
     echo "${name}@${signed}: no valid provenance attestation from ${workflow} on ${wanted}" >&2
+    # gh's reason, which may also be a credential problem (an expired GH_TOKEN, say).
+    grep -v '^\s*$' "${errors}" | tail -n 3 | sed 's/^/  gh: /' >&2
     exit 1
   fi
   attested="attested"
