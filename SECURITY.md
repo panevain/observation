@@ -82,6 +82,12 @@ Every change is checked automatically (see `.github/workflows/`):
   reqwest features), keeps outbound HTTP inside `observation-upstream`'s
   SSRF-guarded client (only it, the server and the region agent may depend on
   reqwest), and refuses crates that fetch code at build time.
+- **cargo-vet** (`supply-chain/`): every crate version in the tree of the
+  server, the region agent and `observation-core` has been audited, by us or
+  in an imported audit set (Mozilla, Google, the Bytecode Alliance, Embark,
+  ISRG, Zcash), or is an exemption recorded when vetting started. A new
+  version nobody has reviewed fails the check until someone does. The client's
+  own Bevy tree is not vetted yet (see `supply-chain/README.md`).
 - **cargo-shear** reports dependencies that no code uses, in both workspaces, so
   nothing sits in the tree (and the audit surface) for no reason.
 - **cargo-audit**: `Cargo.lock` and the fuzz

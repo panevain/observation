@@ -30,6 +30,7 @@ cargo-chef = "github:LukeMathWalker/cargo-chef"
 cargo-auditable = "github:rust-secure-code/cargo-auditable"
 typos = "aqua:crate-ci/typos"
 cargo-shear = "github:Boshen/cargo-shear"
+cargo-vet = "github:mozilla/cargo-vet"
 
 [tools]
 # Security checks (security.yml, release.yml, release-watch.yml, hotfix.yml). Trivy comes
@@ -43,6 +44,8 @@ zizmor = "1.31.1"
 # Hygiene checks (ci.yml's hygiene job): spelling, and dependencies no code uses.
 typos = "1.51.1"
 cargo-shear = "1.14.0"
+# Dependency audits (security.yml's cargo-vet job; supply-chain/).
+cargo-vet = "0.10.3"
 # Tests and fuzzing (ci.yml, fuzz.yml). cargo-fuzz builds the targets for the platform it was
 # itself built for, and its only Linux release binary is the musl one, whose static libc the
 # sanitizers can't link; so it is built from crates.io (`cargo install --locked`).
@@ -123,6 +126,14 @@ run = [
   "cargo shear --locked --deny-warnings",
   "cargo shear --locked --deny-warnings fuzz",
 ]
+
+[tasks.vet]
+description = "cargo-vet: every crate in the server side's tree is audited (supply-chain/audits.toml), covered by an imported audit, or exempted (supply-chain/README.md)"
+run = "cargo vet --locked"
+
+[tasks."vet:imports"]
+description = "Fetch the imported cargo-vet audit sets again (supply-chain/imports.lock) and drop the exemptions they now cover"
+run = ["cargo vet regenerate imports", "cargo vet regenerate exemptions"]
 
 [tasks.deny]
 description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `mise -E ci run deny advisories` runs one check"

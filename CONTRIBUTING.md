@@ -12,7 +12,7 @@
 
 Add user-visible changes under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
-Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Every crate version a pull request adds to `Cargo.lock` or `fuzz/Cargo.lock`, including the ones a bump pulls in, must have been on crates.io for 7 days (the **`cargo-cooldown`** check, `.config/cargo-cooldown.toml`; `mise -E ci run cooldown` runs it against `origin/develop`). Fixes for RustSec vulnerabilities are exempt; anything else that cannot wait needs an exemption there with a reason. Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge. Each run's summary lists every open Dependabot PR and why it was or was not set to auto-merge; run the workflow by hand with **dry run** to see that list without changing anything.
+Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Every crate version a pull request adds to `Cargo.lock` or `fuzz/Cargo.lock`, including the ones a bump pulls in, must have been on crates.io for 7 days (the **`cargo-cooldown`** check, `.config/cargo-cooldown.toml`; `mise -E ci run cooldown` runs it against `origin/develop`). Fixes for RustSec vulnerabilities are exempt; anything else that cannot wait needs an exemption there with a reason. New versions of crates the server side uses must also pass **`cargo-vet`**: audited by us or by an imported audit set (Mozilla, Google and others), or exempted; [supply-chain/README.md](supply-chain/README.md) says how to review or exempt one. A Dependabot PR that fails it is not merged automatically: whoever pushes the audit merges it. Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge. Each run's summary lists every open Dependabot PR and why it was or was not set to auto-merge; run the workflow by hand with **dry run** to see that list without changing anything.
 
 ### Releasing
 
@@ -70,7 +70,7 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | --- | --- |
 | Branch policy | `branch policy` (into `main`, only same-repo `release/*` and `hotfix/*`) |
 | CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)`, `browser (wasm smoke test)` |
-| Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `trivy (image + repo)` |
+| Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `cargo-vet`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
 If you rename a job, update the rulesets in the same PR and apply them once it is merged, or merges will block on a check that no longer exists.
@@ -91,7 +91,7 @@ mise run build          # release wasm build, as the CI wasm job does
 mise run build:budget   # then its size against .config/wasm-size-budget.toml
 mise run test:browser   # headless-browser smoke test against a running server (mise run serve:release)
 mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
-mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz, typos, shear
+mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, cooldown, vet, zizmor, scan:repo, fuzz, typos, shear
 ```
 
 Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise run sync` keeps `Cargo.toml`, `mise.lock` and the Dockerfile equal to it). `cargo nextest` is used for tests when installed, and `mise run coverage` needs `cargo-llvm-cov` (both in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.

@@ -18,6 +18,7 @@ node_modules
 # Not needed in the image (docs/ and *.md are kept: crates may include_str! them)
 Dockerfile
 tests/browser
+supply-chain
 /lcov.info
 
 # Local settings and secrets (mise, docker compose)
