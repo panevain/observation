@@ -684,9 +684,10 @@ fn finish_region(ui: &mut UiState, scene: &mut Scene) {
 /// cannot put one kilometres away.
 fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
     match area {
-        Some(a) => Vec2::from_array(p)
-            .clamp(a.layers.grid.min, a.layers.grid.max())
-            .to_array(),
+        Some(a) => {
+            let r = a.bounds();
+            Vec2::from_array(p).clamp(r.min, r.max).to_array()
+        }
         None => p,
     }
 }

@@ -35,7 +35,9 @@ pub struct WorldColors {
     /// Outline of the coverage region.
     pub region: Color32,
     /// Edge of the loaded area and the hatching beyond it, shown while
-    /// drawing a region.
+    /// drawing a region. Red, though the warm band belongs to the coverage
+    /// ramp: it only tints ground the overlay never paints, and the hatching
+    /// tells it apart without colour.
     pub outside_area: Color32,
     /// Buildings at the address picked with the Address tool.
     pub address: Color32,

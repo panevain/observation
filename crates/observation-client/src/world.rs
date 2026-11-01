@@ -3,7 +3,9 @@
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
-use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState};
+use crate::state::{
+    Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState, grid_bounds,
+};
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;
@@ -62,18 +64,19 @@ struct TileTextured;
 #[derive(Component)]
 pub struct FacadeOverlay;
 
-/// Tint over the ground beyond the loaded area, where nothing is analysed.
-/// Shown while the Region tool is on, with hatching and an edge drawn over it.
+/// Tint over the ground beyond the loaded area ([`Area::bounds`]), where
+/// nothing is analysed. Shown while the Region tool is on, with hatching and
+/// an edge drawn over it.
 #[derive(Component)]
 pub struct OutsideArea {
-    /// The loaded area (the coverage grid), world `[x, z]`.
-    pub inner: Rect,
-    /// The drawn ground around it: the map tiles' extent.
+    /// The drawn ground around the area: the map tiles' extent, world `[x, z]`.
     pub outer: Rect,
 }
 
-/// Opacity of the [`OutsideArea`] tint.
-const OUTSIDE_TINT_ALPHA: f32 = 0.15;
+/// Colour of the [`OutsideArea`] tint.
+fn outside_tint(tokens: &Tokens) -> Color {
+    to_bevy(tokens.world.outside_area).with_alpha(0.15)
+}
 
 /// The buildings at the address picked with the Address tool, drawn over the
 /// building mesh.
@@ -270,7 +273,7 @@ fn on_area_loaded(
     let z = zoom_for_bbox(&tile_bbox, MAX_GROUND_TILES, 19);
     let ground_tiles = tiles_covering(&tile_bbox, z);
     tiles.pin(ground_tiles.iter().copied());
-    let inner = Rect::from_corners(grid.min, grid.max());
+    let inner = grid_bounds(&grid);
     let mut outer = Rect::from_corners(gmin, gmax);
     for t in ground_tiles {
         let b = t.bounds();
@@ -287,7 +290,7 @@ fn on_area_loaded(
         ));
     }
     let outside = materials.add(StandardMaterial {
-        base_color: to_bevy(tokens.world.outside_area).with_alpha(OUTSIDE_TINT_ALPHA),
+        base_color: outside_tint(&tokens),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         depth_bias: 10.0,
@@ -295,7 +298,7 @@ fn on_area_loaded(
     });
     commands.spawn((
         AreaEntity,
-        OutsideArea { inner, outer },
+        OutsideArea { outer },
         Mesh3d(meshes.add(ground_frame(inner, outer, OVERLAY_Y_M))),
         MeshMaterial3d(outside.clone()),
         Visibility::Hidden,
@@ -385,8 +388,10 @@ fn on_area_loaded(
     let area = msg.request.area;
     if !msg.request.keep_cameras || scene.area != Some(area) {
         scene.cameras.clear();
-        // A region belongs to the area it was drawn on.
+        // A region belongs to the area it was drawn on, as does one being
+        // drawn.
         scene.region = None;
+        ui.region_draft.clear();
         ui.selected = None;
         if area == AreaRef::Demo {
             // A fresh demo street comes with example cameras to explore.
@@ -457,10 +462,7 @@ fn follow_theme(
     for (handle, color) in [
         (&world.building, to_bevy(tokens.world.building)),
         (&world.plain, to_bevy(tokens.world.ground)),
-        (
-            &world.outside,
-            to_bevy(tokens.world.outside_area).with_alpha(OUTSIDE_TINT_ALPHA),
-        ),
+        (&world.outside, outside_tint(&tokens)),
     ] {
         if let Some(mut mat) = materials.get_mut(handle) {
             mat.base_color = color;
