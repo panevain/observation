@@ -21,6 +21,8 @@ docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com ghcr.io/panevain/obs
 docker build -t observation . && docker run --rm -p 8080:8080 -e OBS_CONTACT=you@example.com observation   # or from source
 ```
 
+Released images are signed: from a checkout, `mise run verify ghcr.io/panevain/observation:<version>` checks one and prints it pinned by digest, which you can then `docker run` (see [SECURITY.md](SECURITY.md)).
+
 Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to OpenStreetMap services so they can reach you; set it to something real.
 
 ### Docker Compose, with local map data
