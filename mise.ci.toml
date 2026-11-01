@@ -83,12 +83,10 @@ flag "-C --dir <dir>" default="." help="Directory whose rust-toolchain.toml appl
 arg "[component]..." help="Extra components, such as llvm-tools-preview"
 '''
 run = '''
-#!/usr/bin/env bash
 # Swatinem/rust-cache hashes the `rustc -vV` of each installed toolchain into its cache key, and
 # the runner image's preinstalled stable changes with each image update, so leaving it there
 # gives jobs that run on different image versions different keys and makes them miss develop's
 # caches.
-set -euo pipefail
 [ "${CI:-}" = true ] || { echo "ci:toolchain uninstalls every other Rust toolchain, so it runs only in CI (CI=true)" >&2; exit 1; }
 cd "${usage_dir}"
 rustup toolchain install --profile minimal --no-self-update
@@ -145,8 +143,6 @@ run = "cargo-deny --locked check"
 description = "zizmor on .github (the workflows and dependabot.yml); its online audits use GH_TOKEN"
 usage = 'flag "--sarif <file>" help="Also write the findings as SARIF to FILE, without failing on them; the plain run after it sets the exit status"'
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 if [ -n "${usage_sarif:-}" ]; then zizmor --format sarif --no-exit-codes .github > "${usage_sarif}"; fi
 zizmor .github
 '''
@@ -155,8 +151,6 @@ zizmor .github
 description = "Trivy on the repository: Cargo.lock vulnerabilities, Dockerfile misconfiguration and committed secrets; a fixable CRITICAL or HIGH finding fails"
 usage = 'flag "--sarif <file>" help="Write SARIF to FILE instead of a table"'
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 trivy fs --scanners vuln,misconfig,secret --severity CRITICAL,HIGH --ignore-unfixed \
   --skip-dirs target,dist,.git --exit-code 1 ${usage_sarif:+--format sarif --output "${usage_sarif}"} .
 '''
@@ -168,8 +162,6 @@ arg "<image>" help="Image in the local Docker daemon, such as observation:scan"
 flag "--sarif <file>" help="Write SARIF to FILE instead of a table"
 '''
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 trivy image --image-src docker --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed \
   --exit-code 1 ${usage_sarif:+--format sarif --output "${usage_sarif}"} "${usage_image}"
 '''
@@ -178,8 +170,6 @@ trivy image --image-src docker --scanners vuln --severity CRITICAL,HIGH --ignore
 description = "Fail unless Trivy sees the Rust crates in an image's binaries; without cargo auditable, the image scan covers only the Debian packages"
 usage = 'arg "<image>" help="Image in the local Docker daemon"'
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 n="$(trivy image --image-src docker --scanners vuln --list-all-pkgs --format json --quiet "${usage_image}" |
   jq '[.Results[]? | select(.Type == "rustbinary") | .Packages[]?] | length')"
 echo "Rust crates seen in ${usage_image}: ${n}"
@@ -190,8 +180,6 @@ echo "Rust crates seen in ${usage_image}: ${n}"
 description = "Check that fuzz/Cargo.lock is current, then build every fuzz target (with fuzz/rust-toolchain.toml's nightly)"
 dir = "{{config_root}}/fuzz"
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 cargo metadata --locked --format-version 1 > /dev/null
 cargo fuzz build
 '''
@@ -204,8 +192,6 @@ arg "[seconds]" default="30" help="Seconds to fuzz each target"
 flag "--nightly" help="The nightly run's times: bbox_query 60 s, whose coverage stops growing within a minute (a small parser at ~250k execs/s), and coverage_geometry 900 s (a few hundred execs/s)"
 '''
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 secs="${usage_seconds}"
 [[ "${secs}" =~ ^[0-9]+$ ]] || { echo "seconds must be a whole number, not '${secs}'" >&2; exit 1; }
 for t in $(cargo fuzz list); do

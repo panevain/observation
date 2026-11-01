@@ -10,12 +10,14 @@
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start. Docker Compose settings are on the
 # `up` task below; its tokens are fnox secrets (fnox.toml; values in the gitignored
-# fnox.local.toml).
+# fnox.local.toml). The local development stack (`mise run dev`) is in mise.dev.toml, which
+# .miserc.toml loads by default.
 
-# The CI mise version (.github/actions/setup-mise, which the Pins workflow bumps along with this
-# line; mise run sync checks they agree). An older mise warns: some settings and task features
-# here are recent.
-min_version = { soft = "2026.10.18" }
+# hard: the oldest mise that reads this config correctly (2026.7.15 added [task_config] shell;
+# an older one would ignore it and run the task scripts under sh). soft: the CI mise version
+# (.github/actions/setup-mise, which the Pins workflow bumps along with this value; mise run sync
+# checks they agree); an older mise warns.
+min_version = { hard = "2026.7.15", soft = "2026.10.18" }
 
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
@@ -29,6 +31,12 @@ idiomatic_version_file_enable_tools = ["rust"]
 minimum_release_age = "7d"
 # Don't report installs to mise-versions.jdx.dev (download statistics).
 use_versions_host_track = false
+
+[task_config]
+# Every inline task script in this directory's mise files (mise.ci.toml, mise.dev.toml and your
+# gitignored mise.local.toml too) runs under bash with errexit, nounset and pipefail, so the
+# scripts need no shebang or `set` line of their own. A task's own `shell` or shebang opts out.
+shell = "bash -o errexit -o nounset -o pipefail -c"
 
 [tool_alias]
 # The registry's `trunk` is a different tool (Trunk.io's launcher).
@@ -89,7 +97,7 @@ run = "scripts/check-toolchain-sync.sh"
 description = "Refresh mise.lock and mise.ci.lock (checksums for every platform they list) after changing a tool in mise.toml or mise.ci.toml"
 # Under MISE_ENV=ci, `mise lock` writes both: each tool into the lockfile beside the file that
 # declares it.
-run = "MISE_ENV=ci {{mise_bin}} lock"
+run = "MISE_ENV=ci {{mise_bin | quote}} lock"
 
 [tasks.treemap]
 description = "Regenerate docs/images/wasm-bundle-treemap.svg (fat-LTO build, 15-20 minutes)"
@@ -101,6 +109,8 @@ run = "trunk build --release --locked"
 
 [tasks."build:sizes"]
 description = "Sizes of dist/*.wasm (raw, gzip -9 and, if brotli is installed, brotli -q 11) as a Markdown table"
+# A shebang: mise appends extra arguments to the text of an inline script, which would break
+# the closing `done`; a script file gets them as ignored arguments instead.
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -120,7 +130,7 @@ description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `m
 run = 'python3 scripts/check-wasm-size.py ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
 
 [tasks."test:browser"]
-description = "Headless-browser smoke test of the client against a running server (OBS_URL, default http://127.0.0.1:8080; start one with `mise run serve:release`). Needs Node.js and Chrome (or CHROME_PATH)"
+description = "Headless-browser smoke test of the client against a running server (OBS_URL, default http://127.0.0.1:8080; start one with `mise run serve --release`). Needs Node.js and Chrome (or CHROME_PATH)"
 dir = "{{config_root}}/tests/browser"
 run = [
   "npm ci --ignore-scripts --no-audit --no-fund",
@@ -132,14 +142,19 @@ description = "Fast unoptimised wasm client build into dist/"
 run = "trunk build --locked"
 
 [tasks.serve]
-description = "Dev-build the client, then run the server from the repo root"
-depends = ["build:dev"]
-run = "cargo run --locked -p observation-server"
+description = "Dev-build the client, then run the server from the repo root (`--release` builds both for release)"
+usage = 'flag "--release" help="Release-build the client and the server, as CI does"'
+# The client build is a step, not a templated `depends` entry, which `mise tasks validate`
+# can't resolve to a task.
+run = [
+  "trunk build --locked{% if usage.release %} --release{% endif %}",
+  "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}",
+]
 
+# The old name for `serve --release`. An alias can't pass the flag, so this is a task.
 [tasks."serve:release"]
-description = "Release-build the client, then run the server"
-depends = ["build"]
-run = "cargo run --locked --release -p observation-server"
+hide = true
+run = [{ task = "serve", args = ["--release"] }]
 
 [tasks.verify]
 description = "Check that a published image was signed and attested by Release on its release tag; prints it pinned by digest (scripts/verify-image.sh)"
@@ -159,8 +174,6 @@ tools.fnox = "1.42.1"
 tools.cosign = "3.1.3"
 usage = 'flag "--build" help="Build both images from this checkout (tagged :local) instead of pulling OBS_VERSION"'
 run = '''
-#!/usr/bin/env bash
-set -euo pipefail
 if [ "${usage_build:-false}" = true ]; then
   OBS_VERSION=local OBS_IMAGE= OBS_REGIONS_IMAGE= fnox exec -- docker compose up -d --build
 else
@@ -221,8 +234,15 @@ run = "scripts/rulesets.sh check"
 
 [tasks."rulesets:apply"]
 description = "Create or update the live rulesets from .github/rulesets/ (repository admin; `mise run rulesets:apply --prune` also deletes live ones with no file)"
+confirm = { message = "Change the live rulesets on GitHub?", default = "no" }
 run = "scripts/rulesets.sh apply"
 
+[tasks."tasks:validate"]
+description = "Check the task definitions of the selected environments (references, usage specs, templates); CI checks ci and dev"
+# The current environment only (dev by default), so `check` never loads mise.ci.toml, which
+# paranoid trust would then refuse. CI runs this with MISE_ENV=ci,dev to cover all three files.
+run = "{{mise_bin | quote}} tasks validate"
+
 [tasks.check]
-description = "fmt, clippy, tests, design tokens and version sync (the non-Docker CI checks; build is separate)"
-depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens", "sync"]
+description = "fmt, clippy, tests, design tokens, version sync and task definitions (the non-Docker CI checks; build is separate)"
+depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens", "sync", "tasks:validate"]
