@@ -11,6 +11,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
+use observation_core::geo::{MAX_BBOX_SIDE_M, MIN_BBOX_SIDE_M};
 use observation_core::regions::{ActionKind, RegionAction, SizesRequest};
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
@@ -27,18 +28,60 @@ enum Request {
     RegionsSizes(Vec<String>),
 }
 
-/// Settings published by the server at `/api/config`.
+/// Settings published by the server at `/api/config`. Until it answers, and
+/// for any field it leaves out or gets wrong, this build's own values apply.
 #[derive(Debug, Resource)]
 pub struct ServerConfig {
     /// Attribution required by the configured tile provider.
     pub tile_attribution: String,
+    /// Tile URL template with `{z}`, `{x}` and `{y}` placeholders.
+    pub tile_url: String,
+    /// Side limits of an area the server will load, metres.
+    pub min_bbox_side_m: f64,
+    pub max_bbox_side_m: f64,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             tile_attribution: "© OpenStreetMap contributors".to_owned(),
+            tile_url: "/api/tiles/{z}/{x}/{y}.png".to_owned(),
+            min_bbox_side_m: MIN_BBOX_SIDE_M,
+            max_bbox_side_m: MAX_BBOX_SIDE_M,
         }
+    }
+}
+
+impl ServerConfig {
+    /// Takes the fields of a `/api/config` body that are present and sane.
+    fn apply(&mut self, v: &serde_json::Value) {
+        let text = |k: &str| v.get(k).and_then(serde_json::Value::as_str);
+        if let Some(a) = text("attribution").filter(|a| !a.is_empty()) {
+            a.clone_into(&mut self.tile_attribution);
+        }
+        // A same-origin path with every placeholder.
+        if let Some(u) = text("tile_url").filter(|u| {
+            u.starts_with('/')
+                && !u.starts_with("//")
+                && ["{z}", "{x}", "{y}"].iter().all(|p| u.contains(p))
+        }) {
+            u.clone_into(&mut self.tile_url);
+        }
+        // An older server publishes only the maximum.
+        let side = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
+        let min = side("min_bbox_side_m").unwrap_or(self.min_bbox_side_m);
+        let max = side("max_bbox_side_m").unwrap_or(self.max_bbox_side_m);
+        if min.is_finite() && max.is_finite() && 0.0 < min && min <= max {
+            self.min_bbox_side_m = min;
+            self.max_bbox_side_m = max;
+        }
+    }
+
+    pub fn tile_url(&self, t: TileId) -> String {
+        self.tile_url
+            .replace("{z}", &t.z.to_string())
+            .replace("{x}", &t.x.to_string())
+            .replace("{y}", &t.y.to_string())
     }
 }
 
@@ -112,10 +155,6 @@ pub fn area_url(area: &AreaRef) -> String {
             bbox.south, bbox.west, bbox.north, bbox.east
         ),
     }
-}
-
-pub fn tile_url(t: TileId) -> String {
-    format!("/api/tiles/{}/{}/{}.png", t.z, t.x, t.y)
 }
 
 /// State of one map tile.
@@ -220,11 +259,11 @@ fn start_area_loads(
     }
 }
 
-fn pump_tiles(net: Res<Net>, mut tiles: ResMut<Tiles>) {
+fn pump_tiles(net: Res<Net>, mut tiles: ResMut<Tiles>, config: Res<ServerConfig>) {
     while tiles.in_flight < MAX_IN_FLIGHT {
         let Some(t) = tiles.queue.pop() else { break };
         tiles.in_flight += 1;
-        net.get(tile_url(t), Request::Tile(t));
+        net.get(config.tile_url(t), Request::Tile(t));
     }
 }
 
@@ -295,11 +334,8 @@ fn drain_replies(
             Request::Config => {
                 let v: Option<serde_json::Value> =
                     res.ok().and_then(|b| serde_json::from_slice(&b).ok());
-                let attribution = v
-                    .as_ref()
-                    .and_then(|v| v.get("attribution")?.as_str().map(str::to_owned));
-                if let Some(a) = attribution.filter(|a| !a.is_empty()) {
-                    config.tile_attribution = a;
+                if let Some(v) = &v {
+                    config.apply(v);
                 }
                 let has_regions = v
                     .as_ref()
@@ -567,4 +603,65 @@ fn spawn_event_source(_: &str, _: &str, on: impl Fn(Result<Vec<u8>, String>) + '
     on(Err(
         "live updates are only available in the browser build".to_owned()
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn applied(v: &serde_json::Value) -> ServerConfig {
+        let mut c = ServerConfig::default();
+        c.apply(v);
+        c
+    }
+
+    #[test]
+    fn takes_the_servers_limits_and_tile_url() {
+        let c = applied(&json!({
+            "attribution": "© Someone",
+            "tile_url": "/tiles/{z}/{y}/{x}.png",
+            "min_bbox_side_m": 50.0,
+            "max_bbox_side_m": 1000.0,
+        }));
+        assert_eq!(c.tile_attribution, "© Someone");
+        assert_eq!((c.min_bbox_side_m, c.max_bbox_side_m), (50.0, 1000.0));
+        let t = TileId::new(18, 130_000, 87_000).unwrap();
+        assert_eq!(c.tile_url(t), "/tiles/18/87000/130000.png");
+        assert_eq!(
+            ServerConfig::default().tile_url(t),
+            "/api/tiles/18/130000/87000.png"
+        );
+    }
+
+    #[test]
+    fn an_older_server_without_a_minimum_keeps_ours() {
+        let c = applied(&json!({ "max_bbox_side_m": 400.0 }));
+        assert_eq!(
+            (c.min_bbox_side_m, c.max_bbox_side_m),
+            (MIN_BBOX_SIDE_M, 400.0)
+        );
+    }
+
+    #[test]
+    fn ignores_values_that_make_no_sense() {
+        let d = ServerConfig::default();
+        for v in [
+            json!({ "min_bbox_side_m": 600.0, "max_bbox_side_m": 500.0 }),
+            json!({ "min_bbox_side_m": 0.0 }),
+            json!({ "max_bbox_side_m": -1.0 }),
+            json!({ "max_bbox_side_m": 10.0 }),
+            json!({ "max_bbox_side_m": "500" }),
+            json!({ "tile_url": "https://elsewhere.example/{z}/{x}/{y}.png" }),
+            json!({ "tile_url": "//elsewhere.example/{z}/{x}/{y}.png" }),
+            json!({ "tile_url": "/api/tiles/{z}/{x}.png" }),
+            json!({ "attribution": "" }),
+        ] {
+            let c = applied(&v);
+            assert_eq!(c.min_bbox_side_m, d.min_bbox_side_m, "{v}");
+            assert_eq!(c.max_bbox_side_m, d.max_bbox_side_m, "{v}");
+            assert_eq!(c.tile_url, d.tile_url, "{v}");
+            assert_eq!(c.tile_attribution, d.tile_attribution, "{v}");
+        }
+    }
 }

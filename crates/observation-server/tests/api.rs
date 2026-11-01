@@ -260,6 +260,7 @@ async fn config_endpoint() {
     let v = json(&body);
     assert_eq!(v["tile_url"], "/api/tiles/{z}/{x}/{y}.png");
     assert_eq!(v["attribution"], "© OpenStreetMap contributors");
+    assert_eq!(v["min_bbox_side_m"], 20.0);
     assert_eq!(v["max_bbox_side_m"], 500.0);
     assert_eq!(v["demo_available"], true);
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));

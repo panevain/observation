@@ -1,7 +1,7 @@
 //! 2D slippy-map dialog for choosing the area to load.
 
 use super::widgets::{hint, primary, secondary};
-use crate::net::Tiles;
+use crate::net::{ServerConfig, Tiles};
 use crate::theme::{IMAGE_TINT, Tokens};
 use bevy::asset::Handle;
 use bevy::image::Image;
@@ -9,7 +9,7 @@ use bevy::prelude::Resource;
 use bevy_egui::egui::{
     self, Align2, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, vec2,
 };
-use observation_core::geo::{BBox, LatLon, MAX_BBOX_SIDE_M, MIN_BBOX_SIDE_M};
+use observation_core::geo::{BBox, LatLon};
 use observation_core::tiles::{TileId, lat_to_y, lon_to_x, x_to_lon, y_to_lat};
 
 const TILE_PX: f64 = 256.0;
@@ -135,16 +135,18 @@ impl MapPicker {
     }
 }
 
-/// Validation message for a selection, or `None` if it can be loaded.
-fn problem(b: &BBox) -> Option<String> {
+/// Validation message for a selection against the server's side limits, or
+/// `None` if it can be loaded.
+fn problem(b: &BBox, c: &ServerConfig) -> Option<String> {
     let (w, h) = (b.width_m(), b.height_m());
-    if w > MAX_BBOX_SIDE_M || h > MAX_BBOX_SIDE_M {
+    let (min, max) = (c.min_bbox_side_m, c.max_bbox_side_m);
+    if w > max || h > max {
         Some(format!(
-            "Too large: {w:.0} × {h:.0} m, but sides must be ≤ {MAX_BBOX_SIDE_M:.0} m"
+            "Too large: {w:.0} × {h:.0} m, but sides must be ≤ {max:.0} m"
         ))
-    } else if w < MIN_BBOX_SIDE_M || h < MIN_BBOX_SIDE_M {
+    } else if w < min || h < min {
         Some(format!(
-            "Too small: {w:.0} × {h:.0} m, but sides must be ≥ {MIN_BBOX_SIDE_M:.0} m"
+            "Too small: {w:.0} × {h:.0} m, but sides must be ≥ {min:.0} m"
         ))
     } else {
         None
@@ -228,10 +230,12 @@ pub fn window(
     p: &mut MapPicker,
     tile_draws: &[TileDraw],
     local: &[(String, BBox)],
-    attribution: &str,
+    config: &ServerConfig,
     open: &mut bool,
 ) -> Option<BBox> {
     let mut result = None;
+    let max = config.max_bbox_side_m;
+    let square = DEFAULT_SIDE_M.clamp(config.min_bbox_side_m, max);
     let screen = ctx.viewport_rect();
     let size = vec2(
         (screen.width() * 0.8).min(1100.0),
@@ -270,7 +274,7 @@ pub fn window(
                 ui,
                 t,
                 &format!(
-                    "Drag to pan, scroll to zoom. Turn on Draw area (or hold Shift) and drag to draw a box up to {MAX_BBOX_SIDE_M:.0} m × {MAX_BBOX_SIDE_M:.0} m."
+                    "Drag to pan, scroll to zoom. Turn on Draw area (or hold Shift) and drag to draw a box up to {max:.0} m × {max:.0} m."
                 ),
             );
             ui.add_space(t.space.xs);
@@ -355,7 +359,7 @@ pub fn window(
                     view.screen_of(LatLon::new(b.north, b.west)),
                     view.screen_of(LatLon::new(b.south, b.east)),
                 );
-                let bad = problem(&b).is_some();
+                let bad = problem(&b, config).is_some();
                 let col = if bad { t.danger } else { t.selection_box };
                 painter.rect_filled(r, 0.0, col.gamma_multiply(0.15));
                 painter.rect_stroke(r, 0.0, Stroke::new(t.stroke_width * 2.0, col), StrokeKind::Middle);
@@ -368,7 +372,7 @@ pub fn window(
                 );
             }
             // Attribution (required by the tile policy).
-            let galley = painter.layout_no_wrap(attribution.to_owned(), egui::FontId::proportional(t.font.caption), t.text);
+            let galley = painter.layout_no_wrap(config.tile_attribution.clone(), egui::FontId::proportional(t.font.caption), t.text);
             let ar = Rect::from_min_size(rect.right_bottom() - galley.size() - vec2(t.space.sm, t.space.xs) * 2.0, galley.size() + vec2(t.space.sm, t.space.xs) * 2.0);
             painter.rect_filled(ar, CornerRadius::same(t.radius.sm), t.surface_raised.gamma_multiply(0.85));
             painter.galley(ar.min + vec2(t.space.sm, t.space.xs), galley, t.text);
@@ -386,10 +390,11 @@ pub fn window(
                 if ui.add(secondary(t, draw_label)).on_hover_text("Drag on the map to draw a box (Shift)").clicked() {
                     p.draw_mode = !p.draw_mode;
                 }
-                if ui.add(secondary(t, "Square here")).on_hover_text("A 300 m box at the map centre").clicked() {
-                    p.selection = Some(BBox::around(p.center, DEFAULT_SIDE_M));
+                if ui.add(secondary(t, "Square here")).on_hover_text(format!("A {square:.0} m box at the map centre")).clicked() {
+                    p.selection = Some(BBox::around(p.center, square));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let problem = |b: &BBox| problem(b, config);
                     let valid = p.selection.filter(|b| problem(b).is_none());
                     if ui.add_enabled(valid.is_some(), primary(t, "Load area")).clicked() {
                         result = valid;
