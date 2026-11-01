@@ -449,7 +449,7 @@ There are no accounts, sessions or personal data. The assets worth protecting ar
 
 ## Privacy and network traffic
 
-Observation has no telemetry: no analytics, crash reporting, usage pings, update checks, accounts or cookies, in the app or the server. The only network traffic is what the feature in use needs, listed below. This was audited against the sources of the pinned dependencies and tools, and the CI-side opt-outs were verified against the real Trivy and trunk binaries.
+Observation has no telemetry: no analytics, crash reporting, usage pings, update checks, accounts or cookies, in the app or the server. The only network traffic is what the feature in use needs, listed below. This was audited against the sources of the pinned dependencies and tools, and the CI-side opt-outs were verified against the real Trivy and trunk binaries at the versions pinned at the time.
 
 ### Runtime
 
@@ -472,12 +472,12 @@ Upstream services see the server's IP address and the server's `User-Agent`. The
 
 ### Build, CI and development tools
 
-Versions are not repeated here: each tool is pinned in `mise.toml` or `mise.ci.toml` (mise itself in `.github/actions/setup-mise`).
+Versions are not repeated here. The tools mise installs are pinned in `mise.toml` or `mise.ci.toml`, mise itself in `.github/actions/setup-mise`, Rust in `rust-toolchain.toml`, and the actions by commit SHA in the workflows. Recheck a row when a bump changes that tool.
 
 | Tool | Destination | What is sent | Status |
 | --- | --- | --- | --- |
 | trunk (Docker build, CI, local) | `crates.io` API | A once-per-interval check for a newer trunk | Off: `TRUNK_SKIP_VERSION_CHECK=true` in the `Dockerfile` builder stage and in `mise.toml`'s `[env]` (every build through mise, local or CI). It is a CLI option or environment variable only (not available in `Trunk.toml`), so set it in your own shell for builds without mise |
-| trunk | `github.com` releases of wasm-bindgen and binaryen (`wasm-opt`) | Plain downloads | Required for the build. wasm-bindgen's version is taken from `Cargo.lock` (and so already pinned); `wasm-opt`'s default version is fixed by the pinned trunk. Pinning them in `Trunk.toml` would add a second place to update. trunk's source (`src/tools.rs`) has no checksum check for these downloads, so treat them as trusted-by-TLS only |
+| trunk | `github.com` releases of wasm-bindgen and binaryen (`wasm-opt`) | Plain downloads | Required for the build. wasm-bindgen's version is taken from `Cargo.lock` (and so already pinned); `wasm-opt`'s default version is fixed by the pinned trunk. Pinning them in `Trunk.toml` would add a second place to update. trunk's source (`src/tools.rs`) had no checksum check for these downloads when this was audited, so treat them as trusted-by-TLS only |
 | cargo, rustup | `crates.io` index and `static.rust-lang.org` | Package and toolchain downloads | No telemetry. CI and the Dockerfile pass `--no-self-update` to rustup |
 | Trivy (`security.yml`, `release.yml`, `release-watch.yml`, `hotfix.yml`) | `check.trivy.dev/updates` | Version check plus anonymous usage data | Off: `TRIVY_DISABLE_TELEMETRY=true` and `TRIVY_SKIP_VERSION_CHECK=true` (`[env]` in `mise.ci.toml`). Confirmed with the real binary: its debug log says "Version check and telemetry are disabled, skipping request" |
 | Trivy | `ghcr.io/aquasecurity/trivy-db`, `mirror.gcr.io/aquasec/trivy-db` and `trivy-checks`; `release-watch.yml` and `hotfix.yml` also pull the published images and base images from `ghcr.io` and `gcr.io` | Downloads of the vulnerability database, rules and images | Required for scanning |

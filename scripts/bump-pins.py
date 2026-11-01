@@ -199,9 +199,7 @@ def bump_rust(f, out):
     f.sub("rust-toolchain.toml", r'^channel = "[^"]+"', f'channel = "{v}"')
     f.sub("Cargo.toml", r'^rust-version = "[^"]+"', f'rust-version = "{v}"')
     f.sub("Dockerfile", r"^FROM rust:[0-9.]+-slim-\w+@sha256:[0-9a-f]{64} AS chef$", f"FROM {image}@{digest} AS chef")
-    f.sub("Dockerfile", r"Rust [0-9.]+ on Debian", f"Rust {v} on Debian")
     f.sub("Dockerfile", r"imagetools inspect rust:[0-9.]+-slim-\w+$", f"imagetools inspect {image}")
-    f.sub("docs/design.md", r"`rust:[0-9.]+-slim-\w+`", f"`{image}`")
     out.append(("Rust", cur, v))
 
 
