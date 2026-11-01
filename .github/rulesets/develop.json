@@ -65,11 +65,19 @@
             "integration_id": 15368
           },
           {
+            "context": "hygiene (typos, unused deps)",
+            "integration_id": 15368
+          },
+          {
             "context": "wasm (trunk build)",
             "integration_id": 15368
           },
           {
             "context": "docker (build + smoke test)",
+            "integration_id": 15368
+          },
+          {
+            "context": "browser (wasm smoke test)",
             "integration_id": 15368
           },
           {
@@ -82,6 +90,14 @@
           },
           {
             "context": "cargo-audit",
+            "integration_id": 15368
+          },
+          {
+            "context": "cargo-cooldown",
+            "integration_id": 15368
+          },
+          {
+            "context": "cargo-vet",
             "integration_id": 15368
           },
           {

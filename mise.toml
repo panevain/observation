@@ -34,6 +34,8 @@ use_versions_host_track = false
 # The registry's `trunk` is a different tool (Trunk.io's launcher).
 trunk = "github:trunk-rs/trunk"
 fnox = "github:jdx/fnox"
+# Also CI's (mise.ci.toml [tools]); here for the verify and up tasks.
+cosign = "aqua:sigstore/cosign"
 
 [tools]
 # mise.lock records the release checksums; the Dockerfile installs trunk from it.
@@ -113,6 +115,18 @@ for f in dist/*.wasm; do
 done
 '''
 
+[tasks."build:budget"]
+description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `mise run build`)"
+run = 'python3 scripts/check-wasm-size.py ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+
+[tasks."test:browser"]
+description = "Headless-browser smoke test of the client against a running server (OBS_URL, default http://127.0.0.1:8080; start one with `mise run serve:release`). Needs Node.js and Chrome (or CHROME_PATH)"
+dir = "{{config_root}}/tests/browser"
+run = [
+  "npm ci --ignore-scripts --no-audit --no-fund",
+  "node smoke.cjs",
+]
+
 [tasks."build:dev"]
 description = "Fast unoptimised wasm client build into dist/"
 run = "trunk build --locked"
@@ -127,16 +141,36 @@ description = "Release-build the client, then run the server"
 depends = ["build"]
 run = "cargo run --locked --release -p observation-server"
 
+[tasks.verify]
+description = "Check that a published image was signed and attested by Release on its release tag; prints it pinned by digest (scripts/verify-image.sh)"
+# A task tool (installed and locked for this task only), at CI's cosign version (mise.ci.toml;
+# `mise run sync` checks they agree, and the Pins workflow moves them together).
+tools.cosign = "3.1.3"
+usage = '''
+arg "<image>" help="ghcr.io/panevain/observation or ghcr.io/panevain/observation-regions, with :TAG or @sha256:DIGEST"
+arg "[ref]" help="The ref Release must have run on (default: refs/tags/vX.Y.Z for :X.Y.Z, any release tag for :latest)"
+'''
+run = 'scripts/verify-image.sh "${usage_image}" ${usage_ref:+"${usage_ref}"}'
+
 [tasks.up]
-description = "Start the Docker Compose stack (app + region agent) from the released images, with the fnox secrets"
-# A task tool: installed and locked for this task only, so `mise install` and CI skip it.
+description = "Start the Docker Compose stack (app + region agent) from the released images, checked against their signatures, with the fnox secrets"
+# Task tools: installed and locked for this task only, so `mise install` and CI skip them.
 tools.fnox = "1.42.1"
+tools.cosign = "3.1.3"
 usage = 'flag "--build" help="Build both images from this checkout (tagged :local) instead of pulling OBS_VERSION"'
 run = '''
+#!/usr/bin/env bash
+set -euo pipefail
 if [ "${usage_build:-false}" = true ]; then
-  OBS_VERSION=local fnox exec -- docker compose up -d --build
+  OBS_VERSION=local OBS_IMAGE= OBS_REGIONS_IMAGE= fnox exec -- docker compose up -d --build
 else
-  fnox exec -- docker compose up -d --pull always
+  # Each image must carry Release's signature and provenance for OBS_VERSION's tag, and runs by
+  # the digest that was checked, so a tag moved in between is never pulled. A patch release
+  # reaches a running stack with another `mise run up`.
+  OBS_IMAGE="$(scripts/verify-image.sh "ghcr.io/panevain/observation:${OBS_VERSION}")"
+  OBS_REGIONS_IMAGE="$(scripts/verify-image.sh "ghcr.io/panevain/observation-regions:${OBS_VERSION}")"
+  export OBS_IMAGE OBS_REGIONS_IMAGE
+  fnox exec -- docker compose up -d --pull missing
 fi
 '''
 

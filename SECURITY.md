@@ -77,11 +77,28 @@ versions or modified deployments.
 Every change is checked automatically (see `.github/workflows/`):
 
 - **cargo-deny** (`deny.toml`): RustSec advisories, yanked crates, licence
-  allow-list, banned or wildcard dependencies, and allowed crate sources.
+  allow-list, banned or wildcard dependencies, and allowed crate sources. The
+  ban list keeps TLS rustls-only (no OpenSSL or native-tls, as crates or as
+  reqwest features), keeps outbound HTTP inside `observation-upstream`'s
+  SSRF-guarded client (only it, the server and the region agent may depend on
+  reqwest), and refuses crates that fetch code at build time.
+- **cargo-vet** (`supply-chain/`): every crate version in the tree of the
+  server, the region agent and `observation-core` has been audited, by us or
+  in an imported audit set (Mozilla, Google, the Bytecode Alliance, Embark,
+  ISRG, Zcash), or is an exemption recorded when vetting started. A new
+  version nobody has reviewed fails the check until someone does. The client's
+  own Bevy tree is not vetted yet (see `supply-chain/README.md`).
+- **cargo-shear** reports dependencies that no code uses, in both workspaces, so
+  nothing sits in the tree (and the audit surface) for no reason.
 - **cargo-audit**: `Cargo.lock` and the fuzz
   workspace's `fuzz/Cargo.lock`, on every change and daily; yanked crates fail too.
   Accepted advisories need a reason in `deny.toml` and are mirrored in
   `.cargo/audit.toml` and `osv-scanner.toml`.
+- **Crate cooldown** (`.config/cargo-cooldown.toml`): every crate version a pull
+  request adds to either lockfile, including indirect dependencies, must have
+  been published at least 7 days earlier, as Dependabot's cooldown requires
+  only of the crate it bumps. Fixes for RustSec vulnerabilities are exempt;
+  other exemptions need a reason.
 - **Trivy**: scans the container image's
   operating system packages and the server binary's crates (the binaries are built
   with `cargo auditable`, which embeds their dependency list; the static client,
@@ -108,12 +125,24 @@ Every change is checked automatically (see `.github/workflows/`):
   `observation-regions`) carry SLSA build provenance and an SBOM, are signed
   keylessly with cosign, and are attested with GitHub artifact attestations. A
   release is published only from a tag on `main` that passes the advisory check,
-  a smoke test and the Trivy gate; its GitHub release is immutable. Verify with
-  (likewise for `observation-regions`):
+  a smoke test and the Trivy gate; its GitHub release is immutable. Images are
+  published only from a push to `develop` (`:devel`) or a `v*` tag, and each one
+  is verified as below before the workflow finishes.
+
+  Verify an image against the **tag it was released from**, not just the
+  workflow: the signing identity is `release.yml@<ref>`, and an identity that
+  matches `release.yml@` alone would also accept an image signed by a copy of
+  the workflow pushed on a branch. Only admins and the release bot can create
+  `v*` tags, and nobody can move them. From a checkout,
+  `mise run verify ghcr.io/panevain/observation:<version>` runs both checks and
+  prints the image pinned by digest (`mise run up` does this for both images and
+  runs them by that digest). By hand (likewise for `observation-regions`):
 
   ```sh
-  gh attestation verify oci://ghcr.io/panevain/observation:<tag> --repo panevain/observation
-  cosign verify ghcr.io/panevain/observation:<tag> \
-    --certificate-identity-regexp '^https://github.com/panevain/observation/\.github/workflows/release\.yml@' \
+  cosign verify ghcr.io/panevain/observation:<version> \
+    --certificate-identity 'https://github.com/panevain/observation/.github/workflows/release.yml@refs/tags/v<version>' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  gh attestation verify oci://ghcr.io/panevain/observation:<version> --repo panevain/observation \
+    --cert-identity 'https://github.com/panevain/observation/.github/workflows/release.yml@refs/tags/v<version>' \
+    --source-ref refs/tags/v<version> --deny-self-hosted-runners
   ```

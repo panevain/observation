@@ -17,7 +17,6 @@ path = "src/bin/coverage_worker.rs"
 [dependencies]
 observation-core.workspace = true
 observation-tokens.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 bevy = { workspace = true, features = [
     "std",
@@ -95,6 +94,7 @@ web-sys = { version = "0.3", features = [
     "DedicatedWorkerGlobalScope",
     "ErrorEvent",
 ] }
+# Not used in code: it selects getrandom's browser backend (wasm_js) for the crates that use it.
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -102,3 +102,7 @@ bevy = { workspace = true, features = ["x11"] }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-shear]
+# getrandom is a feature switch (see above), which cargo-shear cannot see.
+ignored = ["getrandom"]
