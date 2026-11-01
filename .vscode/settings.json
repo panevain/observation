@@ -1,0 +1,64 @@
+{
+  // Group a config file's companions (locks, local overrides, related tool configs) under it.
+  // Patterns match within the same directory, so fuzz/Cargo.toml nests its own lock and toolchain.
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.expand": false,
+  "explorer.fileNesting.patterns": {
+    "Cargo.toml": "Cargo.lock, rust-toolchain.toml, clippy.toml, rustfmt.toml, .rustfmt.toml, deny.toml, osv-scanner.toml",
+    "Trunk.toml": "Trunk.*.toml",
+    "fnox.toml": "fnox.*.toml, .fnox.toml, .fnox.*.toml",
+    "mise.toml": "mise.*.toml, mise.lock, mise.*.lock, .mise.toml, .mise.*.toml, mise.local.toml.example",
+    "Dockerfile": "Dockerfile.*, *.Dockerfile, *.dockerfile, .dockerignore, compose.yaml, compose.*.yaml, compose.yml, compose.*.yml, docker-compose*.yaml, docker-compose*.yml",
+    "package.json": "package-lock.json, .npmrc, .nvmrc",
+    "README.md": "CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE*",
+    ".env": ".env.*"
+  },
+
+  // Rust
+  "rust-analyzer.check.command": "clippy",
+  // Its own target dir, so on-save checks don't hold the build lock that `cargo` / `trunk` need.
+  "rust-analyzer.cargo.targetDir": true,
+  "rust-analyzer.files.exclude": ["dist", "cache", "node_modules", "tests/browser/node_modules"],
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true,
+    "editor.rulers": [100]
+  },
+
+  // TOML
+  "evenBetterToml.formatter.reorderKeys": false,
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml",
+    "editor.formatOnSave": false
+  },
+
+  // .editorconfig covers indentation and whitespace; these keep the editor from fighting it.
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "[markdown]": {
+    "files.trimTrailingWhitespace": false
+  },
+  "files.associations": {
+    // Cargo.lock, mise*.lock and supply-chain/imports.lock are all TOML.
+    "*.lock": "toml",
+    "mise.local.toml.example": "toml"
+  },
+
+  // Build output and caches: keep them out of search and the file watcher.
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/dist/**": true,
+    "**/cache/**": true,
+    "**/node_modules/**": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/dist": true,
+    "**/cache": true,
+    "**/node_modules": true,
+    "**/*.lock": true,
+    "**/package-lock.json": true,
+    "lcov.info": true
+  }
+}

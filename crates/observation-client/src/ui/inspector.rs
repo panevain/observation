@@ -1,15 +1,16 @@
-//! Right-hand inspector: coverage summary, analysis settings, cameras.
+//! Right-hand inspector: a coverage summary that stays in view, then tabs
+//! for the camera list, the selected camera and the analysis settings.
 
 use super::UiData;
 use super::actions::{self, CameraAction};
 use super::widgets::{
-    NUMBER_TIP, bar, compass_dial, danger, drag_speed, hint, primary, row, secondary, section,
-    segmented, stat, subsection, swatch, swatch_button,
+    NUMBER_TIP, bar, compass_dial, danger, drag_speed, hint, primary, row, secondary,
+    section_title, segmented, stat, subsection, swatch, swatch_button, tabs,
 };
 use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{OverlayMode, Tool};
+use crate::state::{InspectorTab, OverlayMode, Tool, UiState};
 use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
@@ -21,93 +22,229 @@ use observation_core::scene::MAX_CUSTOM_MODELS;
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
+    follow_selection(&mut d.ui);
+    if d.ui.jump_to_address {
+        let groups = d.addresses.groups(&d.scene.cameras);
+        if picked_group(d, &groups).is_some() {
+            // Show the list it scrolls.
+            d.ui.inspector_tab = InspectorTab::Cameras;
+        } else {
+            // No camera is listed there: nothing to scroll to.
+            d.ui.jump_to_address = false;
+        }
+    }
+    ui.spacing_mut().item_spacing.y = t.space.sm;
+    summary(ui, d, &t);
+    let camera =
+        d.ui.selected
+            .and_then(|id| d.scene.camera(id))
+            .map(|c| c.label.trim())
+            .filter(|l| !l.is_empty())
+            .unwrap_or("Camera")
+            .to_owned();
+    tabs(
+        ui,
+        &t,
+        &mut d.ui.inspector_tab,
+        &[
+            (InspectorTab::Cameras, "Cameras"),
+            (InspectorTab::Camera, &camera),
+            (InspectorTab::Analysis, "Analysis"),
+        ],
+    );
+    ui.separator();
+    let tab = d.ui.inspector_tab;
+    // Only the list sets this; without it a row hovered last stays
+    // highlighted in the view.
+    if (tab != InspectorTab::Cameras || d.scene.cameras.is_empty()) && d.ui.hover_list.is_some() {
+        d.ui.hover_list = None;
+    }
+    // One scroll area per tab, so each keeps its own position.
     ScrollArea::vertical()
+        .id_salt(tab)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = t.space.sm;
-            coverage_card(ui, d, &t);
-            ui.separator();
-            camera_list(ui, d, &t);
-            if d.ui.selected.is_some() {
-                ui.separator();
-                camera_details(ui, d, &t);
+            match tab {
+                InspectorTab::Cameras => cameras_tab(ui, d, &t),
+                InspectorTab::Camera => camera_tab(ui, d, &t),
+                InspectorTab::Analysis => analysis_tab(ui, d, &t),
             }
-            ui.separator();
-            custom_model(ui, d, &t);
-            ui.separator();
-            analysis(ui, d, &t);
             ui.add_space(t.space.lg);
         });
 }
 
-fn coverage_card(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    let in_region = d.scene.region.as_ref().is_some_and(|r| r.is_active());
-    section(
-        ui,
-        t,
-        if in_region {
-            "Coverage inside region"
-        } else {
-            "Coverage"
-        },
-    );
-    let s = d.coverage.stats;
-    if d.scene.cameras.is_empty() {
-        empty_state(ui, d, t);
-        // A region drawn earlier can still be switched off or cleared.
-        if d.scene.region.is_some() {
-            region_controls(ui, d, t);
-        }
-        return;
-    }
-    ui.columns(3, |c| {
-        stat(&mut c[0], t, s.street_fraction(), "of street seen", t.text);
-        stat(
-            &mut c[1],
-            t,
-            s.street_multi_fraction(),
-            "by 2+ cameras",
-            t.text,
-        );
-        stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
-    });
-    bar(ui, t, s.street_fraction(), t.coverage_color(1));
-    hint(
-        ui,
-        t,
-        &format!(
-            "{:.0} m² of {:.0} m² street surface · {:.0} m² open ground seen",
-            s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
-        ),
-    );
-    region_controls(ui, d, t);
-    ui.add_space(t.space.xs);
-    segmented(
-        ui,
-        t,
-        &mut d.ui.overlay,
-        &[
-            (OverlayMode::Overlap, "Overlap"),
-            (OverlayMode::PerCamera, "Per camera"),
-        ],
-    );
-    if d.ui.overlay == OverlayMode::Overlap {
-        ui.horizontal_wrapped(|ui| {
-            for (i, label) in ["1", "2", "3", "4+"].iter().enumerate() {
-                swatch(ui, t, t.coverage_ramp[i]);
-                ui.label(
-                    RichText::new(*label)
-                        .size(t.font.caption)
-                        .color(t.text_muted),
-                );
+/// Opens the Camera tab when the selection changes to another camera, and
+/// goes back to the list when the selection is cleared there.
+fn follow_selection(ui: &mut UiState) {
+    if ui.selected != ui.inspector_seen {
+        match ui.selected {
+            Some(_) => ui.inspector_tab = InspectorTab::Camera,
+            None if ui.inspector_tab == InspectorTab::Camera => {
+                ui.inspector_tab = InspectorTab::Cameras;
             }
-            hint(ui, t, "cameras");
-        });
+            None => {}
+        }
+        ui.inspector_seen = ui.selected;
     }
 }
 
-/// In place of three 0% figures: what to do first.
-fn empty_state(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+/// The group the address picked with the Address tool is listed under, if
+/// any camera is listed there.
+fn picked_group<'a>(
+    d: &UiData,
+    groups: &[(Option<&'a str>, Vec<&'a CameraPlacement>)],
+) -> Option<&'a str> {
+    d.ui.selected_address
+        .as_ref()
+        .map(address_label)
+        .and_then(|label| d.addresses.group_for(groups, &label))
+}
+
+/// Always in view above the tabs: the figures, the region they are limited
+/// to, and the analysis settings they depend on.
+fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    let in_region = d.scene.region.as_ref().is_some_and(|r| r.is_active());
+    ui.horizontal(|ui| {
+        ui.label(section_title(
+            t,
+            if in_region {
+                "Coverage inside region"
+            } else {
+                "Coverage"
+            },
+        ));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            region_menu(ui, d, t, in_region);
+        });
+    });
+    let s = d.coverage.stats;
+    if d.scene.cameras.is_empty() {
+        hint(
+            ui,
+            t,
+            "No cameras yet: the figures appear once you place one.",
+        );
+    } else {
+        ui.columns(3, |c| {
+            stat(&mut c[0], t, s.street_fraction(), "of street seen", t.text);
+            stat(
+                &mut c[1],
+                t,
+                s.street_multi_fraction(),
+                "by 2+ cameras",
+                t.text,
+            );
+            stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
+        });
+        bar(ui, t, s.street_fraction(), t.coverage_color(1));
+        hint(
+            ui,
+            t,
+            &format!(
+                "{:.0} m² of {:.0} m² street surface · {:.0} m² open ground seen",
+                s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
+            ),
+        );
+    }
+    let p = d.scene.params;
+    let dori = match p.dori {
+        DoriLevel::Custom => format!("Custom {:.0} px/m", p.custom_ppm),
+        l => l.label().to_owned(),
+    };
+    let light = match p.lighting {
+        Lighting::Day => "Day",
+        Lighting::Night => "Night",
+    };
+    let text = format!(
+        "{}  {dori} · {light} · {:.2} m high",
+        icons::SLIDERS_HORIZONTAL,
+        p.subject_height_m
+    );
+    if ui
+        .add(
+            egui::Button::new(RichText::new(text).size(t.font.caption).color(t.text_muted))
+                .frame(false)
+                .truncate(),
+        )
+        .on_hover_text("Detail level, lighting and subject height: change them under Analysis")
+        .clicked()
+    {
+        d.ui.inspector_tab = InspectorTab::Analysis;
+    }
+}
+
+/// Draw, toggle, redraw or clear the region the figures are limited to.
+/// `active`: the figures are limited to the region.
+fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
+    let label = RichText::new(format!("{}  Region", icons::POLYGON))
+        .size(t.font.caption)
+        .color(if active { t.accent } else { t.text_muted });
+    ui.menu_button(label, |ui| {
+        let Some(r) = &d.scene.region else {
+            if ui
+                .button("Draw region…")
+                .on_hover_text("Limit the figures to an area you outline on the ground (R)")
+                .clicked()
+            {
+                d.ui.tool = Tool::Region;
+            }
+            return;
+        };
+        let mut on = r.enabled;
+        let toggled = ui
+            .checkbox(
+                &mut on,
+                format!("Only inside region ({:.0} m²)", r.area_m2()),
+            )
+            .on_hover_text("Count only the street and walls inside the outlined area")
+            .changed();
+        if ui
+            .button("Redraw")
+            .on_hover_text("Outline a new region (R)")
+            .clicked()
+        {
+            d.ui.tool = Tool::Region;
+        } else if ui.button("Clear").clicked() {
+            d.scene.region = None;
+            d.scene.touch();
+        } else if toggled && let Some(r) = &mut d.scene.region {
+            r.enabled = on;
+            d.scene.touch();
+        }
+    })
+    .response
+    .on_hover_text("Limit the figures to part of the area");
+}
+
+/// The model for new cameras, Place, the camera list and custom models.
+fn cameras_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    hint(ui, t, "New camera model");
+    model_combo(
+        ui,
+        "place-model",
+        &d.models.catalog.models,
+        &d.models.custom,
+        &mut d.ui.place_model,
+    );
+    if ui
+        .add(primary(t, &format!("{}  Place camera…", icons::PLUS)))
+        .on_hover_text("Then click a wall or the ground (P)")
+        .clicked()
+    {
+        d.ui.tool = Tool::Place;
+    }
+    ui.add_space(t.space.xs);
+    if d.scene.cameras.is_empty() {
+        empty_state(ui, t);
+    } else {
+        camera_list(ui, d, t);
+    }
+    ui.separator();
+    custom_model(ui, d, t);
+}
+
+/// In place of an empty list: what to do first.
+fn empty_state(ui: &mut egui::Ui, t: &Tokens) {
     egui::Frame::new()
         .fill(t.surface_sunken)
         .corner_radius(egui::CornerRadius::same(t.radius.lg))
@@ -129,63 +266,70 @@ fn empty_state(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             ui.add(
                 egui::Label::new(
                     RichText::new(
-                        "Choose a model under Cameras, then click a wall to mount it or the ground to put it on a pole. The street and wall coverage appears here.",
+                        "Choose a model above, press Place camera, then click a wall to mount it or the ground to put it on a pole. The street and wall coverage appears at the top.",
                     )
                     .color(t.text_muted),
                 )
                 .wrap(),
             );
-            ui.add_space(t.space.xs);
-            if ui
-                .add(primary(t, &format!("{}  Place camera…", icons::PLUS)))
-                .on_hover_text("P")
-                .clicked()
-            {
-                d.ui.tool = Tool::Place;
-            }
         });
 }
 
-/// Draw, toggle, redraw or clear the region the figures are limited to.
-fn region_controls(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    ui.horizontal_wrapped(|ui| {
-        let Some(r) = &d.scene.region else {
-            if ui
-                .add(secondary(t, "Draw region…"))
-                .on_hover_text("Limit the figures to an area you outline on the ground (R)")
-                .clicked()
-            {
-                d.ui.tool = Tool::Region;
-            }
-            return;
-        };
-        let mut on = r.enabled;
-        let label = format!("Only inside region ({:.0} m²)", r.area_m2());
-        let toggled = ui
-            .checkbox(&mut on, label)
-            .on_hover_text("Count only the street and walls inside the outlined area")
-            .changed();
+/// The selected camera's settings, with a way back to the list and to the
+/// cameras before and after it.
+fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    let Some(id) = d.ui.selected else {
+        hint(
+            ui,
+            t,
+            "No camera selected. Click a camera in the view or in the Cameras list to change it here.",
+        );
+        return;
+    };
+    let order: Vec<u32> = d
+        .addresses
+        .groups(&d.scene.cameras)
+        .iter()
+        .flat_map(|(_, cameras)| cameras.iter().map(|c| c.id))
+        .collect();
+    ui.horizontal(|ui| {
         if ui
-            .add(secondary(t, "Redraw"))
-            .on_hover_text("Outline a new region (R)")
+            .add(secondary(t, &format!("{}  Cameras", icons::ARROW_LEFT)))
+            .on_hover_text("Back to the camera list")
             .clicked()
         {
-            d.ui.tool = Tool::Region;
+            d.ui.inspector_tab = InspectorTab::Cameras;
         }
-        if ui.add(secondary(t, "Clear")).clicked() {
-            d.scene.region = None;
-            d.scene.touch();
-        } else if toggled && let Some(r) = &mut d.scene.region {
-            r.enabled = on;
-            d.scene.touch();
-        }
+        let Some(i) = order.iter().position(|&c| c == id) else {
+            return;
+        };
+        let n = order.len();
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let next = ui
+                .add_enabled(n > 1, secondary(t, icons::CARET_RIGHT))
+                .on_hover_text("Next camera in the list");
+            ui.label(
+                RichText::new(format!("{} of {n}", i + 1))
+                    .size(t.font.caption)
+                    .color(t.text_muted),
+            );
+            let prev = ui
+                .add_enabled(n > 1, secondary(t, icons::CARET_LEFT))
+                .on_hover_text("Previous camera in the list");
+            if next.clicked() {
+                d.ui.select(order[(i + 1) % n]);
+            } else if prev.clicked() {
+                d.ui.select(order[(i + n - 1) % n]);
+            }
+        });
     });
+    camera_details(ui, d, t);
 }
 
-fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    section(ui, t, "Analysis");
+/// What the figures count, and how the overlay colours the ground.
+fn analysis_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let mut p = d.scene.params;
-    hint(ui, t, "Detail level (pixels per metre on a person)");
+    subsection(ui, t, "Detail level (pixels per metre on a person)");
     let opts: Vec<(DoriLevel, &str)> = DoriLevel::ALL.iter().map(|l| (*l, l.label())).collect();
     segmented(ui, t, &mut p.dori, &opts);
     if p.dori == DoriLevel::Custom {
@@ -211,14 +355,15 @@ fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             DoriLevel::Custom => "Custom: your own density, e.g. measured from real footage.",
         },
     );
+    subsection(ui, t, "Lighting");
     segmented(
         ui,
         t,
         &mut p.lighting,
         &[(Lighting::Day, "Day"), (Lighting::Night, "Night (IR)")],
     );
+    subsection(ui, t, "Subject height");
     ui.horizontal_wrapped(|ui| {
-        ui.label("Subject height");
         ui.add(
             DragValue::new(&mut p.subject_height_m)
                 .range(0.0..=2.5)
@@ -236,27 +381,36 @@ fn analysis(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         d.scene.params = p;
         d.scene.touch();
     }
+    subsection(ui, t, "Overlay colours");
+    segmented(
+        ui,
+        t,
+        &mut d.ui.overlay,
+        &[
+            (OverlayMode::Overlap, "Overlap"),
+            (OverlayMode::PerCamera, "Per camera"),
+        ],
+    );
+    if d.ui.overlay == OverlayMode::Overlap {
+        ui.horizontal_wrapped(|ui| {
+            for (i, label) in ["1", "2", "3", "4+"].iter().enumerate() {
+                swatch(ui, t, t.coverage_ramp[i]);
+                ui.label(
+                    RichText::new(*label)
+                        .size(t.font.caption)
+                        .color(t.text_muted),
+                );
+            }
+            hint(ui, t, "cameras");
+        });
+    } else {
+        hint(ui, t, "Each camera's coverage in its own colour.");
+    }
 }
 
+/// The camera list, grouped by address. A group of one camera has no
+/// heading: its address goes under the camera's name instead.
 fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    section(ui, t, "Cameras");
-    ui.horizontal(|ui| {
-        ui.label("New camera model");
-    });
-    model_combo(
-        ui,
-        "place-model",
-        &d.models.catalog.models,
-        &d.models.custom,
-        &mut d.ui.place_model,
-    );
-    if ui
-        .add(primary(t, &format!("{}  Place camera…", icons::PLUS)))
-        .on_hover_text("Then click a wall or the ground (P)")
-        .clicked()
-    {
-        d.ui.tool = Tool::Place;
-    }
     let mut action = None;
     let mut hovered = None;
     ui.spacing_mut().item_spacing.y = 2.0;
@@ -265,23 +419,22 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let headed = !matches!(groups.as_slice(), [(None, _)] | []);
     // The address picked with the Address tool: its group is shaded, and
     // scrolled into view once after a click.
-    let picked =
-        d.ui.selected_address
-            .as_ref()
-            .map(address_label)
-            .and_then(|label| d.addresses.group_for(&groups, &label));
+    let picked = picked_group(d, &groups);
     let jump = d.ui.jump_to_address;
     if jump {
         d.ui.jump_to_address = false;
     }
     for (group, cameras) in &groups {
-        if headed {
-            let is_picked = group.is_some() && *group == picked;
+        let is_picked = group.is_some() && *group == picked;
+        // The picked address keeps its heading, which is what gets shaded.
+        let heading = headed && (cameras.len() > 1 || is_picked);
+        if heading {
             let heading = group_heading(ui, t, *group, cameras.len(), is_picked);
             if is_picked && jump {
                 heading.scroll_to_me(Some(egui::Align::TOP));
             }
         }
+        let subtitle = (headed && !heading).then(|| group.unwrap_or(NO_ADDRESS));
         for &c in cameras {
             let model = d
                 .models
@@ -290,6 +443,7 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             let row = CameraRow {
                 label: &c.label,
                 model: &model,
+                subtitle,
                 glyph: icons::kind(d.models.kind_of(&c.model_id)),
                 color: camera_color(&d.scene, c, &d.models, t),
                 enabled: c.enabled,
@@ -303,12 +457,8 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             if eye.clicked() {
                 action = Some((c.id, CameraAction::ToggleEnabled));
             } else if resp.clicked() {
-                // Clicking the selected row deselects it.
-                if row.selected {
-                    d.ui.selected = None;
-                } else {
-                    action = Some((c.id, CameraAction::Select));
-                }
+                // Also for the selected row: back to its settings.
+                action = Some((c.id, CameraAction::Select));
             }
             resp.on_hover_text(&model).context_menu(|ui| {
                 for a in [
@@ -414,6 +564,8 @@ fn group_heading_row(
 struct CameraRow<'a> {
     label: &'a str,
     model: &'a str,
+    /// The address of a camera listed without a group heading.
+    subtitle: Option<&'a str>,
     glyph: &'a str,
     color: egui::Color32,
     enabled: bool,
@@ -423,14 +575,19 @@ struct CameraRow<'a> {
 }
 
 /// A full-width camera row: an eye toggle, the colour, the type icon, the
-/// name and the model. Returns the row's response and the eye's.
+/// name and the model, and the address under them when there is no group
+/// heading. Returns the row's response and the eye's.
 fn camera_row(ui: &mut egui::Ui, t: &Tokens, row: &CameraRow) -> (egui::Response, egui::Response) {
-    let height = t.layout.hit_target - 4.0;
+    let line = t.layout.hit_target - 4.0;
+    let height = line + row.subtitle.map_or(0.0, |_| t.font.caption);
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
-    let eye_rect = egui::Rect::from_min_size(rect.min, egui::vec2(height, height));
+    let eye_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.min.x + line / 2.0, rect.center().y),
+        egui::vec2(line, line),
+    );
     let eye = ui
         .interact(eye_rect, resp.id.with("eye"), egui::Sense::click())
         .on_hover_text(if row.enabled {
@@ -506,11 +663,21 @@ fn camera_row(ui: &mut egui::Ui, t: &Tokens, row: &CameraRow) -> (egui::Response
     job.append(row.model, t.space.sm, egui::TextFormat::simple(font, muted));
     job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
     let text = ui.fonts_mut(|f| f.layout_job(job));
-    painter.galley(
-        egui::pos2(x, rect.center().y - text.size().y / 2.0),
-        text,
-        fg,
-    );
+    let sub = row.subtitle.map(|s| {
+        let mut job = egui::text::LayoutJob::single_section(
+            s.to_owned(),
+            egui::TextFormat::simple(egui::FontId::proportional(t.font.caption), muted),
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+        ui.fonts_mut(|f| f.layout_job(job))
+    });
+    // The name line and the address under it, centred together.
+    let top = rect.center().y - (text.size().y + sub.as_ref().map_or(0.0, |g| g.size().y)) / 2.0;
+    let below = top + text.size().y;
+    painter.galley(egui::pos2(x, top), text, fg);
+    if let Some(sub) = sub {
+        painter.galley(egui::pos2(x, below), sub, muted);
+    }
     (resp, eye)
 }
 
@@ -522,7 +689,6 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     };
     let color = camera_color(&d.scene, &c, &d.models, t);
     let model = d.models.get(&c.model_id).cloned();
-    section(ui, t, "Selected camera");
     ui.horizontal(|ui| {
         swatch(ui, t, color);
         ui.label(
@@ -743,59 +909,72 @@ fn group_row(ui: &mut egui::Ui, d: &UiData, t: &Tokens, c: &mut CameraPlacement)
     let automatic = d.addresses.automatic(c.id);
     ui.horizontal(|ui| {
         ui.label(RichText::new("Group").color(t.text_muted));
-        let mut name = c.group.clone().unwrap_or_default();
-        let picker_w = t.layout.hit_target;
-        let resp = ui
-            .add(
-                TextEdit::singleline(&mut name)
-                    .hint_text(automatic.unwrap_or(NO_ADDRESS))
-                    .desired_width((ui.available_width() - picker_w).max(0.0))
-                    .char_limit(MAX_GROUP_CHARS),
-            )
-            .on_hover_text(match (name.trim().is_empty(), automatic) {
-                (true, Some(a)) => format!(
-                    "Listed under {a}, the nearest address in OpenStreetMap. Type a name to list it elsewhere"
-                ),
-                (true, None) => {
-                    "No address in OpenStreetMap is near this camera. Type a name to group it"
-                        .to_owned()
-                }
-                (false, Some(a)) => format!(
-                    "Listed under this name. Clear it to list the camera under {a}, the nearest address in OpenStreetMap"
-                ),
-                (false, None) => format!(
-                    "Listed under this name. Clear it to list the camera under {NO_ADDRESS}: no address in OpenStreetMap is near it"
-                ),
-            });
-        if resp.changed() {
-            c.group = (!name.trim().is_empty()).then_some(name);
+        // Right to left, so the field takes only the width the picker
+        // leaves and never widens the panel.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            group_picker(ui, d, c);
+            group_field(ui, automatic, c);
+        });
+    });
+}
+
+/// The group name: empty means by address.
+fn group_field(ui: &mut egui::Ui, automatic: Option<&str>, c: &mut CameraPlacement) {
+    let mut name = c.group.clone().unwrap_or_default();
+    let resp = ui
+        .add(
+            TextEdit::singleline(&mut name)
+                .hint_text(automatic.unwrap_or(NO_ADDRESS))
+                .desired_width(ui.available_width())
+                .char_limit(MAX_GROUP_CHARS),
+        )
+        .on_hover_text(match (name.trim().is_empty(), automatic) {
+            (true, Some(a)) => format!(
+                "Listed under {a}, the nearest address in OpenStreetMap. Type a name to list it elsewhere"
+            ),
+            (true, None) => {
+                "No address in OpenStreetMap is near this camera. Type a name to group it"
+                    .to_owned()
+            }
+            (false, Some(a)) => format!(
+                "Listed under this name. Clear it to list the camera under {a}, the nearest address in OpenStreetMap"
+            ),
+            (false, None) => format!(
+                "Listed under this name. Clear it to list the camera under {NO_ADDRESS}: no address in OpenStreetMap is near it"
+            ),
+        });
+    if resp.changed() {
+        c.group = (!name.trim().is_empty()).then_some(name);
+    }
+}
+
+/// Pick a nearby address as the group, or go back to grouping by address.
+fn group_picker(ui: &mut egui::Ui, d: &UiData, c: &mut CameraPlacement) {
+    ui.menu_button(icons::MAP_PIN, |ui| {
+        if ui
+            .add(egui::Button::new("By address").selected(c.group.is_none()))
+            .on_hover_text("Group by the nearest address in OpenStreetMap")
+            .clicked()
+        {
+            c.group = None;
+            ui.close();
         }
-        ui.menu_button(icons::MAP_PIN, |ui| {
+        let known = d.addresses.known();
+        if !known.is_empty() {
+            ui.separator();
+        }
+        for a in known {
             if ui
-                .add(egui::Button::new("By address").selected(c.group.is_none()))
-                .on_hover_text("Group by the nearest address in OpenStreetMap")
+                .add(egui::Button::new(a).selected(c.group.as_deref() == Some(a)))
                 .clicked()
             {
-                c.group = None;
+                c.group = Some(a.to_owned());
                 ui.close();
             }
-            let known = d.addresses.known();
-            if !known.is_empty() {
-                ui.separator();
-            }
-            for a in known {
-                if ui
-                    .add(egui::Button::new(a).selected(c.group.as_deref() == Some(a)))
-                    .clicked()
-                {
-                    c.group = Some(a.to_owned());
-                    ui.close();
-                }
-            }
-        })
-        .response
-        .on_hover_text("Pick an address nearby, or go back to grouping by address");
-    });
+        }
+    })
+    .response
+    .on_hover_text("Pick an address nearby, or go back to grouping by address");
 }
 
 fn compass(yaw: f32) -> &'static str {
@@ -817,9 +996,11 @@ fn model_combo(
         .map_or_else(|| value.clone(), CameraModel::display_name);
     let query_id = egui::Id::new((id, "model-search"));
     let mut query: String = ui.data_mut(|m| m.get_temp(query_id)).unwrap_or_default();
+    // Cut a long name short rather than widen the panel.
     let resp = egui::ComboBox::from_id_salt(id)
         .width(ui.available_width())
         .height(360.0)
+        .truncate()
         .selected_text(current)
         .show_ui(ui, |ui| {
             let search = ui.add(
@@ -948,7 +1129,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     }
     let mut action = None;
     egui::CollapsingHeader::new(
-        RichText::new("CUSTOM MODEL")
+        RichText::new("CUSTOM MODELS")
             .size(t.font.caption)
             .strong()
             .color(t.text_muted),

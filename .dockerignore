@@ -8,6 +8,7 @@ node_modules
 # VCS / CI / editor / agent worktrees
 .git
 .claude
+.vscode
 .github
 .config
 .gitignore

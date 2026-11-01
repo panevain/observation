@@ -703,19 +703,17 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
 /// A click/tap (press + release without dragging).
 fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>) {
     match ui.tool {
-        Tool::Select => {
-            ui.selected = match hit {
-                Some(Hit {
-                    target: HitTarget::Camera(id),
-                    ..
-                }) => Some(id),
-                _ => None,
-            };
-        }
+        Tool::Select => match hit {
+            Some(Hit {
+                target: HitTarget::Camera(id),
+                ..
+            }) => ui.select(id),
+            _ => ui.selected = None,
+        },
         Tool::Place => {
             let Some(hit) = hit else { return };
             if let HitTarget::Camera(id) = hit.target {
-                ui.selected = Some(id);
+                ui.select(id);
                 return;
             }
             let kind = models.kind_of(&ui.place_model);
@@ -732,7 +730,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 enabled: true,
                 group: None,
             });
-            ui.selected = Some(id);
+            ui.select(id);
             if yaw.is_none() {
                 // Placed on the ground: switch to Aim so the next click points it.
                 ui.tool = Tool::Aim;
@@ -748,7 +746,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                     ..
                 }) = hit
             {
-                ui.selected = Some(id);
+                ui.select(id);
             }
         }
     }
