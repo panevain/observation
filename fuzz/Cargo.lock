@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "observation-core"
-version = "0.1.0"
+version = "0.2.0-dev.1"
 dependencies = [
  "earcut",
  "glam",
@@ -1093,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "observation-server"
-version = "0.1.0"
+version = "0.2.0-dev.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "observation-upstream"
-version = "0.1.0"
+version = "0.2.0-dev.1"
 dependencies = [
  "reqwest",
  "tokio",
