@@ -386,6 +386,20 @@ impl Catalog {
     pub fn get(&self, id: &str) -> Option<&CameraModel> {
         self.models.iter().find(|m| m.id == id)
     }
+
+    /// The catalogue's version for a scene's provenance: 16 hex digits
+    /// hashed from every model's values, so it changes whenever any model
+    /// does (and with nothing to bump by hand), but not with comments or
+    /// file layout.
+    pub fn fingerprint(&self) -> String {
+        let mut h = crate::provenance::Fnv64::default();
+        h.u64(self.models.len() as u64);
+        for m in &self.models {
+            // Plain data: serialising cannot fail.
+            h.bytes(&serde_json::to_vec(m).unwrap_or_default());
+        }
+        crate::provenance::fingerprint_hex(h.finish())
+    }
 }
 
 /// Validates catalogue models: each is sane, no two share an id, and none
@@ -462,6 +476,15 @@ mod tests {
             source: Some("https://example.com"))])"#;
         let c = Catalog::from_ron(ron).unwrap();
         assert_eq!(c.get("a-b").unwrap().kind, CameraKind::Doorbell);
+        // The fingerprint follows the models' values, not the file's layout.
+        let fp = c.fingerprint();
+        assert_eq!(fp.len(), 16);
+        let relaid =
+            Catalog::from_ron(&format!("// a comment\n{}", ron.replace(", ", ",\n  "))).unwrap();
+        assert_eq!(relaid.fingerprint(), fp);
+        let wider = Catalog::from_ron(&ron.replace("hfov_deg: 150.0", "hfov_deg: 151.0")).unwrap();
+        assert_ne!(wider.fingerprint(), fp);
+        assert_ne!(Catalog::default().fingerprint(), fp);
         let dup = ron.replace("models: [(", "models: [(id: \"a-b\", vendor: \"V\", name: \"N\", kind: Doorbell, hfov_deg: 150.0, vfov_deg: 150.0, resolution: (1536, 1536)), (");
         assert!(matches!(
             Catalog::from_ron(&dup),

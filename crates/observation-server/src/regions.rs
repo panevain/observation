@@ -6,8 +6,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use observation_core::geo::BBox;
+use observation_core::provenance::parse_utc;
 use observation_core::regions::{
-    ActionKind, RegionAction, RegionView, RegionsSnapshot, RegionsStatus, SizesRequest,
+    ActionKind, OSM_BASE_HEADER, RegionAction, RegionView, RegionsSnapshot, RegionsStatus,
+    SizesRequest,
 };
 use reqwest::StatusCode;
 use tokio::sync::watch;
@@ -187,11 +189,20 @@ impl Regions {
                     .unwrap_or_default()
             ));
         }
+        // The region's data date, for databases imported before the agent
+        // recorded it in them (they report an empty `timestamp_osm_base`).
+        let header_base = resp
+            .headers()
+            .get(OSM_BASE_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_utc);
         let body = crate::read_capped(resp, MAX_RESULT_BYTES)
             .await
             .map_err(|e| e.without_url().to_string())?
             .ok_or("the result is too large")?;
-        parse_response(&body).map(Some).map_err(|e| e.to_string())
+        let mut data = parse_response(&body).map_err(|e| e.to_string())?;
+        data.osm_base_unix = data.osm_base_unix.or(header_base);
+        Ok(Some(data))
     }
 
     /// The importable extracts (JSON), cached for an hour.

@@ -249,7 +249,7 @@ mod tests {
             width_m: 6.0,
             points: vec![at(-150.0, 0.0), at(150.0, 0.0)],
         }];
-        build_bundle(bbox, &buildings, &roads, &[], terrain, "test", 0)
+        build_bundle(bbox, &buildings, &roads, &[], terrain, "test", 0, None)
     }
 
     #[test]

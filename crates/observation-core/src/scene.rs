@@ -6,6 +6,7 @@ use crate::camera::{
 };
 use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
+use crate::provenance::{Provenance, lenient_provenance};
 use crate::terrain::Terrain;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -45,6 +46,16 @@ pub struct SceneFile {
     /// Area the coverage figures are limited to, if one was drawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<Region>,
+    /// Where the figures came from: the OSM data date and fingerprint, the
+    /// bundle build time, and the app, catalogue and caveats versions.
+    /// Optional and additive: files without it load, and a malformed block
+    /// is dropped rather than failing the file.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_provenance"
+    )]
+    pub provenance: Option<Provenance>,
 }
 
 #[derive(Debug, Error)]
@@ -78,6 +89,7 @@ impl SceneFile {
             custom_models: Vec::new(),
             params: CoverageParams::default(),
             region: None,
+            provenance: None,
         }
     }
 
@@ -138,6 +150,9 @@ impl SceneFile {
             r.points.len() > MAX_REGION_POINTS || !r.points.iter().all(|p| finite(p))
         }) {
             scene.region = None;
+        }
+        if let Some(p) = &mut scene.provenance {
+            p.sanitise();
         }
         let height = scene.params.subject_height_m;
         if !(0.0..=10.0).contains(&height) {
@@ -397,6 +412,53 @@ mod tests {
         let far = s.to_json().replace("10.0", "1e9");
         let loaded = SceneFile::from_json(&far).unwrap();
         assert_eq!((loaded.region, loaded.cameras.len()), (None, 1));
+    }
+
+    #[test]
+    fn provenance_is_optional_and_lenient() {
+        let mut s = scene();
+        assert!(!s.to_json().contains("provenance"), "omitted when absent");
+        s.provenance = Some(Provenance {
+            osm_data_unix: Some(1_793_475_782),
+            bundle_built_unix: Some(1_793_500_000),
+            osm_fingerprint: Some("0123456789abcdef".into()),
+            app_version: "0.1.0".into(),
+            catalog_version: "fedcba9876543210".into(),
+            caveats_version: 1,
+        });
+        let json = s.to_json();
+        assert!(
+            json.contains("\"osm_data_as_of\": \"2026-10-31T19:43:02Z\""),
+            "{json}"
+        );
+        assert_eq!(SceneFile::from_json(&json).unwrap(), s);
+        // A malformed block is dropped; the cameras survive.
+        for bad in ["5", "\"yesterday\"", "true", "{\"app_version\": 3}"] {
+            let json = scene().to_json().replacen(
+                "\"cameras\"",
+                &format!("\"provenance\": {bad},\n  \"cameras\""),
+                1,
+            );
+            let loaded = SceneFile::from_json(&json).unwrap();
+            assert_eq!(
+                (loaded.provenance, loaded.cameras.len()),
+                (None, 1),
+                "{bad}"
+            );
+        }
+        // `null` and an empty block load too.
+        for ok in ["null", "{}"] {
+            let json = scene().to_json().replacen(
+                "\"cameras\"",
+                &format!("\"provenance\": {ok},\n  \"cameras\""),
+                1,
+            );
+            assert!(SceneFile::from_json(&json).is_ok(), "{ok}");
+        }
+        // Values from the file are tidied.
+        let long = json.replace("\"0.1.0\"", &format!("\"{}\"", "9".repeat(500)));
+        let loaded = SceneFile::from_json(&long).unwrap();
+        assert_eq!(loaded.provenance.unwrap().app_version.len(), 64);
     }
 
     #[test]

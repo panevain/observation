@@ -4,6 +4,7 @@ mod actions;
 mod inspector;
 pub mod map_picker;
 mod overlays;
+mod provenance;
 mod regions;
 mod toolbar;
 mod widgets;

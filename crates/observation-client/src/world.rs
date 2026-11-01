@@ -18,6 +18,7 @@ use observation_core::camera::CameraModel;
 use observation_core::coverage::StaticLayers;
 use observation_core::example::example_cameras;
 use observation_core::geo::{LatLon, Projection};
+use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::{AreaRef, lift_onto_terrain};
 use observation_core::terrain::{TERRAIN_MARGIN_M, Terrain};
 use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
@@ -470,6 +471,12 @@ fn on_area_loaded(
     }
     scene.area = Some(area);
     scene.origin = bundle.origin;
+    // A restored or imported scene learns whether its map data changed
+    // since it was saved; any older notice was about the area replaced.
+    ui.data_change = scene.area_loaded(Provenance::of(&bundle, &models.catalog_version), keep);
+    if let Some(message) = ui.data_change.as_ref().map(DataChange::message) {
+        ui.info(message);
+    }
     scene.touch();
     *coverage = CoverageState::default();
 

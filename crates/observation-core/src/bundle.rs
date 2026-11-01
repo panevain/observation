@@ -3,7 +3,9 @@
 //! Layout: `b"OBSB"` magic, `u16` little-endian format version, then a
 //! postcard-encoded [`AreaBundle`].
 //!
-//! Version 3 added the [`Terrain`] grid and [`Footprint::base_m`].
+//! Version 3 added the [`Terrain`] grid and [`Footprint::base_m`]; version 4
+//! the OSM data date ([`AreaBundle::osm_base_unix`]) and
+//! [`AreaBundle::osm_fingerprint`].
 
 use crate::address::{
     Address, AddressPoint, AddressSource, MAX_ADDRESS_DISTANCE_M, building_of, dist,
@@ -11,12 +13,13 @@ use crate::address::{
 };
 use crate::building::{Footprint, MeshData, extrude};
 use crate::geo::{BBox, LatLon, Projection};
+use crate::provenance::Fnv64;
 use crate::terrain::Terrain;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const BUNDLE_MAGIC: [u8; 4] = *b"OBSB";
-pub const BUNDLE_VERSION: u16 = 3;
+pub const BUNDLE_VERSION: u16 = 4;
 /// MIME type used on the wire.
 pub const BUNDLE_CONTENT_TYPE: &str = "application/vnd.observation.bundle";
 
@@ -56,7 +59,17 @@ pub struct AreaBundle {
     /// elevation data).
     pub terrain: Terrain,
     pub attribution: String,
+    /// When the server built this bundle, Unix seconds (0 if unknown). Not
+    /// when the map data was current: see [`Self::osm_base_unix`].
     pub generated_unix: u64,
+    /// When the OSM data was current, Unix seconds: Overpass's
+    /// `osm3s.timestamp_osm_base`, the time of the last change its database
+    /// holds. `None` when the source did not say.
+    pub osm_base_unix: Option<u64>,
+    /// [`osm_fingerprint`] of the map features the bundle was built from, so
+    /// a saved scene can tell whether its area changed (the data date alone
+    /// cannot: public Overpass's moves every minute).
+    pub osm_fingerprint: u64,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -280,7 +293,9 @@ pub fn build_bundle(
     terrain: Terrain,
     attribution: impl Into<String>,
     generated_unix: u64,
+    osm_base_unix: Option<u64>,
 ) -> AreaBundle {
+    let osm_fingerprint = osm_fingerprint(buildings, roads, addresses);
     let origin = bbox.center();
     let proj = Projection::new(origin);
     let to_w = |p: &LatLon| {
@@ -370,7 +385,79 @@ pub fn build_bundle(
         terrain,
         attribution: attribution.into(),
         generated_unix,
+        osm_base_unix,
+        osm_fingerprint,
     }
+}
+
+/// A fingerprint of the map features an area is built from: every
+/// building's id, rings, heights and address, every road's id, type, name,
+/// width and points, and every address point. Equal for the same features in
+/// any order, and different (barring a 1 in 2^64 chance) when any of them
+/// changes, so a saved scene can tell whether its area's map data changed.
+///
+/// It covers what the app read from OSM, after height inference and road
+/// widths: a version of the app that reads the same data differently gives a
+/// different fingerprint. Terrain is not included.
+pub fn osm_fingerprint(
+    buildings: &[OsmBuilding],
+    roads: &[OsmRoad],
+    addresses: &[OsmAddressPoint],
+) -> u64 {
+    fn points(h: &mut Fnv64, ring: &[LatLon]) {
+        h.u64(ring.len() as u64);
+        for p in ring {
+            h.f64(p.lat).f64(p.lon);
+        }
+    }
+    fn address(h: &mut Fnv64, a: &Address) {
+        h.opt_str(a.housenumber.as_deref())
+            .opt_str(a.street.as_deref())
+            .opt_str(a.housename.as_deref())
+            .opt_str(a.unit.as_deref());
+    }
+    let buildings = buildings.iter().map(|b| {
+        let mut h = Fnv64::default();
+        h.bytes(b"building").i64(b.osm_id);
+        points(&mut h, &b.outer);
+        h.u64(b.holes.len() as u64);
+        for hole in &b.holes {
+            points(&mut h, hole);
+        }
+        h.f32(b.min_height_m).f32(b.height_m);
+        match &b.address {
+            Some(a) => address(h.bytes(&[1]), a),
+            None => {
+                h.bytes(&[0]);
+            }
+        }
+        h.finish()
+    });
+    let roads = roads.iter().map(|r| {
+        let mut h = Fnv64::default();
+        h.bytes(b"road")
+            .i64(r.osm_id)
+            .str(&r.highway)
+            .opt_str(r.name.as_deref())
+            .f32(r.width_m);
+        points(&mut h, &r.points);
+        h.finish()
+    });
+    let addresses = addresses.iter().map(|a| {
+        let mut h = Fnv64::default();
+        h.bytes(b"address").f64(a.point.lat).f64(a.point.lon);
+        address(&mut h, &a.address);
+        h.finish()
+    });
+    // Sorted, so the order Overpass lists features in does not matter.
+    let mut each: Vec<u64> = buildings.chain(roads).chain(addresses).collect();
+    each.sort_unstable();
+    let mut h = Fnv64::default();
+    h.u64(each.len() as u64);
+    for f in each {
+        h.u64(f);
+    }
+    h.finish()
 }
 
 #[cfg(test)]
@@ -426,6 +513,7 @@ pub(crate) mod tests {
             terrain,
             "© OpenStreetMap contributors",
             1_700_000_000,
+            Some(1_699_990_000),
         )
     }
 
@@ -457,6 +545,85 @@ pub(crate) mod tests {
         let bytes = b.encode();
         assert_eq!(&bytes[..4], b"OBSB");
         assert_eq!(AreaBundle::decode(&bytes).unwrap(), b);
+        assert_eq!(b.osm_base_unix, Some(1_699_990_000));
+        assert_ne!(b.osm_fingerprint, 0);
+    }
+
+    /// A change to [`sample_features`].
+    type Edit = dyn Fn(&mut Vec<OsmBuilding>, &mut Vec<OsmRoad>, &mut Vec<OsmAddressPoint>);
+
+    /// Two buildings, a road and an address point, unprojected.
+    fn sample_features() -> (Vec<OsmBuilding>, Vec<OsmRoad>, Vec<OsmAddressPoint>) {
+        let p = |lat, lon| LatLon::new(lat, lon);
+        let building = |id, d: f64| OsmBuilding {
+            osm_id: id,
+            outer: vec![p(0.0, 0.0), p(0.0, d), p(d, d), p(d, 0.0), p(0.0, 0.0)],
+            holes: vec![],
+            min_height_m: 0.0,
+            height_m: 6.5,
+            address: None,
+        };
+        let road = OsmRoad {
+            osm_id: 7,
+            highway: "residential".into(),
+            name: Some("Test St".into()),
+            width_m: 6.0,
+            points: vec![p(0.0, 0.0), p(0.0, 1.0)],
+        };
+        let address = OsmAddressPoint {
+            address: Address {
+                housenumber: Some("12".into()),
+                ..Address::default()
+            },
+            point: p(0.5, 0.5),
+        };
+        (
+            vec![building(1, 0.001), building(2, 0.002)],
+            vec![road],
+            vec![address],
+        )
+    }
+
+    #[test]
+    fn fingerprint_ignores_order_and_follows_every_feature() {
+        let (b, r, a) = sample_features();
+        let base = osm_fingerprint(&b, &r, &a);
+        // Pinned: a fingerprint is saved in scene files, so it must not drift
+        // between releases for the same features.
+        assert_eq!(base, 0x6499_895e_529d_4893, "{base:016x}");
+        let mut swapped = b.clone();
+        swapped.reverse();
+        assert_eq!(osm_fingerprint(&swapped, &r, &a), base);
+
+        let changed = |f: &Edit| {
+            let (mut b, mut r, mut a) = sample_features();
+            f(&mut b, &mut r, &mut a);
+            osm_fingerprint(&b, &r, &a)
+        };
+        let variants = [
+            changed(&|b, _, _| b[0].height_m = 9.0),
+            changed(&|b, _, _| b[0].outer[1].lon += 1e-7),
+            changed(&|b, _, _| {
+                let ring = b[0].outer.clone();
+                b[1].holes.push(ring);
+            }),
+            changed(&|b, _, _| b[0].address = Some(Address::default())),
+            changed(&|b, _, _| b.truncate(1)),
+            changed(&|_, r, _| r[0].name = None),
+            changed(&|_, r, _| r[0].highway = "service".into()),
+            changed(&|_, r, _| r[0].width_m = 4.0),
+            changed(&|_, _, a| a[0].address.unit = Some("B".into())),
+            changed(&|_, _, a| a.clear()),
+        ];
+        let mut all: Vec<u64> = variants.to_vec();
+        all.push(base);
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), variants.len() + 1, "every change shows");
+        assert_eq!(
+            osm_fingerprint(&[], &[], &[]),
+            osm_fingerprint(&[], &[], &[])
+        );
     }
 
     #[test]
@@ -521,6 +688,8 @@ pub(crate) mod tests {
             terrain: Terrain::default(),
             attribution: String::new(),
             generated_unix: 0,
+            osm_base_unix: None,
+            osm_fingerprint: 0,
         }
     }
 

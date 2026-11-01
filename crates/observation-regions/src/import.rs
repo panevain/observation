@@ -79,7 +79,13 @@ pub async fn run(
     tokio::fs::create_dir_all(&db)
         .await
         .map_err(|e| format!("could not create the database directory: {e}"))?;
-    import(tools, registry, id, job, &filtered, &db, total).await?;
+    let version = info
+        .header
+        .option
+        .osmosis_replication_timestamp
+        .as_deref()
+        .filter(|t| is_osm_timestamp(t));
+    import(tools, registry, id, job, &filtered, &db, total, version).await?;
     let _ = tokio::fs::remove_file(&filtered).await;
 
     registry.progress(id, job, JobPhase::Finishing, 0, None);
@@ -216,8 +222,24 @@ async fn file_info(tools: &Tools, file: &Path) -> Result<FileInfo, String> {
     serde_json::from_slice(&out).map_err(|e| format!("osmium fileinfo output unreadable: {e}"))
 }
 
+/// Whether `s` has the form `YYYY-MM-DDTHH:MM:SSZ` (ASCII digits and the
+/// fixed separators only, 20 characters), as Overpass reports its data date.
+/// Checked before a timestamp reaches a command line or a response header.
+pub fn is_osm_timestamp(s: &str) -> bool {
+    s.len() == 20
+        && s.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 => b == b'-',
+            10 => b == b'T',
+            13 | 16 => b == b':',
+            19 => b == b'Z',
+            _ => b.is_ascii_digit(),
+        })
+}
+
 /// Pipes `osmium cat -f osm` into `update_database`, counting elements on the
-/// way for progress.
+/// way for progress. With a `version` (the extract's replication timestamp,
+/// see [`is_osm_timestamp`]) the database records it, and Overpass reports it
+/// as `timestamp_osm_base`.
 async fn import(
     tools: &Tools,
     registry: &Registry,
@@ -226,6 +248,7 @@ async fn import(
     filtered: &Path,
     db: &Path,
     total: u64,
+    version: Option<&str>,
 ) -> Result<(), String> {
     let mut cat = Command::new(&tools.osmium);
     cat.arg("cat")
@@ -247,6 +270,9 @@ async fn import(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if let Some(version) = version {
+        update.arg(format!("--version={version}"));
+    }
     let mut cat = cat
         .spawn()
         .map_err(|e| format!("could not start osmium: {e}"))?;
@@ -406,6 +432,25 @@ mod tests {
             info.header.option.osmosis_replication_timestamp.as_deref(),
             Some("2026-10-19T20:21:11Z")
         );
+    }
+
+    #[test]
+    fn accepts_only_iso_utc_timestamps() {
+        assert!(is_osm_timestamp("2026-10-31T19:43:02Z"));
+        for bad in [
+            "",
+            "2026-10-31T19:43:02",
+            "2026-10-31 19:43:02Z",
+            "2026-10-31T19:43:02+00:00",
+            "2026-10-31T19:43:02.5Z",
+            "2026-10-31T19:43:02Zx",
+            "2026-10-31T19:43:0aZ",
+            "2026-10-31T19:43:02Z --db-dir=/",
+            "２０２６-10-31T19:43:02Z",
+            "2026-10-31T19:43:02\nZ",
+        ] {
+            assert!(!is_osm_timestamp(bad), "{bad:?}");
+        }
     }
 
     #[test]

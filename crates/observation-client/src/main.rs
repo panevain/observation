@@ -59,10 +59,7 @@ fn main() {
         .insert_resource(theme::Tokens::from_environment())
         .insert_resource(persist::load_font())
         .insert_resource(persist::load_address_jump())
-        .insert_resource(state::Models {
-            catalog,
-            custom: Vec::new(),
-        })
+        .insert_resource(state::Models::new(catalog))
         .init_resource::<state::Scene>()
         .init_resource::<state::UiState>()
         .init_resource::<state::UiLayout>()

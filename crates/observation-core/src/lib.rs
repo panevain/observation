@@ -16,6 +16,7 @@ pub mod example;
 pub mod frustum;
 pub mod geo;
 pub mod occlusion;
+pub mod provenance;
 pub mod regions;
 pub mod scene;
 pub mod terrain;

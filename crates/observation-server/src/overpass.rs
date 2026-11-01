@@ -15,6 +15,7 @@ use observation_core::address::Address;
 use observation_core::building::infer_heights;
 use observation_core::bundle::{OsmAddressPoint, OsmBuilding, OsmRoad, road_width_m};
 use observation_core::geo::{BBox, LatLon};
+use observation_core::provenance::parse_utc;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
@@ -32,6 +33,10 @@ pub struct OsmData {
     pub buildings: Vec<OsmBuilding>,
     pub roads: Vec<OsmRoad>,
     pub addresses: Vec<OsmAddressPoint>,
+    /// When the data was current, Unix seconds: `osm3s.timestamp_osm_base`.
+    /// `None` when the response has none, or an empty or unreadable one (a
+    /// database imported without a data date reports `""`).
+    pub osm_base_unix: Option<u64>,
 }
 
 /// The Overpass response could not be used.
@@ -60,6 +65,16 @@ struct Response {
     #[serde(default)]
     elements: Vec<Element>,
     remark: Option<String>,
+    #[serde(default)]
+    osm3s: Osm3s,
+}
+
+/// The response's metadata block.
+#[derive(Debug, Default, Deserialize)]
+struct Osm3s {
+    /// When the database's data was current, `YYYY-MM-DDTHH:MM:SSZ`.
+    #[serde(default)]
+    timestamp_osm_base: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,12 +136,16 @@ fn complete_geometry(g: &[Option<Pt>]) -> Option<Vec<LatLon>> {
 ///   highways (plazas, car parks) are skipped.
 /// * Buildings keep their `addr:*` tags, and nodes with a house number or
 ///   house name become address points.
+/// * `osm3s.timestamp_osm_base` becomes [`OsmData::osm_base_unix`].
 pub fn parse_response(json: &[u8]) -> Result<OsmData, ParseError> {
     let resp: Response = serde_json::from_slice(json)?;
     if let Some(remark) = resp.remark.filter(|r| r.contains("runtime error")) {
         return Err(ParseError::Remark(remark));
     }
-    let mut out = OsmData::default();
+    let mut out = OsmData {
+        osm_base_unix: resp.osm3s.timestamp_osm_base.as_deref().and_then(parse_utc),
+        ..OsmData::default()
+    };
 
     // Outer-role ways of building relations are covered by the relation itself.
     let relation_member_ways: HashSet<i64> = resp
@@ -728,6 +747,31 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_data_date() {
+        let at = |osm3s: &str| {
+            parse_response(format!(r#"{{"osm3s":{osm3s},"elements":[]}}"#).as_bytes())
+                .unwrap()
+                .osm_base_unix
+        };
+        assert_eq!(
+            at(r#"{"timestamp_osm_base":"2026-10-31T19:43:02Z","copyright":"ODbL"}"#),
+            Some(1_793_475_782)
+        );
+        // A database with no data date reports an empty one; some report none.
+        assert_eq!(at(r#"{"timestamp_osm_base":""}"#), None);
+        assert_eq!(at(r#"{"copyright":"ODbL"}"#), None);
+        assert_eq!(at(r#"{"timestamp_osm_base":"last week"}"#), None);
+        assert_eq!(at("{}"), None);
+        // Area queries add `timestamp_areas_base`, which is not the data date.
+        assert_eq!(
+            at(
+                r#"{"timestamp_osm_base":"2026-10-31T19:43:02Z","timestamp_areas_base":"2026-10-30T00:00:00Z"}"#
+            ),
+            Some(1_793_475_782)
+        );
+    }
+
+    #[test]
     fn point_in_ring_works() {
         let ring = pts(&[(0.0, 0.0), (0.0, 4.0), (4.0, 4.0), (4.0, 0.0), (0.0, 0.0)]);
         assert!(point_in_ring(LatLon::new(2.0, 2.0), &ring));
@@ -747,5 +791,11 @@ mod tests {
         );
         let addressed = d.buildings.iter().filter(|b| b.address.is_some()).count();
         assert!(addressed > 50, "{addressed} addressed buildings");
+        // Recorded with the fixture (see fixtures/README.md).
+        assert_eq!(
+            d.osm_base_unix
+                .map(observation_core::provenance::format_utc),
+            Some("2026-10-31T00:00:00Z".to_owned())
+        );
     }
 }

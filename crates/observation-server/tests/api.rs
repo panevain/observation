@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, Request, Response, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use observation_core::bundle::{AreaBundle, BUNDLE_CONTENT_TYPE};
+use observation_core::provenance::format_utc;
 use observation_server::config::Config;
 use observation_server::ratelimit::{Cidr, Rate};
 use observation_server::{AppState, app};
@@ -311,6 +312,12 @@ async fn demo_is_a_decodable_bundle() {
     assert!(b.buildings.len() > 20);
     assert!(!b.roads.is_empty());
     assert_eq!(b.attribution, "© OpenStreetMap contributors");
+    // The fixture's recorded data date, and a fingerprint of its features.
+    assert_eq!(
+        b.osm_base_unix.map(format_utc).as_deref(),
+        Some("2026-10-31T00:00:00Z")
+    );
+    assert_ne!(b.osm_fingerprint, 0);
 }
 
 #[tokio::test]
@@ -1337,6 +1344,11 @@ struct MockAgent {
     /// Status for `/interpreter` (0 = answer with the fixture).
     interpreter_status: AtomicU64,
     interpreter_hits: AtomicUsize,
+    /// The `x-osm-base` header on `/interpreter` answers, if any.
+    osm_base: Mutex<Option<String>>,
+    /// Answer with the fixture's `timestamp_osm_base` blanked, as a database
+    /// imported without a data date reports it.
+    undated: AtomicBool,
     bboxes: Mutex<Vec<String>>,
     auth: Mutex<Vec<String>>,
     actions: Mutex<Vec<(String, String)>>,
@@ -1406,7 +1418,25 @@ async fn agent_interpreter(
         .unwrap()
         .push(q.get("bbox").cloned().unwrap_or_default());
     match m.interpreter_status.load(Ordering::SeqCst) {
-        0 => ([(header::CONTENT_TYPE, "application/json")], FIXTURE).into_response(),
+        0 => {
+            let body = if m.undated.load(Ordering::SeqCst) {
+                FIXTURE.replacen(
+                    "\"timestamp_osm_base\":\"2026-10-31T00:00:00Z\"",
+                    "\"timestamp_osm_base\":\"\"",
+                    1,
+                )
+            } else {
+                FIXTURE.to_owned()
+            };
+            let mut resp = ([(header::CONTENT_TYPE, "application/json")], body).into_response();
+            if let Some(v) = m.osm_base.lock().unwrap().clone() {
+                resp.headers_mut().insert(
+                    observation_core::regions::OSM_BASE_HEADER,
+                    v.parse().unwrap(),
+                );
+            }
+            resp
+        }
         code => (
             StatusCode::from_u16(code as u16).unwrap(),
             axum::Json(serde_json::json!({"error": "agent says no"})),
@@ -1528,6 +1558,49 @@ async fn regions_are_off_without_an_agent() {
         let (status, _, _) = get_uri(&h.app, uri).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
     }
+}
+
+#[tokio::test]
+async fn region_bundles_carry_the_regions_data_date() {
+    let (h, _, agent) = region_harness(None).await;
+    agent.set_ready("wa", 1);
+    wait_for_version(&h.app, 1).await;
+    // A database imported without a data date: the agent's header supplies it.
+    agent.undated.store(true, Ordering::SeqCst);
+    *agent.osm_base.lock().unwrap() = Some("2026-10-20T20:21:11Z".into());
+    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::OK);
+    let b = AreaBundle::decode(&body).unwrap();
+    assert_eq!(
+        b.osm_base_unix.map(format_utc).as_deref(),
+        Some("2026-10-20T20:21:11Z")
+    );
+    assert!(b.generated_unix > 1_700_000_000, "built now, not then");
+}
+
+#[tokio::test]
+async fn an_overpass_data_date_beats_the_agents_header() {
+    let (h, _, agent) = region_harness(None).await;
+    agent.set_ready("wa", 1);
+    wait_for_version(&h.app, 1).await;
+    *agent.osm_base.lock().unwrap() = Some("2026-10-20T20:21:11Z".into());
+    let (_, _, body) = get_uri(&h.app, &area_uri()).await;
+    let b = AreaBundle::decode(&body).unwrap();
+    assert_eq!(
+        b.osm_base_unix.map(format_utc).as_deref(),
+        Some("2026-10-31T00:00:00Z")
+    );
+}
+
+#[tokio::test]
+async fn an_undated_region_gives_an_undated_bundle() {
+    let (h, _, agent) = region_harness(None).await;
+    agent.set_ready("wa", 1);
+    wait_for_version(&h.app, 1).await;
+    agent.undated.store(true, Ordering::SeqCst);
+    *agent.osm_base.lock().unwrap() = Some("not a date".into());
+    let (_, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(AreaBundle::decode(&body).unwrap().osm_base_unix, None);
 }
 
 #[tokio::test]

@@ -68,6 +68,7 @@ pub fn build_demo(
         demo_terrain(&bbox, dem_attribution)?,
         attribution,
         generated_unix,
+        data.osm_base_unix,
     );
     Ok(Bytes::from(bundle.encode()))
 }
@@ -88,6 +89,13 @@ mod tests {
         assert!(b.buildings.len() > 80, "{} buildings", b.buildings.len());
         assert!(!b.roads.is_empty());
         assert!(!b.mesh.is_empty());
+        // The fixture's recorded data date, apart from when it was built.
+        assert_eq!(b.generated_unix, 1);
+        assert_eq!(
+            b.osm_base_unix
+                .map(observation_core::provenance::format_date),
+            Some("2026-10-31".to_owned())
+        );
     }
 
     #[test]
