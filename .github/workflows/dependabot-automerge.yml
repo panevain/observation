@@ -13,6 +13,11 @@ on:
     # Every 4 hours; the 06:00 run follows the 05:00-05:30 update window (Dependabot, Pins).
     - cron: "0 2-22/4 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only list what would happen (in the run's summary); change nothing
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -41,14 +46,15 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          prs="$(python3 scripts/dependabot-automerge.py list --repo "${REPO}")"
+          prs="$(python3 scripts/dependabot-automerge.py list --repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")"
           echo "prs=${prs}" >> "${GITHUB_OUTPUT}"
 
-  # Only when there is something to do, so the sweep does not deploy to `bot` each time.
+  # Only when there is something to do, so the sweep does not deploy to `bot` each time, and
+  # never on a dry run.
   merge:
     name: set auto-merge
     needs: find
-    if: needs.find.outputs.prs != '' && needs.find.outputs.prs != '{"merge":[],"hold":[]}'
+    if: needs.find.outputs.prs != '' && needs.find.outputs.prs != '{"merge":[],"hold":[]}' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: bot

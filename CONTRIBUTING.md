@@ -12,7 +12,7 @@
 
 Add user-visible changes under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
-Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge.
+Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge. Each run's summary lists every open Dependabot PR and why it was or was not set to auto-merge; run the workflow by hand with **dry run** to see that list without changing anything.
 
 ### Releasing
 
@@ -104,6 +104,6 @@ Every tool is pinned once, and mise installs it from a release asset that matche
 | `mise.ci.toml`, `mise.ci.lock` | the tools only CI and the image build use, CI's environment, and the tasks behind the security, fuzz and scan steps | with `MISE_ENV=ci` (every workflow sets it) or `mise -E ci` |
 | `mise.local.toml` | your own settings (`OBS_CONTACT` and so on; gitignored) | always |
 
-To add or change a tool, edit `mise.toml` or `mise.ci.toml` (for an unusual GitHub release, a `[tool_alias]` entry names its backend), then `mise run lock` to record its checksums in both lockfiles. A workflow job installs only what it needs (`install_args` of `jdx/mise-action`). The Pins workflow bumps every tool in `[tools]` with `mise upgrade --bump` once a release is a week old (`minimum_release_age` in `mise.toml`); task tools other than fnox stay where they are until someone bumps them. The Dockerfile's build-tools stage installs trunk, cargo-chef and cargo-auditable from the same lockfiles.
+To add or change a tool, edit `mise.toml` or `mise.ci.toml` (for an unusual GitHub release, a `[tool_alias]` entry names its backend), then `mise run lock` to record its checksums in both lockfiles. A workflow job installs only what it needs (the `tools` input of `.github/actions/setup-mise`, the one place the workflows' mise version is pinned; `mise.toml`'s `min_version` warns when your local mise is older). The Pins workflow bumps every tool in `[tools]` with `mise upgrade --bump` once a release is a week old (`minimum_release_age` in `mise.toml`); task tools other than fnox stay where they are until someone bumps them. The Dockerfile's build-tools stage installs trunk, cargo-chef and cargo-auditable from the same lockfiles.
 
 Keep colours, spacing and other UI constants in `crates/observation-client/src/theme.rs` (the design-token check fails otherwise). See [docs/design.md](docs/design.md) for architecture and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

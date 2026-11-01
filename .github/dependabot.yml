@@ -14,8 +14,10 @@
 # checks pass, so a patch group never waits on a minor update that needs a person.
 version: 2
 updates:
+  # Both Cargo workspaces: the root one and the fuzz targets (fuzz/, its own lockfile; see
+  # fuzz/README.md). One entry, so a crate both use is bumped in one PR across both lockfiles.
   - package-ecosystem: cargo
-    directory: /
+    directories: ["/", "/fuzz"]
     schedule:
       interval: weekly
       day: monday
@@ -44,34 +46,10 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
 
-  # Fuzz targets (separate workspace with its own lockfile; see fuzz/README.md).
-  - package-ecosystem: cargo
-    directory: /fuzz
-    schedule:
-      interval: weekly
-      day: monday
-      time: "05:10"
-      timezone: Etc/UTC
-    open-pull-requests-limit: 2
-    cooldown:
-      default-days: 7
-    commit-message:
-      prefix: "fuzz"
-    ignore:
-      # Same rule as the main workspace: glam moves with Bevy.
-      - dependency-name: glam
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-    groups:
-      fuzz-patch:
-        update-types: [patch]
-      fuzz-deps:
-        patterns: ["*"]
-      fuzz-security:
-        applies-to: security-updates
-        patterns: ["*"]
-
+  # The workflows, and the composite actions they share (.github/actions/), which Dependabot
+  # does not look at from the root directory alone.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
       day: monday
@@ -103,18 +81,15 @@ updates:
     commit-message:
       prefix: "docker"
     ignore:
-      # The builder image's Rust version must match rust-toolchain.toml (and Bevy's MSRV).
-      # The Pins workflow (scripts/bump-pins.py) moves rust-toolchain.toml, Cargo.toml, the
-      # Dockerfile tag and mise.lock together, and mise run sync checks they agree. Only
-      # digest updates come from Dependabot.
-      - dependency-name: rust
-        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
-      # The build-tools stage's mise is the CI mise (MISE_VERSION in ci.yml), which the Pins
-      # workflow bumps together with this tag; only its digest comes from Dependabot.
-      - dependency-name: "*jdx/mise"
+      # Digests only. The builder image's Rust version must match rust-toolchain.toml (and
+      # Bevy's MSRV), and the build-tools stage's mise is the CI mise
+      # (.github/actions/setup-mise): the Pins workflow (scripts/bump-pins.py) moves those tags
+      # with the files that repeat them, and mise run sync checks they agree. Debian and
+      # distroless are pinned to a release name (trixie-slim, nonroot), which has no versions.
+      # A new base image with a versioned tag would need its own rule here.
+      - dependency-name: "*"
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
     groups:
-      docker-patch:
-        update-types: [patch]
-      docker-minor:
-        update-types: [minor]
+      # Every image's digest refresh in one PR, which auto-merge takes once green.
+      docker-digests:
+        patterns: ["*"]

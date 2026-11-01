@@ -2,8 +2,10 @@
 """Lists the open Dependabot pull requests that may merge themselves, and those on hold. Used
 by dependabot-automerge.yml, which enables or disables auto-merge on them as the bot app.
 
-  list --repo OWNER/NAME
-      Prints {"merge": [...], "hold": [...]} (JSON, each item {"number", "sha"}).
+  list --repo OWNER/NAME [--summary FILE]
+      Prints {"merge": [...], "hold": [...]} (JSON, each item {"number", "sha"}), and appends a
+      Markdown table of every open Dependabot PR and what happens to it to FILE (the job
+      summary).
       merge: each open, non-draft Dependabot PR into develop, without auto-merge yet and not
         labelled `hold`, whose commits are all Dependabot's and whose every updated dependency
         (from the commit's `updated-dependencies` metadata) is a semver patch update, or a
@@ -47,6 +49,11 @@ def dependencies(body):
     return [tuple(d) for d in deps]
 
 
+def cell(text):
+    """text as a Markdown table cell."""
+    return text.replace("|", "\\|")
+
+
 def labels(pr):
     return {label["name"] for label in pr["labels"]}
 
@@ -78,16 +85,26 @@ def cmd_list(a):
     fields = "number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"
     prs = [gh("pr", "view", str(p["number"]), "--repo", a.repo, "--json", fields) for p in listed]
     out = {"merge": [], "hold": []}
+    rows = []
     for pr in prs:
         item = {"number": pr["number"], "sha": pr["headRefOid"]}
         if HOLD in labels(pr) and pr["autoMergeRequest"]:
-            print(f"#{pr['number']} {pr['title']}: labelled {HOLD}, disable auto-merge", file=sys.stderr)
+            verdict = f"labelled {HOLD}: disable auto-merge"
             out["hold"].append(item)
-            continue
-        why = eligible(pr)
-        print(f"#{pr['number']} {pr['title']}: {why or 'auto-merge'}", file=sys.stderr)
-        if why is None:
+        elif (why := eligible(pr)) is None:
+            verdict = "enable auto-merge"
             out["merge"].append(item)
+        else:
+            verdict = f"left alone: {why}"
+        print(f"#{pr['number']} {pr['title']}: {verdict}", file=sys.stderr)
+        rows.append(f"| #{pr['number']} | {cell(pr['title'])} | {cell(verdict)} |")
+    if a.summary:
+        with open(a.summary, "a") as f:
+            f.write("### Open Dependabot pull requests\n\n")
+            if rows:
+                f.write("| PR | Title | Auto-merge |\n| --- | --- | --- |\n" + "\n".join(rows) + "\n")
+            else:
+                f.write("None.\n")
     print(json.dumps(out, separators=(",", ":")))  # compact: the workflow compares it as text
 
 
@@ -96,6 +113,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("list")
     p.add_argument("--repo", required=True)
+    p.add_argument("--summary", help="append a Markdown table of the verdicts to this file")
     cmd_list(ap.parse_args())
 
 

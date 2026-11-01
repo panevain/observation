@@ -66,9 +66,11 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Flatter widget style: buttons show hover and press by fill instead of an outline, input fields have a 3:1 edge, corners are smaller (4/6/8 px) and floating cards and menus have a shadow.
 - Selected camera is grouped into a name header, Position, Orientation and a collapsed Optics section; the face vector moved to the compass label's tooltip. Camera rows use an eye toggle instead of a checkbox, and the Cones and Walls toggles look different from the tools.
 - The light or dark theme follows a change of the system setting without a reload: the panels, the map dialog, the 3D scene (sky, buildings, ground, camera bodies) and the coverage overlay all switch over.
+- CI tooling: every workflow sets up mise and Rust through two composite actions (`.github/actions/setup-mise`, the one pin of the CI mise version, and `setup-rust`); `mise.toml` sets `min_version`, so an older local mise warns. Dependabot bumps both Cargo workspaces in one PR, also updates the composite actions, and refreshes all base image digests in one daily PR. The Dependabot auto-merge run summary lists each open PR's verdict, and a manual run can be a dry run.
 
 ### Fixed
 
+- Prepare release no longer counts changes under `fuzz/` (which ships in no image) as a reason for a patch release.
 - The demo street now has its 205 address nodes: the fixture had been recorded before the converter kept them, so many houses there had no address in the camera list or the Address tool.
 - A scene file with two custom models of the same id, or a custom model id without the `custom-` prefix (which could replace a catalogue model), no longer leaves a model unreachable in the custom model editor: on import or restore, each such model gets a new `custom-` id and the cameras that showed it follow it. Files the app wrote are unchanged, since it has always made unique `custom-` ids. Catalogue ids may not start with `custom-`.
 - Ctrl/Cmd+V pastes into text fields such as the admin token, and Ctrl/Cmd+C and X copy and cut from them. The browser's clipboard events were not wired up, and Bevy cancelled the key presses that fire them.

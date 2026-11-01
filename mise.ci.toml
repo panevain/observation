@@ -9,7 +9,7 @@
 # with `mise upgrade --bump`, each once it is a week old (minimum_release_age in mise.toml).
 
 [settings]
-# Each job installs only the tools it uses (mise-action's install_args); `mise run` must not
+# Each job installs only the tools it uses (setup-mise's `tools`); `mise run` must not
 # install the rest.
 task.run_auto_install = false
 # cargo: tools (cargo-fuzz) are built with `cargo install --locked`, never taken from a prebuilt

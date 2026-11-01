@@ -65,16 +65,16 @@ jobs:
       # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
       # directories: without shims, nothing run in release/ resolves its own mise config.
       # No cache: they are downloaded fresh and checked against mise.ci.lock.
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
         if: steps.state.outputs.go == 'true'
         with:
-          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install_args: cargo-audit trivy
+          tools: cargo-audit trivy
           cache: false
-          add_shims_to_path: false
-      - name: Install toolchain (from the release's rust-toolchain.toml)
+          shims: false
+      - uses: $/.github/actions/setup-rust
         if: steps.state.outputs.go == 'true'
-        run: mise run ci:toolchain -C release
+        with:
+          dir: release
       # Runs `cargo update` in the release checkout to see which advisories have a compatible
       # fix; nothing is pushed from here.
       - name: Check
