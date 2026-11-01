@@ -62,6 +62,19 @@ struct TileTextured;
 #[derive(Component)]
 pub struct FacadeOverlay;
 
+/// Tint over the ground beyond the loaded area, where nothing is analysed.
+/// Shown while the Region tool is on, with hatching and an edge drawn over it.
+#[derive(Component)]
+pub struct OutsideArea {
+    /// The loaded area (the coverage grid), world `[x, z]`.
+    pub inner: Rect,
+    /// The drawn ground around it: the map tiles' extent.
+    pub outer: Rect,
+}
+
+/// Opacity of the [`OutsideArea`] tint.
+const OUTSIDE_TINT_ALPHA: f32 = 0.15;
+
 /// The buildings at the address picked with the Address tool, drawn over the
 /// building mesh.
 #[derive(Component)]
@@ -80,6 +93,8 @@ struct WorldMaterials {
     building: Handle<StandardMaterial>,
     /// Ground tiles without their map image.
     plain: Handle<StandardMaterial>,
+    /// The [`OutsideArea`] tint.
+    outside: Handle<StandardMaterial>,
 }
 
 pub struct WorldPlugin;
@@ -142,6 +157,34 @@ pub fn ground_quad(min: Vec2, max: Vec2, y: f32) -> Mesh {
         vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     )
     .with_inserted_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]))
+}
+
+/// Flat ring on the ground plane: `outer` with `inner` cut out.
+fn ground_frame(inner: Rect, outer: Rect, y: f32) -> Mesh {
+    let corners = |r: Rect| {
+        [
+            [r.min.x, y, r.min.y],
+            [r.max.x, y, r.min.y],
+            [r.max.x, y, r.max.y],
+            [r.min.x, y, r.max.y],
+        ]
+    };
+    // Outer corners 0-3, inner 4-7; one quad per side, wound like `ground_quad`.
+    let mut idx = Vec::with_capacity(24);
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        idx.extend([i, 4 + j, j, i, 4 + i, 4 + j]);
+    }
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        [corners(outer), corners(inner)].concat(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 8])
+    .with_inserted_indices(Indices::U32(idx))
 }
 
 /// Asset stores an area load writes to.
@@ -227,10 +270,13 @@ fn on_area_loaded(
     let z = zoom_for_bbox(&tile_bbox, MAX_GROUND_TILES, 19);
     let ground_tiles = tiles_covering(&tile_bbox, z);
     tiles.pin(ground_tiles.iter().copied());
+    let inner = Rect::from_corners(grid.min, grid.max());
+    let mut outer = Rect::from_corners(gmin, gmax);
     for t in ground_tiles {
         let b = t.bounds();
         let nw = world2(&proj, LatLon::new(b.north, b.west));
         let se = world2(&proj, LatLon::new(b.south, b.east));
+        outer = outer.union(Rect::from_corners(nw, se));
         commands.spawn((
             AreaEntity,
             GroundTile(t),
@@ -240,7 +286,27 @@ fn on_area_loaded(
             Pickable::IGNORE,
         ));
     }
-    commands.insert_resource(WorldMaterials { building, plain });
+    let outside = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.outside_area).with_alpha(OUTSIDE_TINT_ALPHA),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        depth_bias: 10.0,
+        ..default()
+    });
+    commands.spawn((
+        AreaEntity,
+        OutsideArea { inner, outer },
+        Mesh3d(meshes.add(ground_frame(inner, outer, OVERLAY_Y_M))),
+        MeshMaterial3d(outside.clone()),
+        Visibility::Hidden,
+        NotShadowCaster,
+        Pickable::IGNORE,
+    ));
+    commands.insert_resource(WorldMaterials {
+        building,
+        plain,
+        outside,
+    });
 
     // Ground coverage overlay texture (one texel per ground cell).
     let ground_image = images.add(Image::new_fill(
@@ -378,8 +444,8 @@ fn apply_ground_tiles(
     }
 }
 
-/// Recolours the sky, the buildings and the plain ground in place after a
-/// theme change.
+/// Recolours the sky, the buildings, the plain ground and the outside-area
+/// tint in place after a theme change.
 fn follow_theme(
     tokens: Res<Tokens>,
     mut clear: ResMut<ClearColor>,
@@ -389,11 +455,15 @@ fn follow_theme(
     clear.0 = to_bevy(tokens.world.sky);
     let Some(world) = world else { return };
     for (handle, color) in [
-        (&world.building, tokens.world.building),
-        (&world.plain, tokens.world.ground),
+        (&world.building, to_bevy(tokens.world.building)),
+        (&world.plain, to_bevy(tokens.world.ground)),
+        (
+            &world.outside,
+            to_bevy(tokens.world.outside_area).with_alpha(OUTSIDE_TINT_ALPHA),
+        ),
     ] {
         if let Some(mut mat) = materials.get_mut(handle) {
-            mat.base_color = to_bevy(color);
+            mat.base_color = color;
         }
     }
 }

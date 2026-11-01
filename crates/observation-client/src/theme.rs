@@ -34,6 +34,9 @@ pub struct WorldColors {
     pub halo: Color32,
     /// Outline of the coverage region.
     pub region: Color32,
+    /// Edge of the loaded area and the hatching beyond it, shown while
+    /// drawing a region.
+    pub outside_area: Color32,
     /// Buildings at the address picked with the Address tool.
     pub address: Color32,
 }
@@ -153,6 +156,7 @@ impl Tokens {
                 aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 halo: Color32::from_rgb(0x1B, 0x1F, 0x24),
                 region: Color32::from_rgb(0x1B, 0x1F, 0x24),
+                outside_area: Color32::from_rgb(0xC9, 0x2A, 0x2A),
                 address: Color32::from_rgb(0x8F, 0xA3, 0xEE),
             },
         )
@@ -172,6 +176,7 @@ impl Tokens {
                 aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 halo: Color32::from_rgb(0x12, 0x14, 0x17),
                 region: Color32::from_rgb(0x12, 0x14, 0x17),
+                outside_area: Color32::from_rgb(0xF0, 0x6A, 0x6A),
                 address: Color32::from_rgb(0x7C, 0x95, 0xF2),
             },
         )

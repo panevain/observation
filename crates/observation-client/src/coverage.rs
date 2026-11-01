@@ -6,9 +6,10 @@
 
 mod backend;
 
+use crate::input::OrbitCamera;
 use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState};
 use crate::theme::{Tokens, rgba, to_bevy};
-use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, Overlay, texel, write_overlay};
+use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
 use backend::CoverageBackend;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -63,6 +64,16 @@ impl Plugin for CoveragePlugin {
                     ..default()
                 },
             )
+            .insert_gizmo_config(
+                HatchGizmos,
+                GizmoConfig {
+                    line: GizmoLineConfig {
+                        width: 1.5,
+                        ..default()
+                    },
+                    ..default()
+                },
+            )
             .add_systems(
                 Update,
                 (
@@ -71,6 +82,7 @@ impl Plugin for CoveragePlugin {
                     update_coverage.after(AreaLoadSet),
                     paint_overlay,
                     draw_region,
+                    draw_outside_area,
                 )
                     .chain(),
             );
@@ -346,5 +358,145 @@ fn draw_region(
             0.4
         };
         gizmos.circle(Isometry3d::new(at(*p), flat), radius, color);
+    }
+}
+
+/// Gizmo group for the hatching beyond the loaded area: thin, and hidden by
+/// buildings like the ground it lies on.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct HatchGizmos;
+
+/// Opacity of the hatching beyond the loaded area.
+const HATCH_ALPHA: f32 = 0.6;
+
+/// While the Region tool is on, marks where corners can go: a solid edge
+/// around the loaded area, and the ground beyond it tinted and hatched.
+fn draw_outside_area(
+    mut edge: Gizmos<RegionGizmos>,
+    mut hatching: Gizmos<HatchGizmos>,
+    mut outside: Query<(&OutsideArea, &mut Visibility)>,
+    orbit: Query<&OrbitCamera>,
+    ui: Res<UiState>,
+    tokens: Res<Tokens>,
+) {
+    let on = ui.tool == Tool::Region;
+    let color = to_bevy(tokens.world.outside_area);
+    for (area, mut vis) in &mut outside {
+        vis.set_if_neq(if on {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+        if !on {
+            continue;
+        }
+        let at = |p: Vec2| Vec3::new(p.x, REGION_Y_M, p.y);
+        let r = area.inner;
+        edge.linestrip(
+            [
+                r.min,
+                Vec2::new(r.max.x, r.min.y),
+                r.max,
+                Vec2::new(r.min.x, r.max.y),
+                r.min,
+            ]
+            .map(at),
+            color,
+        );
+        let spacing = orbit.single().map_or(8.0, |o| hatch_spacing_m(o.distance));
+        let c = color.with_alpha(HATCH_ALPHA);
+        for (a, b) in hatch(area.inner, area.outer, spacing) {
+            hatching.line(at(a), at(b), c);
+        }
+    }
+}
+
+/// Gap between hatch lines, metres: about 2% of the view distance, rounded to
+/// a power of two so zooming adds or drops every other line instead of
+/// sliding them all.
+fn hatch_spacing_m(view_distance: f32) -> f32 {
+    (view_distance * 0.02)
+        .clamp(2.0, 64.0)
+        .log2()
+        .round()
+        .exp2()
+}
+
+/// Diagonal lines `x + z = k * spacing` across `outer`, with `inner` cut out.
+fn hatch(inner: Rect, outer: Rect, spacing: f32) -> Vec<(Vec2, Vec2)> {
+    // The span of `x` where the line `x + z = c` crosses `r`, if it does.
+    let span = |r: Rect, c: f32| {
+        let (lo, hi) = (r.min.x.max(c - r.max.y), r.max.x.min(c - r.min.y));
+        (lo < hi).then_some((lo, hi))
+    };
+    let point = |c: f32, x: f32| Vec2::new(x, c - x);
+    let first = ((outer.min.x + outer.min.y) / spacing).ceil() as i64;
+    let last = ((outer.max.x + outer.max.y) / spacing).floor() as i64;
+    let mut out = Vec::new();
+    for k in first..=last {
+        let c = k as f32 * spacing;
+        let Some((a0, a1)) = span(outer, c) else {
+            continue;
+        };
+        match span(inner, c) {
+            Some((b0, b1)) => {
+                if a0 < b0 {
+                    out.push((point(c, a0), point(c, b0.min(a1))));
+                }
+                if b1 < a1 {
+                    out.push((point(c, b1.max(a0)), point(c, a1)));
+                }
+            }
+            None => out.push((point(c, a0), point(c, a1))),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hatching_stays_outside_the_area() {
+        let inner = Rect::new(-10.0, -10.0, 10.0, 10.0);
+        let outer = Rect::new(-30.0, -30.0, 30.0, 30.0);
+        let lines = hatch(inner, outer, 4.0);
+        assert!(!lines.is_empty());
+        for (a, b) in lines {
+            for p in [a, b] {
+                assert!(outer.inflate(1e-3).contains(p), "{p} outside the ground");
+            }
+            // Neither end nor the middle is strictly inside the area.
+            for p in [a, b, (a + b) / 2.0] {
+                assert!(!inner.inflate(-1e-3).contains(p), "{p} inside the area");
+            }
+        }
+    }
+
+    #[test]
+    fn lines_through_the_area_are_split() {
+        let inner = Rect::new(-10.0, -10.0, 10.0, 10.0);
+        let outer = Rect::new(-30.0, -30.0, 30.0, 30.0);
+        // `x + z = 0` crosses the area's middle: two pieces, each from the
+        // ground's corner to the area's.
+        let through: Vec<_> = hatch(inner, outer, 4.0)
+            .into_iter()
+            .filter(|(a, b)| (a.x + a.y).abs() < 1e-3 && (b.x + b.y).abs() < 1e-3)
+            .collect();
+        assert_eq!(
+            through,
+            [
+                (Vec2::new(-30.0, 30.0), Vec2::new(-10.0, 10.0)),
+                (Vec2::new(10.0, -10.0), Vec2::new(30.0, -30.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn spacing_follows_zoom_in_powers_of_two() {
+        assert_eq!(hatch_spacing_m(10.0), 2.0);
+        assert_eq!(hatch_spacing_m(400.0), 8.0);
+        assert_eq!(hatch_spacing_m(1e6), 64.0);
     }
 }
