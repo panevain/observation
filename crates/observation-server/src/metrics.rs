@@ -30,6 +30,9 @@ pub const OVERPASS_FETCH: &str = "observation_overpass_fetches_total";
 /// Bundle builds tried against a local region: `outcome` is `ok`, `not_covered`
 /// (the agent has no region holding the area) or `error`; the last two fall back to Overpass.
 pub const REGION_QUERY: &str = "observation_region_queries_total";
+/// Upstream-bound requests over a client's limit (a 429, or an expired tile
+/// served instead of revalidated): `route` is `area` or `tiles`.
+pub const CLIENT_LIMITED: &str = "observation_client_rate_limited_total";
 
 /// Latency bucket upper bounds in seconds; the request timeout is 80 s.
 const DURATION_BUCKETS: &[f64] = &[

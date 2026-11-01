@@ -407,6 +407,7 @@ fn http_failure(status: u16, body: &str) -> String {
         .filter(|m| !m.is_empty());
     from_server.unwrap_or_else(|| match status {
         404 => "the server does not have this (HTTP 404); the app may be out of date, so reload the page".to_owned(),
+        429 => "too many requests to the server (HTTP 429); wait a minute and try again".to_owned(),
         408 | 504 => format!("the server took too long to answer (HTTP {status}); try again shortly"),
         502 | 503 => format!("the server is unavailable right now (HTTP {status}); try again shortly"),
         500..=599 => format!("the server had a problem (HTTP {status}); try again shortly"),

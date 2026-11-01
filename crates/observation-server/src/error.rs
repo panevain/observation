@@ -37,6 +37,14 @@ pub enum ApiError {
         /// Value for the `retry-after` header, seconds.
         retry_after_secs: u64,
     },
+    /// This client sent too many requests that go upstream (429).
+    #[error(
+        "too many new areas or map tiles from your address; try again in about {retry_after_secs} s"
+    )]
+    TooManyRequests {
+        /// Value for the `retry-after` header, seconds.
+        retry_after_secs: u64,
+    },
     /// Unexpected local failure (500). The detail is logged, never sent.
     #[error("the server hit an unexpected problem; please try again")]
     Internal(String),
@@ -54,6 +62,7 @@ impl ApiError {
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::RateLimited { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -65,7 +74,8 @@ impl IntoResponse for ApiError {
             tracing::error!(%detail, "internal error");
         }
         let mut resp = (self.status(), Json(json!({ "error": self.to_string() }))).into_response();
-        if let Self::RateLimited { retry_after_secs } = self
+        if let Self::RateLimited { retry_after_secs } | Self::TooManyRequests { retry_after_secs } =
+            self
             && let Ok(v) = HeaderValue::from_str(&retry_after_secs.to_string())
         {
             resp.headers_mut().insert(header::RETRY_AFTER, v);

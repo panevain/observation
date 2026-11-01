@@ -40,6 +40,8 @@ services:
       # Leave empty to make regions read-only in the UI.
       OBS_ADMIN_TOKEN: ${OBS_ADMIN_TOKEN:-}
       OBS_LOG_FORMAT: ${OBS_LOG_FORMAT:-text}
+      # Your reverse proxy's address, if one sits in front, so clients are rate limited apart.
+      OBS_TRUSTED_PROXIES: ${OBS_TRUSTED_PROXIES:-}
     volumes:
       - cache:/var/cache/observation
     depends_on:

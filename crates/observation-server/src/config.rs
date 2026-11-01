@@ -8,6 +8,8 @@ use observation_core::tiles::TileId;
 use observation_upstream::{UrlProblem, check_url, redact};
 use thiserror::Error;
 
+use crate::ratelimit::{Cidr, Rate};
+
 /// Default tile URL template (OpenStreetMap standard tiles).
 pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 /// Default Overpass interpreter endpoint.
@@ -59,7 +61,29 @@ pub enum ConfigError {
     LogFormat(String),
     #[error("OBS_REGIONS_URL `{0}` is not an http(s) URL")]
     RegionsUrl(String),
+    #[error("OBS_TRUSTED_PROXIES entry `{0}` is not an IP address or a block like 10.0.0.0/8")]
+    TrustedProxy(String),
+    #[error("{var} `{value}` is not a whole number from {min} to {MAX_RATE}")]
+    Rate {
+        var: &'static str,
+        value: String,
+        min: u32,
+    },
 }
+
+/// Largest per-minute rate or burst accepted for the per-client limits.
+pub const MAX_RATE: u32 = 1_000_000;
+/// Default `/api/area` limit: 10 boxes at once, then one every 6 s.
+pub const DEFAULT_AREA_RATE: Rate = Rate {
+    per_minute: 10,
+    burst: 10,
+};
+/// Default `/api/tiles` limit: a screenful of tiles at once (the client keeps
+/// up to 400), then 10 a second.
+pub const DEFAULT_TILE_RATE: Rate = Rate {
+    per_minute: 600,
+    burst: 400,
+};
 
 /// Server configuration.
 #[derive(Debug, Clone)]
@@ -109,6 +133,14 @@ pub struct Config {
     /// Token that allows importing and deleting regions from the UI
     /// (`OBS_ADMIN_TOKEN`); `None` makes regions read-only.
     pub admin_token: Option<String>,
+    /// Reverse proxies whose `X-Forwarded-For` names the client (`OBS_TRUSTED_PROXIES`).
+    pub trusted_proxies: Vec<Cidr>,
+    /// Per-client limit on bundles that are not cached yet
+    /// (`OBS_AREA_RATE_PER_MIN`, `OBS_AREA_BURST`).
+    pub area_rate: Rate,
+    /// Per-client limit on tiles that go upstream
+    /// (`OBS_TILE_RATE_PER_MIN`, `OBS_TILE_BURST`).
+    pub tile_rate: Rate,
 }
 
 /// Whether two listen addresses would collide: same port and the same IP, or either
@@ -218,7 +250,34 @@ impl Config {
                 }
             })
             .transpose()?;
+        let trusted_proxies = get("OBS_TRUSTED_PROXIES")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(|c| Cidr::parse(c).ok_or_else(|| ConfigError::TrustedProxy(c.to_owned())))
+            .collect::<Result<_, _>>()?;
+        let number = |var: &'static str, default: u32, min: u32| match get(var) {
+            None => Ok(default),
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (min..=MAX_RATE).contains(n))
+                .ok_or(ConfigError::Rate { var, value, min }),
+        };
+        // A rate of 0 turns that limit off; otherwise a burst below 1 would refuse everything.
+        let area_rate = Rate {
+            per_minute: number("OBS_AREA_RATE_PER_MIN", DEFAULT_AREA_RATE.per_minute, 0)?,
+            burst: number("OBS_AREA_BURST", DEFAULT_AREA_RATE.burst, 1)?,
+        };
+        let tile_rate = Rate {
+            per_minute: number("OBS_TILE_RATE_PER_MIN", DEFAULT_TILE_RATE.per_minute, 0)?,
+            burst: number("OBS_TILE_BURST", DEFAULT_TILE_RATE.burst, 1)?,
+        };
         let config = Self {
+            trusted_proxies,
+            area_rate,
+            tile_rate,
             bind,
             metrics_bind,
             regions_url,
@@ -310,11 +369,14 @@ impl Config {
             regions_url: None,
             regions_token: None,
             admin_token: None,
+            trusted_proxies: Vec::new(),
+            area_rate: DEFAULT_AREA_RATE,
+            tile_rate: DEFAULT_TILE_RATE,
         }
     }
 
-    /// Configuration for tests: loopback upstreams, no minimum tile TTL and a
-    /// short retry pause.
+    /// Configuration for tests: loopback upstreams, no minimum tile TTL, a
+    /// short retry pause and no per-client limits.
     pub fn for_tests(
         cache_dir: impl Into<PathBuf>,
         static_dir: impl Into<PathBuf>,
@@ -333,6 +395,14 @@ impl Config {
             overpass_timeout: Duration::from_secs(5),
             overpass_cooldown: Duration::from_secs(30),
             request_timeout: Duration::from_secs(20),
+            area_rate: Rate {
+                per_minute: 0,
+                burst: 1,
+            },
+            tile_rate: Rate {
+                per_minute: 0,
+                burst: 1,
+            },
             ..Self::defaults()
         }
     }
@@ -452,6 +522,53 @@ mod tests {
                 "https://a.example/api/interpreter".to_owned(),
                 "https://b.example/api/interpreter".to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn client_limits_and_trusted_proxies() {
+        let c = Config::from_lookup(lookup(&[])).unwrap();
+        assert_eq!(c.area_rate, DEFAULT_AREA_RATE);
+        assert_eq!(c.tile_rate, DEFAULT_TILE_RATE);
+        assert!(c.trusted_proxies.is_empty());
+
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_AREA_RATE_PER_MIN", "0"),
+            ("OBS_TILE_RATE_PER_MIN", "120"),
+            ("OBS_TILE_BURST", "50"),
+            ("OBS_TRUSTED_PROXIES", "10.0.0.0/8, ,::1"),
+        ]))
+        .unwrap();
+        assert_eq!(c.area_rate.per_minute, 0);
+        assert_eq!(
+            c.tile_rate,
+            Rate {
+                per_minute: 120,
+                burst: 50
+            }
+        );
+        assert_eq!(c.trusted_proxies.len(), 2);
+        assert!(c.trusted_proxies[0].contains("10.9.8.7".parse().unwrap()));
+
+        for (var, bad) in [
+            ("OBS_AREA_RATE_PER_MIN", "-1"),
+            ("OBS_AREA_RATE_PER_MIN", "1.5"),
+            ("OBS_TILE_RATE_PER_MIN", "1000001"),
+            ("OBS_AREA_BURST", "0"),
+            ("OBS_TILE_BURST", "lots"),
+        ] {
+            assert!(
+                matches!(
+                    Config::from_lookup(lookup(&[(var, bad)])),
+                    Err(ConfigError::Rate { var: v, value, .. }) if v == var && value == bad
+                ),
+                "{var}={bad}"
+            );
+        }
+        assert_eq!(
+            Config::from_lookup(lookup(&[("OBS_TRUSTED_PROXIES", "10.0.0.0/8,proxy")]))
+                .unwrap_err(),
+            ConfigError::TrustedProxy("proxy".into())
         );
     }
 

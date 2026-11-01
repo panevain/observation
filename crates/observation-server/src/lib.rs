@@ -13,6 +13,7 @@ pub mod demo;
 pub mod error;
 pub mod metrics;
 pub mod overpass;
+pub mod ratelimit;
 pub mod regions;
 pub mod routes;
 pub mod tiles;
@@ -36,6 +37,7 @@ use crate::bundles::BundleService;
 use crate::cache::{Cache, CacheCaps};
 use crate::config::Config;
 use crate::overpass::OverpassClient;
+use crate::ratelimit::RateLimiter;
 use crate::regions::Regions;
 use crate::tiles::TileProxy;
 
@@ -153,6 +155,7 @@ impl AppState {
             overpass,
             regions.clone(),
             config.attribution.clone(),
+            RateLimiter::new("area", config.area_rate),
         ));
         let tiles = TileProxy::new(tile_client, &config, cache);
 

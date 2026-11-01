@@ -7,6 +7,7 @@ use observation_core::tiles::TileId;
 
 use crate::AppState;
 use crate::error::ApiError;
+use crate::ratelimit::ClientKey;
 
 /// Parses the path segments into a valid [`TileId`]; anything else is a 404.
 fn parse_tile(z: &str, x: &str, y: &str) -> Option<TileId> {
@@ -17,11 +18,15 @@ fn parse_tile(z: &str, x: &str, y: &str) -> Option<TileId> {
 /// Caching proxy for map tiles.
 pub async fn tile(
     State(state): State<AppState>,
+    client: ClientKey,
     Path((z, x, y)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let id = parse_tile(&z, &x, &y).ok_or(ApiError::NotFound("not a valid map tile address"))?;
-    let bytes = state.tiles().get(id, headers.get(header::REFERER)).await?;
+    let bytes = state
+        .tiles()
+        .get(id, headers.get(header::REFERER), client)
+        .await?;
     Ok((
         [
             (header::CONTENT_TYPE, HeaderValue::from_static("image/png")),

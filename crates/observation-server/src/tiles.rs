@@ -2,7 +2,8 @@
 //! (<https://operations.osmfoundation.org/policies/tiles/>):
 //! distinct `User-Agent`, `Referer` forwarded, upstream `Cache-Control`/`Expires`
 //! honoured but never below the configured minimum (7 days), conditional
-//! revalidation, at most 4 concurrent upstream fetches, no prefetching.
+//! revalidation, at most 4 concurrent upstream fetches, no prefetching. Each
+//! client's upstream fetches are also rate limited (see [`crate::ratelimit`]).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -15,6 +16,7 @@ use tokio::sync::Semaphore;
 use crate::cache::{Cache, TileMeta};
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::ratelimit::{ClientKey, RateLimiter};
 
 /// Maximum number of simultaneous upstream tile requests.
 pub const MAX_CONCURRENT_FETCHES: usize = 4;
@@ -30,6 +32,8 @@ pub struct TileProxy {
     cache: Arc<Cache>,
     permits: Semaphore,
     min_ttl: Duration,
+    /// Per-client limit on upstream fetches.
+    limiter: RateLimiter,
 }
 
 impl TileProxy {
@@ -41,18 +45,32 @@ impl TileProxy {
             cache,
             permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
             min_ttl: config.tile_min_ttl,
+            limiter: RateLimiter::new("tiles", config.tile_rate),
         }
     }
 
     /// Returns the PNG for `id`, from cache when fresh, else from upstream.
     /// `referer` is the client's `Referer`, forwarded upstream as the policy asks.
-    pub async fn get(&self, id: TileId, referer: Option<&HeaderValue>) -> Result<Bytes, ApiError> {
+    /// Only a request that goes upstream is charged to `client`.
+    pub async fn get(
+        &self,
+        id: TileId,
+        referer: Option<&HeaderValue>,
+        client: ClientKey,
+    ) -> Result<Bytes, ApiError> {
         let cached = self.cache.get_tile(id).await;
         if let Some(c) = &cached
             && c.meta.expires_unix > unix_now()
         {
             metrics::counter!(crate::metrics::TILE_CACHE, "result" => "hit").increment(1);
             return Ok(c.bytes.clone());
+        }
+        if let Err(e) = self.limiter.check(client) {
+            // An expired copy is better than nothing, and costs no upstream request.
+            return match cached {
+                Some(c) => Ok(c.bytes),
+                None => Err(e),
+            };
         }
         match self
             .fetch(id, cached.as_ref().map(|c| &c.meta), referer)

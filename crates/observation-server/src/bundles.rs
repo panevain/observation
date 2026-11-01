@@ -15,6 +15,7 @@ use tracing::Instrument;
 use crate::cache::Cache;
 use crate::error::ApiError;
 use crate::overpass::{OsmData, OverpassClient};
+use crate::ratelimit::{ClientKey, RateLimiter};
 use crate::regions::Regions;
 
 /// Longest wait for a local region (they answer in well under a second), so
@@ -35,6 +36,8 @@ pub struct BundleService {
     regions: Option<Arc<Regions>>,
     attribution: String,
     in_flight: Mutex<HashMap<String, Flight>>,
+    /// Per-client limit on new builds.
+    limiter: RateLimiter,
 }
 
 impl BundleService {
@@ -43,6 +46,7 @@ impl BundleService {
         overpass: Arc<OverpassClient>,
         regions: Option<Arc<Regions>>,
         attribution: String,
+        limiter: RateLimiter,
     ) -> Self {
         Self {
             cache,
@@ -50,27 +54,36 @@ impl BundleService {
             regions,
             attribution,
             in_flight: Mutex::new(HashMap::new()),
+            limiter,
         }
     }
 
     /// Returns the encoded bundle for `bbox`, which should already be snapped.
-    pub async fn get(self: &Arc<Self>, bbox: BBox) -> Result<Bytes, ApiError> {
+    /// Only a request that starts a new build is charged to `client`; cache
+    /// hits and requests joining a build in progress are free.
+    pub async fn get(self: &Arc<Self>, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
         if let Some((bytes, true)) = self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
-        self.flight(key, bbox).await
+        self.flight(key, bbox, client)?.await
     }
 
-    fn flight(self: &Arc<Self>, key: String, bbox: BBox) -> Flight {
+    fn flight(
+        self: &Arc<Self>,
+        key: String,
+        bbox: BBox,
+        client: ClientKey,
+    ) -> Result<Flight, ApiError> {
         let mut map = self
             .in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(f) = map.get(&key) {
-            return f.clone();
+            return Ok(f.clone());
         }
+        self.limiter.check(client)?;
         let this = Arc::clone(self);
         let task_key = key.clone();
         // Spawned while holding the lock: the task's own clean-up below cannot
@@ -96,7 +109,7 @@ impl BundleService {
         .boxed()
         .shared();
         map.insert(key, shared.clone());
-        shared
+        Ok(shared)
     }
 
     /// Cache re-check, Overpass fetch, bundle build, cache write. Falls back to
