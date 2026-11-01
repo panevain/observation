@@ -9,8 +9,8 @@
 # [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
 # aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
-# gitignored; copy mise.local.toml.example to start. Docker Compose settings are on the
-# `up` task below; its tokens are fnox secrets (fnox.toml; values in the gitignored
+# gitignored; copy mise.local.toml.example to start. Docker Compose settings default in
+# compose.yaml; its tokens are fnox secrets (fnox.toml; values in the gitignored
 # fnox.local.toml). The local development stack (`mise run dev`) is in mise.dev.toml, which
 # .miserc.toml loads by default.
 
@@ -117,7 +117,7 @@ description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "The Rust and mise versions agree across rust-toolchain.toml, Cargo.toml, mise.lock, the Dockerfile and the workflows, and the advisory ignore lists agree"
+description = "The Rust and mise versions agree across rust-toolchain.toml, Cargo.toml, mise.lock, the Dockerfile and the workflows, task tool pins agree (cosign with CI's), and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
 
 [tasks.lock]
@@ -214,22 +214,12 @@ else
 fi
 '''
 
-# Compose settings, for this task only (so `mise run serve` is unaffected). A variable
-# already set wins, e.g. `OBS_PORT=9090 mise run up`.
+# The release to run, for this task only (so `mise run serve` is unaffected): `latest`, or a
+# version such as 0.1.0 (both images use the same one). The script verifies it, so it needs the
+# value here; the other Compose settings (port, log format, region limits) default in
+# compose.yaml. A variable already set wins, e.g. `OBS_VERSION=0.1.0 OBS_PORT=9090 mise run up`.
 [tasks.up.env]
-# Release to run: `latest`, or a version such as 0.1.0 (both images use the same one).
 OBS_VERSION = "{{ get_env(name='OBS_VERSION', default='latest') }}"
-# Host port for the app.
-OBS_PORT = "{{ get_env(name='OBS_PORT', default='8080') }}"
-# `json` for one JSON object per log line.
-OBS_LOG_FORMAT = "{{ get_env(name='OBS_LOG_FORMAT', default='text') }}"
-# Largest Geofabrik extract downloaded, MB.
-OBS_REGIONS_MAX_DOWNLOAD_MB = "{{ get_env(name='OBS_REGIONS_MAX_DOWNLOAD_MB', default='2048') }}"
-# Re-import regions after this many days unless a region has its own interval; 0 never (for all).
-OBS_REGIONS_DEFAULT_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_DEFAULT_REFRESH_DAYS', default='7') }}"
-# Range of the interval a region can be given in the UI, days.
-OBS_REGIONS_MIN_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_MIN_REFRESH_DAYS', default='7') }}"
-OBS_REGIONS_MAX_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_MAX_REFRESH_DAYS', default='365') }}"
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"
