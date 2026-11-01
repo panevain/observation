@@ -56,7 +56,7 @@ Map tiles are Web Mercator. Each tile's corner coordinates are run through the s
 | Route | Response |
 | --- | --- |
 | `GET /healthz` | `ok` (liveness probe; the image has no `HEALTHCHECK`, so orchestrators should probe this) |
-| `GET /api/config` | JSON: tile URL template for the proxy, attribution, `max_bbox_side_m`, `demo_available`, version. The client reads the tile attribution from it at startup |
+| `GET /api/config` | JSON: tile URL template for the proxy, attribution, `min_bbox_side_m` and `max_bbox_side_m`, `demo_available`, `regions`, version. The client reads the tile URL, attribution, side limits and `regions` from it at startup, and requests no tiles until it has answered. For a field that is missing or not sensible (limits that are not positive with min < max, or a tile URL that is not a plain same-origin path with `{z}`, `{x}` and `{y}`), it uses its own build's values |
 | `GET /api/area?bbox=south,west,north,east` | Bundle, `Cache-Control: public, max-age=86400` |
 | `GET /api/demo` | Demo bundle built at startup, `max-age=3600`; 404 if the fixture failed to build |
 | `GET /api/tiles/{z}/{x}/{y}.png` | Proxied tile, `max-age=604800` |
@@ -473,7 +473,7 @@ The README badges are images fetched by whoever views the README on GitHub (from
 - **Build checks**: the release `trunk build` (with the wasm size budget) and the Docker build with a smoke test.
 - **Browser smoke test** (`tests/browser/smoke.cjs`, CI's `browser (wasm smoke test)`): the release `dist/` in the app image, loaded in headless Chrome with WebGL2 on SwiftShader. It fails unless the client starts (removes its loading card), loads the demo street and starts the coverage worker without logging an error or panic; the screenshot and console log are kept as an artifact. Map tiles are answered by the test, so it sends nothing to OpenStreetMap. `mise run test:browser` runs it against a local server.
 
-The client has no unit tests yet. The CI step that would run them only runs if the client has a library target, which it currently does not, so client behaviour is covered by compilation, clippy and the core tests of the logic it uses.
+The client has a few unit tests (`net`, `regions` and `ui::regions`), run by hand with `cargo test -p observation-client --bin observation-client`. The CI step that would run them only runs if the client has a library target, which it currently does not, so in CI client behaviour is covered by compilation, clippy and the core tests of the logic it uses.
 
 ## Known limitations and future work
 
@@ -482,4 +482,4 @@ The client has no unit tests yet. The CI step that would run them only runs if t
 - Per-client rate limiting belongs in the server (or a proxy in front of it).
 - There is a single autosave slot, and undo history lasts for the visit only.
 - Night modelling uses IR range only; it does not account for floodlights, street lighting or shutter behaviour.
-- The client hard-codes its API paths and the 20-500 m limits rather than reading them from `/api/config`.
+- The client builds the area, demo and region API paths itself; only the tile URL and the area size limits come from `/api/config`. The image ships client and server from one build, so they only differ if a client is served by another server version.

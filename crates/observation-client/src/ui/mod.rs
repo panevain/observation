@@ -266,7 +266,7 @@ fn draw_ui(
             &mut d.picker,
             &tile_draws,
             &local,
-            &d.config.tile_attribution,
+            &d.config,
             &mut d.ui.map_open,
         )
     {
