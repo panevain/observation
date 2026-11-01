@@ -7,6 +7,7 @@ use observation_core::camera::{
 };
 use observation_core::coverage::{CoverageParams, GroundGrid, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
+use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::{AreaRef, SceneFile};
 use observation_core::terrain::{FLAT, Terrain};
 
@@ -223,6 +224,10 @@ pub struct UiState {
     /// The selection the inspector last saw, so it can open the Camera tab
     /// when the selection changes some other way than [`UiState::select`].
     pub inspector_seen: Option<u32>,
+    /// A restored or imported scene's area came back with different map
+    /// data: shown in the Coverage card until dismissed or another area
+    /// loads.
+    pub data_change: Option<DataChange>,
 }
 
 impl Default for UiState {
@@ -253,6 +258,7 @@ impl Default for UiState {
             jump_to_address: false,
             inspector_tab: InspectorTab::Cameras,
             inspector_seen: None,
+            data_change: None,
         }
     }
 }
@@ -395,10 +401,22 @@ impl UiState {
 #[derive(Debug, Resource)]
 pub struct Models {
     pub catalog: Catalog,
+    /// [`Catalog::fingerprint`], worked out once: the catalogue version a
+    /// scene's provenance records.
+    pub catalog_version: String,
     pub custom: Vec<CameraModel>,
 }
 
 impl Models {
+    /// The shipped catalogue, and no custom models yet.
+    pub fn new(catalog: Catalog) -> Self {
+        Self {
+            catalog_version: catalog.fingerprint(),
+            catalog,
+            custom: Vec::new(),
+        }
+    }
+
     pub fn get(&self, id: &str) -> Option<&CameraModel> {
         self.custom_model(id).or_else(|| self.catalog.get(id))
     }
@@ -458,6 +476,15 @@ pub struct Scene {
     /// The cameras come from a scene saved before terrain and still stand on
     /// flat ground; they are lifted onto the terrain when the area loads.
     pub on_flat_ground: bool,
+    /// Where the figures come from: the loaded area's data date and
+    /// fingerprint, and the app and catalogue versions. Saved with the
+    /// scene. Until a loaded file's area arrives it is the file's own (unless
+    /// that area is already loaded), so an autosave in between keeps it.
+    pub provenance: Option<Provenance>,
+    /// The provenance a restored or imported file was saved with, checked
+    /// against its area once that loads (see
+    /// [`Provenance::data_change`]).
+    pub saved_provenance: Option<Provenance>,
     next_id: u32,
     /// Bumped on every change; drives sync, coverage and autosave.
     pub revision: u64,
@@ -472,6 +499,8 @@ impl Default for Scene {
             params: CoverageParams::default(),
             region: None,
             on_flat_ground: false,
+            provenance: None,
+            saved_provenance: None,
             next_id: 1,
             revision: 0,
         }
@@ -524,6 +553,7 @@ impl Scene {
         file.params = self.params;
         file.region = self.region.clone();
         file.custom_models = models.custom.clone();
+        file.provenance = self.provenance.clone();
         if self.on_flat_ground {
             // Saved before the area loaded: still in the old frame.
             file.version = observation_core::scene::FLAT_GROUND_VERSION;
@@ -545,6 +575,12 @@ impl Scene {
 
     /// Puts back a [`Self::snapshot`].
     pub fn restore(&mut self, s: &Snapshot, models: &mut Models) {
+        if self.area != s.area {
+            // It described the area being left; the one coming back sets its
+            // own when it loads, and is not checked against a saved file.
+            self.provenance = None;
+            self.saved_provenance = None;
+        }
         self.area = s.area;
         self.origin = s.origin;
         self.cameras = s.cameras.clone();
@@ -563,6 +599,13 @@ impl Scene {
 
     /// Replaces the document with a loaded file (custom models go to `models`).
     pub fn load_file(&mut self, file: SceneFile, models: &mut Models) {
+        // Over the area already loaded, the provenance stays that of the data
+        // on screen until the reload replaces it (should the reload fail,
+        // the figures are still from that data). Otherwise the file's own is
+        // kept, so an autosave before its area arrives does not drop it.
+        if self.area != Some(file.area) {
+            self.provenance.clone_from(&file.provenance);
+        }
         self.area = Some(file.area);
         self.on_flat_ground = file.on_flat_ground();
         self.origin = file.origin;
@@ -570,8 +613,19 @@ impl Scene {
         self.cameras = file.cameras;
         self.params = file.params;
         self.region = file.region;
+        self.saved_provenance = file.provenance;
         models.custom = file.custom_models;
         self.touch();
+    }
+
+    /// Records the provenance of an area that just loaded, and when it
+    /// brings back a restored or imported scene (`kept`), how its map data
+    /// changed since that scene was saved.
+    pub fn area_loaded(&mut self, now: Provenance, kept: bool) -> Option<DataChange> {
+        let saved = self.saved_provenance.take();
+        let change = saved.filter(|_| kept).and_then(|s| s.data_change(&now));
+        self.provenance = Some(now);
+        change
     }
 }
 
@@ -676,4 +730,96 @@ pub struct Loading {
     pub request: Option<LoadArea>,
     /// When it was sent, seconds since start-up.
     pub started: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provenance(fingerprint: &str, date: u64) -> Provenance {
+        Provenance {
+            osm_data_unix: Some(date),
+            osm_fingerprint: Some(fingerprint.to_owned()),
+            app_version: "0.1.0".into(),
+            ..Provenance::default()
+        }
+    }
+
+    fn file(p: Option<Provenance>) -> SceneFile {
+        let mut f = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
+        f.provenance = p;
+        f
+    }
+
+    #[test]
+    fn a_loaded_scene_is_checked_once_against_its_area() {
+        let mut models = Models::new(Catalog::default());
+        let mut scene = Scene::default();
+        let saved = provenance("00000000000000aa", 1_793_475_782);
+        scene.load_file(file(Some(saved.clone())), &mut models);
+        // Until the area loads, the file's provenance is kept for autosave.
+        assert_eq!(
+            scene.to_file(&models).and_then(|f| f.provenance),
+            Some(saved.clone())
+        );
+        // The same features on a newer data date: nothing to report.
+        let same = provenance("00000000000000aa", 1_794_000_000);
+        assert_eq!(scene.area_loaded(same.clone(), true), None);
+        assert_eq!(scene.provenance, Some(same));
+
+        // Different features: reported once, and only for that load.
+        scene.load_file(file(Some(saved.clone())), &mut models);
+        let changed = provenance("00000000000000bb", 1_794_000_000);
+        let change = scene.area_loaded(changed.clone(), true).unwrap();
+        assert!(change.message().contains("saved: 2026-10-31"), "{change:?}");
+        assert_eq!(scene.provenance, Some(changed.clone()));
+        assert_eq!(scene.area_loaded(changed.clone(), true), None);
+
+        // A different area replacing the scene is not compared with it.
+        scene.load_file(file(Some(saved)), &mut models);
+        assert_eq!(scene.area_loaded(changed.clone(), false), None);
+        assert_eq!(scene.saved_provenance, None);
+
+        // A file without provenance has nothing to compare.
+        scene.load_file(file(None), &mut models);
+        assert_eq!(scene.saved_provenance, None);
+        assert_eq!(scene.area_loaded(changed, true), None);
+    }
+
+    #[test]
+    fn importing_over_the_loaded_area_keeps_its_provenance_until_reload() {
+        let mut models = Models::new(Catalog::default());
+        let mut scene = Scene::default();
+        scene.load_file(file(None), &mut models);
+        let on_screen = provenance("00000000000000aa", 1_794_000_000);
+        scene.area_loaded(on_screen.clone(), true);
+        // A file for the same area: if its reload fails, the figures are
+        // still from the data on screen, and so is what gets saved.
+        scene.load_file(
+            file(Some(provenance("00000000000000bb", 1_793_475_782))),
+            &mut models,
+        );
+        assert_eq!(scene.provenance, Some(on_screen.clone()));
+        // When the reload arrives, the file is checked against it.
+        assert!(scene.area_loaded(on_screen, true).is_some());
+    }
+
+    #[test]
+    fn undoing_into_another_area_forgets_the_provenance() {
+        let mut models = Models::new(Catalog::default());
+        let mut scene = Scene::default();
+        scene.load_file(file(None), &mut models);
+        scene.area_loaded(provenance("00000000000000aa", 0), true);
+        let mut other = scene.snapshot(&models);
+        other.area = Some(AreaRef::Osm {
+            bbox: BBox::around(LatLon::new(1.0, 1.0), 100.0),
+        });
+        scene.restore(&other, &mut models);
+        assert_eq!(scene.provenance, None, "it described the demo street");
+        // Undoing within the area keeps it.
+        scene.area_loaded(provenance("00000000000000cc", 0), true);
+        let same = scene.snapshot(&models);
+        scene.restore(&same, &mut models);
+        assert!(scene.provenance.is_some());
+    }
 }

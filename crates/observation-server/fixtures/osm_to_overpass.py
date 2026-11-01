@@ -5,14 +5,25 @@ shape served by /api/demo.
 Keeps building ways, building multipolygon relations, highway ways and
 address nodes, i.e. the same feature set as the server's Overpass query.
 
-Usage: python3 -I osm_to_overpass.py map.osm > demo-overpass.json
+Usage: python3 -I osm_to_overpass.py map.osm [TIMESTAMP] > demo-overpass.json
+
+TIMESTAMP (`YYYY-MM-DDTHH:MM:SSZ`, UTC) is when the extract was downloaded,
+written as `osm3s.timestamp_osm_base` like Overpass's own data date: the OSM
+API serves live data, so that is when the data was current. It defaults to
+now; give the download time when converting an older extract.
 """
 import json
+import re
 import sys
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 
 
-def main(path):
+def main(path, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", timestamp):
+        sys.exit(f"timestamp must look like 2026-10-31T19:43:02Z, not {timestamp!r}")
     root = ET.parse(path).getroot()
     nodes = {n.get("id"): (float(n.get("lat")), float(n.get("lon"))) for n in root.iter("node")}
     ways = {}
@@ -43,7 +54,8 @@ def main(path):
     out = {
         "version": 0.6,
         "generator": "osm_to_overpass.py (from OSM API 0.6 /map extract)",
-        "osm3s": {"copyright": "The data included in this document is from www.openstreetmap.org. "
+        "osm3s": {"timestamp_osm_base": timestamp,
+                  "copyright": "The data included in this document is from www.openstreetmap.org. "
                                "The data is made available under ODbL."},
         "elements": elements,
     }
@@ -51,4 +63,6 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    if len(sys.argv) not in (2, 3):
+        sys.exit(__doc__)
+    main(*sys.argv[1:])

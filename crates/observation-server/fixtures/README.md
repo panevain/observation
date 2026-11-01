@@ -12,7 +12,12 @@ Data © OpenStreetMap contributors, licensed under the
 Retrieved 2026-10-31 with a single OSM API request,
 `GET https://api.openstreetmap.org/api/0.6/map?bbox=-122.208,47.7075,-122.204,47.7098`,
 and converted to the Overpass `out geom` shape with
-`python3 -I osm_to_overpass.py map.osm > demo-overpass.json`. The result
+`python3 -I osm_to_overpass.py map.osm 2026-10-31T00:00:00Z > demo-overpass.json`.
+The second argument is written as `osm3s.timestamp_osm_base`, the data date
+the app shows ("OSM data as of 2026-10-31"); only the day of the download is
+known, so the time is midnight UTC. Without it the converter uses the current
+time, so pass the download time when converting an older extract. `./fetch.sh`
+needs none: Overpass reports its own. The result
 contains building ways (with their `addr:*` tags), building multipolygon
 relations and highway ways. The converter also keeps address nodes (`addr:housenumber` or
 `addr:housename`), as the live query does: here 205 of them, from the King

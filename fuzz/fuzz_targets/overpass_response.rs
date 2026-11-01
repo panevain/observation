@@ -22,6 +22,7 @@ fuzz_target!(|data: &[u8]| {
         Terrain::default(),
         "fuzz",
         0,
+        osm.osm_base_unix,
     );
     AreaBundle::decode(&bundle.encode()).expect("built bundle decodes");
 });

@@ -100,6 +100,19 @@ impl BBox {
         }
     }
 
+    /// The box grown by `m` metres on every side (east–west measured at the
+    /// centre latitude).
+    pub fn expanded_m(&self, m: f64) -> Self {
+        let lat = (m / EARTH_RADIUS_M).to_degrees();
+        let lon = lat / self.center().lat.to_radians().cos().max(1e-6);
+        Self {
+            south: self.south - lat,
+            west: self.west - lon,
+            north: self.north + lat,
+            east: self.east + lon,
+        }
+    }
+
     pub fn center(&self) -> LatLon {
         LatLon::new(
             (self.south + self.north) / 2.0,
@@ -228,6 +241,15 @@ mod tests {
         assert_eq!(BBox::parse("89,0,89.5,1"), Err(BBoxError::Range));
         let big = BBox::parse("51.0,0.0,51.1,0.1").unwrap();
         assert!(matches!(big.validate_size(), Err(BBoxError::Size { .. })));
+    }
+
+    #[test]
+    fn expanding_adds_metres_on_every_side() {
+        let c = LatLon::new(47.6, -122.3);
+        let b = BBox::around(c, 200.0).expanded_m(30.0);
+        assert!((b.width_m() - 260.0).abs() < 0.01, "{}", b.width_m());
+        assert!((b.height_m() - 260.0).abs() < 0.01, "{}", b.height_m());
+        assert_eq!(b.center(), BBox::around(c, 200.0).center());
     }
 
     #[test]

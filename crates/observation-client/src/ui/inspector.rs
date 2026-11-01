@@ -101,7 +101,9 @@ fn picked_group<'a>(
 }
 
 /// Always in view above the tabs: the figures, the region they are limited
-/// to, and the analysis settings they depend on.
+/// to, what they leave out, the analysis settings they depend on and the
+/// date of the map data under them (and whether it changed since a restored
+/// or imported scene was saved).
 fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let in_region = d.scene.region.as_ref().is_some_and(|r| r.is_active());
     ui.horizontal(|ui| {
@@ -117,6 +119,7 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             region_menu(ui, d, t, in_region);
         });
     });
+    super::provenance::data_change_notice(ui, t, &mut d.ui);
     let s = d.coverage.stats;
     if d.scene.cameras.is_empty() {
         hint(
@@ -145,6 +148,7 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
             ),
         );
+        super::provenance::caveats(ui, t);
     }
     let p = d.scene.params;
     let dori = match p.dori {
@@ -170,6 +174,9 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         .clicked()
     {
         d.ui.inspector_tab = InspectorTab::Analysis;
+    }
+    if let Some(a) = &d.area {
+        super::provenance::card_data_date(ui, t, &a.bundle);
     }
 }
 

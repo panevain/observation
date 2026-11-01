@@ -138,6 +138,15 @@ pub struct Imported {
     pub disk_bytes: u64,
 }
 
+/// The region answering an area: see [`Registry::covering`].
+#[derive(Debug)]
+pub struct Covering {
+    pub id: String,
+    pub db: Arc<RegionDb>,
+    /// The extract's replication timestamp, when it had one.
+    pub data_timestamp: Option<String>,
+}
+
 #[derive(Debug)]
 struct Region {
     record: RegionRecord,
@@ -550,7 +559,7 @@ impl Registry {
     }
 
     /// The ready database whose boundary holds `bbox` (the smallest, if several).
-    pub fn covering(&self, bbox: &BBox) -> Option<(String, Arc<RegionDb>)> {
+    pub fn covering(&self, bbox: &BBox) -> Option<Covering> {
         let s = self.lock();
         let area = |r: &Region| {
             r.record
@@ -566,7 +575,13 @@ impl Registry {
                     .is_some_and(|db| db.boundary.contains_bbox(bbox))
             })
             .min_by(|a, b| area(a).total_cmp(&area(b)))
-            .and_then(|r| Some((r.record.id.clone(), Arc::clone(r.db.as_ref()?))))
+            .and_then(|r| {
+                Some(Covering {
+                    id: r.record.id.clone(),
+                    db: Arc::clone(r.db.as_ref()?),
+                    data_timestamp: r.record.data_timestamp.clone(),
+                })
+            })
     }
 
     /// Regions due for a scheduled refresh (see [`next_refresh`]).
@@ -685,11 +700,11 @@ mod tests {
 
         reg.finish(&id, job, Some(Ok(imported(dir.path(), "monaco-1"))));
         let bbox = BBox::new(0.2, 0.2, 0.3, 0.3).unwrap();
-        assert_eq!(reg.covering(&bbox).map(|c| c.0).as_deref(), Some("monaco"));
+        assert_eq!(reg.covering(&bbox).map(|c| c.id).as_deref(), Some("monaco"));
         assert!(reg.snapshot().regions[0].ready);
 
         // A refresh swaps the database; the old one goes when unused.
-        let (_, held) = reg.covering(&bbox).unwrap();
+        let held = reg.covering(&bbox).unwrap().db;
         reg.enqueue("monaco", "Monaco").unwrap();
         let (id, job) = reg.next_job().await;
         assert!(reg.started(&id, job, spawn_dummy()));

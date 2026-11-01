@@ -184,6 +184,7 @@ impl BundleService {
             terrain,
             self.attribution.as_str(),
             generated,
+            data.osm_base_unix,
         );
         let bytes = Bytes::from(bundle.encode());
         metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);

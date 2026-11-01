@@ -10,6 +10,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::geo::BBox;
 
+/// Response header on the agent's `POST /interpreter` answers: the answering
+/// region's OSM data date (`YYYY-MM-DDTHH:MM:SSZ`, the extract's replication
+/// timestamp), when known. The server uses it when the Overpass output has
+/// no `timestamp_osm_base` of its own (databases imported before the agent
+/// recorded the date in them).
+pub const OSM_BASE_HEADER: &str = "x-osm-base";
+
 /// Everything the agent knows about its regions. `version` increases on every
 /// change, so watchers can wait for the next one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

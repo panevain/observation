@@ -218,13 +218,17 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
     });
 }
 
-/// Shortcuts for the active tool on the left; the coverage figures and the
-/// attribution on the right, so the figures stay in view while the inspector
-/// is scrolled.
+/// Shortcuts for the active tool on the left; the coverage figures, the
+/// attribution and the OSM data date on the right, so the figures stay in
+/// view while the inspector is scrolled.
 pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
     let t = *d.tokens;
     ui.horizontal_centered(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // Right to left: the date ends the line, after the credit.
+            if let Some(a) = &d.area {
+                super::provenance::status_data_date(ui, &t, &a.bundle);
+            }
             let data = d.area.as_ref().map_or("© OpenStreetMap contributors", |a| {
                 a.bundle.attribution.as_str()
             });

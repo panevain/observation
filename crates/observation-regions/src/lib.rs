@@ -13,7 +13,7 @@
 //! | `POST /catalog/sizes` | [`SizesRequest`] -> `{"<id>": bytes or null}` |
 //! | `POST /regions/import`, `/cancel`, `/delete` | `{"id": "…"}` |
 //! | `POST /regions/settings` | `{"id": "…", "auto_refresh": true, "refresh_days": 30}` (either or both; `"refresh_days": null` returns to the default) |
-//! | `POST /interpreter?bbox=s,w,n,e` | Overpass query (form field `data`) against the region holding the box; 404 if none |
+//! | `POST /interpreter?bbox=s,w,n,e` | Overpass query (form field `data`) against the region holding the box; 404 if none. The answer carries `x-region` (the region's id) and, when the extract's date is known, `x-osm-base` (its `YYYY-MM-DDTHH:MM:SSZ` replication timestamp) |
 
 pub mod catalog;
 pub mod config;
@@ -46,7 +46,7 @@ use tokio::sync::Semaphore;
 use crate::catalog::Catalog;
 use crate::config::Config;
 use crate::import::Tools;
-use crate::registry::{ActionError, Registry};
+use crate::registry::{ActionError, Covering, Registry};
 
 /// Longest a `GET /regions?since=` waits for a change.
 const LONG_POLL: Duration = Duration::from_secs(25);
@@ -448,7 +448,11 @@ async fn interpreter(
     if form.data.len() > MAX_QUERY_BYTES {
         return Err(err(StatusCode::PAYLOAD_TOO_LARGE, "query too long"));
     }
-    let (region, db) = agent
+    let Covering {
+        id: region,
+        db,
+        data_timestamp,
+    } = agent
         .registry
         .covering(&bbox)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no imported region holds this area"))?;
@@ -484,6 +488,16 @@ async fn interpreter(
     let mut resp = ([(header::CONTENT_TYPE, "application/json")], out).into_response();
     if let Ok(v) = HeaderValue::from_str(&region) {
         resp.headers_mut().insert("x-region", v);
+    }
+    // Databases imported before they recorded their own date have no
+    // `timestamp_osm_base` in the output, so the date travels in a header.
+    if let Some(v) = data_timestamp
+        .as_deref()
+        .filter(|t| import::is_osm_timestamp(t))
+        .and_then(|t| HeaderValue::from_str(t).ok())
+    {
+        resp.headers_mut()
+            .insert(observation_core::regions::OSM_BASE_HEADER, v);
     }
     Ok(resp)
 }
@@ -592,6 +606,71 @@ mod tests {
             .await
             .unwrap_err();
         assert!(e.contains("runtime error: broken"), "{e}");
+    }
+
+    /// Answers `POST /interpreter` for a box inside a ready region that has
+    /// `data_timestamp`, through a stand-in `osm3s_query`.
+    #[cfg(unix)]
+    async fn interpreter_headers(data_timestamp: Option<&str>) -> axum::http::HeaderMap {
+        let bin = fake_query_bin("echo '{\"elements\":[]}'");
+        let data = tempfile::tempdir().unwrap();
+        let config = Config::from_lookup(|k| match k {
+            "OBS_REGIONS_DATA_DIR" => Some(data.path().display().to_string()),
+            "OBS_REGIONS_OVERPASS_BIN" => Some(bin.path().display().to_string()),
+            _ => None,
+        })
+        .unwrap();
+        let agent = Agent::new(&config).unwrap();
+
+        let square = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
+        let db_dir = data.path().join("db/monaco-1");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        agent.registry.enqueue("monaco", "Monaco").unwrap();
+        let (id, job) = agent.registry.next_job().await;
+        assert!(agent.registry.started(
+            &id,
+            job,
+            tokio::spawn(std::future::pending::<()>()).abort_handle()
+        ));
+        let boundary = poly::Boundary::parse(square).unwrap();
+        agent.registry.finish(
+            &id,
+            job,
+            Some(Ok(registry::Imported {
+                bbox: boundary.bbox(),
+                db: Arc::new(registry::RegionDb::new(db_dir, boundary)),
+                db_dir: "monaco-1".into(),
+                data_timestamp: data_timestamp.map(str::to_owned),
+                disk_bytes: 0,
+            })),
+        );
+
+        let resp = interpreter(
+            State(agent),
+            Query(BBoxParam {
+                bbox: "0.2,0.2,0.3,0.3".into(),
+            }),
+            Form(QueryForm { data: "q".into() }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        resp.headers().clone()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn answers_carry_the_regions_data_date() {
+        let h = interpreter_headers(Some("2026-10-31T19:43:02Z")).await;
+        assert_eq!(h["x-region"], "monaco");
+        assert_eq!(h["x-osm-base"], "2026-10-31T19:43:02Z");
+
+        let h = interpreter_headers(None).await;
+        assert_eq!(h["x-region"], "monaco");
+        assert!(!h.contains_key("x-osm-base"));
+
+        let h = interpreter_headers(Some("yesterday")).await;
+        assert!(!h.contains_key("x-osm-base"));
     }
 
     #[cfg(unix)]
