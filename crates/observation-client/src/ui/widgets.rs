@@ -6,13 +6,16 @@ use bevy_egui::egui::{self, Color32, RichText, Sense, Stroke, Ui, vec2};
 /// Section heading with consistent spacing.
 pub fn section(ui: &mut Ui, t: &Tokens, title: &str) {
     ui.add_space(t.space.sm);
-    ui.label(
-        RichText::new(title.to_uppercase())
-            .size(t.font.caption)
-            .family(strong_family())
-            .color(t.text_muted),
-    );
+    ui.label(section_title(t, title));
     ui.add_space(t.space.xs);
+}
+
+/// The text of a section heading, for a heading that shares its row.
+pub fn section_title(t: &Tokens, title: &str) -> RichText {
+    RichText::new(title.to_uppercase())
+        .size(t.font.caption)
+        .family(strong_family())
+        .color(t.text_muted)
 }
 
 /// Secondary explanatory text.
@@ -38,13 +41,15 @@ pub fn stat(ui: &mut Ui, t: &Tokens, value: f32, caption: &str, color: Color32) 
 }
 
 /// Horizontal progress bar for a fraction.
-pub fn bar(ui: &mut Ui, t: &Tokens, frac: f32, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.space.sm), Sense::hover());
+pub fn bar(ui: &mut Ui, t: &Tokens, frac: f32, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(ui.available_width(), t.space.sm), Sense::hover());
     let r = egui::CornerRadius::same(t.radius.sm);
     ui.painter().rect_filled(rect, r, t.surface_sunken);
     let mut fill = rect;
     fill.set_width(rect.width() * frac.clamp(0.0, 1.0));
     ui.painter().rect_filled(fill, r, color);
+    resp
 }
 
 /// Small filled colour swatch.
@@ -102,6 +107,40 @@ pub fn segmented<T: PartialEq + Copy>(
                 ))
                 .min_size(vec2(0.0, t.layout.hit_target));
             if ui.add(btn).clicked() && !on {
+                *value = *v;
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// Tabs that share the row's width equally, styled like [`segmented`];
+/// labels too long for their tab are cut short. True when another tab was
+/// picked.
+pub fn tabs<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    t: &Tokens,
+    value: &mut T,
+    options: &[(T, &str)],
+) -> bool {
+    let gap = t.space.xs;
+    let n = options.len().max(1) as f32;
+    let w = ((ui.available_width() - gap * (n - 1.0)) / n).max(0.0);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        for (v, label) in options {
+            let on = *value == *v;
+            let text = RichText::new(*label).color(if on { t.on_accent } else { t.text });
+            let btn = egui::Button::new(text)
+                .truncate()
+                .fill(if on { t.accent } else { t.surface_sunken })
+                .stroke(Stroke::new(
+                    t.stroke_width,
+                    if on { t.accent } else { t.border },
+                ));
+            if ui.add_sized(vec2(w, t.layout.hit_target), btn).clicked() && !on {
                 *value = *v;
                 changed = true;
             }

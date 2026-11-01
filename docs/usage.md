@@ -11,7 +11,7 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 | Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
 | Tool rail (left) | Six tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move**, **Region** and **Address**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
 | 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, in Region the corners so far, or in Address the selected address). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move, a cell cursor for Region and a question-mark cursor for Address. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
-| Inspector (right, resizable) | Sections **Coverage**, **Cameras**, **Selected camera** (only while a camera is selected), **Custom model** (collapsed) and **Analysis** |
+| Inspector (right, resizable) | At the top, always in view: **Coverage** (the figures, a **Region** menu, and a line with the analysis settings that opens the Analysis tab). Below it three tabs, each scrolling on its own: **Cameras** (the model for new cameras, **Place camera...**, the camera list and **Custom models**), **Camera** (the selected camera) and **Analysis**. Selecting a camera anywhere opens the Camera tab; deselecting it there goes back to Cameras |
 | Status bar | The active tool's keys and gestures as keycaps on the left (dropped from the end when the window is narrow); on the right the three coverage figures (street, 2+ cameras, walls), so they stay in view while the inspector scrolls, and the OpenStreetMap attribution link |
 
 ## Pick an area
@@ -38,7 +38,7 @@ Loading a new area, including **Demo street**, removes the cameras you placed, b
 
 ## Place cameras
 
-1. In the inspector, under **Cameras**, choose a model in **New camera model**. Models are grouped by type (Doorbell, Floodlight, Spotlight, Bullet, Turret, Dome, Indoor) and show their horizontal field of view. Type in the search box at the top of the list to filter by maker, name or type (every word must match); **Enter** picks the first match of what you typed. See the [camera catalogue](camera-catalog.md) for sources. The default is a generic 160 degree doorbell.
+1. In the inspector's **Cameras** tab, choose a model in **New camera model**. Models are grouped by type (Doorbell, Floodlight, Spotlight, Bullet, Turret, Dome, Indoor) and show their horizontal field of view. Type in the search box at the top of the list to filter by maker, name or type (every word must match); **Enter** picks the first match of what you typed. See the [camera catalogue](camera-catalog.md) for sources. The default is a generic 160 degree doorbell.
 2. Press **Place camera...** or **P**.
 3. Click where the camera goes:
    - **A wall:** the camera is mounted 0.15 m in front of the wall, at the height you clicked, facing outward. Its tilt is the type's default (doorbell 0 degrees, indoor -10, others -20).
@@ -56,7 +56,7 @@ With Aim or Move active and a camera selected, a left-drag drives the tool rathe
 
 ## Fine-tune in the inspector
 
-Select a camera (in the viewport or by clicking its row in the list) to open **Selected camera**. It starts with the camera's colour, its type icon and its name (free text, up to 48 characters, edited in place), then:
+Select a camera (in the viewport or by clicking its row in the list) to open the inspector's **Camera** tab, named after the camera. At the top, **Cameras** goes back to the list and the arrows step to the previous and next camera in list order (*2 of 10*). It goes on with the camera's colour, its type icon and its name (free text, up to 48 characters, edited in place), then:
 
 | Field | Meaning |
 | --- | --- |
@@ -67,7 +67,7 @@ Select a camera (in the viewport or by clicking its row in the list) to open **S
 | Orientation | A compass dial: click or drag it to point the camera (Shift snaps to 15 degree steps); the shaded wedge is the horizontal field of view. Beside it, **Heading** (0-360 degrees clockwise from north, with a compass label such as NE; hover the label for the unit vector the camera faces as east, north, up), **Tilt** (-90 to 90 degrees; negative looks down) and **Roll** (-180 to 180 degrees) |
 | Optics (collapsed) | Read-only. **Field of view**, **Resolution** and **Night vision** from the model (night vision shows "7.5 m (assumed)" in a warning colour when the manufacturer publishes no figure), **Modelled range** for the current detail level and lighting (see below), and **Source**, a link to the manufacturer's spec page for catalogue models |
 
-Every number field (here, in Custom model and Subject height) changes when you drag across it: hold **Shift** for finer steps or **Ctrl** (**Cmd** on a Mac) for coarser ones, or click it to type a value.
+Every number field (here, in Custom models and Subject height) changes when you drag across it: hold **Shift** for finer steps or **Ctrl** (**Cmd** on a Mac) for coarser ones, or click it to type a value.
 
 Buttons: **Aim (A)**, **Move (M)**, **Focus (F)** (frame the camera in the view), **Duplicate** (a copy one metre east, with a new name) and **Delete**.
 
@@ -75,7 +75,7 @@ In the **Cameras** list, each row shows an eye, the camera's colour, its type ic
 
 ### Groups by address
 
-The list groups cameras by street address, worked out from OpenStreetMap as you place and move them. Each group has a heading with its address and how many cameras it holds. Groups appear in the order of their first camera, with **No address** last. A camera belongs to the nearest address within 25 m:
+The list groups cameras by street address, worked out from OpenStreetMap as you place and move them. A group of two or more cameras has a heading with its address and how many cameras it holds; a camera alone at its address has no heading and shows the address in small type under its name instead. Groups appear in the order of their first camera, with **No address** last. A camera belongs to the nearest address within 25 m:
 
 - a building tagged with an address (a camera on its wall, or on a pole in its yard), or
 - an address mapped as a point inside a building (an entrance, or one of a terrace's houses). A camera on that building takes the closest of its points, or
@@ -85,11 +85,11 @@ A building's own address wins over points inside it. The address is the house nu
 
 ### Look up an address
 
-The **Address** tool (**L**) shows the address under the pointer in a small card beside it. Pointing at a building (its roof or a wall) gives that building's own address: its tags, else an address point inside it, else an address point in its yard (one whose nearest building it is, as some imports place them). It never borrows a neighbour's, so a building with none says **No address here**. Pointing at a yard or the street gives the nearest address within 25 m, as for cameras. Click to select that address: every building at it is highlighted, and the mode pill says how many cameras are there. The group those cameras are listed under is shaded in the camera list (its address heading, or a hand-set group). With **Settings → Click jumps to the camera list** on (the default), the click also scrolls the list to that group. **Delete** or a click where there is no address clears the selection, as does leaving the tool. Dragging orbits and pans as in Select.
+The **Address** tool (**L**) shows the address under the pointer in a small card beside it. Pointing at a building (its roof or a wall) gives that building's own address: its tags, else an address point inside it, else an address point in its yard (one whose nearest building it is, as some imports place them). It never borrows a neighbour's, so a building with none says **No address here**. Pointing at a yard or the street gives the nearest address within 25 m, as for cameras. Click to select that address: every building at it is highlighted, and the mode pill says how many cameras are there. The group those cameras are listed under is shaded in the camera list (its address heading, or a hand-set group; a camera alone at the picked address gets a heading for it). With **Settings → Click jumps to the camera list** on (the default), the click also opens the Cameras tab and scrolls the list to that group. **Delete** or a click where there is no address clears the selection, as does leaving the tool. Dragging orbits and pans as in Select.
 
 ## Read the coverage
 
-The **Coverage** section updates as soon as you change anything. With no cameras placed it shows a short "No cameras yet" note with a **Place camera...** button instead of the figures.
+The **Coverage** summary at the top of the inspector updates as soon as you change anything, and stays in view whichever tab is open. With no cameras placed it shows a short note instead of the figures, and the Cameras tab says how to place the first one. Under the figures, a line such as *Detect · Day · 1.00 m high* shows the analysis settings behind them; click it to open the Analysis tab.
 
 | Figure | Meaning |
 | --- | --- |
@@ -97,22 +97,22 @@ The **Coverage** section updates as soon as you change anything. With no cameras
 | **by 2+ cameras** | Share of the street surface seen by two or more cameras |
 | **of walls seen** | Share of building wall area (every building in the area) that at least one camera can see |
 
-Below the bar, the square metres behind the street figure are shown, plus "open ground seen": all visible ground that is not under a building, which includes the street.
+Hover the bar for the square metres behind the street figure, plus "open ground seen": all visible ground that is not under a building, which includes the street.
 
-**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, click **Draw region...** under the figures (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a dark outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. **Only inside region** turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
+**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, open the **Region** menu beside the Coverage heading and click **Draw region...** (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area, and the outline must not cross itself. The region is drawn as a dark outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. The **Region** menu, shown in the accent colour while a region is on, then has **Only inside region**, which turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
 
 What counts as "street": every mapped road, service road (including driveways) and footpath, drawn as a band of its estimated width (about 14 m for a motorway down to 2 m for a footpath; the `width` and `lanes` tags are used when present), excluding anything under a building. Other way types, such as tracks, are ignored. Footpaths and service lanes therefore count towards the street figure.
 
 What counts as "seen": a spot is seen when it is inside the camera's field of view, within the camera's modelled range, and a straight line from the camera to a person-height point above it does not pass through a building. Ground is sampled every 0.5 m and walls in roughly 1 m patches; a wall patch must also face the camera.
 
-**Colours.** Switch with the **Overlap / Per camera** control (or **N**):
+**Colours.** Switch with the **Overlap / Per camera** control under **Overlay colours** in the Analysis tab (or **N**):
 
 - **Overlap:** a heat ramp by number of cameras that see a spot: 1 yellow, 2 orange, 3 red, 4 or more purple. The legend appears under the control.
 - **Per camera:** each camera in its own colour (the swatch next to its name; see **Colour** above). Where views overlap, the camera lower in the list is painted on top.
 
 ## Analysis settings
 
-These apply to every camera and are saved with the scene.
+These are in the inspector's **Analysis** tab. They apply to every camera and are saved with the scene.
 
 **Detail level** sets how many pixels cover one metre of a person, using the DORI levels (EN 62676-4):
 
@@ -132,7 +132,7 @@ These apply to every camera and are saved with the scene.
 
 ## Custom models
 
-Open **Custom model** (above Analysis in the inspector) to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene, and the form goes on to edit it (pick **New model** under **Model** to add another). A scene holds at most 64 custom models.
+Open **Custom models** (at the bottom of the inspector's Cameras tab) to add a camera that is not in the catalogue. Fill in name, type, horizontal and vertical field of view (10-180 degrees), resolution (width 160-8192, height 120-8192) and night-vision range (0-60 m; 0 means no night coverage), then click **Add model**. The model is selected for new cameras, appears in the model lists, and is stored with the scene, and the form goes on to edit it (pick **New model** under **Model** to add another). A scene holds at most 64 custom models.
 
 To change one of your models, pick it under **Model** at the top of the form (it shows **New model** while you are adding one). The fields fill in with its values, unchanged even where they lie outside the ranges the fields offer (as an imported model's may); change them and click **Save changes**. The model keeps its identity, so cameras that already use it pick up the new values. **Delete** removes it, with an **Undo** button in the message. A model that cameras still use cannot be deleted: the message says how many use it, so give them another model or delete them first. If the deleted model was the one for new cameras, new cameras go back to the default model. Catalogue models cannot be changed.
 

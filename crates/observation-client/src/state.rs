@@ -161,6 +161,19 @@ pub enum OverlayMode {
     PerCamera,
 }
 
+/// The inspector's tabs below the coverage summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum InspectorTab {
+    /// Model picker, Place, the camera list and custom models.
+    #[default]
+    Cameras,
+    /// The selected camera's settings.
+    Camera,
+    /// What the coverage figures count: detail level, lighting, subject
+    /// height, the overlay colours and the region.
+    Analysis,
+}
+
 /// Transient UI state.
 #[derive(Debug, Resource)]
 pub struct UiState {
@@ -205,6 +218,10 @@ pub struct UiState {
     /// Scroll the camera list to the picked address's group once (consumed by
     /// the inspector).
     pub jump_to_address: bool,
+    pub inspector_tab: InspectorTab,
+    /// The selection the inspector last saw, so it can open the Camera tab
+    /// when another camera is selected (anywhere: list, view or shortcut).
+    pub inspector_seen: Option<u32>,
 }
 
 impl Default for UiState {
@@ -233,6 +250,8 @@ impl Default for UiState {
             hover_address: None,
             selected_address: None,
             jump_to_address: false,
+            inspector_tab: InspectorTab::Cameras,
+            inspector_seen: None,
         }
     }
 }
