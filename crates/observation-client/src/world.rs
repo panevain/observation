@@ -3,7 +3,9 @@
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
-use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState};
+use crate::state::{
+    Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState, grid_bounds,
+};
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;
@@ -61,6 +63,20 @@ struct TileTextured;
 #[derive(Component)]
 pub struct FacadeOverlay;
 
+/// Tint over the ground beyond the loaded area ([`Area::bounds`]), where
+/// nothing is analysed. Shown while the Region tool is on, with hatching and
+/// an edge drawn over it.
+#[derive(Component)]
+pub struct OutsideArea {
+    /// The drawn ground around the area: the map tiles' extent, world `[x, z]`.
+    pub outer: Rect,
+}
+
+/// Colour of the [`OutsideArea`] tint.
+fn outside_tint(tokens: &Tokens) -> Color {
+    to_bevy(tokens.world.outside_area).with_alpha(0.15)
+}
+
 /// The buildings at the address picked with the Address tool, drawn over the
 /// building mesh.
 #[derive(Component)]
@@ -79,6 +95,8 @@ struct WorldMaterials {
     building: Handle<StandardMaterial>,
     /// Ground tiles without their map image.
     plain: Handle<StandardMaterial>,
+    /// The [`OutsideArea`] tint.
+    outside: Handle<StandardMaterial>,
 }
 
 pub struct WorldPlugin;
@@ -120,36 +138,67 @@ fn setup_lights(mut commands: Commands, tokens: Res<Tokens>) {
     ));
 }
 
-/// The ground over the `x, z` rectangle `[min, max]`, `lift` metres above the
-/// terrain, with UVs running across it: `(min.x, min.z)` → uv(0,0). Its
-/// vertices lie on the terrain's sample lines (see [`Terrain::breaks`]), so
-/// every such surface over the same terrain has the same shape: the coverage
-/// overlay stays just above the map tiles. A single quad on flat ground.
-pub fn ground_mesh(terrain: &Terrain, min: Vec2, max: Vec2, lift: f32) -> Mesh {
-    let xs = terrain.breaks(min.x, max.x, 0);
-    let zs = terrain.breaks(min.y, max.y, 1);
-    let size = (max - min).max(Vec2::splat(1e-3));
-    let mut pos = Vec::with_capacity(xs.len() * zs.len());
-    let mut nrm = Vec::with_capacity(pos.capacity());
-    let mut uv = Vec::with_capacity(pos.capacity());
+/// Lines every ground surface of an area puts vertices on, besides the
+/// terrain's sample lines: the edges of the map tiles, the coverage grid and
+/// the outside tint. Surfaces split the same way are the same surface where
+/// they overlap, so the overlay stays just above the tiles.
+#[derive(Debug, Default)]
+pub struct GroundLines {
+    xs: Vec<f32>,
+    zs: Vec<f32>,
+}
+
+impl GroundLines {
+    fn add(&mut self, r: Rect) {
+        self.xs.extend([r.min.x, r.max.x]);
+        self.zs.extend([r.min.y, r.max.y]);
+    }
+
+    /// Vertex coordinates along one axis of `[lo, hi]`: both ends, the
+    /// terrain's sample lines and these lines in between.
+    fn along(&self, terrain: &Terrain, lo: f32, hi: f32, axis: usize) -> Vec<f32> {
+        let extra = if axis == 0 { &self.xs } else { &self.zs };
+        let mut out = terrain.breaks(lo, hi, axis);
+        out.extend(extra.iter().filter(|&&v| v > lo + 1e-3 && v < hi - 1e-3));
+        out.sort_by(f32::total_cmp);
+        out.dedup_by(|a, b| (*a - *b).abs() <= 1e-3);
+        out
+    }
+}
+
+/// Positions, normals, UVs and indices of a mesh being built.
+type MeshBuffers = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>);
+
+/// Appends the ground over the `x, z` rectangle `r`, `lift` metres above the
+/// terrain, to the mesh buffers, with UVs running across it: `r.min` →
+/// uv(0,0). A single quad on flat ground.
+fn ground_patch(terrain: &Terrain, lines: &GroundLines, r: Rect, lift: f32, buf: &mut MeshBuffers) {
+    let (pos, nrm, uv, idx) = buf;
+    let xs = lines.along(terrain, r.min.x, r.max.x, 0);
+    let zs = lines.along(terrain, r.min.y, r.max.y, 1);
+    let size = r.size().max(Vec2::splat(1e-3));
+    let base = pos.len() as u32;
     for &z in &zs {
         for &x in &xs {
             let p = Vec2::new(x, z);
             pos.push([x, terrain.height_at(p) + lift, z]);
             nrm.push(terrain.normal_at(p).to_array());
-            uv.push(((p - min) / size).to_array());
+            uv.push(((p - r.min) / size).to_array());
         }
     }
     let w = xs.len() as u32;
-    let mut idx = Vec::with_capacity((xs.len() - 1) * (zs.len() - 1) * 6);
     for row in 0..zs.len() as u32 - 1 {
         for col in 0..w - 1 {
-            let (a, b) = (row * w + col, row * w + col + 1);
+            let (a, b) = (base + row * w + col, base + row * w + col + 1);
             let (c, d) = (a + w, b + w);
             // Counter-clockwise seen from above (+Y).
             idx.extend([a, d, b, a, c, d]);
         }
     }
+}
+
+fn mesh_of(buf: MeshBuffers) -> Mesh {
+    let (pos, nrm, uv, idx) = buf;
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -158,6 +207,39 @@ pub fn ground_mesh(terrain: &Terrain, min: Vec2, max: Vec2, lift: f32) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
     .with_inserted_indices(Indices::U32(idx))
+}
+
+/// The ground over the `x, z` rectangle `r`, `lift` metres above the terrain;
+/// see [`ground_patch`].
+pub fn ground_mesh(terrain: &Terrain, lines: &GroundLines, r: Rect, lift: f32) -> Mesh {
+    let mut buf = Default::default();
+    ground_patch(terrain, lines, r, lift, &mut buf);
+    mesh_of(buf)
+}
+
+/// The ground between `inner` and `outer` (which holds it), `lift` metres
+/// above the terrain: four strips around the hole.
+fn ground_frame(
+    terrain: &Terrain,
+    lines: &GroundLines,
+    inner: Rect,
+    outer: Rect,
+    lift: f32,
+) -> Mesh {
+    let mut buf = Default::default();
+    let strips = [
+        Rect::new(outer.min.x, outer.min.y, outer.max.x, inner.min.y),
+        Rect::new(outer.min.x, inner.max.y, outer.max.x, outer.max.y),
+        Rect::new(outer.min.x, inner.min.y, inner.min.x, inner.max.y),
+        Rect::new(inner.max.x, inner.min.y, outer.max.x, inner.max.y),
+    ];
+    for r in strips
+        .into_iter()
+        .filter(|r| r.width() > 1e-3 && r.height() > 1e-3)
+    {
+        ground_patch(terrain, lines, r, lift, &mut buf);
+    }
+    mesh_of(buf)
 }
 
 /// Asset stores an area load writes to.
@@ -238,20 +320,54 @@ fn on_area_loaded(
     let z = zoom_for_bbox(&tile_bbox, MAX_GROUND_TILES, 19);
     let ground_tiles = tiles_covering(&tile_bbox, z);
     tiles.pin(ground_tiles.iter().copied());
-    for t in ground_tiles {
-        let b = t.bounds();
-        let nw = world2(&proj, LatLon::new(b.north, b.west));
-        let se = world2(&proj, LatLon::new(b.south, b.east));
+    let inner = grid_bounds(&grid);
+    let tile_rects: Vec<(TileId, Rect)> = ground_tiles
+        .into_iter()
+        .map(|t| {
+            let b = t.bounds();
+            let nw = world2(&proj, LatLon::new(b.north, b.west));
+            let se = world2(&proj, LatLon::new(b.south, b.east));
+            (t, Rect::from_corners(nw, se))
+        })
+        .collect();
+    let outer = tile_rects
+        .iter()
+        .fold(Rect::from_corners(gmin, gmax), |o, (_, r)| o.union(*r));
+    let mut lines = GroundLines::default();
+    for r in tile_rects.iter().map(|(_, r)| *r).chain([inner, outer]) {
+        lines.add(r);
+    }
+    for (t, r) in tile_rects {
         commands.spawn((
             AreaEntity,
             GroundTile(t),
-            Mesh3d(meshes.add(ground_mesh(terrain, nw, se, 0.0))),
+            Mesh3d(meshes.add(ground_mesh(terrain, &lines, r, 0.0))),
             MeshMaterial3d(plain.clone()),
             NotShadowCaster,
             Pickable::IGNORE,
         ));
     }
-    commands.insert_resource(WorldMaterials { building, plain });
+    let outside = materials.add(StandardMaterial {
+        base_color: outside_tint(&tokens),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        depth_bias: 10.0,
+        ..default()
+    });
+    commands.spawn((
+        AreaEntity,
+        OutsideArea { outer },
+        Mesh3d(meshes.add(ground_frame(terrain, &lines, inner, outer, OVERLAY_Y_M))),
+        MeshMaterial3d(outside.clone()),
+        Visibility::Hidden,
+        NotShadowCaster,
+        Pickable::IGNORE,
+    ));
+    commands.insert_resource(WorldMaterials {
+        building,
+        plain,
+        outside,
+    });
 
     // Ground coverage overlay texture (one texel per ground cell).
     let ground_image = images.add(Image::new_fill(
@@ -267,7 +383,7 @@ fn on_area_loaded(
     ));
     commands.spawn((
         AreaEntity,
-        Mesh3d(meshes.add(ground_mesh(terrain, grid.min, grid.max(), OVERLAY_Y_M))),
+        Mesh3d(meshes.add(ground_mesh(terrain, &lines, inner, OVERLAY_Y_M))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(ground_image.clone()),
             alpha_mode: AlphaMode::Blend,
@@ -336,8 +452,10 @@ fn on_area_loaded(
     if !keep {
         scene.on_flat_ground = false;
         scene.cameras.clear();
-        // A region belongs to the area it was drawn on.
+        // A region belongs to the area it was drawn on, as does one being
+        // drawn.
         scene.region = None;
+        ui.region_draft.clear();
         ui.selected = None;
         if area == AreaRef::Demo {
             // A fresh demo street comes with example cameras to explore.
@@ -395,8 +513,8 @@ fn apply_ground_tiles(
     }
 }
 
-/// Recolours the sky, the buildings and the plain ground in place after a
-/// theme change.
+/// Recolours the sky, the buildings, the plain ground and the outside-area
+/// tint in place after a theme change.
 fn follow_theme(
     tokens: Res<Tokens>,
     mut clear: ResMut<ClearColor>,
@@ -406,11 +524,12 @@ fn follow_theme(
     clear.0 = to_bevy(tokens.world.sky);
     let Some(world) = world else { return };
     for (handle, color) in [
-        (&world.building, tokens.world.building),
-        (&world.plain, tokens.world.ground),
+        (&world.building, to_bevy(tokens.world.building)),
+        (&world.plain, to_bevy(tokens.world.ground)),
+        (&world.outside, outside_tint(&tokens)),
     ] {
         if let Some(mut mat) = materials.get_mut(handle) {
-            mat.base_color = to_bevy(color);
+            mat.base_color = color;
         }
     }
 }

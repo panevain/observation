@@ -260,6 +260,7 @@ async fn config_endpoint() {
     let v = json(&body);
     assert_eq!(v["tile_url"], "/api/tiles/{z}/{x}/{y}.png");
     assert_eq!(v["attribution"], "© OpenStreetMap contributors");
+    assert_eq!(v["min_bbox_side_m"], 20.0);
     assert_eq!(v["max_bbox_side_m"], 500.0);
     assert_eq!(v["demo_available"], true);
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
@@ -659,6 +660,8 @@ async fn expired_bundle_is_served_when_upstream_fails() {
 struct MockDem {
     hits: AtomicUsize,
     fail: AtomicBool,
+    /// Answer with a 1 x 1 PNG instead of a tile.
+    tiny: AtomicBool,
     paths: Mutex<Vec<String>>,
 }
 
@@ -690,6 +693,9 @@ async fn dem_handler(
     m.paths.lock().unwrap().push(format!("{z}/{x}/{y}"));
     if m.fail.load(Ordering::SeqCst) {
         return (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response();
+    }
+    if m.tiny.load(Ordering::SeqCst) {
+        return ([(header::CONTENT_TYPE, "image/png")], PNG).into_response();
     }
     let y: u32 = y.trim_end_matches(".png").parse().unwrap();
     Response::builder()
@@ -778,11 +784,19 @@ async fn elevation_failures_fail_the_area() {
         "{}",
         String::from_utf8_lossy(&body)
     );
-    assert_eq!(overpass.hits.load(Ordering::SeqCst), 1);
-    // Nothing was cached: the next request tries again.
+    // Elevation comes first, so Overpass was not asked for data to throw away.
+    assert_eq!(overpass.hits.load(Ordering::SeqCst), 0);
+    // A tile that is a PNG but not a 256 x 256 Terrarium tile is not cached either.
     dem.fail.store(false, Ordering::SeqCst);
+    dem.tiny.store(true, Ordering::SeqCst);
+    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(String::from_utf8_lossy(&body).contains("unusable"));
+    // Nothing was cached: the next request tries again.
+    dem.tiny.store(false, Ordering::SeqCst);
     let (status, _, _) = get_uri(&h.app, &area_uri()).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(overpass.hits.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

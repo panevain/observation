@@ -5,9 +5,10 @@ use observation_core::bundle::AreaBundle;
 use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, fresh_custom_id,
 };
-use observation_core::coverage::{CoverageParams, Region, StaticLayers};
+use observation_core::coverage::{CoverageParams, GroundGrid, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::scene::{AreaRef, SceneFile};
+use observation_core::terrain::{FLAT, Terrain};
 
 /// Ground raster resolution, metres.
 pub const GROUND_CELL_M: f32 = 0.5;
@@ -549,6 +550,9 @@ impl Scene {
         self.cameras = s.cameras.clone();
         self.params = s.params;
         self.region = s.region.clone();
+        // Every step was recorded with its cameras on the terrain (none is
+        // while a flat-ground scene waits for its area).
+        self.on_flat_ground = false;
         // Never hand out an id the restored cameras already use (an import
         // resets `next_id`, so undoing past one can bring back higher ids).
         let max = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
@@ -588,6 +592,28 @@ pub struct Area {
     pub area: AreaRef,
     pub bundle: AreaBundle,
     pub layers: StaticLayers,
+}
+
+/// Flat ground, for before an area has loaded.
+static FLAT_GROUND: Terrain = FLAT;
+
+/// The loaded area's ground, or flat ground before one has loaded.
+pub fn terrain_of(area: Option<&Area>) -> &Terrain {
+    area.map_or(&FLAT_GROUND, |a| &a.bundle.terrain)
+}
+
+impl Area {
+    /// The loaded area, world `[x, z]`: see [`grid_bounds`].
+    pub fn bounds(&self) -> Rect {
+        grid_bounds(&self.layers.grid)
+    }
+}
+
+/// The ground a coverage grid spans, world `[x, z]`. Coverage is computed
+/// only here, so region corners are kept inside it, and the Region tool marks
+/// its edge.
+pub fn grid_bounds(grid: &GroundGrid) -> Rect {
+    Rect::from_corners(grid.min, grid.max())
 }
 
 /// Request to (re)load an area.

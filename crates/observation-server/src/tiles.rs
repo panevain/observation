@@ -30,6 +30,9 @@ pub struct TileProxy {
     client: reqwest::Client,
     template: String,
     set: TileSet,
+    /// Checks a downloaded tile beyond its PNG signature; one that fails is
+    /// neither cached nor served.
+    usable: fn(&[u8]) -> bool,
     cache: Arc<Cache>,
     permits: Semaphore,
     min_ttl: Duration,
@@ -43,16 +46,19 @@ impl TileProxy {
             client,
             template: config.tile_url.clone(),
             set: TileSet::Map,
+            usable: |_| true,
             cache,
             permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
             min_ttl: config.tile_min_ttl,
         }
     }
 
-    /// The elevation tile proxy for the `template` from `OBS_DEM_URL`.
+    /// The elevation tile proxy for the `template` from `OBS_DEM_URL`, which
+    /// keeps only tiles `usable` accepts.
     pub fn elevation(
         client: reqwest::Client,
         template: String,
+        usable: fn(&[u8]) -> bool,
         config: &Config,
         cache: Arc<Cache>,
     ) -> Self {
@@ -60,6 +66,7 @@ impl TileProxy {
             client,
             template,
             set: TileSet::Dem,
+            usable,
             cache,
             permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
             min_ttl: config.dem_min_ttl,
@@ -150,7 +157,7 @@ impl TileProxy {
             .acquire()
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let mut req = self.client.get(tile_url(&self.template, id));
+        let mut req = self.client.get(id.url(&self.template));
         if let Some(r) = referer {
             req = req.header(header::REFERER, r);
         }
@@ -197,6 +204,13 @@ impl TileProxy {
                         self.server()
                     )));
                 }
+                if !(self.usable)(&body) {
+                    tracing::warn!(?id, server = self.server(), "unusable tile");
+                    return Err(ApiError::Upstream(format!(
+                        "the {} sent an unusable tile",
+                        self.server()
+                    )));
+                }
                 Ok(Upstream::Fresh(body, meta))
             }
             StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(resp.headers(), stale))),
@@ -234,15 +248,6 @@ impl TileProxy {
 enum Upstream {
     Fresh(Bytes, TileMeta),
     NotModified(TileMeta),
-}
-
-/// Expands `{z}`, `{x}`, `{y}` and `{s}` (always `a`) in the template.
-pub fn tile_url(template: &str, id: TileId) -> String {
-    template
-        .replace("{z}", &id.z.to_string())
-        .replace("{x}", &id.x.to_string())
-        .replace("{y}", &id.y.to_string())
-        .replace("{s}", "a")
 }
 
 /// Expiry (unix seconds) from `Cache-Control: max-age` or `Expires`, floored at
@@ -291,7 +296,7 @@ mod tests {
     fn template_substitution() {
         let id = TileId::new(17, 3, 5).unwrap();
         assert_eq!(
-            tile_url("https://{s}.t/{z}/{x}/{y}.png", id),
+            id.url("https://{s}.t/{z}/{x}/{y}.png"),
             "https://a.t/17/3/5.png"
         );
     }

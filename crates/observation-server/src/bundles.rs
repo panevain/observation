@@ -114,14 +114,20 @@ impl BundleService {
         }
         // One budget for both sources: Overpass gets what the local try left.
         let started = std::time::Instant::now();
-        let osm = async {
-            match self.fetch_local(&bbox).await {
-                Some(d) => Ok(d),
-                None => self.overpass.fetch_since(&bbox, started).await,
-            }
+        // Elevation first: it is usually cached, and if it fails the map data
+        // would be thrown away, so Overpass is not asked for nothing.
+        let fetched = match self.elevation.terrain(&bbox).await {
+            Ok(terrain) => match self.fetch_local(&bbox).await {
+                Some(d) => Ok((d, terrain)),
+                None => self
+                    .overpass
+                    .fetch_since(&bbox, started)
+                    .await
+                    .map(|d| (d, terrain)),
+            },
+            Err(e) => Err(e),
         };
-        let (fetched, terrain) = tokio::join!(osm, self.elevation.terrain(&bbox));
-        let (data, terrain) = match fetched.and_then(|d| Ok((d, terrain?))) {
+        let (data, terrain) = match fetched {
             Ok(both) => both,
             Err(e) => {
                 if let Some((stale, _)) = self.cache.get_bundle(key, None).await {

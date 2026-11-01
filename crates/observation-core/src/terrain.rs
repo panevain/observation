@@ -12,6 +12,12 @@ use crate::tiles::{TileId, lat_to_y, lon_to_x, tiles_covering};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+/// Credit for the default elevation source, the AWS Open Data Terrain Tiles.
+pub const TERRAIN_TILES_ATTRIBUTION: &str = "Elevation: Mapzen Terrain Tiles, USGS and others";
+/// Where the Terrain Tiles list every source's required credit.
+pub const TERRAIN_TILES_CREDITS_URL: &str =
+    "https://github.com/tilezen/joerd/blob/master/docs/attribution.md";
+
 /// Ground covered beyond the area on every side, metres. The client draws
 /// map tiles and the pick surface this far out.
 pub const TERRAIN_MARGIN_M: f32 = 150.0;
@@ -50,6 +56,20 @@ pub struct Terrain {
     pub attribution: String,
 }
 
+/// Flat ground, as a constant (the same as [`Terrain::default`]).
+pub const FLAT: Terrain = Terrain {
+    min: [0.0, 0.0],
+    cell_m: 0.0,
+    cols: 0,
+    rows: 0,
+    heights_dm: Vec::new(),
+    datum_m: 0.0,
+    attribution: String::new(),
+};
+
+/// Smallest and largest sample spacing a grid from the wire may have, metres.
+const CELL_RANGE_M: std::ops::RangeInclusive<f32> = 1.0..=1000.0;
+
 /// Why a [`Terrain`] read from the wire cannot be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidTerrain;
@@ -68,8 +88,7 @@ impl Terrain {
         let sized = (1..=max).contains(&self.cols)
             && (1..=max).contains(&self.rows)
             && self.heights_dm.len() == self.cols as usize * self.rows as usize;
-        let numbers = self.cell_m.is_finite()
-            && self.cell_m > 0.0
+        let numbers = CELL_RANGE_M.contains(&self.cell_m)
             && self.min.iter().all(|v| v.is_finite() && v.abs() < 1.0e5)
             && self.datum_m.is_finite();
         if flat_empty || (sized && numbers) {
@@ -136,6 +155,25 @@ impl Terrain {
         if low.is_finite() { low } else { 0.0 }
     }
 
+    /// Height of world point `p` above the ground under it.
+    pub fn height_above(&self, p: [f32; 3]) -> f32 {
+        p[1] - self.height_at(Vec2::new(p[0], p[2]))
+    }
+
+    /// `p` moved to world `[x, z]`, keeping its height above the ground.
+    pub fn moved_to(&self, p: [f32; 3], x: f32, z: f32) -> [f32; 3] {
+        [x, self.height_at(Vec2::new(x, z)) + self.height_above(p), z]
+    }
+
+    /// Lowest sample, metres (0 for a flat grid).
+    pub fn bottom(&self) -> f32 {
+        self.heights_dm
+            .iter()
+            .min()
+            .map_or(0.0, |&h| f32::from(h) * 0.1)
+            .min(0.0)
+    }
+
     /// Highest sample, metres (0 for a flat grid).
     pub fn top(&self) -> f32 {
         self.heights_dm
@@ -189,6 +227,15 @@ impl Terrain {
         if above(origin) < 0.0 {
             return None;
         }
+        // Past the lowest sample, or rising above the highest, a ray meets
+        // nothing more (the ground beyond the grid holds its edge heights).
+        let max_dist = if dir.y < -1e-6 {
+            max_dist.min((origin.y - self.bottom()) / -dir.y + 1.0)
+        } else if origin.y > self.top() {
+            return None;
+        } else {
+            max_dist
+        };
         let step = (self.cell_m * 0.5).max(0.1);
         let steps = (max_dist / step).ceil().min(100_000.0) as u32;
         let mut t0 = 0.0;
@@ -443,6 +490,11 @@ pub(crate) mod tests {
         let mut t = slope();
         t.cell_m = f32::NAN;
         assert_eq!(t.validate(), Err(InvalidTerrain));
+        // Samples closer than a metre would make the client's meshes huge.
+        let mut t = slope();
+        t.cell_m = 0.1;
+        assert_eq!(t.validate(), Err(InvalidTerrain));
+        assert_eq!(FLAT, Terrain::default());
     }
 
     #[test]
@@ -513,6 +565,14 @@ pub(crate) mod tests {
             t.ray_hit(Vec3::new(0.0, 50.0, 0.0), Vec3::Y, 500.0)
                 .is_none()
         );
+        // Upward from above the highest sample: nothing to meet.
+        assert!(
+            t.ray_hit(Vec3::new(0.0, 50.0, 0.0), Vec3::new(1.0, 0.1, 0.0), 500.0)
+                .is_none()
+        );
+        // Moving keeps the height above the ground.
+        let p = t.moved_to([0.0, 2.0, 0.0], 30.0, 5.0);
+        assert!((p[1] - 5.0).abs() < 0.06 && (t.height_above(p) - 2.0).abs() < 1e-4);
         let flat = Terrain::default();
         let hit = flat
             .ray_hit(Vec3::new(0.0, 10.0, 0.0), Vec3::new(1.0, -1.0, 0.0), 100.0)

@@ -371,7 +371,8 @@ pub struct StaticLayers {
     /// Ground cells on a road surface (and not under a building).
     pub street_mask: Vec<bool>,
     pub facades: Vec<FacadeCell>,
-    pub terrain: Terrain,
+    /// Private, so it cannot change under [`Self::terrain_top`].
+    terrain: Terrain,
     /// [`Terrain::top`], for the sight-line tests.
     terrain_top: f32,
 }
@@ -441,6 +442,11 @@ impl StaticLayers {
             terrain_top: terrain.top(),
             terrain,
         }
+    }
+
+    /// The ground the layers stand on.
+    pub fn terrain(&self) -> &Terrain {
+        &self.terrain
     }
 
     /// Whether the line from `a` to `b` is blocked by a building or the ground.

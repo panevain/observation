@@ -28,7 +28,7 @@ impl Elevation {
             proxy: config
                 .dem_url
                 .clone()
-                .map(|t| TileProxy::elevation(client, t, config, cache)),
+                .map(|t| TileProxy::elevation(client, t, is_terrarium, config, cache)),
             attribution: config.dem_attribution.clone(),
         }
     }
@@ -43,7 +43,12 @@ impl Elevation {
             futures_util::future::join_all(ids.iter().map(|&id| proxy.get(id, None))).await;
         let mut pngs = Vec::with_capacity(ids.len());
         for (id, png) in ids.into_iter().zip(fetched) {
-            pngs.push((id, png?));
+            // A missing tile is the elevation server's failure, not a missing area.
+            let png = png.map_err(|e| match e {
+                ApiError::NotFound(why) => ApiError::Upstream(why.to_owned()),
+                other => other,
+            })?;
+            pngs.push((id, png));
         }
         let (bbox, attribution) = (*bbox, self.attribution.clone());
         tokio::task::spawn_blocking(move || {
@@ -68,6 +73,11 @@ pub fn decode_tile(id: TileId, png: &[u8]) -> Result<DemTile, ApiError> {
     };
     let rgb = terrarium_rgb(png).ok_or_else(|| bad("not a 256 × 256 RGB PNG"))?;
     DemTile::from_terrarium_rgb(id, &rgb).ok_or_else(|| bad("wrong size"))
+}
+
+/// Whether `png` is a Terrarium tile [`decode_tile`] can use.
+fn is_terrarium(png: &[u8]) -> bool {
+    terrarium_rgb(png).is_some()
 }
 
 /// 8-bit RGB pixels of a [`DEM_TILE_PX`]² PNG (RGBA and palette images are

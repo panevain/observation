@@ -10,6 +10,7 @@ use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
 use observation_core::scene::AreaRef;
+use observation_core::terrain::{TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL};
 
 pub fn top_bar(
     ui: &mut egui::Ui,
@@ -217,9 +218,6 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
     });
 }
 
-/// Who the elevation data comes from, in full: the bundle names the set.
-const ELEVATION_CREDITS: &str = "https://github.com/tilezen/joerd/blob/master/docs/attribution.md";
-
 /// Shortcuts for the active tool on the left; the coverage figures and the
 /// attribution on the right, so the figures stay in view while the inspector
 /// is scrolled.
@@ -248,10 +246,14 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
                 .map(|a| a.bundle.terrain.attribution.as_str())
                 .filter(|a| !a.is_empty())
             {
-                ui.hyperlink_to(
-                    RichText::new(dem).size(t.font.caption).color(t.text_muted),
-                    ELEVATION_CREDITS,
-                );
+                let text = RichText::new(dem).size(t.font.caption).color(t.text_muted);
+                // The default source's credits are listed in full there; an
+                // operator's own source has only the text it was given.
+                if dem == TERRAIN_TILES_ATTRIBUTION {
+                    ui.hyperlink_to(text, TERRAIN_TILES_CREDITS_URL);
+                } else {
+                    ui.label(text);
+                }
             }
             ui.separator();
             save_status(ui, d);

@@ -14,10 +14,9 @@ pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.p
 /// "Terrain Tiles" set).
 pub const DEFAULT_DEM_URL: &str =
     "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
-/// Default credit for the elevation data, embedded in bundles. The sources
-/// behind it are listed at
-/// <https://github.com/tilezen/joerd/blob/master/docs/attribution.md>.
-pub const DEFAULT_DEM_ATTRIBUTION: &str = "Elevation: Mapzen Terrain Tiles, USGS and others";
+/// Default credit for the elevation data, embedded in bundles. The client
+/// links it to the sources' full credits.
+pub const DEFAULT_DEM_ATTRIBUTION: &str = observation_core::terrain::TERRAIN_TILES_ATTRIBUTION;
 /// `OBS_DEM_URL` value that turns elevation off (flat ground).
 pub const DEM_OFF: &str = "off";
 /// Default Overpass interpreter endpoint.
@@ -193,7 +192,7 @@ fn check_template(
     if in_host {
         return Err(host());
     }
-    let probe = crate::tiles::tile_url(template, TileId::new(0, 0, 0).expect("tile 0/0/0"));
+    let probe = TileId::new(0, 0, 0).expect("tile 0/0/0").url(template);
     check_upstream(var, &probe, allow_private, || malformed(redact(template)))
 }
 

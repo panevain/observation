@@ -2,7 +2,9 @@
 
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
-use crate::state::{AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
+use crate::state::{
+    AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState, terrain_of,
+};
 use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::math::Affine3A;
@@ -66,7 +68,7 @@ impl OrbitCamera {
     /// [`NEAR_PLANE_M`]: the ground at the bottom of the frame is never closer
     /// than the height.
     fn near_plane(&self) -> f32 {
-        let height = self.focus.y - self.distance * self.pitch.sin();
+        let height = -self.distance * self.pitch.sin();
         (height * 0.5).clamp(*NEAR_PLANE_M.start(), *NEAR_PLANE_M.end())
     }
 
@@ -364,8 +366,7 @@ fn pointer(
         bodies,
         area,
     } = targets;
-    let flat = Terrain::default();
-    let terrain = area.as_deref().map_or(&flat, |a| &a.bundle.terrain);
+    let terrain = terrain_of(area.as_deref());
     // The ground the tiles cover; a ray past it meets nothing.
     let ground_rect = area.as_deref().map(|a| {
         (
@@ -695,9 +696,6 @@ fn ground_point(
     terrain: &Terrain,
 ) -> Option<[f32; 2]> {
     let ray = camera.viewport_to_world(cam_t, window_pos).ok()?;
-    if ray.direction.y > -1e-4 {
-        return None;
-    }
     let p = terrain.ray_hit(ray.origin, *ray.direction, MAX_GROUND_RAY_M)?;
     Some([p.x, p.z])
 }
@@ -768,9 +766,10 @@ fn finish_region(ui: &mut UiState, scene: &mut Scene) {
 /// cannot put one kilometres away.
 fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
     match area {
-        Some(a) => Vec2::from_array(p)
-            .clamp(a.layers.grid.min, a.layers.grid.max())
-            .to_array(),
+        Some(a) => {
+            let r = a.bounds();
+            Vec2::from_array(p).clamp(r.min, r.max).to_array()
+        }
         None => p,
     }
 }

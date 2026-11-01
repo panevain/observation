@@ -10,7 +10,7 @@ use super::widgets::{
 use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{InspectorTab, OverlayMode, Tool, UiState};
+use crate::state::{InspectorTab, OverlayMode, Tool, UiState, terrain_of};
 use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
@@ -714,21 +714,36 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     color_row(ui, d, t, &mut c);
     group_row(ui, d, t, &mut c);
 
-    subsection(ui, t, "Position (m from the area centre)");
+    subsection(
+        ui,
+        t,
+        "Position (m from the area centre, height above the ground)",
+    );
     ui.horizontal(|ui| {
-        for (i, prefix, speed, range) in [
-            (0, "E ", 0.1, None),
-            (2, "S ", 0.1, None),
-            (1, "H ", 0.05, Some(0.0..=60.0)),
+        // Height is above the ground under the camera, so moving it east or
+        // south keeps it at the same height over a slope.
+        let terrain = terrain_of(d.area.as_deref());
+        let [mut east, _, mut south] = c.position;
+        let mut height = terrain.height_above(c.position);
+        let mut changed = false;
+        for (value, prefix, speed, range) in [
+            (&mut east, "E ", 0.1, None),
+            (&mut south, "S ", 0.1, None),
+            (&mut height, "H ", 0.05, Some(0.0..=60.0)),
         ] {
-            let mut field = DragValue::new(&mut c.position[i])
+            let mut field = DragValue::new(value)
                 .speed(drag_speed(ui, speed))
                 .prefix(prefix)
                 .max_decimals(2);
             if let Some(r) = range {
-                field = field.range(r);
+                // Showing a camera must not move it.
+                field = field.range(r).clamp_existing_to_range(false);
             }
-            ui.add(field).on_hover_text(NUMBER_TIP);
+            changed |= ui.add(field).on_hover_text(NUMBER_TIP).changed();
+        }
+        if changed {
+            let ground = terrain.height_at(observation_core::glam::Vec2::new(east, south));
+            c.position = [east, ground + height, south];
         }
     });
 

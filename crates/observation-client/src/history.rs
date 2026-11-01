@@ -118,13 +118,14 @@ pub fn record(
     let busy = mouse.get_pressed().next().is_some()
         || touches.iter().next().is_some()
         || wants.wants_any_keyboard_input()
-        || loading.area.is_some();
+        || loading.area.is_some()
+        // Cameras from a flat-ground scene, still waiting for their area to
+        // lift them onto the terrain: recording them would let an undo sink them.
+        || scene.on_flat_ground;
     if busy {
         ui.history_request = None;
         // The first snapshot can be taken mid-load: the start-up restore must
         // be undoable to if the user replaces it before its area arrives.
-        // Not while its cameras still wait to be lifted onto the terrain:
-        // undoing to that would sink them.
         if h.last.is_none() && scene.area.is_some() && !scene.on_flat_ground {
             h.last = Some(scene.snapshot(&models));
             h.last_revision = scene.revision;
