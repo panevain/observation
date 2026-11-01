@@ -1,0 +1,54 @@
+name: Image (full build)
+
+# The CI docker job builds the image around a stub dist/ (target runtime-prebuilt). This
+# workflow builds the default target, which compiles the client inside the image the way
+# Release does, so a break there is found before a tag. It runs only when inputs to that
+# path change, weekly, and on demand.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/image-full.yml
+      - Dockerfile
+      - scripts/smoke-test-image.sh
+      - .dockerignore
+      - rust-toolchain.toml
+      - Trunk.toml
+      - web/**
+      - Cargo.toml
+      - Cargo.lock
+      - crates/*/Cargo.toml
+      - crates/observation-client/build.rs
+  schedule:
+    # Weekly health checks, Sundays (after CodeQL): two days before the Tuesday release.
+    - cron: "30 6 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  image:
+    name: image (full build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image (default target)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: observation:full
+          # Reads Release's cache; never writes it.
+          cache-from: type=gha,scope=image
+      - name: Smoke test
+        run: scripts/smoke-test-image.sh observation:full

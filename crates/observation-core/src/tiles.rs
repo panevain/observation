@@ -18,6 +18,34 @@ impl TileId {
         (z <= MAX_ZOOM && x < n && y < n).then_some(Self { z, x, y })
     }
 
+    /// The four tiles one zoom level down, row-major from the north-west.
+    pub fn children(&self) -> Option<[Self; 4]> {
+        (self.z < MAX_ZOOM).then(|| {
+            let (z, x, y) = (self.z + 1, self.x * 2, self.y * 2);
+            [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| Self {
+                z,
+                x: x + dx,
+                y: y + dy,
+            })
+        })
+    }
+
+    /// Where this tile sits inside its ancestor `levels` zooms up, as
+    /// `[left, top, right, bottom]` fractions of the ancestor.
+    pub fn within_ancestor(&self, levels: u8) -> Option<(Self, [f32; 4])> {
+        let up = self.z.checked_sub(levels)?;
+        // The fields are public, so `z` (and with it `levels`) can exceed 31.
+        let n = 1u32.checked_shl(u32::from(levels))?;
+        let a = Self {
+            z: up,
+            x: self.x >> levels,
+            y: self.y >> levels,
+        };
+        let (fx, fy) = ((self.x % n) as f32, (self.y % n) as f32);
+        let k = n as f32;
+        Some((a, [fx / k, fy / k, (fx + 1.0) / k, (fy + 1.0) / k]))
+    }
+
     /// North-west corner of the tile.
     pub fn nw(&self) -> LatLon {
         LatLon::new(
@@ -112,6 +140,27 @@ mod tests {
         assert!((lon_to_x(b.west, 18) - 130_000.0).abs() < 1e-6);
         assert!((lat_to_y(b.north, 18) - 87_000.0).abs() < 1e-6);
         assert!(TileId::new(2, 4, 0).is_none());
+    }
+
+    #[test]
+    fn family() {
+        let t = TileId::new(17, 21_000, 45_001).unwrap();
+        let kids = t.children().unwrap();
+        assert!(
+            kids.iter()
+                .all(|c| c.within_ancestor(1).map(|(a, _)| a) == Some(t))
+        );
+        assert_eq!(kids[3].within_ancestor(1).unwrap().1, [0.5, 0.5, 1.0, 1.0]);
+        assert_eq!(TileId::new(19, 0, 0).unwrap().children(), None);
+        // x = 21000 = 4·5250 + 0, y = 45001 = 4·11250 + 1.
+        let (a, f) = t.within_ancestor(2).unwrap();
+        assert_eq!(a, TileId::new(15, 5_250, 11_250).unwrap());
+        assert_eq!(f, [0.0, 0.25, 0.25, 0.5]);
+        assert_eq!(t.within_ancestor(0), Some((t, [0.0, 0.0, 1.0, 1.0])));
+        assert_eq!(t.within_ancestor(18), None);
+        // Out-of-range zooms built through the public fields don't overflow.
+        let deep = TileId { z: 40, x: 0, y: 0 };
+        assert_eq!(deep.within_ancestor(35), None);
     }
 
     #[test]

@@ -1,0 +1,59 @@
+[package]
+name = "observation-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "cargo-fuzz targets for Observation's untrusted-input parsers"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+observation-core = { path = "../crates/observation-core" }
+observation-server = { path = "../crates/observation-server" }
+
+# Kept out of the main workspace: fuzzing needs a nightly toolchain and
+# sanitizer flags (see fuzz/README.md).
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "bundle_decode"
+path = "fuzz_targets/bundle_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scene_json"
+path = "fuzz_targets/scene_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "overpass_response"
+path = "fuzz_targets/overpass_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bbox_query"
+path = "fuzz_targets/bbox_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "coverage_geometry"
+path = "fuzz_targets/coverage_geometry.rs"
+test = false
+doc = false
+bench = false

@@ -1,20 +1,34 @@
 //! Orbit camera, pointer/touch handling and tool actions.
 
+use crate::addresses::address_label;
 use crate::cameras::CameraBody;
-use crate::state::{MOUNT_OFFSET_M, Models, Scene, Tool, UiState};
-use crate::world::{BuildingMesh, GroundMesh};
+use crate::state::{AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
+use crate::world::{AreaLoadSet, BuildingMesh, GroundMesh};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::math::Affine3A;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
+use observation_core::address::{Address, ON_OUTLINE_M};
 use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
+use observation_core::coverage::{MAX_REGION_POINTS, Region};
 
 /// Pixels a press may travel and still count as a click/tap.
 const CLICK_SLOP_PX: f32 = 5.0;
+/// How far from a camera body's centre a click still picks it, in pixels.
+/// Bodies are only a few pixels across at street zoom.
+const PICK_RADIUS_MOUSE_PX: f32 = 14.0;
+/// As [`PICK_RADIUS_MOUSE_PX`], for a tap: about a 44 px fingertip target.
+const PICK_RADIUS_TOUCH_PX: f32 = 22.0;
 const MIN_DISTANCE: f32 = 8.0;
 const MAX_DISTANCE: f32 = 1200.0;
 const ORBIT_SPEED: f32 = 0.006;
+/// Near clip distance, metres. WebGL remaps depth to [-1, 1], which costs most
+/// of the precision of reverse-Z, so the near plane is kept as far out as the
+/// view allows: up to 1 m, which keeps the ground layers apart at range, and
+/// down to 0.1 m when the camera is low enough that 1 m would clip the ground.
+const NEAR_PLANE_M: std::ops::RangeInclusive<f32> = 0.1..=1.0;
 
 /// Spherical orbit around a focus point.
 #[derive(Debug, Component)]
@@ -39,6 +53,13 @@ impl Default for OrbitCamera {
 }
 
 impl OrbitCamera {
+    /// Half the camera's height above the ground, within [`NEAR_PLANE_M`]: the
+    /// ground at the bottom of the frame is never closer than the height.
+    fn near_plane(&self) -> f32 {
+        let height = self.focus.y - self.distance * self.pitch.sin();
+        (height * 0.5).clamp(*NEAR_PLANE_M.start(), *NEAR_PLANE_M.end())
+    }
+
     fn transform(&self) -> Transform {
         let rot = Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0);
         let pos = self.focus + rot * Vec3::new(0.0, 0.0, self.distance);
@@ -67,9 +88,23 @@ struct PointerState {
     gesture: Gesture,
     last_touch_mid: Option<Vec2>,
     last_touch_dist: Option<f32>,
+    /// Whether the current two-finger gesture started on the UI; decided
+    /// once when it starts so it cannot change hands half-way.
+    pinch_on_ui: Option<bool>,
     /// Touch id driving a one-finger gesture.
     touch_id: Option<u64>,
     last_pos: Option<Vec2>,
+    /// What the Address tool's card was last looked up for, and the address
+    /// found, so a click on a settled pointer need not cast again.
+    address_key: Option<AddressKey>,
+    address_found: Option<Address>,
+}
+
+/// Everything the address under the pointer depends on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AddressKey {
+    pos: Vec2,
+    view: Affine3A,
 }
 
 pub struct InputPlugin;
@@ -78,7 +113,23 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PointerState>()
             .add_systems(Startup, spawn_camera)
-            .add_systems(Update, (keyboard, pointer, apply_orbit).chain());
+            // After an area load, so the pointer never reads the old area
+            // once the address state has been cleared for the new one.
+            .add_systems(
+                Update,
+                (keyboard, pointer.after(AreaLoadSet), apply_orbit).chain(),
+            )
+            // Undo and import replace the custom models (and the inspector
+            // deletes them, after the frame's input): a click must never place
+            // a camera with a model that is gone.
+            .add_systems(
+                Update,
+                crate::state::forget_missing_place_model
+                    .run_if(resource_changed::<Models>)
+                    .after(crate::history::record)
+                    .after(crate::persist::receive_imports)
+                    .before(pointer),
+            );
     }
 }
 
@@ -88,6 +139,10 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     // unlike the default, needs no LUT assets (and their zstd decoder).
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            near: orbit.near_plane(),
+            ..default()
+        }),
         bevy::core_pipeline::tonemapping::Tonemapping::KhronosPbrNeutral,
         Msaa::Sample4,
         orbit.transform(),
@@ -98,6 +153,11 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     egui.auto_create_primary_context = false;
     commands.spawn((
         bevy_egui::PrimaryEguiContext,
+        // Hyperlinks (attribution, spec sheets) open in a new tab, keeping the app.
+        bevy_egui::EguiContextSettings {
+            default_open_url_target: Some("_blank".to_owned()),
+            ..default()
+        },
         Camera2d,
         bevy::camera::visibility::RenderLayers::none(),
         Camera {
@@ -112,9 +172,17 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
     ));
 }
 
-fn apply_orbit(mut q: Query<(&OrbitCamera, &mut Transform), Changed<OrbitCamera>>) {
-    for (o, mut t) in &mut q {
+fn apply_orbit(
+    mut q: Query<(&OrbitCamera, &mut Transform, &mut Projection), Changed<OrbitCamera>>,
+) {
+    for (o, mut t, mut proj) in &mut q {
         *t = o.transform();
+        if let Projection::Perspective(p) = &mut *proj {
+            let near = o.near_plane();
+            if p.near != near {
+                p.near = near;
+            }
+        }
     }
 }
 
@@ -133,6 +201,8 @@ fn keyboard(
         (KeyCode::KeyP, Tool::Place),
         (KeyCode::KeyA, Tool::Aim),
         (KeyCode::KeyM, Tool::Move),
+        (KeyCode::KeyR, Tool::Region),
+        (KeyCode::KeyL, Tool::Address),
     ] {
         if keys.just_pressed(key) {
             ui.tool = tool;
@@ -145,8 +215,22 @@ fn keyboard(
         ui.tool = Tool::Select;
         ui.map_open = false;
         ui.help_open = false;
+        ui.regions_open = false;
     }
-    if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
+    if ui.tool == Tool::Region {
+        // Drawing a region: Enter closes it, Backspace undoes a corner.
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
+            finish_region(&mut ui, &mut scene);
+        }
+        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
+            ui.region_draft.pop();
+        }
+    } else if ui.tool == Tool::Address {
+        // The picked address, not the camera selected before the tool.
+        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
+            ui.selected_address = None;
+        }
+    } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
         && let Some(id) = ui.selected.take()
     {
         scene.remove_camera(id);
@@ -154,7 +238,10 @@ fn keyboard(
     if keys.just_pressed(KeyCode::Slash) || keys.just_pressed(KeyCode::F1) {
         ui.help_open = !ui.help_open;
     }
-    if keys.just_pressed(KeyCode::KeyF)
+    if keys.just_pressed(KeyCode::KeyF) {
+        ui.focus_request = true;
+    }
+    if std::mem::take(&mut ui.focus_request)
         && let Some(c) = ui.selected.and_then(|id| scene.camera(id))
         && let Ok(mut o) = orbit.single_mut()
     {
@@ -193,6 +280,7 @@ struct RawInput<'w> {
     scroll: Res<'w, AccumulatedMouseScroll>,
     touches: Res<'w, Touches>,
     wants: Res<'w, EguiWantsInput>,
+    layout: Res<'w, UiLayout>,
 }
 
 /// Entities the tools can hit.
@@ -200,7 +288,8 @@ struct RawInput<'w> {
 struct Targets<'w, 's> {
     buildings: Query<'w, 's, (), With<BuildingMesh>>,
     grounds: Query<'w, 's, (), With<GroundMesh>>,
-    bodies: Query<'w, 's, &'static CameraBody>,
+    bodies: Query<'w, 's, (&'static CameraBody, &'static GlobalTransform)>,
+    area: Option<Res<'w, Area>>,
 }
 
 fn pointer(
@@ -213,6 +302,7 @@ fn pointer(
     mut ui: ResMut<UiState>,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
+    jump: Res<AddressJump>,
 ) {
     let RawInput {
         mouse,
@@ -221,28 +311,32 @@ fn pointer(
         scroll,
         touches,
         wants,
+        layout,
     } = input;
     let Targets {
         buildings,
         grounds,
         bodies,
+        area,
     } = targets;
     let Ok((camera, cam_t, mut orbit)) = cam.single_mut() else {
         return;
     };
-    let over_ui = wants.wants_any_pointer_input();
-    let viewport_origin = camera.logical_viewport_rect().map_or(Vec2::ZERO, |r| r.min);
 
-    let mut cast = |screen: Vec2| -> Option<Hit> {
-        let ray = camera
-            .viewport_to_world(cam_t, screen - viewport_origin)
-            .ok()?;
-        let filter = |e: Entity| buildings.contains(e) || grounds.contains(e) || bodies.contains(e);
+    // `bodies_only` tests just the camera bodies: a cheap first pass for
+    // hover, where testing every building triangle on each mouse move is not
+    // worth it unless a body is under the pointer at all.
+    let mut cast = |screen: Vec2, bodies_only: bool| -> Option<Hit> {
+        // Takes window coordinates: it maps the camera's viewport rect itself.
+        let ray = camera.viewport_to_world(cam_t, screen).ok()?;
+        let filter = |e: Entity| {
+            bodies.contains(e) || (!bodies_only && (buildings.contains(e) || grounds.contains(e)))
+        };
         let settings = MeshRayCastSettings::default()
             .with_filter(&filter)
             .with_visibility(RayCastVisibility::Any);
         let (e, hit) = ray_cast.cast_ray(ray, &settings).first()?;
-        let target = if let Ok(b) = bodies.get(*e) {
+        let target = if let Ok((b, _)) = bodies.get(*e) {
             HitTarget::Camera(b.0)
         } else if buildings.contains(*e) {
             HitTarget::Building
@@ -256,12 +350,55 @@ fn pointer(
         })
     };
 
+    // The camera body nearest `screen` whose centre is within `radius` px. Its
+    // centre is cast to again, so a body behind a building is not picked.
+    let near_body = |cast: &mut dyn FnMut(Vec2, bool) -> Option<Hit>,
+                     screen: Vec2,
+                     radius: f32|
+     -> Option<Hit> {
+        let (id, centre) = bodies
+            .iter()
+            .filter_map(|(b, t)| {
+                let p = camera.world_to_viewport(cam_t, t.translation()).ok()?;
+                (p.distance_squared(screen) <= radius * radius).then_some((b.0, p))
+            })
+            .min_by(|a, b| {
+                a.1.distance_squared(screen)
+                    .total_cmp(&b.1.distance_squared(screen))
+            })?;
+        cast(centre, false).filter(|h| h.target == HitTarget::Camera(id))
+    };
+
+    // The address under `screen`. The ray meets the buildings, so pointing
+    // at a roof or a wall gives that building's own address, not the ground
+    // behind it or a neighbour's.
+    let address_under =
+        |cast: &mut dyn FnMut(Vec2, bool) -> Option<Hit>, screen: Vec2| -> Option<Address> {
+            let area = area.as_deref()?;
+            let at = cast(screen, false)
+                .map(|h| [h.point.x, h.point.z])
+                .or_else(|| ground_point(camera, cam_t, screen))?;
+            area.bundle.address_pointed_at(at, ON_OUTLINE_M).cloned()
+        };
+    if area.as_ref().is_some_and(|a| a.is_changed()) {
+        st.address_key = None;
+    }
+
     // --- Two-finger touch: pinch zoom + pan (always camera navigation).
     let active: Vec<_> = touches.iter().collect();
     if active.len() >= 2 {
         let (a, b) = (active[0].position(), active[1].position());
         let mid = (a + b) / 2.0;
         let dist = a.distance(b);
+        // A pinch with either finger on a panel belongs to the panel.
+        let on_ui = *st.pinch_on_ui.get_or_insert_with(|| {
+            wants.wants_any_pointer_input() || layout.is_ui(a) || layout.is_ui(b)
+        });
+        if on_ui {
+            st.gesture = Gesture::None;
+            st.touch_id = None;
+            return;
+        }
         if let (Some(lm), Some(ld)) = (st.last_touch_mid, st.last_touch_dist) {
             pan(&mut orbit, mid - lm, window.height());
             if dist > 1.0 {
@@ -276,8 +413,10 @@ fn pointer(
     }
     st.last_touch_mid = None;
     st.last_touch_dist = None;
+    st.pinch_on_ui = None;
 
     // --- Unified single pointer (mouse or one finger).
+    let touch = !active.is_empty() || st.touch_id.is_some();
     let (pos, just_pressed, pressed, just_released, button) = if let Some(t) = active.first() {
         let first = st.touch_id != Some(t.id());
         st.touch_id = Some(t.id());
@@ -303,6 +442,8 @@ fn pointer(
     };
     st.last_pos = pos;
 
+    let over_ui = wants.wants_any_pointer_input() || pos.is_some_and(|p| layout.is_ui(p));
+
     // Scroll zoom.
     if !over_ui && scroll.delta.y != 0.0 {
         let lines = match scroll.unit {
@@ -312,14 +453,91 @@ fn pointer(
         orbit.distance = (orbit.distance * (1.0 - lines * 0.1)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
-    let Some(pos) = pos else { return };
+    if ui.tool != Tool::Region {
+        if !ui.region_draft.is_empty() || ui.region_hover.is_some() {
+            ui.region_draft.clear();
+            ui.region_hover = None;
+        }
+    } else {
+        let hover = pos
+            .filter(|_| !over_ui)
+            .and_then(|p| ground_point(camera, cam_t, p))
+            .map(|p| clamp_to_area(p, area.as_deref()));
+        if ui.region_hover != hover {
+            ui.region_hover = hover;
+        }
+        let snap = region_snap_m(orbit.distance);
+        if ui.region_snap_m != snap {
+            ui.region_snap_m = snap;
+        }
+    }
+
+    if ui.tool != Tool::Address && ui.selected_address.is_some() {
+        ui.selected_address = None;
+    }
+
+    let Some(pos) = pos else {
+        if ui.hover_scene.is_some() {
+            ui.hover_scene = None;
+        }
+        if ui.hover_address.is_some() {
+            ui.hover_address = None;
+        }
+        st.address_key = None;
+        return;
+    };
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // The camera under an idle mouse, so its row in the list lights up. A
+    // body hit is confirmed with the full cast, so one hidden behind a
+    // building does not light up.
+    if !pressed && active.is_empty() && delta != Vec2::ZERO {
+        let camera_at = |h: Option<Hit>| match h?.target {
+            HitTarget::Camera(id) => Some(id),
+            _ => None,
+        };
+        let hover = if over_ui {
+            None
+        } else if camera_at(cast(pos, true)).is_some() {
+            camera_at(cast(pos, false))
+        } else if ui.tool != Tool::Place {
+            camera_at(near_body(&mut cast, pos, PICK_RADIUS_MOUSE_PX))
+        } else {
+            None
+        };
+        if ui.hover_scene != hover {
+            ui.hover_scene = hover;
+        }
+    }
+
+    // The address under an idle mouse, looked up again only when the
+    // pointer, the view or the area changes. Hidden while dragging and over
+    // the panels.
+    if ui.tool == Tool::Address && active.is_empty() && !pressed && !over_ui {
+        let key = AddressKey {
+            pos,
+            view: cam_t.affine(),
+        };
+        if st.address_key != Some(key) {
+            st.address_key = Some(key);
+            st.address_found = address_under(&mut cast, pos);
+            let hover = Some(st.address_found.as_ref().map(address_label));
+            if ui.hover_address != hover {
+                ui.hover_address = hover;
+            }
+        }
+    } else {
+        st.address_key = None;
+        if ui.hover_address.is_some() {
+            ui.hover_address = None;
+        }
+    }
 
     if just_pressed && !over_ui {
         st.gesture = Gesture::Pending { start: pos, button };
         if button == MouseButton::Left && ui.tool.needs_selection() && ui.selected.is_some() {
             st.gesture = Gesture::Tool;
-            if let Some(hit) = cast(pos) {
+            if let Some(hit) = cast(pos, false) {
                 apply_tool(&mut ui, &mut scene, &models, hit);
             }
         }
@@ -341,7 +559,7 @@ fn pointer(
             Gesture::Pan => pan(&mut orbit, delta, window.height()),
             Gesture::Tool => {
                 if delta != Vec2::ZERO
-                    && let Some(hit) = cast(pos)
+                    && let Some(hit) = cast(pos, false)
                 {
                     apply_tool(&mut ui, &mut scene, &models, hit);
                 }
@@ -356,10 +574,120 @@ fn pointer(
             ..
         } = st.gesture
         {
-            let hit = cast(pos);
-            click(&mut ui, &mut scene, &models, hit);
+            if ui.tool == Tool::Region {
+                if let Some(p) = ground_point(camera, cam_t, pos) {
+                    region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
+                }
+            } else if ui.tool == Tool::Address {
+                // A click reuses the card's lookup for the same spot; a tap
+                // looks up afresh. A click away from any address clears
+                // the selection.
+                let here = AddressKey {
+                    pos,
+                    view: cam_t.affine(),
+                };
+                let picked = if st.address_key == Some(here) {
+                    st.address_found.clone()
+                } else {
+                    address_under(&mut cast, pos)
+                };
+                ui.jump_to_address = jump.0 && picked.is_some();
+                ui.selected_address = picked;
+            } else {
+                let mut hit = cast(pos, false);
+                // Placing near a camera should still place, so only the
+                // other tools reach for a body the press just missed.
+                if ui.tool != Tool::Place
+                    && !matches!(
+                        hit,
+                        Some(Hit {
+                            target: HitTarget::Camera(_),
+                            ..
+                        })
+                    )
+                {
+                    let radius = if touch {
+                        PICK_RADIUS_TOUCH_PX
+                    } else {
+                        PICK_RADIUS_MOUSE_PX
+                    };
+                    hit = near_body(&mut cast, pos, radius).or(hit);
+                }
+                click(&mut ui, &mut scene, &models, hit);
+            }
         }
         st.gesture = Gesture::None;
+    }
+}
+
+/// Where the pointer's ray meets the ground plane, world `[x, z]`.
+fn ground_point(camera: &Camera, cam_t: &GlobalTransform, window_pos: Vec2) -> Option<[f32; 2]> {
+    let ray = camera.viewport_to_world(cam_t, window_pos).ok()?;
+    let dy = ray.direction.y;
+    if dy > -1e-4 {
+        return None;
+    }
+    let p = ray.origin + *ray.direction * (-ray.origin.y / dy);
+    Some([p.x, p.z])
+}
+
+/// How close to the first corner a click closes the region, metres: it grows
+/// with the zoom so the corner stays easy to hit, and is drawn around it.
+pub fn region_snap_m(view_distance: f32) -> f32 {
+    (view_distance * 0.02).clamp(1.0, 10.0)
+}
+
+/// Adds a region corner, or closes the region when the first corner is clicked.
+fn region_click(ui: &mut UiState, scene: &mut Scene, p: [f32; 2]) {
+    let closes = ui.region_draft.len() >= 3
+        && ui.region_draft.first().is_some_and(|f| {
+            Vec2::from_array(*f).distance(Vec2::from_array(p)) <= ui.region_snap_m
+        });
+    if closes {
+        finish_region(ui, scene);
+    } else if ui.region_draft.len() < MAX_REGION_POINTS {
+        ui.region_draft.push(p);
+    } else {
+        ui.error(format!(
+            "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
+        ));
+    }
+}
+
+/// Turns the draft into the scene's region (nothing to do without corners).
+fn finish_region(ui: &mut UiState, scene: &mut Scene) {
+    if ui.region_draft.is_empty() {
+        return;
+    }
+    let region = Region {
+        points: std::mem::take(&mut ui.region_draft),
+        enabled: true,
+    };
+    match region.problem() {
+        None => {
+            ui.info(format!(
+                "Coverage now counts only the {:.0} m² region",
+                region.area_m2()
+            ));
+            scene.region = Some(region);
+            scene.touch();
+            ui.tool = Tool::Select;
+        }
+        Some(problem) => {
+            ui.region_draft = region.points;
+            ui.error(problem.message());
+        }
+    }
+}
+
+/// Keeps a region corner on the loaded area, so a click near the horizon
+/// cannot put one kilometres away.
+fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
+    match area {
+        Some(a) => Vec2::from_array(p)
+            .clamp(a.layers.grid.min, a.layers.grid.max())
+            .to_array(),
+        None => p,
     }
 }
 
@@ -399,8 +727,9 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 yaw_deg: yaw.unwrap_or(0.0),
                 pitch_deg: kind.default_pitch_deg(),
                 roll_deg: 0.0,
-                color_index: 0,
+                color: None,
                 enabled: true,
+                group: None,
             });
             ui.selected = Some(id);
             if yaw.is_none() {
@@ -409,6 +738,8 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
                 ui.info("Click where the new camera should point");
             }
         }
+        // Handled in `pointer` (by `region_click` for Region).
+        Tool::Region | Tool::Address => {}
         Tool::Aim | Tool::Move => {
             if ui.selected.is_none()
                 && let Some(Hit {

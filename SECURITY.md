@@ -2,9 +2,13 @@
 
 ## Supported versions
 
-Only the `main` branch (and the container image published from it,
-`ghcr.io/panevain/observation:edge`) receives security fixes. Tagged releases
-(`v*`) are snapshots of `main`; please upgrade to the latest one.
+Only the `main` branch (and the container images published from its releases,
+`ghcr.io/panevain/observation:latest` and `ghcr.io/panevain/observation-regions:latest`)
+receives security fixes. Tagged releases (`v*`) are snapshots of `main`; please
+upgrade to the latest one. When a dependency of the latest release gets a security
+fix (a crate advisory with a compatible fix, or a Debian fix in an image), a patch
+release with it is prepared automatically and published after a maintainer's
+approval. The `:devel` images track `develop` and are for testing only.
 
 | Version | Supported |
 | ------- | --------- |
@@ -45,6 +49,8 @@ In scope:
 
 - The `observation-server` HTTP service, including its request handling,
   caching and static file serving.
+- The optional `observation-regions` agent and its image, including region
+  imports, the admin token on region management and the agent token.
 - The WebAssembly client served by that server.
 - The container image and the build and release pipeline in this repository.
 
@@ -71,20 +77,72 @@ versions or modified deployments.
 Every change is checked automatically (see `.github/workflows/`):
 
 - **cargo-deny** (`deny.toml`): RustSec advisories, yanked crates, licence
-  allow-list, banned or wildcard dependencies, and allowed crate sources.
-- **cargo-audit** (`rustsec/audit-check`): daily scan of `Cargo.lock`; on the
-  scheduled run it opens or updates a GitHub issue per new advisory so that
-  remediation is tracked.
-- **Trivy** (pinned, checksum-verified binary): scans the built container image
-  and the repository (dependencies, Dockerfile misconfiguration, secrets); fails
-  on fixable CRITICAL or HIGH findings and uploads SARIF to code scanning.
+  allow-list, banned or wildcard dependencies, and allowed crate sources. The
+  ban list keeps TLS rustls-only (no OpenSSL or native-tls, as crates or as
+  reqwest features), keeps outbound HTTP inside `observation-upstream`'s
+  SSRF-guarded client (only it, the server and the region agent may depend on
+  reqwest), and refuses crates that fetch code at build time.
+- **cargo-vet** (`supply-chain/`): every crate version in the tree of the
+  server, the region agent and `observation-core` has been audited, by us or
+  in an imported audit set (Mozilla, Google, the Bytecode Alliance, Embark,
+  ISRG, Zcash), or is an exemption recorded when vetting started. A new
+  version nobody has reviewed fails the check until someone does. The client's
+  own Bevy tree is not vetted yet (see `supply-chain/README.md`).
+- **cargo-shear** reports dependencies that no code uses, in both workspaces, so
+  nothing sits in the tree (and the audit surface) for no reason.
+- **cargo-audit**: `Cargo.lock` and the fuzz
+  workspace's `fuzz/Cargo.lock`, on every change and daily; yanked crates fail too.
+  Accepted advisories need a reason in `deny.toml` and are mirrored in
+  `.cargo/audit.toml` and `osv-scanner.toml`.
+- **Crate cooldown** (`.config/cargo-cooldown.toml`): every crate version a pull
+  request adds to either lockfile, including indirect dependencies, must have
+  been published at least 7 days earlier, as Dependabot's cooldown requires
+  only of the crate it bumps. Fixes for RustSec vulnerabilities are exempt;
+  other exemptions need a reason.
+- **Trivy**: scans the container image's
+  operating system packages and the server binary's crates (the binaries are built
+  with `cargo auditable`, which embeds their dependency list; the static client,
+  which Trivy does not inspect, is a stub for this scan) and the repository
+  (dependencies, Dockerfile misconfiguration, secrets); fails on fixable CRITICAL
+  or HIGH findings and uploads SARIF to code scanning.
+- **Release watch** (daily): the same checks against the latest release (its
+  `Cargo.lock` and both published images). A fix that a patch release can carry
+  starts the Hotfix workflow; everything found is tracked in a `Security: vX.Y.Z`
+  issue.
+- **zizmor** audits the GitHub Actions workflows and the Dependabot configuration
+  (with its online audits); findings fail the check and are uploaded to code
+  scanning.
 - **CodeQL** for Rust and GitHub Actions workflows.
 - **OpenSSF Scorecard**, published weekly and on branch-protection changes.
 - **Dependabot** for Cargo, GitHub Actions and Docker updates (version and
-  security updates). All GitHub Actions are pinned to full commit SHAs.
-- **Release provenance**: images pushed to GHCR carry SLSA build provenance and
-  an SBOM, and are attested with GitHub artifact attestations. Verify with:
+  security updates), and a weekly workflow for the pins Dependabot does not
+  cover. All GitHub Actions are pinned to full commit SHAs, and the tools the
+  checks run (cargo-audit, cargo-deny, Trivy, zizmor, cosign and the rest) are
+  pinned in `mise.ci.toml` and installed only from release assets that match the
+  checksums in `mise.ci.lock`, with the publisher's attestations or signatures
+  verified where they exist.
+- **Release provenance**: both images pushed to GHCR (`observation` and
+  `observation-regions`) carry SLSA build provenance and an SBOM, are signed
+  keylessly with cosign, and are attested with GitHub artifact attestations. A
+  release is published only from a tag on `main` that passes the advisory check,
+  a smoke test and the Trivy gate; its GitHub release is immutable. Images are
+  published only from a push to `develop` (`:devel`) or a `v*` tag, and each one
+  is verified as below before the workflow finishes.
+
+  Verify an image against the **tag it was released from**, not just the
+  workflow: the signing identity is `release.yml@<ref>`, and an identity that
+  matches `release.yml@` alone would also accept an image signed by a copy of
+  the workflow pushed on a branch. Only admins and the release bot can create
+  `v*` tags, and nobody can move them. From a checkout,
+  `mise run verify ghcr.io/panevain/observation:<version>` runs both checks and
+  prints the image pinned by digest (`mise run up` does this for both images and
+  runs them by that digest). By hand (likewise for `observation-regions`):
 
   ```sh
-  gh attestation verify oci://ghcr.io/panevain/observation:<tag> --repo panevain/observation
+  cosign verify ghcr.io/panevain/observation:<version> \
+    --certificate-identity 'https://github.com/panevain/observation/.github/workflows/release.yml@refs/tags/v<version>' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  gh attestation verify oci://ghcr.io/panevain/observation:<version> --repo panevain/observation \
+    --cert-identity 'https://github.com/panevain/observation/.github/workflows/release.yml@refs/tags/v<version>' \
+    --source-ref refs/tags/v<version> --deny-self-hosted-runners
   ```

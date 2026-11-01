@@ -2,12 +2,13 @@ name: Security
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   schedule:
-    # Daily, deliberately off the hour. Scheduled runs are what make
-    # rustsec/audit-check open/update advisory issues (remediation tracking).
-    - cron: "17 4 * * *"
+    # Nightly checks, after Fuzz (00:00) and before Release watch (02:00): a new advisory
+    # against develop fails this run. Advisories against the latest release are tracked by
+    # release-watch.yml.
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +16,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions: {}
+
+# The checks are tasks in mise.ci.toml, next to their tools (pinned, and checksum-verified
+# through mise.ci.lock) and settings; `mise -E ci run <task>` runs one locally.
+env:
+  MISE_ENV: ci
+  # Code scanning uploads: not from fork or Dependabot pull requests, whose read-only token
+  # cannot write security events.
+  UPLOAD_SARIF: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
 
 jobs:
   cargo-deny:
@@ -27,33 +36,100 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: $/.github/actions/setup-mise
         with:
-          command: check
-          # Default is `--all-features`, which is wrong for Bevy's feature set;
-          # deny.toml controls the graph instead.
-          arguments: --locked
-          command-arguments: advisories bans licenses sources
+          tools: cargo-deny
+      # cargo-deny reads the dependency graph through `cargo metadata`.
+      - uses: $/.github/actions/setup-rust
+      - run: mise run deny
 
-  cargo-audit:
-    name: cargo-audit
+  zizmor:
+    name: zizmor (workflow audit)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    # issues: write -> scheduled runs open/update one issue per new advisory.
-    # checks: write -> reports the audit as a check run.
+    timeout-minutes: 10
     permissions:
       contents: read
-      issues: write # scheduled runs open/update advisory issues
-      checks: write # publish the audit check run
+      security-events: write # upload SARIF to code scanning
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+      - uses: $/.github/actions/setup-mise
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tools: zizmor
+      # Online audits (impostor commits, actions with known vulnerabilities, stale refs) use the
+      # job's read-only token. The SARIF run (for code scanning) never fails; the plain run
+      # after it does.
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise run zizmor --sarif zizmor.sarif
+      - name: Upload SARIF
+        if: ${{ !cancelled() && hashFiles('zizmor.sarif') != '' && env.UPLOAD_SARIF == 'true' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+  # Both lockfiles, including the fuzz workspace's (cargo-deny covers only the root one: the fuzz
+  # crate's licences are not on the allow-list, and it ships nothing). Ignores come from
+  # .cargo/audit.toml. Yanked crates fail the job, as they do in cargo-deny.
+  cargo-audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit
+      - run: mise run audit
+
+  # Every crate in the server side's tree (observation-core, the server, the region agent) is
+  # audited by us or by an imported audit set, or exempted (supply-chain/README.md). The imports
+  # come from supply-chain/imports.lock, so this needs no network beyond crates.io.
+  cargo-vet:
+    name: cargo-vet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-vet
+      # cargo-vet reads the dependency graph through `cargo metadata`.
+      - uses: $/.github/actions/setup-rust
+      - run: mise run vet
+
+  # Every crate version a pull request adds to Cargo.lock or fuzz/Cargo.lock, used directly or
+  # pulled in by another crate, must be at least .config/cargo-cooldown.toml's `days` old:
+  # Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec vulnerabilities at
+  # the base are exempt (cargo-audit finds those). Skipped outside pull requests.
+  cargo-cooldown:
+    name: cargo-cooldown
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent, the base branch.
+          fetch-depth: 2
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit
+      - run: mise run cooldown --base HEAD^1
 
   trivy:
     name: trivy (image + repo)
@@ -63,80 +139,65 @@ jobs:
       contents: read
       security-events: write # upload Trivy SARIF to code scanning
     env:
-      # Trivy is installed from a pinned GitHub release and verified against a
-      # pinned sha256 -- NOT via aquasecurity/trivy-action (its tags were
-      # compromised in March 2026, CVE-2026-33634).
-      # Checksum source: trivy_0.76.0_checksums.txt in
-      # https://github.com/aquasecurity/trivy/releases/tag/v0.76.0
-      TRIVY_VERSION: "0.76.0"
-      TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
       IMAGE: observation:scan
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Trivy (pinned, checksum-verified)
-        run: |
-          set -euo pipefail
-          archive="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${archive}"
-          echo "${TRIVY_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
-          mkdir -p "${RUNNER_TEMP}/trivy-bin"
-          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/trivy-bin" trivy
-          echo "${RUNNER_TEMP}/trivy-bin" >> "${GITHUB_PATH}"
+      # Trivy from its release (mise.ci.toml), not aquasecurity/trivy-action, whose tags were
+      # compromised in March 2026 (CVE-2026-33634). Telemetry and the version check are off
+      # (TRIVY_* in mise.ci.toml).
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: trivy
 
-      - name: Trivy version
-        run: trivy --version
-
-      # Repo scan first (cheap): Cargo.lock vulnerabilities, Dockerfile
-      # misconfiguration, committed secrets. --ignore-unfixed only affects
-      # vulnerabilities; CRITICAL/HIGH findings fail the job.
+      # Repo scan first (cheap): Cargo.lock vulnerabilities, Dockerfile misconfiguration,
+      # committed secrets. Fixable CRITICAL/HIGH findings fail the job.
       - name: Trivy fs scan (misconfig, vuln, secret)
-        run: |
-          trivy fs \
-            --scanners vuln,misconfig,secret \
-            --severity CRITICAL,HIGH \
-            --ignore-unfixed \
-            --skip-dirs target,dist,.git \
-            --format sarif --output trivy-fs.sarif \
-            --exit-code 1 \
-            .
+        run: mise run scan:repo --sarif trivy-fs.sarif
 
       - name: Upload fs SARIF
-        if: ${{ !cancelled() && hashFiles('trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        if: ${{ !cancelled() && hashFiles('trivy-fs.sarif') != '' && env.UPLOAD_SARIF == 'true' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # Trivy checks OS packages and the server binary; the static client is not
+      # something it scans, so use a stub dist/ rather than compiling Bevy to wasm.
+      - name: Stub client dist
+        run: |
+          mkdir -p "${RUNNER_TEMP}/stub-dist"
+          echo '<!doctype html><html></html>' > "${RUNNER_TEMP}/stub-dist/index.html"
+
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          target: runtime-prebuilt
+          build-contexts: |
+            client-dist=${{ runner.temp }}/stub-dist
           push: false
           load: true
           tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=security-image
-          cache-to: type=gha,scope=security-image,mode=max
+          # The CI docker job builds this same image (same stub dist/) and writes this cache
+          # from develop; reading it is enough here.
+          cache-from: type=gha,scope=image-prebuilt
 
       - name: Trivy image scan
-        run: |
-          trivy image \
-            --image-src docker \
-            --scanners vuln \
-            --severity CRITICAL,HIGH \
-            --ignore-unfixed \
-            --format sarif --output trivy-image.sarif \
-            --exit-code 1 \
-            "${IMAGE}"
+        run: mise run scan:image "${IMAGE}" --sarif trivy-image.sarif
+
+      # The server binary is built with cargo-auditable, so Trivy reads its crate list. Without
+      # that (a plain `cargo build`), the scan silently covers only the Debian packages.
+      - name: Image scan sees the server's crates
+        run: mise run scan:crates "${IMAGE}"
 
       - name: Upload image SARIF
-        if: ${{ !cancelled() && hashFiles('trivy-image.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        if: ${{ !cancelled() && hashFiles('trivy-image.sarif') != '' && env.UPLOAD_SARIF == 'true' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image

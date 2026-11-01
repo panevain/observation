@@ -1,0 +1,49 @@
+{
+ "format": "observation-scene",
+ "version": 1,
+ "area": {
+  "kind": "demo"
+ },
+ "origin": {
+  "lat": 47.70865,
+  "lon": -122.206
+ },
+ "cameras": [
+  {
+   "id": 1,
+   "label": "Front door",
+   "model_id": "generic-doorbell-160",
+   "position": [
+    12.0,
+    1.2,
+    -3.0
+   ],
+   "yaw_deg": 180.0,
+   "pitch_deg": 0.0,
+   "roll_deg": 0.0,
+   "enabled": true
+  }
+ ],
+ "custom_models": [
+  {
+   "id": "custom-x-1",
+   "vendor": "",
+   "name": "X",
+   "kind": "Bullet",
+   "hfov_deg": 100.0,
+   "vfov_deg": 55.0,
+   "resolution": [
+    2560,
+    1440
+   ],
+   "ir_range_m": 10.0,
+   "source": null,
+   "notes": null
+  }
+ ],
+ "params": {
+  "dori": "Recognise",
+  "lighting": "Night",
+  "subject_height_m": 1.6
+ }
+}

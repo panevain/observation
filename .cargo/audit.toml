@@ -1,6 +1,5 @@
-# cargo-audit configuration (also read by rustsec/audit-check in CI).
-# Keep in sync with [advisories].ignore in deny.toml; every entry needs a reason there.
+# cargo-audit configuration (read by the cargo-audit job in security.yml and by release-watch.yml).
+# Keep in sync with [advisories].ignore in deny.toml (every entry needs a reason there) and
+# osv-scanner.toml; `mise run sync` checks that the three lists agree.
 [advisories]
-ignore = [
-    "RUSTSEC-2026-0344", # ruzstd via bevy_image 0.20: unreachable, blocked on Bevy upgrade
-]
+ignore = []

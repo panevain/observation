@@ -2,13 +2,16 @@
 
 ## Purpose
 
-`crates/observation-client/assets/catalog.ron` is the curated list of consumer
+`crates/observation-client/assets/catalog/` is the curated list of consumer
 home-surveillance cameras that users can place on a street map. Each entry carries
 the few optics numbers needed to draw a coverage footprint: field of view,
-main-stream resolution and night-vision range. The file is embedded in the client
-and parsed with `observation_core::camera::Catalog::from_ron`, which validates ids,
+main-stream resolution and night-vision range. There is one RON file per manufacturer
+(`generic.ron` for the archetypes), each a bare list of models. Every `.ron` file under
+the directory (subfolders included) is found by the client's `build.rs`, embedded, and parsed with
+`observation_core::camera::Catalog::from_ron_parts`, which sorts by kind, vendor and
+name and validates ids,
 FOV, resolution and IR ranges and rejects duplicate ids. The integration test
-`crates/observation-core/tests/catalog.rs` checks the shipped file.
+`crates/observation-core/tests/catalog.rs` checks the shipped files.
 
 Three vendor-neutral archetypes (`generic-doorbell-160`, `generic-floodlight-130`,
 `generic-bullet-90`) have an empty vendor and no source. They hold mid-market values
@@ -18,7 +21,7 @@ for cameras that are not in the list.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | Stable, unique kebab-case id (`[a-z0-9-]`). Saved scenes refer to it, so never rename a shipped id. |
+| `id` | string | Stable, unique kebab-case id (`[a-z0-9-]`) that does not start with `custom-` (kept for custom models). Saved scenes refer to it, so never rename a shipped id. |
 | `vendor` | string | Manufacturer. Empty for generic archetypes. |
 | `name` | string | Product name without the vendor prefix. |
 | `kind` | enum | `Doorbell`, `Floodlight`, `Spotlight`, `Bullet`, `Turret`, `Dome` or `Indoor`. Sets default mount height and tilt. |
@@ -29,7 +32,7 @@ for cameras that are not in the list.
 | `source` | `Option<string>` | `https://` link to the manufacturer spec, tech-specs or support page. Required for every model with a vendor. |
 | `notes` | `Option<string>` | Short caveats: derived values, lens variants, conflicting figures. |
 
-The file is sorted by kind (enum order), then vendor, then name.
+Models are sorted by kind (enum order), then vendor, then name when loaded.
 
 ## How effective range is derived
 
@@ -41,6 +44,8 @@ The app uses DORI pixel-density targets (EN 62676-4):
 | Observe | 62 |
 | Recognise | 125 |
 | Identify | 250 |
+
+The **Custom** level uses a pixel density the user enters (1-2000 px/m).
 
 For a level with density `ppm`:
 
@@ -76,18 +81,19 @@ range = width_px / (2 * ppm * tan(hfov / 2))      capped at 100 m
 - If the pages disagree on a value, use the manufacturer's spec sheet and mention
   the conflict in `notes`. If the value cannot be verified, leave the model out.
 - Do not use a night-vision figure from a retailer. Use `None` instead.
-- The header comment of `catalog.ron` records the last-verified month. Update it
+- The header comment of `generic.ron` records the last-verified month. Update it
   whenever you re-check entries.
 
 ### Adding or updating a model
 
 1. Find the manufacturer's spec page and read FOV, main-stream resolution and
    night-vision range from it.
-2. Add the entry in sorted position (kind, vendor, name), with a unique kebab-case
-   `id` of the form `vendor-product-name`.
+2. Add the entry to the manufacturer's file (for a new manufacturer, create
+   `catalog/<vendor>.ron`; no registration is needed), with a unique kebab-case
+   `id` of the form `vendor-product-name` (never starting with `custom-`).
 3. Update the table below so that it matches the RON.
 4. Run `cargo test -p observation-core --test catalog`.
-5. Bump the "Last verified" month in the RON header if you re-checked other entries.
+5. Bump the "Last verified" month in the `generic.ron` header if you re-checked other entries.
 
 PR checklist:
 
@@ -96,7 +102,7 @@ PR checklist:
 - [ ] feet converted to metres, 1 decimal
 - [ ] derived values say "derived from diagonal" in `notes`
 - [ ] lens or SKU variant named in `notes` where the page lists several
-- [ ] entry sorted by kind, vendor, name; `id` unique and kebab-case
+- [ ] entry in the right manufacturer file; `id` unique, kebab-case and not starting with `custom-`
 - [ ] this document's table updated
 - [ ] catalog test passes
 
@@ -108,24 +114,59 @@ night-vision distance (`None`).
 | Vendor | Model | Kind | H × V FOV (°) | Resolution | IR range (m) |
 | --- | --- | --- | --- | --- | --- |
 | (generic) | Generic doorbell (160°) | Doorbell | 160.0 × 120.0 | 1920×1440 | 5.0 |
+| Arlo | Essential Video Doorbell Wire-Free | Doorbell | 180.0 × 180.0 | 1536×1536 | — |
+| Arlo | Video Doorbell 2K (2nd Gen) | Doorbell | 180.0 × 180.0 | 1944×1944 | 7.6 |
 | Blink | Video Doorbell | Doorbell | 135.0 × 80.0 | 1920×1080 | — |
 | Google | Nest Doorbell (battery) | Doorbell | 124.6 × 137.0 | 960×1280 | 3.0 |
 | Reolink | Video Doorbell WiFi | Doorbell | 135.0 × 100.0 | 2560×1920 | — |
 | Ring | Battery Doorbell Plus | Doorbell | 150.0 × 150.0 | 1536×1536 | — |
+| Ring | Wired Doorbell Pro (Video Doorbell Pro 2) | Doorbell | 150.0 × 150.0 | 1536×1536 | — |
 | TP-Link | Tapo D230S1 | Doorbell | 135.0 × 102.8 | 2560×1920 | 7.6 |
+| Ubiquiti | UniFi G4 Doorbell Pro | Doorbell | 138.0 × 114.0 | 1600×1200 | 6.0 |
 | Wyze | Video Doorbell Pro | Doorbell | 150.0 × 150.0 | 1440×1440 | — |
 | (generic) | Generic floodlight (130°) | Floodlight | 130.0 × 75.0 | 1920×1080 | 9.0 |
 | Google | Nest Cam with floodlight (wired) | Floodlight | 123.7 × 92.9 | 1920×1080 | 6.1 |
 | Ring | Floodlight Cam Wired Plus | Floodlight | 140.0 × 80.0 | 1920×1080 | — |
 | Wyze | Cam Floodlight Pro | Floodlight | 170.0 × 95.0 | 2560×1440 | — |
+| Arlo | Essential Security Camera 2K (3rd Gen) | Spotlight | 123.7 × 92.9 | 2560×1440 | 7.6 |
+| Arlo | Pro 4 Spotlight Camera | Spotlight | 157.1 × 140.4 | 2560×1440 | 7.6 |
 | Ring | Spotlight Cam Plus | Spotlight | 140.0 × 80.0 | 1920×1080 | — |
 | (generic) | Generic bullet (90°) | Bullet | 90.0 × 50.0 | 2560×1440 | 25.0 |
+| Arlo | Pro Security Camera 2K (6th Gen) | Bullet | 157.1 × 140.4 | 2560×1440 | 7.6 |
+| Blink | Outdoor 4 | Bullet | 138.0 × 111.4 | 1920×1080 | — |
+| Google | Nest Cam (battery) | Bullet | 123.7 × 92.9 | 1920×1080 | 6.1 |
+| Reolink | Argus 3 Pro | Bullet | 105.0 × 55.0 | 2880×1620 | 10.0 |
+| Reolink | Argus PT | Bullet | 90.0 × 47.0 | 2880×1616 | 10.0 |
 | Reolink | RLC-810A | Bullet | 87.0 × 44.0 | 3840×2160 | 30.0 |
+| Ring | Outdoor Cam (Stick Up Cam Battery/Solar, 3rd Gen) | Bullet | 110.0 × 57.0 | 1920×1080 | — |
+| Ring | Outdoor Cam Plus | Bullet | 140.0 × 80.0 | 2560×1440 | — |
+| Ring | Stick Up Cam Pro | Bullet | 139.0 × 80.0 | 1920×1080 | — |
+| TP-Link | Tapo C120 | Bullet | 103.0 × 55.0 | 2560×1440 | 9.1 |
 | TP-Link | Tapo C320WS | Bullet | 97.0 × 54.0 | 2560×1440 | 29.9 |
+| Ubiquiti | UniFi G4 Instant | Bullet | 102.4 × 54.9 | 2688×1512 | 6.0 |
 | Ubiquiti | UniFi G5 Bullet | Bullet | 84.4 × 45.4 | 2688×1512 | 9.0 |
+| Wyze | Battery Cam Pro | Bullet | 108.0 × 56.0 | 2560×1440 | — |
+| Wyze | Cam v3 | Bullet | 114.0 × 81.8 | 1920×1080 | — |
+| eufy | eufyCam S3 Pro | Bullet | 112.0 × 60.0 | 3840×2160 | 7.6 |
+| Reolink | RLC-520A | Dome | 80.0 × 48.0 | 2560×1920 | 30.0 |
+| TP-Link | Tapo C500 | Dome | 73.5 × 41.0 | 1920×1080 | 29.9 |
+| Ubiquiti | UniFi G5 Dome | Dome | 102.4 × 54.9 | 2688×1512 | 9.0 |
+| Blink | Mini 2 | Indoor | 115.0 × 59.0 | 1920×1080 | — |
+| Google | Nest Cam (indoor, wired) | Indoor | 129.2 × 99.6 | 1920×1080 | 4.6 |
+| Ring | Indoor Cam (2nd Gen) | Indoor | 115.0 × 60.0 | 1920×1080 | — |
 
 Notes on specific entries:
 
+- **Also derived from diagonal:** all five Arlo models, Wyze Cam v3, Blink Outdoor 4,
+  Google Nest Cam (battery) and Nest Cam (indoor, wired). Arlo's 180 degree doorbells
+  derive to 180 x 180 on a square frame and are clamped to 170 by the app.
+- **Inferred resolution:** Ring Wired Doorbell Pro says "1536p HD+"; stored as 1536x1536
+  to match the Battery Doorbell Plus.
+- **Hardware revisions:** the Tapo C120 values are from the datasheet for hardware 1.0/1.6
+  (the US page lists a newer revision at 98.5 x 53.1, 12 m). Reolink RLC-520A uses the 4.0 mm lens.
+- **Kind is approximate** for the Tapo C500 (pan/tilt, listed as Dome) and for outdoor
+  battery cameras listed as Bullet.
+- **Flock Safety:** not shipped; Flock publishes no FOV or resolution.
 - **Derived from diagonal:** Google Nest Doorbell (battery), 145 degrees diagonal on a
   960x1280 portrait frame, and Google Nest Cam with floodlight (wired), 130 degrees
   diagonal on 1920x1080.

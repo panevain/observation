@@ -1,0 +1,18 @@
+[package]
+name = "observation-tokens"
+description = "Design token values for Observation, and their CSS for web/index.html"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# No dependencies: trunk's pre_build hook (Trunk.toml) runs `token-css` before every client
+# build, so it must compile in seconds without Bevy.
+[[bin]]
+name = "token-css"
+path = "src/main.rs"
+
+[lints]
+workspace = true

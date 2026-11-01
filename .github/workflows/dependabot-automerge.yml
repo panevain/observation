@@ -1,0 +1,96 @@
+name: Dependabot auto-merge
+
+# Enables auto-merge (squash) on Dependabot pull requests that only bring semver patch updates
+# or base image digest refreshes (scripts/dependabot-automerge.py); they merge once the
+# required checks pass, and the weekly Prepare release ships them. Minor and major updates
+# still need a person. To hold one, label it `hold`: it is skipped, and auto-merge is switched
+# off if it was already on.
+# A sweep on a schedule rather than a pull_request workflow: the bot app enables auto-merge,
+# so the merge into develop starts its push workflows (one enabled with GITHUB_TOKEN would
+# not), and the app's key is only available to runs on develop.
+on:
+  schedule:
+    # Every 4 hours; the 06:00 run follows the 05:00-05:30 update window (Dependabot, Pins).
+    - cron: "0 2-22/4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only list what would happen (in the run's summary); change nothing
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  find:
+    name: find patch updates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      prs: ${{ steps.list.outputs.prs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Eligible pull requests
+        id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(--repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")
+          if [ "${DRY_RUN}" = true ]; then args+=(--dry-run); fi
+          prs="$(python3 scripts/dependabot-automerge.py list "${args[@]}")"
+          echo "prs=${prs}" >> "${GITHUB_OUTPUT}"
+
+  # Only when there is something to do, so the sweep does not deploy to `bot` each time, and
+  # never on a dry run.
+  merge:
+    name: set auto-merge
+    needs: find
+    if: needs.find.outputs.prs != '' && needs.find.outputs.prs != '{"merge":[],"hold":[]}' && !inputs.dry_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: bot
+    permissions: {}
+    steps:
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write # Actions updates change .github/workflows
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          PRS: ${{ needs.find.outputs.prs }}
+        run: |
+          set -euo pipefail
+          jq -r '.hold[].number' <<<"${PRS}" | while read -r n; do
+            if gh pr merge "${n}" --repo "${REPO}" --disable-auto; then
+              echo "- #${n}: on hold, auto-merge disabled" >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "::warning::could not disable auto-merge on #${n}"
+            fi
+          done
+          jq -r '.merge[] | "\(.number) \(.sha)"' <<<"${PRS}" | while read -r n sha; do
+            # --match-head-commit: nothing pushed since the check above is merged unchecked.
+            if gh pr merge "${n}" --repo "${REPO}" --auto --squash --match-head-commit "${sha}"; then
+              echo "- #${n}: auto-merge enabled" >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "::warning::could not enable auto-merge on #${n}"
+            fi
+          done

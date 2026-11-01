@@ -1,11 +1,16 @@
 name: Scorecard
 
 on:
+  # Scorecard only analyses (and publishes for) the repository's default
+  # branch. Listen on both long-lived branches and let the job skip whichever
+  # one isn't the default, so the badge keeps working if the default changes.
   push:
-    branches: [main]
+    branches: [main, develop]
   schedule:
-    - cron: "23 6 * * 3"
+    # Weekly health checks, Sundays (after Full image).
+    - cron: "0 7 * * 0"
   branch_protection_rule:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,6 +21,9 @@ permissions: {}
 jobs:
   analysis:
     name: Scorecard analysis
+    # Scheduled, branch-protection and manual runs use the default branch;
+    # pushes only count when they land on it.
+    if: github.event_name != 'push' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -40,7 +48,7 @@ jobs:
           results_format: sarif
           publish_results: true
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: results.sarif
           category: scorecard

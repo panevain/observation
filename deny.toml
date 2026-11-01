@@ -1,5 +1,5 @@
 # cargo-deny configuration (current schema; see
-# https://embarkstudios.github.io/cargo-deny/). Run: cargo deny check
+# https://embarkstudios.github.io/cargo-deny/). Run: mise -E ci run deny
 
 [graph]
 # Resolve dependencies for every platform we actually ship for.
@@ -14,17 +14,15 @@ all-features = false
 # Vulnerabilities, unsound and unmaintained advisories (workspace-reachable
 # ones) are always errors in the current schema. Yanked crates are errors too.
 yanked = "deny"
-# Keep empty. If an advisory truly cannot be fixed yet, add an entry WITH a
-# reason and an expiry note, e.g.
+# Keep empty. If an advisory truly cannot be fixed yet, add an entry WITH a reason and an
+# expiry date in osv-scanner.toml (cargo-deny 0.20 has no expiry of its own), e.g.
 #   { id = "RUSTSEC-0000-0000", reason = "no fix upstream; tracked in #123" }
-ignore = [
-    # ruzstd 0.8 is a hard dependency of bevy_image 0.20; the fix (>= 0.9.1) is
-    # semver-incompatible, so it can't be updated until Bevy moves. The vulnerable
-    # decoder is only reached for zstd-supercompressed KTX2 textures, and the
-    # client neither enables the `ktx2`/`zstd_rust` features nor loads untrusted
-    # textures. Re-check (and remove) on every Bevy upgrade. Mirrored in .cargo/audit.toml.
-    { id = "RUSTSEC-2026-0344", reason = "unreachable: no KTX2/zstd texture decoding; blocked on Bevy upgrade" },
-]
+# and mirror the ID in .cargo/audit.toml and osv-scanner.toml (`mise run sync` checks the
+# three lists agree; osv-scanner.toml is what OpenSSF Scorecard reads).
+ignore = []
+# An ignore that no longer matches anything (for example after the upgrade that fixes it)
+# fails the check, so it gets removed rather than lingering.
+unused-ignored-advisory = "deny"
 
 [licenses]
 allow = [
@@ -63,6 +61,31 @@ wildcards = "deny"
 # `path = "..."` workspace dependencies have no version requirement.
 allow-wildcard-paths = true
 highlight = "all"
+# Crates that must never enter the tree, each with the reason. `wrappers` lists the only
+# crates allowed to depend on one directly.
+deny = [
+    # TLS is rustls only (reqwest has default-features = false; observation-upstream builds every
+    # outbound client): one TLS stack to keep patched, and no system OpenSSL in the images.
+    { name = "openssl", reason = "TLS is rustls only" },
+    { name = "openssl-sys", reason = "TLS is rustls only; the distroless runtime has no libssl" },
+    { name = "native-tls", reason = "TLS is rustls only" },
+    { name = "hyper-tls", reason = "TLS is rustls only (hyper-rustls)" },
+    # Outbound HTTP goes through observation-upstream's address-filtering resolver and redirect
+    # policy (SSRF guards). The server and the region agent use reqwest only through it, plus
+    # the error and response types; the client talks only to its own server, through the browser.
+    { name = "reqwest", wrappers = ["observation-upstream", "observation-server", "observation-regions"], reason = "outbound HTTP must use observation-upstream's client_builder" },
+    # Build-time downloads without checksum verification, and git-based crates fetched at build
+    # time, defeat --locked and the Cargo.lock checksums.
+    { name = "protoc-prebuilt", reason = "downloads protoc at build time without verifying it" },
+    { name = "git2", reason = "nothing here needs git at build or run time" },
+    { name = "libgit2-sys", reason = "nothing here needs git at build or run time" },
+]
+
+# Features that must stay off.
+[[bans.features]]
+# The rustls-only rule above, at the feature level (reqwest 0.13's default-tls is rustls).
+crate = "reqwest"
+deny = ["native-tls", "native-tls-no-alpn", "native-tls-vendored", "native-tls-vendored-no-alpn"]
 
 [sources]
 unknown-registry = "deny"

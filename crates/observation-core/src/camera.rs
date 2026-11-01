@@ -112,17 +112,17 @@ impl CameraModel {
         self.vfov_deg.clamp(1.0, MAX_FOV_DEG)
     }
 
-    /// Distance at which the horizontal pixel density drops to the DORI
-    /// threshold, using a rectilinear approximation (centre of frame).
-    pub fn dori_range_m(&self, level: DoriLevel) -> f32 {
+    /// Distance at which the horizontal pixel density drops to `ppm` pixels
+    /// per metre, using a rectilinear approximation (centre of frame).
+    pub fn dori_range_m(&self, ppm: f32) -> f32 {
         let half = (self.hfov_clamped() / 2.0).to_radians();
         let width_px = self.resolution[0].max(1) as f32;
-        (width_px / (2.0 * level.pixels_per_metre() * half.tan())).min(MAX_RANGE_M)
+        (width_px / (2.0 * ppm.max(MIN_CUSTOM_PPM) * half.tan())).min(MAX_RANGE_M)
     }
 
     /// Effective modelled range under the given conditions.
-    pub fn effective_range_m(&self, level: DoriLevel, lighting: Lighting) -> f32 {
-        let dori = self.dori_range_m(level);
+    pub fn effective_range_m(&self, ppm: f32, lighting: Lighting) -> f32 {
+        let dori = self.dori_range_m(ppm);
         match lighting {
             Lighting::Day => dori,
             Lighting::Night => dori.min(self.ir_range_m.unwrap_or(ASSUMED_IR_RANGE_M)),
@@ -131,10 +131,10 @@ impl CameraModel {
 
     /// Basic sanity checks for catalog and custom entries.
     pub fn validate(&self) -> Result<(), CatalogError> {
-        let bad = |why: &str| {
+        let bad = |why: String| {
             Err(CatalogError::Invalid {
                 id: self.id.clone(),
-                why: why.to_owned(),
+                why,
             })
         };
         if self.id.is_empty()
@@ -143,22 +143,63 @@ impl CameraModel {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         {
-            return bad("id must be non-empty kebab-case");
+            return bad("the id must be lowercase letters, digits and dashes".to_owned());
         }
-        if !(1.0..=360.0).contains(&self.hfov_deg) || !(1.0..=360.0).contains(&self.vfov_deg) {
-            return bad("fov out of range");
+        for (what, fov) in [("horizontal", self.hfov_deg), ("vertical", self.vfov_deg)] {
+            if !(1.0..=360.0).contains(&fov) {
+                return bad(format!(
+                    "{what} field of view is {fov}°, but must be 1° to 360°"
+                ));
+            }
         }
         if self.resolution[0] < 16 || self.resolution[1] < 16 {
-            return bad("resolution too small");
+            let [w, h] = self.resolution;
+            return bad(format!(
+                "resolution {w} × {h} is too small; each side needs at least 16 px"
+            ));
         }
-        if self.ir_range_m.is_some_and(|r| !(0.0..=200.0).contains(&r)) {
-            return bad("ir range out of range");
+        if let Some(r) = self.ir_range_m.filter(|r| !(0.0..=200.0).contains(r)) {
+            return bad(format!("IR range is {r} m, but must be 0 to 200 m"));
+        }
+        // The UI opens `source` as a link, and imported scene files carry their
+        // own custom models: anything but a plain https URL (`javascript:`,
+        // `data:`, ...) would run in or navigate away from the app's origin.
+        if self.source.as_deref().is_some_and(|s| !is_https_url(s)) {
+            return bad(
+                "the source link must be an https:// URL without spaces or a user name".to_owned(),
+            );
         }
         Ok(())
     }
 }
 
-/// DORI (EN 62676-4) pixel-density thresholds.
+/// Longest `source` URL accepted.
+const MAX_SOURCE_LEN: usize = 2048;
+
+/// An absolute `https://` URL with a non-empty host, no user info (so
+/// `https://trusted.example@evil.example` cannot pose as another site) and no
+/// whitespace or control characters.
+pub fn is_https_url(s: &str) -> bool {
+    if s.len() > MAX_SOURCE_LEN || s.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Some((scheme, rest)) = s.split_at_checked(8) else {
+        return false;
+    };
+    // Browsers end the authority at `/`, `\`, `?` or `#`.
+    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or_default();
+    scheme.eq_ignore_ascii_case("https://")
+        && !authority.is_empty()
+        && !authority.starts_with(':')
+        && !authority.contains('@')
+}
+
+/// Allowed range for a user-chosen pixel density, px/m.
+pub const MIN_CUSTOM_PPM: f32 = 1.0;
+pub const MAX_CUSTOM_PPM: f32 = 2000.0;
+
+/// DORI (EN 62676-4) pixel-density thresholds, plus a user-chosen density
+/// (`CoverageParams::custom_ppm`) for calibrating against real footage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum DoriLevel {
     /// 25 px/m — can tell a person is present.
@@ -170,17 +211,27 @@ pub enum DoriLevel {
     Recognise,
     /// 250 px/m — identify a stranger.
     Identify,
+    /// User-chosen px/m.
+    Custom,
 }
 
 impl DoriLevel {
-    pub const ALL: [Self; 4] = [Self::Detect, Self::Observe, Self::Recognise, Self::Identify];
+    pub const ALL: [Self; 5] = [
+        Self::Detect,
+        Self::Observe,
+        Self::Recognise,
+        Self::Identify,
+        Self::Custom,
+    ];
 
-    pub fn pixels_per_metre(self) -> f32 {
+    /// The standard density; `None` for [`Self::Custom`].
+    pub fn pixels_per_metre(self) -> Option<f32> {
         match self {
-            Self::Detect => 25.0,
-            Self::Observe => 62.0,
-            Self::Recognise => 125.0,
-            Self::Identify => 250.0,
+            Self::Detect => Some(25.0),
+            Self::Observe => Some(62.0),
+            Self::Recognise => Some(125.0),
+            Self::Identify => Some(250.0),
+            Self::Custom => None,
         }
     }
 
@@ -190,6 +241,7 @@ impl DoriLevel {
             Self::Observe => "Observe",
             Self::Recognise => "Recognise",
             Self::Identify => "Identify",
+            Self::Custom => "Custom",
         }
     }
 }
@@ -217,12 +269,21 @@ pub struct CameraPlacement {
     /// Rotation about the optical axis, degrees.
     #[serde(default)]
     pub roll_deg: f32,
-    /// Index into the UI's per-camera palette.
-    #[serde(default)]
-    pub color_index: u8,
+    /// Colour of the camera, its view cone and its per-camera overlay (sRGB).
+    /// `None` uses the default colour for the model's [`CameraKind`]. Files
+    /// from before this field carried a `color_index`, which is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Group the camera is listed under, set by hand. `None` groups it by the
+    /// address OpenStreetMap gives for its position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
+
+/// Longest group name kept.
+pub const MAX_GROUP_CHARS: usize = 80;
 
 fn default_true() -> bool {
     true
@@ -265,10 +326,29 @@ pub fn yaw_pitch_from_forward(v: Vec3) -> Option<(f32, f32)> {
 pub enum CatalogError {
     #[error("catalog parse error: {0}")]
     Parse(String),
-    #[error("invalid model `{id}`: {why}")]
+    #[error("model `{id}`: {why}")]
     Invalid { id: String, why: String },
     #[error("duplicate model id `{0}`")]
     Duplicate(String),
+}
+
+/// Prefix of every custom model id. Catalogue ids may not use it, so a custom
+/// model can never shadow a catalogue one (custom models win the lookup).
+pub const CUSTOM_ID_PREFIX: &str = "custom-";
+
+/// An id `custom-<slug>-<n>` for a custom model named `name`, with the
+/// smallest `n` from `first` up for which `taken` is false.
+pub fn fresh_custom_id(name: &str, first: usize, taken: impl Fn(&str) -> bool) -> String {
+    let slug: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-');
+    (first..)
+        .map(|n| format!("{CUSTOM_ID_PREFIX}{slug}-{n}"))
+        .find(|id| !taken(id))
+        .unwrap_or_default()
 }
 
 /// The curated model list shipped with the app.
@@ -282,19 +362,49 @@ impl Catalog {
     /// Parses and validates a RON catalog.
     pub fn from_ron(s: &str) -> Result<Self, CatalogError> {
         let cat: Self = ron::from_str(s).map_err(|e| CatalogError::Parse(e.to_string()))?;
-        let mut seen = std::collections::HashSet::new();
-        for m in &cat.models {
-            m.validate()?;
-            if !seen.insert(m.id.as_str()) {
-                return Err(CatalogError::Duplicate(m.id.clone()));
-            }
-        }
+        check_catalog_models(&cat.models)?;
         Ok(cat)
+    }
+
+    /// Parses per-vendor RON files (each a bare list of models) into one validated
+    /// catalog, ordered by kind, then vendor, then name.
+    pub fn from_ron_parts(parts: &[&str]) -> Result<Self, CatalogError> {
+        let mut models = Vec::new();
+        for part in parts {
+            let list: Vec<CameraModel> =
+                ron::from_str(part).map_err(|e| CatalogError::Parse(e.to_string()))?;
+            models.extend(list);
+        }
+        let kind_rank = |k: CameraKind| CameraKind::ALL.iter().position(|a| *a == k);
+        models.sort_by(|a, b| {
+            (kind_rank(a.kind), &a.vendor, &a.name).cmp(&(kind_rank(b.kind), &b.vendor, &b.name))
+        });
+        check_catalog_models(&models)?;
+        Ok(Self { version: 1, models })
     }
 
     pub fn get(&self, id: &str) -> Option<&CameraModel> {
         self.models.iter().find(|m| m.id == id)
     }
+}
+
+/// Validates catalogue models: each is sane, no two share an id, and none
+/// uses the [`CUSTOM_ID_PREFIX`] reserved for custom models.
+fn check_catalog_models(models: &[CameraModel]) -> Result<(), CatalogError> {
+    let mut seen = std::collections::HashSet::new();
+    for m in models {
+        m.validate()?;
+        if m.id.starts_with(CUSTOM_ID_PREFIX) {
+            return Err(CatalogError::Invalid {
+                id: m.id.clone(),
+                why: format!("ids starting with `{CUSTOM_ID_PREFIX}` are kept for custom models"),
+            });
+        }
+        if !seen.insert(m.id.as_str()) {
+            return Err(CatalogError::Duplicate(m.id.clone()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -320,12 +430,13 @@ mod tests {
     fn dori_ranges() {
         let m = model();
         // 1920 / (2 * 25 * tan 45°) = 38.4 m
-        assert!((m.dori_range_m(DoriLevel::Detect) - 38.4).abs() < 0.01);
-        assert!(m.dori_range_m(DoriLevel::Identify) < m.dori_range_m(DoriLevel::Recognise));
-        assert_eq!(
-            m.effective_range_m(DoriLevel::Detect, Lighting::Night),
-            10.0
-        );
+        assert!((m.dori_range_m(25.0) - 38.4).abs() < 0.01);
+        assert!(m.dori_range_m(250.0) < m.dori_range_m(125.0));
+        assert_eq!(m.effective_range_m(25.0, Lighting::Night), 10.0);
+        // A zero or negative density cannot yield an infinite or negative range
+        // (the 100 m cap alone would hide an infinite one, so test a negative).
+        assert_eq!(m.dori_range_m(0.0), m.dori_range_m(MIN_CUSTOM_PPM));
+        assert_eq!(m.dori_range_m(-25.0), m.dori_range_m(MIN_CUSTOM_PPM));
     }
 
     #[test]
@@ -356,6 +467,80 @@ mod tests {
             Catalog::from_ron(&dup),
             Err(CatalogError::Duplicate(_))
         ));
+        // The prefix is kept for custom models, so they never shadow one.
+        let reserved = |r: Result<Catalog, CatalogError>, want: &str| match r {
+            Err(CatalogError::Invalid { id, why }) => {
+                assert_eq!(id, want);
+                assert!(why.contains(CUSTOM_ID_PREFIX), "{why}");
+            }
+            other => panic!("expected the reserved prefix to be refused, got {other:?}"),
+        };
+        reserved(
+            Catalog::from_ron(&ron.replace("\"a-b\"", "\"custom-a-b\"")),
+            "custom-a-b",
+        );
+        reserved(
+            Catalog::from_ron_parts(&[r#"[(id: "custom-x", vendor: "", name: "N",
+                kind: Bullet, hfov_deg: 90.0, vfov_deg: 50.0, resolution: (1920, 1080))]"#]),
+            "custom-x",
+        );
+    }
+
+    #[test]
+    fn fresh_custom_ids() {
+        assert_eq!(
+            fresh_custom_id("Front Cam!", 1, |_| false),
+            "custom-front-cam-1"
+        );
+        let taken = |id: &str| id == "custom-x-2" || id == "custom-x-3";
+        assert_eq!(fresh_custom_id("X", 2, taken), "custom-x-4");
+        let id = fresh_custom_id("Größe", 1, |_| false);
+        assert!(model_with_id(&id).validate().is_ok(), "{id}");
+    }
+
+    fn model_with_id(id: &str) -> CameraModel {
+        CameraModel {
+            id: id.into(),
+            ..model()
+        }
+    }
+
+    #[test]
+    fn source_must_be_https() {
+        let with = |s: &str| CameraModel {
+            source: Some(s.to_owned()),
+            ..model()
+        };
+        assert!(with("https://example.com/spec.pdf").validate().is_ok());
+        assert!(with("HTTPS://example.com").validate().is_ok());
+        assert!(with("https://example.com:8443/a?b=c#d").validate().is_ok());
+        for bad in [
+            "javascript:alert(document.domain)",
+            "JavaScript:alert(1)",
+            " https://example.com",
+            "https://exa mple.com",
+            "https://example.com/\njavascript:x",
+            "data:text/html,<script>alert(1)</script>",
+            "http://example.com",
+            "//example.com",
+            "https://",
+            "https:///path",
+            "HTTPS:///path",
+            "https://?q",
+            "https://#f",
+            "https://:443/",
+            "https://\\evil.example",
+            "https://ring.com@evil.example/spec",
+            "https://@evil.example",
+            "",
+        ] {
+            assert!(with(bad).validate().is_err(), "{bad:?}");
+        }
+        assert!(
+            with(&format!("https://e.com/{}", "a".repeat(3000)))
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]
@@ -368,8 +553,9 @@ mod tests {
             yaw_deg: 0.0,
             pitch_deg: 0.0,
             roll_deg: 0.0,
-            color_index: 0,
+            color: None,
             enabled: true,
+            group: None,
         };
         p.look_at(Vec3::new(10.0, 0.0, 0.0));
         assert!((p.yaw_deg - 90.0).abs() < 1e-3);

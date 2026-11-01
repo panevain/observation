@@ -6,13 +6,17 @@
 //! to an origin at the centre of the loaded area. 2D footprint coordinates are
 //! `[x, z]` pairs in the same frame.
 
+pub mod address;
 pub mod building;
 pub mod bundle;
 pub mod camera;
 pub mod coverage;
+pub mod coverage_job;
+pub mod example;
 pub mod frustum;
 pub mod geo;
 pub mod occlusion;
+pub mod regions;
 pub mod scene;
 pub mod tiles;
 

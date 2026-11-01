@@ -1,0 +1,9 @@
+# Copy to mise.local.toml (gitignored) and edit.
+[env]
+# Goes into the User-Agent sent to OpenStreetMap services (and by `mise run up`
+# to the Compose stack). Uncomment and set a real contact.
+# OBS_CONTACT = "you@example.com"
+# The server binds 0.0.0.0:8080 by default. Uncomment to listen on loopback only.
+# OBS_BIND = "127.0.0.1:8080"
+# Overpass interpreters, tried in order when one fails or times out (at most 4).
+# OBS_OVERPASS_URL = "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter"

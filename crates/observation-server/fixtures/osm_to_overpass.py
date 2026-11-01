@@ -2,8 +2,8 @@
 """Convert an OSM API `/map` XML extract into the Overpass `out geom` JSON
 shape served by /api/demo.
 
-Keeps building ways, building multipolygon relations and highway ways, i.e.
-the same feature set as the server's Overpass query.
+Keeps building ways, building multipolygon relations, highway ways and
+address nodes, i.e. the same feature set as the server's Overpass query.
 
 Usage: python3 -I osm_to_overpass.py map.osm > demo-overpass.json
 """
@@ -22,6 +22,11 @@ def main(path):
         geom = [{"lat": nodes[r][0], "lon": nodes[r][1]} for r in refs if r in nodes]
         ways[w.get("id")] = (tags, geom, len(geom) == len(refs))
     elements = []
+    for n in root.iter("node"):
+        tags = {t.get("k"): t.get("v") for t in n.iter("tag")}
+        if "addr:housenumber" in tags or "addr:housename" in tags:
+            elements.append({"type": "node", "id": int(n.get("id")), "lat": float(n.get("lat")),
+                             "lon": float(n.get("lon")), "tags": tags})
     for wid, (tags, geom, complete) in ways.items():
         if complete and ("building" in tags or "highway" in tags):
             elements.append({"type": "way", "id": int(wid), "geometry": geom, "tags": tags})

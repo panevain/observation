@@ -1,0 +1,5 @@
+# osv-scanner ignores, read by OpenSSF Scorecard's Vulnerabilities check (it applies the
+# osv-scanner.toml next to each lockfile; fuzz/Cargo.lock needs none). Mirrors
+# [advisories].ignore in deny.toml, where each entry's reason lives; `mise run sync` checks
+# that the lists agree. Each entry needs an ignoreUntil date: cargo-deny has no expiry of its own,
+# so this is where an ignore's re-check date lives.

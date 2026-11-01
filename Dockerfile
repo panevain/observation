@@ -1,48 +1,57 @@
 # syntax=docker/dockerfile:1.7
 
 # ---------------------------------------------------------------------------
-# Stage 1: builder
-#   * Rust 1.97.1 on Debian 12 (bookworm) -- must match rust-toolchain.toml.
-#   * Pinned by digest (multi-arch index); the tag is kept for readability.
-#     Refresh with: docker buildx imagetools inspect rust:1.97.1-slim-bookworm
-#     (Dependabot's docker ecosystem bumps both tag and digest.)
+# Stage 0: build-tools -- trunk (mise.toml), cargo-chef and cargo-auditable
+# (mise.ci.toml), at the versions those files pin, from their release binaries
+# checked against the checksums in mise.lock and mise.ci.lock. Installed with
+# `--locked`, so mise downloads only the locked URLs (no GitHub API calls).
+#   * mise from its official image, pinned by digest; the tag is the CI mise
+#     version (.github/actions/setup-mise; mise run sync checks they agree).
+#   * The chef stage copies in only the binaries, so a change to the mise files
+#     that leaves them alone keeps every later layer cached.
 # ---------------------------------------------------------------------------
-FROM rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS builder
+FROM ghcr.io/jdx/mise:2026.10.18-debian@sha256:b20a78a5fa550f0bb9026bef92fa16cfdac7ee672b54565a32840185fbc78389 AS build-tools
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG TRUNK_VERSION=0.21.14
-# sha256 of the release tarballs, taken from
-# https://github.com/trunk-rs/trunk/releases/tag/v0.21.14 (the published
-# *.tar.gz.sha256 files) and cross-checked against a locally computed hash.
-ARG TRUNK_SHA256_AMD64=f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
-ARG TRUNK_SHA256_ARM64=b1d8e60e454f7fc182d9a4d95d1506ffbae947d8ba90f8f6f02da93b60f980f9
+WORKDIR /tools
+COPY mise.toml mise.lock mise.ci.toml mise.ci.lock ./
+ENV MISE_ENV=ci \
+    MISE_TRUSTED_CONFIG_PATHS=/tools
+RUN set -eux; \
+    mise install --locked trunk cargo-chef cargo-auditable; \
+    mkdir -p /out; \
+    for bin in trunk cargo-chef cargo-auditable; do cp "$(mise which "${bin}")" /out/; done
 
+# ---------------------------------------------------------------------------
+# Stage 1: chef -- toolchain, trunk, cargo-chef and cargo-auditable (rarely changes).
+#   * Rust 1.99.1 on Debian 13 (trixie) -- must match rust-toolchain.toml.
+#   * Pinned by digest (multi-arch index); the tag is kept for readability.
+#     Refresh with: docker buildx imagetools inspect rust:1.99.1-slim-trixie
+#     (Dependabot refreshes the digest; the tag moves with rust-toolchain.toml.)
+#
+# Layer caching strategy: dependencies are compiled from a cargo-chef recipe
+# (only Cargo.toml/Cargo.lock data), so the expensive Bevy/axum dependency
+# build is a regular image layer that the GHA layer cache keeps until the
+# dependency graph changes. Source-only changes rebuild just our crates.
+# ---------------------------------------------------------------------------
+FROM rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS chef
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# TRUNK_SKIP_VERSION_CHECK: trunk would otherwise query the crates.io API for a
+# newer trunk release on every build (builder stages only; not in the runtime image).
 ENV CARGO_TERM_COLOR=always \
-    CARGO_INCREMENTAL=0
+    CARGO_INCREMENTAL=0 \
+    TRUNK_SKIP_VERSION_CHECK=true
 
-# curl + ca-certificates: fetch trunk (and, at build time, trunk fetches the
-# wasm-bindgen / wasm-opt versions matching Cargo.lock).
+# ca-certificates: at build time, trunk fetches the wasm-bindgen / wasm-opt
+# versions matching Cargo.lock.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl
-
-# trunk: prebuilt release binary, sha256-verified.
-RUN set -eux; \
-    case "$(dpkg --print-architecture)" in \
-      amd64) arch=x86_64;  sha="${TRUNK_SHA256_AMD64}" ;; \
-      arm64) arch=aarch64; sha="${TRUNK_SHA256_ARM64}" ;; \
-      *) echo "unsupported architecture" >&2; exit 1 ;; \
-    esac; \
-    f="trunk-${arch}-unknown-linux-gnu.tar.gz"; \
-    curl --proto '=https' --tlsv1.2 -fsSL -o "/tmp/${f}" \
-      "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/${f}"; \
-    echo "${sha}  /tmp/${f}" | sha256sum -c -; \
-    tar -xzf "/tmp/${f}" -C /usr/local/bin trunk; \
-    rm "/tmp/${f}"; \
-    trunk --version
+    && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /build
 
@@ -53,41 +62,143 @@ RUN rustup toolchain install --profile minimal --no-self-update \
     && rustup target add wasm32-unknown-unknown \
     && rustc --version && cargo --version
 
+# cargo-auditable embeds the dependency list in the native binaries (a few KB, kept by
+# `strip`), so Trivy, the image SBOM and `cargo audit bin` can see which crates they contain.
+COPY --from=build-tools /out/ /usr/local/bin/
+RUN trunk --version && cargo chef --version && cargo auditable --version
+
+# ---------------------------------------------------------------------------
+# Stage 2: planner -- reduce the workspace to a dependency recipe.
+# The recipe only changes when manifests or Cargo.lock change, so the cook
+# layers below stay cached across source-only commits.
+# ---------------------------------------------------------------------------
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Client (Bevy -> wasm32) via trunk. Output: /build/dist
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/build/target \
-    --mount=type=cache,target=/root/.cache/trunk \
-    trunk build --release --locked
+# ---------------------------------------------------------------------------
+# Stage 3a: server-build -- the native server binary (no Bevy, quick).
+# ---------------------------------------------------------------------------
+FROM chef AS server-build
 
-# Server binary. The target dir is a cache mount, so copy the artifact out.
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/build/target \
-    set -eux; \
-    cargo build --release --locked -p observation-server; \
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p observation-server --recipe-path recipe.json
+
+# `cargo auditable build` rebuilds only the workspace crates; the cooked dependencies stay fresh.
+COPY . .
+RUN set -eux; \
+    cargo auditable build --release --locked -p observation-server; \
     mkdir -p /out/cache; \
     cp target/release/observation-server /out/observation-server
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime -- distroless, glibc, runs as nonroot (uid/gid 65532).
-#   Pinned by digest; refresh with:
-#   docker buildx imagetools inspect gcr.io/distroless/cc-debian12:nonroot
+# Stage 3b: client-build -- Bevy -> wasm32 via trunk (the slow part).
+# Skipped by the `runtime-prebuilt` target below, which takes a dist/ built
+# elsewhere through the `client-dist` named build context (CI's docker and
+# Trivy jobs pass a stub dist/).
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+FROM chef AS client-build
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --profile wasm-release --target wasm32-unknown-unknown --locked \
+      -p observation-client --recipe-path recipe.json
+
+COPY . .
+# Output: /build/dist. Trunk's tool downloads (wasm-bindgen, wasm-opt) are cached.
+RUN --mount=type=cache,target=/root/.cache/trunk \
+    trunk build --release --locked
+
+# ---------------------------------------------------------------------------
+# Region agent image (target `regions`): Overpass API binaries, osmium and the
+# observation-regions agent, which imports Geofabrik extracts into local
+# Overpass databases. Optional; see compose.yaml.
+#   docker build --target regions -t observation-regions .
+# ---------------------------------------------------------------------------
+FROM chef AS regions-build
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p observation-regions --recipe-path recipe.json
+
+COPY . .
+RUN cargo auditable build --release --locked -p observation-regions \
+    && cp target/release/observation-regions /observation-regions
+
+# Overpass API from the release tarball, sha256-verified. Releases:
+# https://dev.overpass-api.de/releases/
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS overpass-build
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG OVERPASS_VERSION=0.7.62.11
+ARG OVERPASS_SHA256=ff9ab837034c25a1956ff638e9af66a7f36f6cbaffc97d71429d1aa8b0a929ba
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates curl g++ make libexpat1-dev zlib1g-dev liblz4-dev
+
+WORKDIR /src
+RUN set -eux; \
+    f="osm-3s_v${OVERPASS_VERSION}.tar.gz"; \
+    curl --proto '=https' --tlsv1.2 -fsSL -o "/tmp/${f}" "https://dev.overpass-api.de/releases/${f}"; \
+    echo "${OVERPASS_SHA256}  /tmp/${f}" | sha256sum -c -; \
+    tar -xzf "/tmp/${f}" --strip-components=1; \
+    ./configure --prefix=/opt/overpass --enable-lz4 CXXFLAGS="-O2"; \
+    make -j"$(nproc)"; \
+    mkdir -p /out/bin; \
+    cp bin/osm3s_query bin/update_database /out/bin/; \
+    mkdir -p /out/data
+
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS regions
+
+LABEL org.opencontainers.image.title="observation-regions" \
+      org.opencontainers.image.description="Region agent for Observation: local Overpass databases built from Geofabrik extracts" \
+      org.opencontainers.image.source="https://github.com/panevain/observation" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+
+# `apt-get upgrade` takes the Debian security fixes published since the base image was
+# built. Release builds skip the layer cache for this stage (no-cache-filters in
+# release.yml), so every published region agent image has them.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates libexpat1 zlib1g liblz4-1 osmium-tool
+
+COPY --from=overpass-build /out/bin /opt/overpass/bin
+COPY --from=regions-build /observation-regions /usr/local/bin/observation-regions
+COPY --from=overpass-build --chown=65532:65532 /out/data /data
+
+ENV OBS_REGIONS_BIND=0.0.0.0:8090 \
+    OBS_REGIONS_DATA_DIR=/data \
+    OBS_REGIONS_OVERPASS_BIN=/opt/overpass/bin
+
+VOLUME /data
+EXPOSE 8090
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/observation-regions"]
+
+# ---------------------------------------------------------------------------
+# Stage 4: runtime -- distroless (Debian 13), glibc, runs as nonroot (uid/gid 65532).
+#   Pinned by digest; refresh with:
+#   docker buildx imagetools inspect gcr.io/distroless/cc-debian13:nonroot
+#   Distroless stops rebuilding a Debian release's images once the next one is out
+#   (cc-debian12 was frozen in August 2026), so move to the new suffix when that happens.
+# ---------------------------------------------------------------------------
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime-base
 
 LABEL org.opencontainers.image.title="observation" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 WORKDIR /app
-COPY --from=builder --chown=65532:65532 /out/observation-server /app/observation-server
-COPY --from=builder --chown=65532:65532 /build/dist /app/dist
+COPY --from=server-build --chown=65532:65532 /out/observation-server /app/observation-server
 # Writable tile/Overpass cache for the nonroot user (no shell in this image,
 # so the directory is created in the builder and copied across).
-COPY --from=builder --chown=65532:65532 /out/cache /var/cache/observation
+COPY --from=server-build --chown=65532:65532 /out/cache /var/cache/observation
 
 ENV OBS_BIND=0.0.0.0:8080 \
     OBS_STATIC_DIR=/app/dist \
@@ -100,3 +211,15 @@ USER 65532:65532
 # No HEALTHCHECK: the image has no shell or curl. Probe GET /healthz from the
 # orchestrator (Kubernetes httpGet, compose/ECS health checks, etc.).
 ENTRYPOINT ["/app/observation-server"]
+
+# ---------------------------------------------------------------------------
+# Targets. The last stage is the default, so a plain `docker build .` compiles
+# the client from source (used by releases, for hermetic provenance).
+#   --target runtime-prebuilt --build-context client-dist=<dir>
+# skips the wasm build and copies <dir> (a finished trunk dist/) instead.
+# ---------------------------------------------------------------------------
+FROM runtime-base AS runtime-prebuilt
+COPY --from=client-dist --chown=65532:65532 / /app/dist
+
+FROM runtime-base AS runtime
+COPY --from=client-build --chown=65532:65532 /build/dist /app/dist

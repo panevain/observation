@@ -1,0 +1,228 @@
+name: Prepare release
+
+# Starts the git-flow release: creates release/<version> from develop, bumps the workspace
+# version, refreshes Cargo.lock, dates the CHANGELOG, regenerates the bundle-size treemap and
+# opens the PR into main, which merges itself once its checks pass. That merge is the
+# release: release-tag.yml then tags main, Release publishes the images and the GitHub
+# release, and a back-merge PR into develop follows (CONTRIBUTING.md).
+#   Weekly: the version comes from CHANGELOG.md's [Unreleased] section, or is a patch release
+#   when only dependencies or pins changed; a week with no shipped change is skipped
+#   (scripts/release-plan.py).
+#   By hand: the same, or a given version, or a dev pre-release (X.Y.Z-dev.N).
+# Nothing starts while a release or hotfix is open, waits for its tag or for its back-merge.
+#
+# Pre-releases (a version with a -suffix) never go through main, so main always holds the
+# latest stable release and a hotfix can start from it at any time: the bot commits the
+# version bump on top of develop and pushes only the vX.Y.Z-dev.N tag (no branch, PR or
+# back-merge), which starts Release. CHANGELOG.md is left alone; the GitHub release takes its
+# notes from [Unreleased].
+on:
+  schedule:
+    # Tuesdays: after Monday's Dependabot and Pins pull requests have had a day to merge.
+    - cron: "0 16 * * 2"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the leading v (for example 0.2.0); empty to work it out"
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Pre-release: dev makes X.Y.Z-dev.N (ignored when a version is given)"
+        required: false
+        type: choice
+        options: [none, dev]
+        default: none
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  MISE_ENV: ci
+
+jobs:
+  plan:
+    name: plan release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+          fetch-depth: 0 # tags, and the history since the latest release
+      - name: Version
+        id: plan
+        env:
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          scripts/release-state.sh > "${RUNNER_TEMP}/state"
+          # shellcheck disable=SC1091
+          . "${RUNNER_TEMP}/state"
+          skip() { echo "$1" | tee -a "${GITHUB_STEP_SUMMARY}"; exit 0; }
+          args=()
+          if [ -n "${VERSION}" ]; then
+            args=(--version "${VERSION}")
+          elif [ "${PRERELEASE:-none}" != none ]; then
+            args=(--prerelease "${PRERELEASE}")
+          fi
+          # A stable release goes through main; a pre-release does not, so these do not apply.
+          if [[ "${VERSION}" != *-* ]] && [ "${PRERELEASE:-none}" = none ]; then
+            # Before the first release main's initial version was never tagged, so that alone
+            # is not a release waiting for its tag.
+            [ "${pending}" = false ] || [ -z "${latest}" ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
+            # Until the back-merge lands, develop's [Unreleased] still holds what v${latest} shipped.
+            [ -z "${latest}" ] || git merge-base --is-ancestor "v${latest}" HEAD || skip "develop does not contain v${latest} yet (its back-merge is still open); skipping."
+            [ "${hotfix}" = false ] || skip "A hotfix/* branch exists (a hotfix is in progress); skipping."
+            [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || skip "A release/* branch exists (a release is in progress); skipping."
+          fi
+          python3 scripts/release-plan.py plan --repo . "${args[@]}" > "${RUNNER_TEMP}/plan"
+          cat "${RUNNER_TEMP}/plan"
+          # Not sourced: the reason is free text.
+          get() { sed -n "s/^$1=//p" "${RUNNER_TEMP}/plan"; }
+          version="$(get version)"; kind="$(get kind)"; reason="$(get reason)"
+          [ -n "${version}" ] || skip "${reason}"
+          echo "Release **${version}** (${kind}): ${reason}." | tee -a "${GITHUB_STEP_SUMMARY}"
+          prerelease=false
+          [[ "${version}" != *-* ]] || prerelease=true
+          {
+            echo "version=${version}"
+            echo "prerelease=${prerelease}"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "${GITHUB_OUTPUT}"
+
+  # The bundle-size chart for the release, committed on the release branch below (stable
+  # releases only: a pre-release ships develop's chart).
+  treemap:
+    name: treemap
+    needs: plan
+    if: needs.plan.outputs.version != '' && needs.plan.outputs.prerelease == 'false'
+    permissions:
+      contents: read
+    uses: $/.github/workflows/treemap-build.yml
+    with:
+      # The report stamps the develop commit the release starts from.
+      ref: ${{ needs.plan.outputs.sha }}
+
+  prepare:
+    name: open release PR
+    needs: [plan, treemap]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The bot app's key lives in this environment (develop, main and v* tags only). The app
+    # pushes and opens the PR, so the PR's checks start (GITHUB_TOKEN-made ones wait for a
+    # manual approval), and its auto-merge pushes to main, which starts release-tag.yml.
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false # the token is added to the push below only
+          fetch-depth: 0 # tags, for the changelog's list of commits since the latest release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: treemap
+          path: ${{ runner.temp }}/treemap
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Bump version, lockfile, changelog and treemap
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/set-version.sh "${VERSION}"
+          python3 scripts/release-plan.py changelog --repo . --version "${VERSION}"
+          cp "${RUNNER_TEMP}/treemap/wasm-bundle-treemap.svg" docs/images/wasm-bundle-treemap.svg
+          git diff --stat
+      # Minted after the build steps above, so nothing they ran can read it.
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch="release/${VERSION}"
+          scripts/ci-git.sh identity "${BOT}"
+          git switch -c "${branch}"
+          git -c core.hooksPath=/dev/null commit -am "release: ${VERSION}"
+          scripts/ci-git.sh push "${branch}"
+          if ! url="$(gh pr create --base main --head "${branch}" \
+            --title "release: ${VERSION}" \
+            --body "Release ${VERSION}, opened by Prepare release. It merges itself (merge commit) when the checks pass: release-tag.yml then tags \`main\` as v${VERSION}, Release publishes the images and the GitHub release, and a back-merge PR into \`develop\` is opened. To hold the release, disable auto-merge on this PR.")"; then
+            # Branch rulesets forbid force-pushes, so a leftover branch would block a re-run.
+            echo "could not open the pull request; removing ${branch} so the workflow can be re-run." >&2
+            scripts/ci-git.sh delete "${branch}"
+            exit 1
+          fi
+          echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url}; merge it by hand when it is green."
+
+  # Pre-releases: a version-bump commit on top of develop, reachable only from its tag.
+  # Release (release.yml) checks that the tag's parent is on develop and that the commit only
+  # moves versions, then publishes it as a GitHub pre-release.
+  pretag:
+    name: tag pre-release
+    needs: plan
+    if: needs.plan.outputs.prerelease == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The app pushes the tag (it may create v* tags), so the push starts Release.
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false # the token is added to the push below only
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal --no-self-update
+      - name: Bump version and lockfiles
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/set-version.sh "${VERSION}"
+          git diff --stat
+      # Minted after the build steps above, so nothing they ran can read it.
+      - name: Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Commit and tag
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/ci-git.sh identity "${BOT}"
+          git -c core.hooksPath=/dev/null commit -am "release: ${VERSION}"
+          git -c core.hooksPath=/dev/null tag -a "v${VERSION}" -m "v${VERSION}"
+          scripts/ci-git.sh push-tag "v${VERSION}"
+          echo "### Tagged v${VERSION} (pre-release, on top of develop)" >> "${GITHUB_STEP_SUMMARY}"

@@ -4,11 +4,15 @@
 //! framed by egui panels. Heavy geometry work happens on the server; coverage
 //! is computed here with the shared `observation-core` logic.
 
+mod addresses;
 mod cameras;
 mod coverage;
+mod history;
+mod icons;
 mod input;
 mod net;
 mod persist;
+mod regions;
 mod state;
 mod theme;
 mod ui;
@@ -19,11 +23,11 @@ use bevy::window::{PresentMode, WindowPlugin};
 use bevy_egui::EguiPlugin;
 use observation_core::camera::Catalog;
 
-/// Curated camera catalog, embedded at build time.
-const CATALOG_RON: &str = include_str!("../assets/catalog.ron");
+// Curated camera catalog: every `.ron` file under `assets/catalog/`, discovered by build.rs.
+include!(concat!(env!("OUT_DIR"), "/catalog_files.rs"));
 
 fn main() {
-    let catalog = match Catalog::from_ron(CATALOG_RON) {
+    let catalog = match Catalog::from_ron_parts(CATALOG_FILES) {
         Ok(c) => c,
         Err(e) => {
             // The catalog is validated in CI; fall back to an empty list rather than crash.
@@ -53,19 +57,24 @@ fn main() {
         )
         .add_plugins((MeshPickingPlugin, EguiPlugin::default()))
         .insert_resource(theme::Tokens::from_environment())
+        .insert_resource(persist::load_font())
+        .insert_resource(persist::load_address_jump())
         .insert_resource(state::Models {
             catalog,
             custom: Vec::new(),
         })
         .init_resource::<state::Scene>()
         .init_resource::<state::UiState>()
+        .init_resource::<state::UiLayout>()
         .add_plugins((
             net::NetPlugin,
             world::WorldPlugin,
             cameras::CamerasPlugin,
+            addresses::AddressesPlugin,
             coverage::CoveragePlugin,
             input::InputPlugin,
             persist::PersistPlugin,
+            history::HistoryPlugin,
             ui::UiPlugin,
         ))
         .add_systems(Startup, hide_loader)

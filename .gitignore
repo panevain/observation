@@ -1,7 +1,17 @@
 /target
 /dist
+/web/tokens.css
 /cache
 *.swp
 .DS_Store
 /node_modules
 /.claude/worktrees/
+/mise.local.toml
+/mise.local.lock
+/.mise.local.toml
+/.env
+/.env.local
+/fnox.local.toml
+/.claude/settings.local.json
+/CLAUDE.local.md
+/lcov.info

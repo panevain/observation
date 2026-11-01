@@ -28,6 +28,7 @@ pub fn build_demo(attribution: &str, generated_unix: u64) -> Result<Bytes, DemoE
         bbox,
         &data.buildings,
         &data.roads,
+        &data.addresses,
         attribution,
         generated_unix,
     );
@@ -46,5 +47,33 @@ mod tests {
         assert!(b.buildings.len() > 80, "{} buildings", b.buildings.len());
         assert!(!b.roads.is_empty());
         assert!(!b.mesh.is_empty());
+    }
+
+    #[test]
+    fn demo_street_fits_ten_example_cameras() {
+        // The client seeds the demo street with these; see `example_cameras`.
+        let bytes = build_demo("© OpenStreetMap contributors", 1).unwrap();
+        let b = AreaBundle::decode(&bytes).unwrap();
+        let catalog = observation_core::camera::CameraModel {
+            id: "m".into(),
+            vendor: String::new(),
+            name: "m".into(),
+            kind: observation_core::camera::CameraKind::Bullet,
+            hfov_deg: 100.0,
+            vfov_deg: 60.0,
+            resolution: [1920, 1080],
+            ir_range_m: None,
+            source: None,
+            notes: None,
+        };
+        let cams = observation_core::example::example_cameras(&b, &[&catalog], 10);
+        assert_eq!(cams.len(), 10);
+        // Most sit on a house with an address, so the list groups them.
+        let addressed: Vec<String> = cams
+            .iter()
+            .filter_map(|c| b.address_at([c.position[0], c.position[2]]))
+            .map(|a| a.label())
+            .collect();
+        assert!(addressed.len() >= 5, "{addressed:?}");
     }
 }

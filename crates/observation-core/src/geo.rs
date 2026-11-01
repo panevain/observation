@@ -31,11 +31,13 @@ impl LatLon {
 pub enum BBoxError {
     #[error("expected four comma-separated numbers: south,west,north,east")]
     Format,
-    #[error("coordinates out of range")]
+    #[error("coordinates out of range (latitude -85 to 85, longitude -180 to 180)")]
     Range,
-    #[error("south must be < north and west must be < east")]
+    #[error("south must be less than north and west less than east")]
     Order,
-    #[error("area side lengths must be between {min} and {max} m (got {w:.0} × {h:.0} m)")]
+    #[error(
+        "the area is {w:.0} m wide and {h:.0} m tall, but each side must be {min:.0} to {max:.0} m"
+    )]
     Size { w: f64, h: f64, min: f64, max: f64 },
 }
 
@@ -158,6 +160,14 @@ impl BBox {
         (self.south..=self.north).contains(&p.lat) && (self.west..=self.east).contains(&p.lon)
     }
 
+    /// Whether `other` lies wholly inside this box (edges may touch).
+    pub fn contains_box(&self, other: &BBox) -> bool {
+        self.south <= other.south
+            && self.west <= other.west
+            && self.north >= other.north
+            && self.east >= other.east
+    }
+
     /// Overpass `(s,w,n,e)` filter string.
     pub fn overpass(&self) -> String {
         format!(
@@ -216,6 +226,14 @@ mod tests {
         assert_eq!(BBox::parse("89,0,89.5,1"), Err(BBoxError::Range));
         let big = BBox::parse("51.0,0.0,51.1,0.1").unwrap();
         assert!(matches!(big.validate_size(), Err(BBoxError::Size { .. })));
+    }
+
+    #[test]
+    fn size_message_gives_both_sides_and_the_limits() {
+        let b = BBox::around(LatLon::new(47.6, -122.3), 620.0);
+        let msg = b.validate_size().unwrap_err().to_string();
+        assert!(msg.contains("620 m wide and 620 m tall"), "{msg}");
+        assert!(msg.contains("20 to 500 m"), "{msg}");
     }
 
     #[test]

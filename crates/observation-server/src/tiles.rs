@@ -51,6 +51,7 @@ impl TileProxy {
         if let Some(c) = &cached
             && c.meta.expires_unix > unix_now()
         {
+            metrics::counter!(crate::metrics::TILE_CACHE, "result" => "hit").increment(1);
             return Ok(c.bytes.clone());
         }
         match self
@@ -58,6 +59,13 @@ impl TileProxy {
             .await
         {
             Ok(Upstream::Fresh(bytes, meta)) => {
+                // `refreshed`: an expired copy was replaced by a new body; `miss`: nothing cached.
+                let result = if cached.is_some() {
+                    "refreshed"
+                } else {
+                    "miss"
+                };
+                metrics::counter!(crate::metrics::TILE_CACHE, "result" => result).increment(1);
                 match self.cache.put_tile(id, &bytes, &meta).await {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, ?id, "could not cache tile"),
@@ -66,8 +74,12 @@ impl TileProxy {
             }
             Ok(Upstream::NotModified(meta)) => {
                 let Some(c) = cached else {
-                    return Err(ApiError::Upstream("unexpected 304 from tile server".into()));
+                    return Err(ApiError::Upstream(
+                        "the tile server sent an unexpected 'not modified' reply".into(),
+                    ));
                 };
+                metrics::counter!(crate::metrics::TILE_CACHE, "result" => "revalidated")
+                    .increment(1);
                 if let Err(e) = self.cache.update_tile_meta(id, &meta).await {
                     tracing::warn!(error = %e, ?id, "could not refresh tile metadata");
                 }
@@ -75,10 +87,15 @@ impl TileProxy {
             }
             Err(e) => match cached {
                 Some(c) => {
+                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "stale_served")
+                        .increment(1);
                     tracing::warn!(error = %e, ?id, "tile upstream failed, serving stale copy");
                     Ok(c.bytes)
                 }
-                None => Err(e),
+                None => {
+                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "error").increment(1);
+                    Err(e)
+                }
             },
         }
     }
@@ -108,7 +125,7 @@ impl TileProxy {
         }
         let resp = req.send().await.map_err(|e| {
             tracing::warn!(error = %e.without_url(), ?id, "tile request failed");
-            ApiError::Upstream("could not reach the tile server".into())
+            ApiError::Upstream("could not reach the tile server; map tiles may be missing".into())
         })?;
         let status = resp.status();
         let header_str =
@@ -122,11 +139,17 @@ impl TileProxy {
         match status {
             StatusCode::OK => {
                 let meta = new_meta(resp.headers(), None);
-                let body = resp.bytes().await.map_err(|e| {
-                    tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
-                    ApiError::Upstream("tile download failed".into())
-                })?;
-                if body.len() > MAX_TILE_BYTES || !body.starts_with(PNG_MAGIC) {
+                let body = crate::read_capped(resp, MAX_TILE_BYTES)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
+                        ApiError::Upstream("the tile download was interrupted".into())
+                    })?
+                    .ok_or_else(|| {
+                        tracing::warn!(max = MAX_TILE_BYTES, ?id, "tile body too large");
+                        ApiError::Upstream("tile server returned a tile that is too large".into())
+                    })?;
+                if !body.starts_with(PNG_MAGIC) {
                     return Err(ApiError::Upstream(
                         "tile server returned something that is not a PNG".into(),
                     ));
@@ -134,7 +157,7 @@ impl TileProxy {
                 Ok(Upstream::Fresh(body, meta))
             }
             StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(resp.headers(), stale))),
-            StatusCode::NOT_FOUND => Err(ApiError::NotFound),
+            StatusCode::NOT_FOUND => Err(ApiError::NotFound("the tile server has no tile here")),
             StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
                 tracing::warn!(%status, ?id, "tile server is limiting us");
                 Err(ApiError::RateLimited {
@@ -142,9 +165,17 @@ impl TileProxy {
                 })
             }
             other => {
+                if other.is_redirection() {
+                    // Redirects are not followed (see `observation_upstream`).
+                    tracing::warn!(
+                        status = %other,
+                        location = ?resp.headers().get(header::LOCATION),
+                        "tile server redirected; point OBS_TILE_URL at the final URL"
+                    );
+                }
                 tracing::warn!(status = %other, ?id, "tile server error");
                 Err(ApiError::Upstream(format!(
-                    "tile server returned {}",
+                    "the tile server answered with an error (HTTP {})",
                     other.as_u16()
                 )))
             }
@@ -183,7 +214,8 @@ fn expiry_unix(headers: &HeaderMap, min_ttl: Duration) -> u64 {
             )
         })
         .unwrap_or(0);
-    now + upstream_ttl.max(min_ttl.as_secs())
+    // `max-age` is upstream input and parses up to `u64::MAX`.
+    now.saturating_add(upstream_ttl.max(min_ttl.as_secs()))
 }
 
 /// Extracts `max-age=N` (seconds) from a `Cache-Control` value.
@@ -254,5 +286,12 @@ mod tests {
         );
         assert!(expiry_unix(&h, week) > unix_now() + 365 * 86_400);
         assert!(expiry_unix(&HeaderMap::new(), Duration::ZERO) <= unix_now() + 1);
+
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("max-age=18446744073709551615"),
+        );
+        assert_eq!(expiry_unix(&h, week), u64::MAX, "huge max-age saturates");
     }
 }

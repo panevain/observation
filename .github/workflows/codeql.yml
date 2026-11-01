@@ -2,11 +2,12 @@ name: CodeQL
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   schedule:
-    - cron: "41 5 * * 1"
+    # Weekly health checks, Sundays: CodeQL 06:00, Full image 06:30, Scorecard 07:00, Prune 09:00.
+    - cron: "0 6 * * 0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,14 +29,28 @@ jobs:
       fail-fast: false
       matrix:
         language: [rust, actions]
+    env:
+      # mise.ci.toml: CI's cargo settings and the ci:toolchain task.
+      MISE_ENV: ci
+      # Rust: the extractor runs cargo (build scripts and proc macros) in this directory, which
+      # rust-cache keeps between runs (saved from develop only, like ci.yml's caches) instead of
+      # a fresh scratch directory each time.
+      CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ github.workspace }}/target/codeql
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      - uses: $/.github/actions/setup-mise
+        if: matrix.language == 'rust'
+      - uses: $/.github/actions/setup-rust
+        if: matrix.language == 'rust'
+        with:
+          cache-workspaces: ". -> target/codeql"
+          cache-key: codeql
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           build-mode: none
-      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: "/language:${{ matrix.language }}"

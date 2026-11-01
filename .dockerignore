@@ -5,9 +5,11 @@ dist
 cache
 node_modules
 
-# VCS / CI / editor
+# VCS / CI / editor / agent worktrees
 .git
+.claude
 .github
+.config
 .gitignore
 .dockerignore
 *.swp
@@ -15,3 +17,16 @@ node_modules
 
 # Not needed in the image (docs/ and *.md are kept: crates may include_str! them)
 Dockerfile
+tests/browser
+supply-chain
+/lcov.info
+
+# Local settings and secrets (mise, docker compose)
+.env
+mise.local.toml
+mise.local.lock
+mise.*.local.toml
+mise.*.local.lock
+.mise.local.toml
+.miserc.local.toml
+fnox.local.toml

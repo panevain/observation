@@ -1,18 +1,22 @@
 [workspace]
 resolver = "3"
-members = ["crates/observation-core", "crates/observation-server", "crates/observation-client"]
-default-members = ["crates/observation-core", "crates/observation-server"]
+members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-upstream", "crates/observation-tokens", "crates/observation-client"]
+default-members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-upstream", "crates/observation-tokens"]
+# Fuzz targets are a separate nightly-only workspace (see fuzz/README.md).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.97.1"
+rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/panevain/observation"
 publish = false
 
 [workspace.dependencies]
 observation-core = { path = "crates/observation-core" }
+observation-upstream = { path = "crates/observation-upstream" }
+observation-tokens = { path = "crates/observation-tokens" }
 
 # shared
 glam = { version = "0.33", features = ["serde"] }
@@ -27,13 +31,15 @@ ron = "0.12"
 axum = "0.8"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "sync", "time"] }
 tower = "0.5"
-tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "compression-br", "set-header", "limit", "timeout"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "compression-br", "set-header", "limit", "timeout", "request-id"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 # client
-bevy = { version = "0.20", default-features = false }
+bevy = { version = "0.20.1", default-features = false } # 0.20.1: ruzstd 0.9.1 (RUSTSEC-2026-0344)
 bevy_egui = { version = "0.43", default-features = false }
 
 [workspace.lints.rust]

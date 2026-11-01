@@ -3,20 +3,44 @@
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
-use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Scene, UiState};
+use crate::state::{Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState};
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use observation_core::address::Address;
+use observation_core::camera::CameraModel;
 use observation_core::coverage::StaticLayers;
+use observation_core::example::example_cameras;
 use observation_core::geo::{LatLon, Projection};
+use observation_core::scene::AreaRef;
 use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
 
 /// Extra ground drawn around the area so it doesn't float in the void, metres.
 const GROUND_MARGIN_M: f32 = 150.0;
 /// Upper bound on ground tiles per area.
 const MAX_GROUND_TILES: usize = 64;
+/// Models used, in turn, for the example cameras on the demo street: a mix of
+/// types and brands.
+const EXAMPLE_MODELS: [&str; 10] = [
+    "ring-wired-doorbell-pro",
+    "ring-floodlight-cam-wired-plus",
+    "google-nest-doorbell-battery",
+    "reolink-rlc-810a",
+    "arlo-pro-4",
+    "eufy-eufycam-s3-pro",
+    "ubiquiti-unifi-g5-dome",
+    "wyze-cam-floodlight-pro",
+    "tp-link-tapo-c320ws",
+    "blink-outdoor-4",
+];
+
+/// Height of the coverage overlay above the map tiles, metres. Layers closer
+/// than the depth buffer can resolve at range fight and flicker.
+const OVERLAY_Y_M: f32 = 0.08;
 
 /// Everything spawned for the current area (despawned on reload).
 #[derive(Component)]
@@ -31,8 +55,17 @@ pub struct GroundMesh;
 #[derive(Component)]
 struct GroundTile(TileId);
 
+/// The tile's map image has been applied.
+#[derive(Component)]
+struct TileTextured;
+
 #[derive(Component)]
 pub struct FacadeOverlay;
+
+/// The buildings at the address picked with the Address tool, drawn over the
+/// building mesh.
+#[derive(Component)]
+struct AddressHighlight;
 
 /// Handles of the coverage overlay assets.
 #[derive(Resource)]
@@ -41,12 +74,33 @@ pub struct Overlay {
     pub facade_mesh: Handle<Mesh>,
 }
 
+/// Materials of the current area that take a theme colour.
+#[derive(Resource)]
+struct WorldMaterials {
+    building: Handle<StandardMaterial>,
+    /// Ground tiles without their map image.
+    plain: Handle<StandardMaterial>,
+}
+
 pub struct WorldPlugin;
+
+/// Builds a newly loaded area and inserts [`Area`]; systems that need the new
+/// area in the same frame run after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AreaLoadSet;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_lights)
-            .add_systems(Update, (on_area_loaded, apply_ground_tiles).chain());
+        app.add_systems(Startup, setup_lights).add_systems(
+            Update,
+            (
+                on_area_loaded.in_set(AreaLoadSet),
+                apply_ground_tiles,
+                follow_theme.run_if(resource_changed::<Tokens>),
+                highlight_address,
+            )
+                .chain(),
+        );
     }
 }
 
@@ -90,13 +144,21 @@ pub fn ground_quad(min: Vec2, max: Vec2, y: f32) -> Mesh {
     .with_inserted_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]))
 }
 
+/// Asset stores an area load writes to.
+#[derive(bevy::ecs::system::SystemParam)]
+struct AreaAssets<'w> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
+    tiles: ResMut<'w, Tiles>,
+}
+
 fn on_area_loaded(
     mut loaded: MessageReader<AreaLoaded>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    assets: AreaAssets,
     mut scene: ResMut<Scene>,
+    models: Res<Models>,
     mut ui: ResMut<UiState>,
     mut coverage: ResMut<CoverageState>,
     mut orbit: Query<&mut OrbitCamera>,
@@ -108,6 +170,12 @@ fn on_area_loaded(
     };
     let Ok(bundle) = &msg.result else { return };
     let bundle = bundle.clone();
+    let AreaAssets {
+        mut meshes,
+        mut materials,
+        mut images,
+        mut tiles,
+    } = assets;
 
     for e in &old {
         commands.entity(e).despawn();
@@ -126,45 +194,53 @@ fn on_area_loaded(
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, m.positions.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals.clone())
     .with_inserted_indices(Indices::U32(m.indices.clone()));
+    let building = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.building),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
     commands.spawn((
         AreaEntity,
         BuildingMesh,
         Mesh3d(meshes.add(building_mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: to_bevy(tokens.world.building),
-            perceptual_roughness: 0.9,
-            ..default()
-        })),
+        MeshMaterial3d(building.clone()),
     ));
 
-    // Base ground (also the pick target for ground clicks).
+    // Pick target for ground clicks. It is not drawn: the tiles below cover
+    // it, and two coplanar surfaces would fight in the depth buffer.
     let (gmin, gmax) = (grid.min - GROUND_MARGIN_M, grid.max() + GROUND_MARGIN_M);
     commands.spawn((
         AreaEntity,
         GroundMesh,
         Mesh3d(meshes.add(ground_quad(gmin, gmax, 0.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: to_bevy(tokens.world.ground),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
+        Visibility::Hidden,
     ));
 
-    // Map tiles draped on the ground (textures attach as they arrive).
+    // Map tiles draped on the ground: plain ground colour until the image
+    // arrives (or for good, if it fails).
+    let plain = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.ground),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
     let tile_bbox = bbox_of(&proj, gmin, gmax);
     let z = zoom_for_bbox(&tile_bbox, MAX_GROUND_TILES, 19);
-    for t in tiles_covering(&tile_bbox, z) {
+    let ground_tiles = tiles_covering(&tile_bbox, z);
+    tiles.pin(ground_tiles.iter().copied());
+    for t in ground_tiles {
         let b = t.bounds();
         let nw = world2(&proj, LatLon::new(b.north, b.west));
         let se = world2(&proj, LatLon::new(b.south, b.east));
         commands.spawn((
             AreaEntity,
             GroundTile(t),
-            Mesh3d(meshes.add(ground_quad(nw, se, 0.01))),
-            Visibility::Hidden,
+            Mesh3d(meshes.add(ground_quad(nw, se, 0.0))),
+            MeshMaterial3d(plain.clone()),
+            NotShadowCaster,
             Pickable::IGNORE,
         ));
     }
+    commands.insert_resource(WorldMaterials { building, plain });
 
     // Ground coverage overlay texture (one texel per ground cell).
     let ground_image = images.add(Image::new_fill(
@@ -180,7 +256,7 @@ fn on_area_loaded(
     ));
     commands.spawn((
         AreaEntity,
-        Mesh3d(meshes.add(ground_quad(grid.min, grid.max(), 0.04))),
+        Mesh3d(meshes.add(ground_quad(grid.min, grid.max(), OVERLAY_Y_M))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(ground_image.clone()),
             alpha_mode: AlphaMode::Blend,
@@ -188,6 +264,7 @@ fn on_area_loaded(
             depth_bias: 10.0,
             ..default()
         })),
+        NotShadowCaster,
         Pickable::IGNORE,
     ));
 
@@ -225,6 +302,7 @@ fn on_area_loaded(
             depth_bias: 10.0,
             ..default()
         })),
+        NotShadowCaster,
         Pickable::IGNORE,
     ));
     commands.insert_resource(Overlay {
@@ -232,11 +310,28 @@ fn on_area_loaded(
         facade_mesh,
     });
 
+    // An address picked in the old area means nothing in the new one.
+    ui.selected_address = None;
+    ui.hover_address = None;
+    ui.jump_to_address = false;
+
     // Document state.
     let area = msg.request.area;
     if !msg.request.keep_cameras || scene.area != Some(area) {
         scene.cameras.clear();
+        // A region belongs to the area it was drawn on.
+        scene.region = None;
         ui.selected = None;
+        if area == AreaRef::Demo {
+            // A fresh demo street comes with example cameras to explore.
+            let picks: Vec<&CameraModel> = EXAMPLE_MODELS
+                .iter()
+                .filter_map(|id| models.get(id))
+                .collect();
+            for c in example_cameras(&bundle, &picks, EXAMPLE_MODELS.len()) {
+                scene.add_camera(c);
+            }
+        }
     }
     scene.area = Some(area);
     scene.origin = bundle.origin;
@@ -264,24 +359,135 @@ fn on_area_loaded(
 }
 
 fn apply_ground_tiles(
-    mut q: Query<(Entity, &GroundTile, &mut Visibility), Without<MeshMaterial3d<StandardMaterial>>>,
+    q: Query<(Entity, &GroundTile), Without<TileTextured>>,
     mut tiles: ResMut<Tiles>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
-    for (e, tile, mut vis) in &mut q {
+    for (e, tile) in &q {
         if let Some(img) = tiles.get(tile.0) {
-            commands
-                .entity(e)
-                .insert(MeshMaterial3d(materials.add(StandardMaterial {
+            commands.entity(e).insert((
+                TileTextured,
+                MeshMaterial3d(materials.add(StandardMaterial {
                     base_color_texture: Some(img),
                     perceptual_roughness: 1.0,
-                    depth_bias: 5.0,
                     ..default()
-                })));
-            *vis = Visibility::Inherited;
+                })),
+            ));
         }
     }
+}
+
+/// Recolours the sky, the buildings and the plain ground in place after a
+/// theme change.
+fn follow_theme(
+    tokens: Res<Tokens>,
+    mut clear: ResMut<ClearColor>,
+    world: Option<Res<WorldMaterials>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    clear.0 = to_bevy(tokens.world.sky);
+    let Some(world) = world else { return };
+    for (handle, color) in [
+        (&world.building, tokens.world.building),
+        (&world.plain, tokens.world.ground),
+    ] {
+        if let Some(mut mat) = materials.get_mut(handle) {
+            mat.base_color = to_bevy(color);
+        }
+    }
+}
+
+/// The highlight as drawn: for which address, and its material.
+#[derive(Default)]
+struct HighlightShown {
+    address: Option<Address>,
+    material: Option<Handle<StandardMaterial>>,
+}
+
+/// Redraws the [`AddressHighlight`] when the picked address or the area
+/// changes: a copy of just those buildings' triangles in the highlight colour,
+/// drawn in front of the same triangles of the building mesh. A theme change
+/// only recolours it.
+#[allow(clippy::too_many_arguments)]
+fn highlight_address(
+    mut commands: Commands,
+    ui: Res<UiState>,
+    area: Option<Res<Area>>,
+    tokens: Res<Tokens>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    old: Query<Entity, With<AddressHighlight>>,
+    mut shown: Local<HighlightShown>,
+) {
+    let area_changed = area.as_ref().is_some_and(|a| a.is_changed());
+    if shown.address == ui.selected_address && !area_changed {
+        if tokens.is_changed()
+            && let Some(mut mat) = shown.material.as_ref().and_then(|h| materials.get_mut(h))
+        {
+            mat.base_color = to_bevy(tokens.world.address);
+        }
+        return;
+    }
+    shown.address.clone_from(&ui.selected_address);
+    shown.material = None;
+    for e in &old {
+        commands.entity(e).despawn();
+    }
+    let (Some(address), Some(area)) = (&ui.selected_address, area) else {
+        return;
+    };
+    let b = &area.bundle;
+    let m = &b.mesh;
+    // Only the vertices those buildings use, renumbered. A triangle with an
+    // index out of range (a damaged bundle) is left out whole.
+    let mut remap: HashMap<u32, u32> = HashMap::default();
+    let (mut pos, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new());
+    for i in b.buildings_at(|a| a == address) {
+        let [first, count] = b.buildings[i].index_range;
+        let range = first as usize..(first as usize).saturating_add(count as usize);
+        for tri in m.indices.get(range).unwrap_or_default().as_chunks::<3>().0 {
+            if tri.iter().any(|&v| {
+                m.positions.get(v as usize).is_none() || m.normals.get(v as usize).is_none()
+            }) {
+                continue;
+            }
+            for &v in tri {
+                let next = pos.len() as u32;
+                let at = *remap.entry(v).or_insert_with(|| {
+                    pos.push(m.positions[v as usize]);
+                    nrm.push(m.normals[v as usize]);
+                    next
+                });
+                idx.push(at);
+            }
+        }
+    }
+    if idx.is_empty() {
+        return;
+    }
+    let mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+    .with_inserted_indices(Indices::U32(idx));
+    let material = materials.add(StandardMaterial {
+        base_color: to_bevy(tokens.world.address),
+        perceptual_roughness: 0.9,
+        // In front of the building mesh, behind the coverage on its walls.
+        depth_bias: 5.0,
+        ..default()
+    });
+    shown.material = Some(material.clone());
+    commands.spawn((
+        AddressHighlight,
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(material),
+        NotShadowCaster,
+        Pickable::IGNORE,
+    ));
 }
 
 fn world2(proj: &Projection, p: LatLon) -> Vec2 {

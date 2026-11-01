@@ -1,0 +1,118 @@
+{
+  "name": "main (git-flow: releases and hotfixes only)",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/main"
+      ],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_extra_approval_for_unattributed_changes": true,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": [
+          "merge"
+        ],
+        "required_reviewers": []
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "branch policy",
+            "integration_id": 15368
+          },
+          {
+            "context": "fmt",
+            "integration_id": 15368
+          },
+          {
+            "context": "clippy (native workspace)",
+            "integration_id": 15368
+          },
+          {
+            "context": "clippy (wasm client)",
+            "integration_id": 15368
+          },
+          {
+            "context": "test",
+            "integration_id": 15368
+          },
+          {
+            "context": "design tokens",
+            "integration_id": 15368
+          },
+          {
+            "context": "hygiene (typos, unused deps)",
+            "integration_id": 15368
+          },
+          {
+            "context": "wasm (trunk build)",
+            "integration_id": 15368
+          },
+          {
+            "context": "docker (build + smoke test)",
+            "integration_id": 15368
+          },
+          {
+            "context": "browser (wasm smoke test)",
+            "integration_id": 15368
+          },
+          {
+            "context": "zizmor (workflow audit)",
+            "integration_id": 15368
+          },
+          {
+            "context": "cargo-deny",
+            "integration_id": 15368
+          },
+          {
+            "context": "cargo-audit",
+            "integration_id": 15368
+          },
+          {
+            "context": "cargo-cooldown",
+            "integration_id": 15368
+          },
+          {
+            "context": "cargo-vet",
+            "integration_id": 15368
+          },
+          {
+            "context": "trivy (image + repo)",
+            "integration_id": 15368
+          },
+          {
+            "context": "analyze (rust)",
+            "integration_id": 15368
+          },
+          {
+            "context": "analyze (actions)",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ]
+}

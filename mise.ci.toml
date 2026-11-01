@@ -1,0 +1,226 @@
+# CI configuration: loaded on top of mise.toml when MISE_ENV=ci, which every workflow sets
+# (https://mise.jdx.dev/configuration/environments.html). It holds the tools only CI and the
+# image build use, locked with their checksums (and provenance, where the project publishes
+# it) in mise.ci.lock; CI's environment; and the tasks the workflows run.
+#
+# Locally, `mise -E ci install` installs these tools and `mise -E ci run <task>` then runs a
+# task the way CI does (with CI's environment, so cargo rebuilds what a plain build made).
+# `mise run lock` refreshes both lockfiles. The Pins workflow bumps the versions
+# with `mise upgrade --bump`, each once it is a week old (minimum_release_age in mise.toml).
+
+[settings]
+# Each job installs only the tools it uses (setup-mise's `tools`); `mise run` must not
+# install the rest.
+task.run_auto_install = false
+# cargo: tools (cargo-fuzz) are built with `cargo install --locked`, never taken from a prebuilt
+# binary (see cargo-fuzz below).
+cargo.binstall = false
+
+# Plain names for the tools below, each from a backend that verifies its download (cosign's is in
+# mise.toml, whose verify and up tasks use it too).
+[tool_alias]
+trivy = "aqua:aquasecurity/trivy"
+cargo-audit = "github:rustsec/rustsec"
+cargo-deny = "aqua:EmbarkStudios/cargo-deny"
+zizmor = "aqua:zizmorcore/zizmor"
+cargo-nextest = "github:nextest-rs/nextest"
+cargo-llvm-cov = "github:taiki-e/cargo-llvm-cov"
+cargo-fuzz = "cargo:cargo-fuzz"
+cargo-chef = "github:LukeMathWalker/cargo-chef"
+cargo-auditable = "github:rust-secure-code/cargo-auditable"
+typos = "aqua:crate-ci/typos"
+cargo-shear = "github:Boshen/cargo-shear"
+cargo-vet = "github:mozilla/cargo-vet"
+
+[tools]
+# Security checks (security.yml, release.yml, release-watch.yml, hotfix.yml). Trivy comes
+# from its release, not aquasecurity/trivy-action, whose tags were compromised in March 2026
+# (CVE-2026-33634).
+trivy = "0.76.0"
+cosign = "3.1.3"
+cargo-audit = { version = "0.22.2", version_prefix = "cargo-audit/v" }
+cargo-deny = "0.20.2"
+zizmor = "1.31.1"
+# Hygiene checks (ci.yml's hygiene job): spelling, and dependencies no code uses.
+typos = "1.51.1"
+cargo-shear = "1.14.0"
+# Dependency audits (security.yml's cargo-vet job; supply-chain/).
+cargo-vet = "0.10.3"
+# Tests and fuzzing (ci.yml, fuzz.yml). cargo-fuzz builds the targets for the platform it was
+# itself built for, and its only Linux release binary is the musl one, whose static libc the
+# sanitizers can't link; so it is built from crates.io (`cargo install --locked`).
+cargo-nextest = { version = "0.9.148", version_prefix = "cargo-nextest-" }
+cargo-llvm-cov = "0.9.1"
+cargo-fuzz = "0.13.2"
+# The image build (Dockerfile, which installs these and trunk from the lockfiles).
+cargo-chef = "0.1.78"
+cargo-auditable = "0.7.7"
+
+[env]
+# mise sets RUSTUP_TOOLCHAIN to the root rust-toolchain.toml's channel, which would override
+# fuzz/'s nightly and the toolchains of the release checkouts that release-watch.yml and
+# hotfix.yml scan. Without it, rustup reads the rust-toolchain.toml of each directory. (CI
+# installs the toolchains with rustup: ci:toolchain.)
+RUSTUP_TOOLCHAIN = false
+CARGO_TERM_COLOR = "always"
+CARGO_INCREMENTAL = "0"
+RUST_BACKTRACE = "1"
+# Line tables keep file:line in panics and backtraces; full debug info would roughly double
+# the size of target/ (and so of every cache) for no use in CI.
+CARGO_PROFILE_DEV_DEBUG = "line-tables-only"
+# .config/nextest.toml: report every failure, and end a hung test.
+NEXTEST_PROFILE = "ci"
+# No phoning home: Trivy otherwise sends a version check plus anonymous usage data to
+# check.trivy.dev on every run. Its vulnerability DB and check bundle downloads remain.
+TRIVY_DISABLE_TELEMETRY = "true"
+TRIVY_SKIP_VERSION_CHECK = "true"
+
+[tasks."ci:toolchain"]
+description = "CI only: install the Rust toolchain that DIR's rust-toolchain.toml pins (plus COMPONENTs) and uninstall every other toolchain"
+hide = true
+usage = '''
+flag "-C --dir <dir>" default="." help="Directory whose rust-toolchain.toml applies (fuzz, or a release checkout)"
+arg "[component]..." help="Extra components, such as llvm-tools-preview"
+'''
+run = '''
+#!/usr/bin/env bash
+# Swatinem/rust-cache hashes the `rustc -vV` of each installed toolchain into its cache key, and
+# the runner image's preinstalled stable changes with each image update, so leaving it there
+# gives jobs that run on different image versions different keys and makes them miss develop's
+# caches.
+set -euo pipefail
+[ "${CI:-}" = true ] || { echo "ci:toolchain uninstalls every other Rust toolchain, so it runs only in CI (CI=true)" >&2; exit 1; }
+cd "${usage_dir}"
+rustup toolchain install --profile minimal --no-self-update
+for c in ${usage_component:-}; do rustup component add "${c}"; done
+pinned="$(rustup show active-toolchain | cut -d' ' -f1)"
+rustup toolchain list --quiet | { grep -vxF "${pinned}" || true; } | while read -r t; do
+  rustup toolchain uninstall "${t}"
+done
+rustup toolchain list
+'''
+
+[tasks.audit]
+description = "cargo-audit on both lockfiles (the workspace's and fuzz/'s); yanked crates fail too. Ignores: .cargo/audit.toml"
+# cargo-deny covers only the root lockfile: the fuzz crate's licences are not on its allow-list,
+# and it ships nothing.
+run = [
+  "cargo-audit audit --deny yanked --file Cargo.lock",
+  "cargo-audit audit --deny yanked --file fuzz/Cargo.lock",
+]
+
+[tasks.cooldown]
+description = "Crate versions added to either lockfile since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
+usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
+run = 'python3 scripts/check-cargo-cooldown.py --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+
+[tasks.typos]
+description = "Spelling in code, docs and config (typos; correct words it does not know go in .typos.toml)"
+run = "typos"
+
+[tasks.shear]
+description = "Dependencies that no code uses, in both workspaces (cargo-shear); one used only for its features goes in [package.metadata.cargo-shear] ignored"
+# Both from the repository root: the fuzz workspace's `cargo metadata` then runs on the root
+# toolchain, so no nightly is needed. --locked: fuzz/Cargo.lock must already match its manifests.
+run = [
+  "cargo shear --locked --deny-warnings",
+  "cargo shear --locked --deny-warnings fuzz",
+]
+
+[tasks.vet]
+description = "cargo-vet: every crate in the server side's tree is audited (supply-chain/audits.toml), covered by an imported audit, or exempted (supply-chain/README.md)"
+run = "cargo vet --locked"
+
+[tasks."vet:imports"]
+description = "Fetch the imported cargo-vet audit sets again (supply-chain/imports.lock) and drop the exemptions they now cover"
+run = ["cargo vet regenerate imports", "cargo vet regenerate exemptions"]
+
+[tasks.deny]
+description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `mise -E ci run deny advisories` runs one check"
+# deny.toml controls the feature graph; cargo-deny's own default elsewhere is --all-features,
+# which is wrong for Bevy's feature set.
+run = "cargo-deny --locked check"
+
+[tasks.zizmor]
+description = "zizmor on .github (the workflows and dependabot.yml); its online audits use GH_TOKEN"
+usage = 'flag "--sarif <file>" help="Also write the findings as SARIF to FILE, without failing on them; the plain run after it sets the exit status"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -n "${usage_sarif:-}" ]; then zizmor --format sarif --no-exit-codes .github > "${usage_sarif}"; fi
+zizmor .github
+'''
+
+[tasks."scan:repo"]
+description = "Trivy on the repository: Cargo.lock vulnerabilities, Dockerfile misconfiguration and committed secrets; a fixable CRITICAL or HIGH finding fails"
+usage = 'flag "--sarif <file>" help="Write SARIF to FILE instead of a table"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+trivy fs --scanners vuln,misconfig,secret --severity CRITICAL,HIGH --ignore-unfixed \
+  --skip-dirs target,dist,.git --exit-code 1 ${usage_sarif:+--format sarif --output "${usage_sarif}"} .
+'''
+
+[tasks."scan:image"]
+description = "Trivy on a local image (Debian packages and the crates in its binaries); a fixable CRITICAL or HIGH vulnerability fails. Security's pull request gate and Release's tag gate"
+usage = '''
+arg "<image>" help="Image in the local Docker daemon, such as observation:scan"
+flag "--sarif <file>" help="Write SARIF to FILE instead of a table"
+'''
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+trivy image --image-src docker --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed \
+  --exit-code 1 ${usage_sarif:+--format sarif --output "${usage_sarif}"} "${usage_image}"
+'''
+
+[tasks."scan:crates"]
+description = "Fail unless Trivy sees the Rust crates in an image's binaries; without cargo auditable, the image scan covers only the Debian packages"
+usage = 'arg "<image>" help="Image in the local Docker daemon"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+n="$(trivy image --image-src docker --scanners vuln --list-all-pkgs --format json --quiet "${usage_image}" |
+  jq '[.Results[]? | select(.Type == "rustbinary") | .Packages[]?] | length')"
+echo "Rust crates seen in ${usage_image}: ${n}"
+[ "${n}" -gt 0 ] || { echo "Trivy found no Rust crates in ${usage_image}; are its binaries built with cargo auditable?" >&2; exit 1; }
+'''
+
+[tasks."fuzz:build"]
+description = "Check that fuzz/Cargo.lock is current, then build every fuzz target (with fuzz/rust-toolchain.toml's nightly)"
+dir = "{{config_root}}/fuzz"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cargo metadata --locked --format-version 1 > /dev/null
+cargo fuzz build
+'''
+
+[tasks.fuzz]
+description = "Run every fuzz target for SECONDS (default 30), from fuzz/corpus/<target> (which it grows) and fuzz/seeds/<target>"
+dir = "{{config_root}}/fuzz"
+usage = '''
+arg "[seconds]" default="30" help="Seconds to fuzz each target"
+flag "--nightly" help="The nightly run's times: bbox_query 60 s, whose coverage stops growing within a minute (a small parser at ~250k execs/s), and coverage_geometry 900 s (a few hundred execs/s)"
+'''
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+secs="${usage_seconds}"
+[[ "${secs}" =~ ^[0-9]+$ ]] || { echo "seconds must be a whole number, not '${secs}'" >&2; exit 1; }
+for t in $(cargo fuzz list); do
+  mkdir -p "corpus/${t}"
+  dirs=("corpus/${t}")
+  if [ -d "seeds/${t}" ]; then dirs+=("seeds/${t}"); fi
+  t_secs="${secs}"
+  if [ "${usage_nightly:-false}" = true ]; then
+    case "${t}" in
+      bbox_query) t_secs=60 ;;
+      coverage_geometry) t_secs=900 ;;
+    esac
+  fi
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::${t} (${t_secs}s)"; else echo "== ${t} (${t_secs}s)"; fi
+  cargo fuzz run "${t}" "${dirs[@]}" -- -max_total_time="${t_secs}" -rss_limit_mb=2048
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::endgroup::"; fi
+done
+'''
