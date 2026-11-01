@@ -84,3 +84,4 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - The server no longer follows redirects from the tile and Overpass upstreams, and the region agent follows them only within the original host, so an upstream cannot send them to an internal address. A 3xx from Overpass now fails over to the next interpreter and is logged with its `Location`.
 - Proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`) are ignored for upstream requests unless `OBS_ALLOW_PRIVATE_UPSTREAMS=1`, since a proxy resolves names past the filter.
 - Credentials in upstream URLs are removed from startup errors.
+- Bevy 0.20.1, which moves `ruzstd` to 0.9.1 and so fixes RUSTSEC-2026-0344 (a decompression bomb in its zstd decoder). The client never reached the vulnerable code, and the advisory is no longer ignored.

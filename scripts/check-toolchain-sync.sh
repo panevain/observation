@@ -34,10 +34,13 @@ direct="$(grep -lE 'uses: *jdx/mise-action@' .github/workflows/*.y*ml .github/ac
 check "" "$direct" "jdx/mise-action used directly (use \$/.github/actions/setup-mise)"
 
 # Advisory ignores: the same IDs in all three files (sorted, one per line).
-ids() { grep -Eo 'RUSTSEC-[0-9]{4}-[0-9]{4}|GHSA(-[0-9a-z]{4}){3}' | sort -u | paste -sd' ' -; }
-deny_ids="$(awk '/^ignore = \[/ {f=1; next} f && /^\]/ {exit} f && !/^ *#/' deny.toml | ids)"
-check "$deny_ids" "$(awk '/^ignore = \[/ {f=1; next} f && /^\]/ {exit} f' .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/audit.toml ignore"
-check "$deny_ids" "$(grep -E '^id *=' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
+# grep finds nothing when a list is empty, which is not a failure.
+ids() { { grep -Eo 'RUSTSEC-[0-9]{4}-[0-9]{4}|GHSA(-[0-9a-z]{4}){3}' || true; } | sort -u | paste -sd' ' -; }
+# The lines inside a file's `ignore = [ ... ]`; none for `ignore = []`.
+ignores() { awk '/^ignore = \[\]/ {exit} /^ignore = \[/ {f=1; next} f && /^\]/ {exit} f' "$1"; }
+deny_ids="$(ignores deny.toml | sed '/^ *#/d' | ids)"
+check "$deny_ids" "$(ignores .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/audit.toml ignore"
+check "$deny_ids" "$(sed -n '/^id *=/p' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
 
 if (( fail )); then exit 1; fi
 echo "versions in sync: rust $rust, mise $mise; advisory ignores: ${deny_ids:-none}"
