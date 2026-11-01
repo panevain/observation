@@ -161,6 +161,24 @@ jobs:
       - run: mise run tokens
       - run: mise run sync
 
+  hygiene:
+    name: hygiene (typos, unused deps)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: typos cargo-shear
+      - run: mise run typos
+      # cargo-shear reads both workspaces through `cargo metadata`.
+      - uses: $/.github/actions/setup-rust
+      - run: mise run shear
+
   wasm:
     name: wasm (trunk build)
     runs-on: ubuntu-24.04
@@ -203,6 +221,9 @@ jobs:
           test -f dist/coverage-worker_loader.js || { echo "::error::dist/coverage-worker_loader.js missing"; exit 1; }
           # trunk's pre_build hook wrote web/tokens.css and index.html inlined it.
           grep -q -- '--obs-bg:' dist/index.html || { echo "::error::design-token CSS not inlined into dist/index.html"; exit 1; }
+      # Each module against its limit in .config/wasm-size-budget.toml (a few seconds of gzip).
+      - name: Wasm size budget
+        run: mise run build:budget
       - name: Wasm size report
         if: github.event_name == 'push'
         run: |
@@ -263,3 +284,53 @@ jobs:
           cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,scope=image-regions,mode=max' || '' }}
       - name: Smoke test region agent
         run: scripts/smoke-test-regions.sh observation-regions:ci
+
+  # The real client in a headless browser: the wasm job's dist/ in the app image, loaded in
+  # Chrome with WebGL2 on SwiftShader (tests/browser/smoke.cjs). Fails if the client does not
+  # start, the demo street or the coverage worker does not load, or anything is logged as an
+  # error or panic. Map tiles are answered by the test, so nothing reaches OpenStreetMap.
+  browser:
+    name: browser (wasm smoke test)
+    needs: wasm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      IMAGE: observation:browser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The docker job's image with this run's client instead of its stub: the server layers come
+      # from the image-prebuilt cache.
+      - name: Build image (this run's client)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime-prebuilt
+          build-contexts: |
+            client-dist=${{ runner.temp }}/dist
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha,scope=image-prebuilt
+      # The runner image's Google Chrome and Node.js; playwright-core (tests/browser/package-lock.json)
+      # downloads no browser.
+      - name: Browser smoke test
+        env:
+          OUT_DIR: ${{ runner.temp }}/browser
+        run: scripts/browser-smoke-test.sh "${IMAGE}"
+      - name: Upload screenshot and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-smoke
+          path: ${{ runner.temp }}/browser
+          if-no-files-found: warn
+          retention-days: 14

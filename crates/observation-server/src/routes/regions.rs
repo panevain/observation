@@ -11,7 +11,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::{self, Stream};
 use observation_core::regions::{
-    ActionKind, RegionAction, RegionsStatus, bearer_matches, is_valid_region_id,
+    ActionKind, MAX_SIZE_IDS, RegionAction, RegionsStatus, SizesRequest, bearer_matches,
+    is_valid_region_id,
 };
 use tokio::sync::{OwnedSemaphorePermit, watch};
 
@@ -55,7 +56,40 @@ pub async fn catalog(State(state): State<AppState>) -> Result<Response, ApiError
         .into_response())
 }
 
-/// `POST /api/regions/{import|cancel|delete}` with `{"id": "…"}` and
+/// `POST /api/regions/catalog/sizes` with `{"ids": [...]}`: download sizes of
+/// up to [`MAX_SIZE_IDS`] extracts, `{"<id>": bytes or null}`. Open to all, as
+/// the catalog is: the agent asks the download server about each extract at
+/// most once a day.
+pub async fn catalog_sizes(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let regions = regions(&state)?;
+    let req: SizesRequest = serde_json::from_slice(&body)
+        .ok()
+        .filter(SizesRequest::is_valid)
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "expected {{\"ids\": [...]}} with at most {MAX_SIZE_IDS} region ids"
+            ))
+        })?;
+    let body = regions.catalog_sizes(&req).await?;
+    Ok(no_store(
+        (
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )],
+            body,
+        )
+            .into_response(),
+    ))
+}
+
+/// `POST /api/regions/{import|cancel|delete}` with `{"id": "…"}`, or
+/// `/api/regions/settings` with `{"id": "…", "auto_refresh": bool,
+/// "refresh_days": n}` (either or both; the agent checks the range; `null`
+/// returns the region to the default interval), and
 /// `Authorization: Bearer <OBS_ADMIN_TOKEN>`.
 pub async fn act(
     State(state): State<AppState>,
@@ -78,13 +112,30 @@ pub async fn act(
             "the admin token is missing or wrong",
         ));
     }
-    let req: RegionAction = serde_json::from_slice(&body)
+    let mut req: RegionAction = serde_json::from_slice(&body)
         .map_err(|_| ApiError::BadRequest("expected {\"id\": \"<region id>\"}".into()))?;
     if !is_valid_region_id(&req.id) {
         return Err(ApiError::BadRequest("not a region id".into()));
     }
-    tracing::info!(?action, region = %req.id, "region action");
-    let status = regions.act(action, &req.id).await?;
+    if action == ActionKind::Settings {
+        if !req.has_settings() {
+            return Err(ApiError::BadRequest(
+                "expected `auto_refresh` (true or false), `refresh_days`, or both".into(),
+            ));
+        }
+    } else {
+        // Only settings take more than the id.
+        req.auto_refresh = None;
+        req.refresh_days = None;
+    }
+    tracing::info!(
+        ?action,
+        region = %req.id,
+        auto_refresh = ?req.auto_refresh,
+        refresh_days = ?req.refresh_days,
+        "region action"
+    );
+    let status = regions.act(action, &req).await?;
     Ok(no_store(Json(status).into_response()))
 }
 

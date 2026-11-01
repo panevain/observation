@@ -1,0 +1,17 @@
+# typos (https://github.com/crate-ci/typos): the spelling check in ci.yml's hygiene job;
+# `mise -E ci run typos` locally. Words below are correct here.
+
+[files]
+# Written by cargo-vet, and full of crate names (flate2, writeable).
+extend-exclude = ["supply-chain/config.toml", "supply-chain/imports.lock"]
+
+[default.extend-identifiers]
+# Fields of view, plural.
+FOVs = "FOVs"
+
+[default.extend-words]
+# OpenStreetMap's way-node element (<nd ref="..."/>).
+nd = "nd"
+# The HTTP header's spelling (RFC 9110).
+referer = "referer"
+referers = "referers"
