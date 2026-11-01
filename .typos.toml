@@ -1,5 +1,5 @@
 # typos (https://github.com/crate-ci/typos): the spelling check in ci.yml's hygiene job;
-# `mise -E ci run typos` locally. Words below are correct here.
+# `mise run typos` locally (part of `mise run check`). Words below are correct here.
 
 [files]
 # Written by cargo-vet, and full of crate names (flate2, writeable).

@@ -1,15 +1,16 @@
 # Dev tooling and tasks: https://mise.jdx.dev
-# CI runs these same tasks (.github/workflows/ci.yml), so `mise run check` matches it. CI loads
-# mise.ci.toml on top of this file (MISE_ENV=ci): the tools only CI and the image build use,
-# CI's environment, and the tasks behind the security, fuzz and scan steps. `mise -E ci install`
-# then `mise -E ci run <task>` runs one of those locally.
+# CI runs these same tasks (.github/workflows/ci.yml); `mise run check` runs every CI check that
+# needs no Docker, no browser and no CI-only tool. CI loads mise.ci.toml on top of this file
+# (MISE_ENV=ci): the tools only CI and the image build use, CI's environment, and the tasks behind
+# the remaining security, fuzz and scan steps. `mise -E ci install` then `mise -E ci run <task>`
+# runs one of those locally.
 # rust-toolchain.toml is the single source of truth for the Rust version, components and
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
 # [settings]; mise.lock records it, and the Pins workflow bumps both), and
 # scripts/check-toolchain-sync.sh checks nothing else repeats it. Without mise, install rustup and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
-# gitignored; copy mise.local.toml.example to start. Docker Compose settings are on the
-# `up` task below; its tokens are fnox secrets (fnox.toml; values in the gitignored
+# gitignored; copy mise.local.toml.example to start. Docker Compose settings default in
+# compose.yaml; its tokens are fnox secrets (fnox.toml; values in the gitignored
 # fnox.local.toml). The local development stack (`mise run dev`) is in mise.dev.toml, which
 # .miserc.toml loads by default.
 
@@ -44,10 +45,21 @@ trunk = "github:trunk-rs/trunk"
 fnox = "github:jdx/fnox"
 # Also CI's (mise.ci.toml [tools]); here for the verify and up tasks.
 cosign = "aqua:sigstore/cosign"
+typos = "aqua:crate-ci/typos"
+cargo-shear = "github:Boshen/cargo-shear"
+cargo-deny = "aqua:EmbarkStudios/cargo-deny"
+cargo-nextest = "github:nextest-rs/nextest"
 
 [tools]
 # mise.lock records the release checksums; the Dockerfile installs trunk from it.
 trunk = "0.21.14"
+# The checks `check` runs besides cargo's own, which CI runs too (ci.yml's test and hygiene jobs;
+# cargo-deny in security.yml and release.yml's tag gate): tests, spelling, unused dependencies
+# and cargo-deny.
+cargo-nextest = { version = "0.9.148", version_prefix = "cargo-nextest-" }
+typos = "1.51.1"
+cargo-shear = "1.14.0"
+cargo-deny = "0.20.2"
 
 [env]
 # trunk would otherwise query the crates.io API for a newer release on every build.
@@ -66,14 +78,10 @@ description = "Clippy on the wasm client"
 run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
 
 [tasks.test]
-description = "Unit tests (core + server, then client if it has a lib target); uses cargo-nextest when installed (`mise -E ci install cargo-nextest`)"
+description = "Unit tests with cargo-nextest, then doctests (core + server, then client if it has a lib target)"
 run = '''
-if cargo nextest --version >/dev/null 2>&1; then
-  cargo nextest run --locked --workspace --exclude observation-client
-  cargo test --locked --doc --workspace --exclude observation-client
-else
-  cargo test --locked --workspace --exclude observation-client
-fi
+cargo nextest run --locked --workspace --exclude observation-client
+cargo test --locked --doc --workspace --exclude observation-client
 if [ -f crates/observation-client/src/lib.rs ]; then
   cargo test --locked -p observation-client --lib
 else
@@ -85,12 +93,31 @@ fi
 description = "Line coverage of core + server (needs cargo-llvm-cov, `mise -E ci install cargo-llvm-cov`, and the llvm-tools-preview component); writes lcov.info"
 run = "cargo llvm-cov --locked --workspace --exclude observation-client --lcov --output-path lcov.info"
 
+[tasks.typos]
+description = "Spelling in code, docs and config (typos; correct words it does not know go in .typos.toml)"
+run = "typos"
+
+[tasks.shear]
+description = "Dependencies that no code uses, in both workspaces (cargo-shear); one used only for its features goes in [package.metadata.cargo-shear] ignored"
+# Both from the repository root: the fuzz workspace's `cargo metadata` then runs on the root
+# toolchain, so no nightly is needed. --locked: fuzz/Cargo.lock must already match its manifests.
+run = [
+  "cargo shear --locked --deny-warnings",
+  "cargo shear --locked --deny-warnings fuzz",
+]
+
+[tasks.deny]
+description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `mise run deny advisories` runs one check"
+# deny.toml controls the feature graph; cargo-deny's own default elsewhere is --all-features,
+# which is wrong for Bevy's feature set.
+run = "cargo-deny --locked check"
+
 [tasks.tokens]
 description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, and the advisory ignore lists agree"
+description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
 
 [tasks.lock]
@@ -187,22 +214,12 @@ else
 fi
 '''
 
-# Compose settings, for this task only (so `mise run serve` is unaffected). A variable
-# already set wins, e.g. `OBS_PORT=9090 mise run up`.
+# The release to run, for this task only (so `mise run serve` is unaffected): `latest`, or a
+# version such as 0.1.0 (both images use the same one). The script verifies it, so it needs the
+# value here; the other Compose settings (port, log format, region limits) default in
+# compose.yaml. A variable already set wins, e.g. `OBS_VERSION=0.1.0 OBS_PORT=9090 mise run up`.
 [tasks.up.env]
-# Release to run: `latest`, or a version such as 0.1.0 (both images use the same one).
 OBS_VERSION = "{{ get_env(name='OBS_VERSION', default='latest') }}"
-# Host port for the app.
-OBS_PORT = "{{ get_env(name='OBS_PORT', default='8080') }}"
-# `json` for one JSON object per log line.
-OBS_LOG_FORMAT = "{{ get_env(name='OBS_LOG_FORMAT', default='text') }}"
-# Largest Geofabrik extract downloaded, MB.
-OBS_REGIONS_MAX_DOWNLOAD_MB = "{{ get_env(name='OBS_REGIONS_MAX_DOWNLOAD_MB', default='2048') }}"
-# Re-import regions after this many days unless a region has its own interval; 0 never (for all).
-OBS_REGIONS_DEFAULT_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_DEFAULT_REFRESH_DAYS', default='7') }}"
-# Range of the interval a region can be given in the UI, days.
-OBS_REGIONS_MIN_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_MIN_REFRESH_DAYS', default='7') }}"
-OBS_REGIONS_MAX_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_MAX_REFRESH_DAYS', default='365') }}"
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"
@@ -244,5 +261,5 @@ description = "Check the task definitions of the selected environments (referenc
 run = "{{mise_bin | quote}} tasks validate"
 
 [tasks.check]
-description = "fmt, clippy, tests, design tokens, version sync and task definitions (the non-Docker CI checks; build is separate)"
-depends = ["fmt", "clippy-native", "clippy-wasm", "test", "tokens", "sync", "tasks:validate"]
+description = "fmt, clippy, tests, spelling, unused dependencies, cargo-deny, design tokens, version sync and task definitions (the CI checks that need no Docker or CI-only tool; build is separate)"
+depends = ["fmt", "clippy-native", "clippy-wasm", "test", "typos", "shear", "deny", "tokens", "sync", "tasks:validate"]
