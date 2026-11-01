@@ -7,9 +7,13 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ## [Unreleased]
 
+### Changed
+
+- The region agent's `OBS_REGIONS_REFRESH_DAYS` is now `OBS_REGIONS_DEFAULT_REFRESH_DAYS`, since regions can have their own interval. The agent refuses to start with only the old name set, so rename it if you set it on 0.1.0-dev.1 or dev.2.
+
 ### Added
 
-- More region controls in **Local map data**: each region shows how long ago it was downloaded, and a failed import says when it failed. Scheduled refreshes can be turned off and on per region with a checkbox, which also says when the next refresh is due. Above the list are the region count and total disk use. The server takes the setting at `POST /api/regions/settings` (`{"id", "auto_refresh"}`, admin token), and the agent keeps it in `regions.json`. Existing regions keep refreshing.
+- More region controls in **Local map data**: each region shows how long ago it was downloaded, and a failed import says when it failed. Scheduled refreshes can be turned off and on per region with a checkbox, and each region can have its own interval, 7 to 365 days (`OBS_REGIONS_MIN_REFRESH_DAYS` and `OBS_REGIONS_MAX_REFRESH_DAYS` change the range); the row says when the next refresh is due. Above the list are the region count and total disk use. The search list shows each extract's download size (asked of Geofabrik with `HEAD` and cached a day, via the new `POST /api/regions/catalog/sizes`) and marks extracts over `OBS_REGIONS_MAX_DOWNLOAD_MB` as **Too large** instead of offering **Import**. The server takes the settings at `POST /api/regions/settings` (`{"id", "auto_refresh", "refresh_days"}`, admin token), and the agent keeps them in `regions.json`. Existing regions keep refreshing.
 
 - An **Address** tool (**L**) in the tool rail: a card by the pointer shows the street address of the building under it (its own, never a neighbour's; off the buildings, the nearest address). Clicking selects that address, highlights every building at it and shades its group in the camera list; with the new **Settings → Click jumps to the camera list** (on by default, remembered in this browser) the list also scrolls to that group.
 - Cameras are grouped by street address in the camera list, worked out from OpenStreetMap: a camera belongs to the nearest building or address point with an address within 25 m. Each group has a heading with the address and its camera count. A camera's new **Group** field overrides its address with a typed name or another nearby address (scene files gain an optional `group` per camera). Bundles carry building addresses and address nodes (bundle format version 2, so cached bundles are rebuilt), the Overpass query also asks for address nodes, and the region agent keeps them when importing (existing regions gain them at their next refresh).

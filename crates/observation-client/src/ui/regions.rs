@@ -7,7 +7,7 @@ use crate::icons;
 use crate::regions::{CatalogState, RegionRequest, Regions, now_unix};
 use crate::theme::{Tokens, strong_family};
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
-use observation_core::regions::{ActionKind, JobPhase, RegionView};
+use observation_core::regions::{ActionKind, JobPhase, RegionAction, RegionView};
 
 /// Matches shown at once in the add list.
 const MAX_MATCHES: usize = 40;
@@ -18,7 +18,7 @@ pub fn megabytes(bytes: u64) -> String {
 }
 
 /// `1.2 GB` from a gigabyte up, `12.3 MB` below.
-fn disk_size(bytes: u64) -> String {
+fn byte_size(bytes: u64) -> String {
     if bytes >= 1 << 30 {
         format!("{:.1} GB", bytes as f64 / f64::from(1 << 30))
     } else {
@@ -181,7 +181,10 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         return;
     }
     let now = now_unix();
-    let refresh_days = r.status.as_ref().map_or(0, |s| s.snapshot.refresh_days);
+    let (refresh_days, refresh_range) = r.status.as_ref().map_or((0, 1..=1), |s| {
+        let s = &s.snapshot;
+        (s.refresh_days, s.min_refresh_days..=s.max_refresh_days)
+    });
     let disk: u64 = regions.iter().filter_map(|x| x.disk_bytes).sum();
     let mut summary = format!(
         "{} {} · {} on disk",
@@ -191,7 +194,7 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         } else {
             "regions"
         },
-        disk_size(disk)
+        byte_size(disk)
     );
     if refresh_days == 0 {
         summary.push_str(" · scheduled refreshes are off on this server");
@@ -275,18 +278,61 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         }
         if region.ready && refresh_days > 0 {
             ui.horizontal(|ui| {
+                let enabled = can_act && !busy;
                 let mut on = region.auto_refresh;
-                let every = match refresh_days {
-                    1 => "Refresh daily".to_owned(),
-                    n => format!("Refresh every {n} days"),
-                };
                 if ui
-                    .add_enabled(can_act && !busy, egui::Checkbox::new(&mut on, every))
+                    .add_enabled(enabled, egui::Checkbox::new(&mut on, "Refresh every"))
                     .on_hover_text("Download and import the latest data on a schedule")
                     .on_disabled_hover_text(not_allowed)
                     .changed()
                 {
-                    r.request(RegionRequest::AutoRefresh(region.id.clone(), on));
+                    r.request(RegionRequest::Settings(RegionAction {
+                        id: region.id.clone(),
+                        auto_refresh: Some(on),
+                        ..RegionAction::default()
+                    }));
+                }
+                let current = region.refresh_days.unwrap_or(refresh_days);
+                let mut days = match &r.refresh_edit {
+                    Some((id, d)) if *id == region.id => *d,
+                    _ => current,
+                };
+                let hover = match region.refresh_days {
+                    Some(_) => format!(
+                        "Days between refreshes of this region, {} to {} (drag, or click and type)",
+                        refresh_range.start(),
+                        refresh_range.end()
+                    ),
+                    None => format!(
+                        "Days between refreshes of this region, {} to {} (drag, or click and type). Until set, the server's default of {refresh_days} days",
+                        refresh_range.start(),
+                        refresh_range.end()
+                    ),
+                };
+                let unit = if days == 1 { " day" } else { " days" };
+                let field = ui
+                    .add_enabled(
+                        enabled,
+                        egui::DragValue::new(&mut days)
+                            .range(refresh_range.clone())
+                            .speed(0.5)
+                            .suffix(unit),
+                    )
+                    .on_hover_text(hover)
+                    .on_disabled_hover_text(not_allowed);
+                if field.changed() {
+                    r.refresh_edit = Some((region.id.clone(), days));
+                }
+                if (field.drag_stopped() || field.lost_focus())
+                    && let Some((id, d)) = r.refresh_edit.take()
+                    && id == region.id
+                    && region.refresh_days != Some(d)
+                {
+                    r.request(RegionRequest::Settings(RegionAction {
+                        id,
+                        refresh_days: Some(d),
+                        ..RegionAction::default()
+                    }));
                 }
                 if let Some(at) = region.next_refresh_unix {
                     hint(ui, t, &next_refresh(at, now));
@@ -372,6 +418,7 @@ fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         hint(ui, t, "No extract matches.");
         return;
     }
+    r.want_sizes(matches.iter().map(|e| e.id.as_str()), now_unix());
     let have: Vec<String> = r.regions().iter().map(|x| x.id.clone()).collect();
     egui::ScrollArea::vertical()
         .id_salt("regions-catalog")
@@ -385,14 +432,31 @@ fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                         ui.label(RichText::new(p).size(t.font.caption).color(t.text_muted));
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let size = r.sizes.get(&e.id).copied();
+                        let too_large = limit > 0 && size.is_some_and(|b| b > limit);
                         if have.contains(&e.id) {
                             hint(ui, t, "Added");
+                        } else if too_large {
+                            ui.label(
+                                RichText::new("Too large")
+                                    .size(t.font.caption)
+                                    .color(t.warning),
+                            )
+                            .on_hover_text(format!(
+                                "Over this server's {} download limit (OBS_REGIONS_MAX_DOWNLOAD_MB)",
+                                byte_size(limit)
+                            ));
                         } else if ui
                             .add_enabled(can_act && r.busy.is_none(), primary(t, "Import"))
                             .on_disabled_hover_text("Enter the admin token first")
                             .clicked()
                         {
                             r.request(RegionRequest::Action(ActionKind::Import, e.id.clone()));
+                        }
+                        if let Some(b) = size {
+                            hint(ui, t, &byte_size(b));
+                        } else if r.sizes_pending.contains(&e.id) {
+                            hint(ui, t, "…");
                         }
                     });
                 });
@@ -417,7 +481,7 @@ mod tests {
         assert_eq!(ago(0, 7200), "2 h ago");
         assert_eq!(next_refresh(100, 4000), "next within the hour", "overdue");
         assert_eq!(next_refresh(2 * 86_400, 0), "next in 2 days");
-        assert_eq!(disk_size(3 << 29), "1.5 GB");
-        assert_eq!(disk_size(1 << 20), "1.0 MB");
+        assert_eq!(byte_size(3 << 29), "1.5 GB");
+        assert_eq!(byte_size(1 << 20), "1.0 MB");
     }
 }

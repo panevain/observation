@@ -151,8 +151,11 @@ OBS_PORT = "{{ get_env(name='OBS_PORT', default='8080') }}"
 OBS_LOG_FORMAT = "{{ get_env(name='OBS_LOG_FORMAT', default='text') }}"
 # Largest Geofabrik extract downloaded, MB.
 OBS_REGIONS_MAX_DOWNLOAD_MB = "{{ get_env(name='OBS_REGIONS_MAX_DOWNLOAD_MB', default='2048') }}"
-# Re-import regions after this many days; 0 never.
-OBS_REGIONS_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_REFRESH_DAYS', default='7') }}"
+# Re-import regions after this many days unless a region has its own interval; 0 never (for all).
+OBS_REGIONS_DEFAULT_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_DEFAULT_REFRESH_DAYS', default='7') }}"
+# Range of the interval a region can be given in the UI, days.
+OBS_REGIONS_MIN_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_MIN_REFRESH_DAYS', default='7') }}"
+OBS_REGIONS_MAX_REFRESH_DAYS = "{{ get_env(name='OBS_REGIONS_MAX_REFRESH_DAYS', default='365') }}"
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"

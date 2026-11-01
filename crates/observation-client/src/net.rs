@@ -11,7 +11,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
-use observation_core::regions::{ActionKind, RegionAction};
+use observation_core::regions::{ActionKind, RegionAction, SizesRequest};
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
 
@@ -24,6 +24,7 @@ enum Request {
     RegionsStatus,
     RegionsCatalog,
     RegionAction(ActionKind, String),
+    RegionsSizes(Vec<String>),
 }
 
 /// Settings published by the server at `/api/config`.
@@ -247,15 +248,21 @@ fn send_region_requests(net: Res<Net>, mut regions: ResMut<Regions>) {
                     ..RegionAction::default()
                 },
             ),
-            RegionRequest::AutoRefresh(id, on) => send_region_action(
-                &net,
-                &token,
-                ActionKind::Settings,
-                RegionAction {
-                    id,
-                    auto_refresh: Some(on),
-                },
-            ),
+            RegionRequest::Sizes(ids) => {
+                let body = SizesRequest { ids };
+                net.send(
+                    HttpRequest {
+                        url: "/api/regions/catalog/sizes".to_owned(),
+                        method: "POST",
+                        body: serde_json::to_string(&body).ok(),
+                        bearer: None,
+                    },
+                    Request::RegionsSizes(body.ids),
+                );
+            }
+            RegionRequest::Settings(settings) => {
+                send_region_action(&net, &token, ActionKind::Settings, settings);
+            }
         }
     }
 }
@@ -322,6 +329,10 @@ fn drain_replies(
                     Ok(list) => CatalogState::Loaded(list),
                     Err(e) => CatalogState::Failed(e),
                 };
+            }
+            Request::RegionsSizes(asked) => {
+                let answer = res.ok().and_then(|b| serde_json::from_slice(&b).ok());
+                regions.take_sizes(&asked, answer, crate::regions::now_unix());
             }
             Request::RegionAction(action, id) => {
                 if regions.busy.as_deref() == Some(id.as_str()) {

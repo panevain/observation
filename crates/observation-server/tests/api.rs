@@ -952,6 +952,7 @@ impl MockAgent {
             imported_unix: Some(imported_unix),
             last_attempt_unix: Some(imported_unix),
             auto_refresh: true,
+            refresh_days: None,
             next_refresh_unix: None,
             disk_bytes: Some(1),
             job: None,
@@ -1035,6 +1036,19 @@ async fn spawn_agent() -> (Arc<MockAgent>, String) {
                 axum::Json(
                     serde_json::json!([{"id": "monaco", "name": "Monaco", "parent": "europe"}]),
                 )
+            }),
+        )
+        .route(
+            "/catalog/sizes",
+            post(|body: Bytes| async move {
+                let ids = json(&body)["ids"].clone();
+                let sizes: serde_json::Map<String, serde_json::Value> = ids
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| Some((id.as_str()?.to_owned(), 1234.into())))
+                    .collect();
+                axum::Json(sizes)
             }),
         )
         .with_state(Arc::clone(&mock));
@@ -1261,6 +1275,35 @@ async fn region_actions_need_the_admin_token() {
 }
 
 #[tokio::test]
+async fn catalog_sizes_are_forwarded_without_a_token() {
+    let (h, _, _) = region_harness(Some("admin-secret")).await;
+    let (status, headers, body) = send(
+        &h.app,
+        post_json(
+            "/api/regions/catalog/sizes",
+            None,
+            r#"{"ids":["monaco","us/california"]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        json(&body),
+        serde_json::json!({"monaco": 1234, "us/california": 1234})
+    );
+    let too_many = serde_json::json!({ "ids": vec!["a"; 41] }).to_string();
+    for bad in [
+        r#"{"ids":["../x"]}"#,
+        r#"{"id":"monaco"}"#,
+        too_many.as_str(),
+    ] {
+        let (status, _, _) = send(&h.app, post_json("/api/regions/catalog/sizes", None, bad)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+}
+
+#[tokio::test]
 async fn region_settings_are_forwarded_with_the_admin_token() {
     let (h, _, agent) = region_harness(Some("admin-secret")).await;
     wait_for_version(&h.app, 0).await;
@@ -1300,13 +1343,23 @@ async fn region_settings_are_forwarded_with_the_admin_token() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco","refresh_days":30}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     // Other actions forward the id alone.
     let (status, _, _) = send(
         &h.app,
         post_json(
             "/api/regions/delete",
             Some("admin-secret"),
-            r#"{"id":"monaco","auto_refresh":true}"#,
+            r#"{"id":"monaco","auto_refresh":true,"refresh_days":30}"#,
         ),
     )
     .await;
@@ -1315,6 +1368,7 @@ async fn region_settings_are_forwarded_with_the_admin_token() {
         *agent.actions.lock().unwrap(),
         vec![
             ("settings".to_owned(), "monaco".to_owned()),
+            ("settings".to_owned(), "monaco".to_owned()),
             ("delete".to_owned(), "monaco".to_owned()),
         ]
     );
@@ -1322,6 +1376,7 @@ async fn region_settings_are_forwarded_with_the_admin_token() {
         *agent.bodies.lock().unwrap(),
         vec![
             serde_json::json!({"id": "monaco", "auto_refresh": false}),
+            serde_json::json!({"id": "monaco", "refresh_days": 30}),
             serde_json::json!({"id": "monaco"}),
         ]
     );

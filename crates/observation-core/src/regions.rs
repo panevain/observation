@@ -12,15 +12,50 @@ use crate::geo::BBox;
 
 /// Everything the agent knows about its regions. `version` increases on every
 /// change, so watchers can wait for the next one.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegionsSnapshot {
     pub version: u64,
     pub regions: Vec<RegionView>,
     /// Largest extract the agent will download, bytes.
     pub max_download_bytes: u64,
     /// Ready regions with [`RegionView::auto_refresh`] on are re-imported
-    /// after this many days; 0 means never.
+    /// after this many days, unless they set their own
+    /// [`RegionView::refresh_days`]; 0 turns scheduled refreshes off for all.
     pub refresh_days: u32,
+    /// Shortest interval a region can be given, days.
+    #[serde(default = "default_min_refresh_days")]
+    pub min_refresh_days: u32,
+    /// Longest interval a region can be given, days.
+    #[serde(default = "default_max_refresh_days")]
+    pub max_refresh_days: u32,
+}
+
+impl Default for RegionsSnapshot {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            regions: Vec::new(),
+            max_download_bytes: 0,
+            refresh_days: 0,
+            min_refresh_days: DEFAULT_MIN_REFRESH_DAYS,
+            max_refresh_days: DEFAULT_MAX_REFRESH_DAYS,
+        }
+    }
+}
+
+/// Default shortest refresh interval a region can be given, days
+/// (`OBS_REGIONS_MIN_REFRESH_DAYS`).
+pub const DEFAULT_MIN_REFRESH_DAYS: u32 = 7;
+/// Default longest refresh interval a region can be given, days
+/// (`OBS_REGIONS_MAX_REFRESH_DAYS`).
+pub const DEFAULT_MAX_REFRESH_DAYS: u32 = 365;
+
+fn default_min_refresh_days() -> u32 {
+    DEFAULT_MIN_REFRESH_DAYS
+}
+
+fn default_max_refresh_days() -> u32 {
+    DEFAULT_MAX_REFRESH_DAYS
 }
 
 /// What the server tells the client: the agent's snapshot, whether the agent
@@ -55,6 +90,11 @@ pub struct RegionView {
     /// The agent re-imports the region every [`RegionsSnapshot::refresh_days`].
     #[serde(default = "yes")]
     pub auto_refresh: bool,
+    /// This region's refresh interval, days, within the snapshot's
+    /// `min_refresh_days..=max_refresh_days`; `None` uses
+    /// [`RegionsSnapshot::refresh_days`].
+    #[serde(default)]
+    pub refresh_days: Option<u32>,
     /// When the next scheduled refresh is due, Unix seconds (the agent checks
     /// hourly). `None` when none is planned: not ready, auto-refresh off for
     /// the region or the agent, or an import already queued.
@@ -145,6 +185,25 @@ pub struct CatalogEntry {
     pub parent: Option<String>,
 }
 
+/// Most extracts whose download size can be asked for at once (the add list
+/// shows up to this many matches).
+pub const MAX_SIZE_IDS: usize = 40;
+
+/// Body of `POST /api/regions/catalog/sizes` (agent `/catalog/sizes`). The
+/// answer maps each id the catalog knows to its download size in bytes, or
+/// `null` when the download server did not say.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SizesRequest {
+    pub ids: Vec<String>,
+}
+
+impl SizesRequest {
+    /// Whether the request is small enough and names only valid ids.
+    pub fn is_valid(&self) -> bool {
+        self.ids.len() <= MAX_SIZE_IDS && self.ids.iter().all(|id| is_valid_region_id(id))
+    }
+}
+
 /// A region management action, named by the last part of its route
 /// (`/api/regions/import`, agent `/regions/import`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +211,8 @@ pub enum ActionKind {
     Import,
     Cancel,
     Delete,
-    /// Changes the region's settings ([`RegionAction::auto_refresh`]).
+    /// Changes the region's settings ([`RegionAction::auto_refresh`],
+    /// [`RegionAction::refresh_days`]).
     Settings,
 }
 
@@ -206,6 +266,18 @@ pub struct RegionAction {
     /// For [`ActionKind::Settings`]: turn scheduled refreshes on or off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_refresh: Option<bool>,
+    /// For [`ActionKind::Settings`]: days between scheduled refreshes, within
+    /// the agent's [`RegionsSnapshot::min_refresh_days`] and
+    /// [`RegionsSnapshot::max_refresh_days`] (the agent checks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_days: Option<u32>,
+}
+
+impl RegionAction {
+    /// Whether a settings change changes anything.
+    pub fn has_settings(&self) -> bool {
+        self.auto_refresh.is_some() || self.refresh_days.is_some()
+    }
 }
 
 /// Whether `id` looks like a Geofabrik extract id: lowercase ASCII letters,
@@ -300,6 +372,7 @@ mod tests {
                 imported_unix: Some(1),
                 last_attempt_unix: Some(1),
                 auto_refresh: false,
+                refresh_days: Some(30),
                 next_refresh_unix: None,
                 disk_bytes: Some(2),
                 job: Some(JobView {
@@ -312,6 +385,8 @@ mod tests {
             }],
             max_download_bytes: 10,
             refresh_days: 7,
+            min_refresh_days: 1,
+            max_refresh_days: 30,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"phase\":\"importing\""));
@@ -327,6 +402,25 @@ mod tests {
         .unwrap();
         assert!(v.auto_refresh);
         assert_eq!(v.next_refresh_unix, None);
+        assert_eq!(v.refresh_days, None);
+        let s: RegionsSnapshot = serde_json::from_str(
+            r#"{"version":1,"regions":[],"max_download_bytes":1,"refresh_days":7}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (s.min_refresh_days, s.max_refresh_days),
+            (DEFAULT_MIN_REFRESH_DAYS, DEFAULT_MAX_REFRESH_DAYS)
+        );
+    }
+
+    #[test]
+    fn size_requests_are_bounded() {
+        let req = |ids: Vec<&str>| SizesRequest {
+            ids: ids.into_iter().map(str::to_owned).collect(),
+        };
+        assert!(req(vec!["monaco", "us/california"]).is_valid());
+        assert!(!req(vec!["monaco", "../x"]).is_valid());
+        assert!(!req(vec!["a"; MAX_SIZE_IDS + 1]).is_valid());
     }
 
     #[test]

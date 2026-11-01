@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::body::Bytes;
 use observation_core::geo::BBox;
 use observation_core::regions::{
-    ActionKind, RegionAction, RegionView, RegionsSnapshot, RegionsStatus,
+    ActionKind, RegionAction, RegionView, RegionsSnapshot, RegionsStatus, SizesRequest,
 };
 use reqwest::StatusCode;
 use tokio::sync::watch;
@@ -213,6 +213,19 @@ impl Regions {
         Ok(body)
     }
 
+    /// Download sizes of catalog extracts (JSON, `{"<id>": bytes or null}`).
+    /// The agent caches them, so this is not cached here.
+    pub async fn catalog_sizes(&self, req: &SizesRequest) -> Result<Bytes, ApiError> {
+        let resp = self
+            .request(reqwest::Method::POST, "/catalog/sizes")
+            .json(req)
+            .timeout(Duration::from_secs(45))
+            .send()
+            .await
+            .map_err(|_| unreachable_agent())?;
+        self.answer(resp).await
+    }
+
     /// Forwards an action and publishes the snapshot the agent answers with.
     pub async fn act(
         &self,
@@ -294,6 +307,7 @@ mod tests {
             imported_unix: Some(1),
             last_attempt_unix: None,
             auto_refresh: true,
+            refresh_days: None,
             next_refresh_unix: None,
             disk_bytes: None,
             job: None,

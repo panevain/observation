@@ -24,7 +24,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use observation_core::geo::BBox;
-use observation_core::regions::{JobPhase, JobView, RegionView, RegionsSnapshot};
+use observation_core::regions::{
+    DEFAULT_MAX_REFRESH_DAYS, DEFAULT_MIN_REFRESH_DAYS, JobPhase, JobView, RegionView,
+    RegionsSnapshot,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{Notify, watch};
@@ -112,6 +115,10 @@ pub struct RegionRecord {
     /// Scheduled refreshes are on for this region.
     #[serde(default = "yes")]
     pub auto_refresh: bool,
+    /// Days between this region's scheduled refreshes; `None` uses the
+    /// agent's `OBS_REGIONS_DEFAULT_REFRESH_DAYS`.
+    #[serde(default)]
+    pub refresh_days: Option<u32>,
 }
 
 fn yes() -> bool {
@@ -203,7 +210,25 @@ pub struct Registry {
     wake: Notify,
     data_dir: PathBuf,
     max_download_bytes: u64,
-    refresh_days: u32,
+    refresh: Refresh,
+}
+
+/// The agent's scheduled-refresh settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Refresh {
+    /// Default interval, days; 0 turns scheduled refreshes off for all regions.
+    days: u32,
+    /// Range a region's own interval must lie in.
+    min_days: u32,
+    max_days: u32,
+}
+
+impl Refresh {
+    /// The interval of a region with `own` days set (clamped, in case the
+    /// range was narrowed since), or the default.
+    fn days_for(self, own: Option<u32>) -> u32 {
+        own.map_or(self.days, |d| d.clamp(self.min_days, self.max_days))
+    }
 }
 
 impl Registry {
@@ -271,7 +296,12 @@ impl Registry {
                 }
             }
         }
-        let snapshot = build_snapshot(&state, max_download_bytes, refresh_days);
+        let refresh = Refresh {
+            days: refresh_days,
+            min_days: DEFAULT_MIN_REFRESH_DAYS,
+            max_days: DEFAULT_MAX_REFRESH_DAYS,
+        };
+        let snapshot = build_snapshot(&state, max_download_bytes, refresh);
         let (tx, _) = watch::channel(snapshot);
         Ok(Self {
             state: Mutex::new(state),
@@ -279,8 +309,23 @@ impl Registry {
             wake: Notify::new(),
             data_dir: data_dir.to_owned(),
             max_download_bytes,
-            refresh_days,
+            refresh,
         })
+    }
+
+    /// Sets the range a region's own refresh interval must lie in
+    /// (`1 <= min_days <= max_days`, checked by the configuration).
+    pub fn with_refresh_range(mut self, min_days: u32, max_days: u32) -> Self {
+        self.refresh.min_days = min_days;
+        self.refresh.max_days = max_days;
+        let snapshot = build_snapshot(&self.lock(), self.max_download_bytes, self.refresh);
+        self.tx.send_replace(snapshot);
+        self
+    }
+
+    /// The range a region's own refresh interval must lie in, days.
+    pub fn refresh_range(&self) -> std::ops::RangeInclusive<u32> {
+        self.refresh.min_days..=self.refresh.max_days
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -309,7 +354,7 @@ impl Registry {
     fn commit(&self, mut state: MutexGuard<'_, State>, persist: bool) {
         state.version += 1;
         state.last_publish = Some(Instant::now());
-        let snapshot = build_snapshot(&state, self.max_download_bytes, self.refresh_days);
+        let snapshot = build_snapshot(&state, self.max_download_bytes, self.refresh);
         if persist {
             let records: Vec<&RegionRecord> = state.regions.values().map(|r| &r.record).collect();
             let path = self.data_dir.join("regions.json");
@@ -384,14 +429,23 @@ impl Registry {
         Ok(())
     }
 
-    /// Turns scheduled refreshes of `id` on or off. A refresh already queued
-    /// or running carries on (cancel it to stop it).
-    pub fn set_auto_refresh(&self, id: &str, on: bool) -> Result<(), ActionError> {
+    /// Changes the refresh settings of `id`: turns scheduled refreshes on or
+    /// off, and sets the days between them (the caller checks them against
+    /// [`Registry::refresh_range`]). `None` leaves a setting as it is. A
+    /// refresh already queued or running carries on (cancel it to stop it).
+    pub fn change_settings(
+        &self,
+        id: &str,
+        auto_refresh: Option<bool>,
+        refresh_days: Option<u32>,
+    ) -> Result<(), ActionError> {
         let mut s = self.lock();
-        let region = s.regions.get_mut(id).ok_or(ActionError::NotFound)?;
-        if region.record.auto_refresh != on {
-            region.record.auto_refresh = on;
-            tracing::info!(region = id, on, "auto-refresh changed");
+        let r = &mut s.regions.get_mut(id).ok_or(ActionError::NotFound)?.record;
+        let before = (r.auto_refresh, r.refresh_days);
+        r.auto_refresh = auto_refresh.unwrap_or(r.auto_refresh);
+        r.refresh_days = refresh_days.or(r.refresh_days);
+        if (r.auto_refresh, r.refresh_days) != before {
+            tracing::info!(region = id, on = r.auto_refresh, days = ?r.refresh_days, "refresh settings changed");
             self.commit(s, true);
         }
         Ok(())
@@ -513,29 +567,31 @@ impl Registry {
         self.lock()
             .regions
             .values()
-            .filter(|r| next_refresh(r, self.refresh_days).is_some_and(|t| t < now))
+            .filter(|r| next_refresh(r, self.refresh).is_some_and(|t| t < now))
             .map(|r| (r.record.id.clone(), r.record.name.clone()))
             .collect()
     }
 }
 
-/// When `r` is due for a scheduled refresh: `refresh_days` after its import,
+/// When `r` is due for a scheduled refresh: its interval after its import,
 /// or, when a later attempt failed or was cancelled, a day after that attempt.
 /// `None` for a region that is not ready, has an import queued or running, or
-/// has auto-refresh off (as has the agent with `refresh_days` 0).
-fn next_refresh(r: &Region, refresh_days: u32) -> Option<u64> {
-    if refresh_days == 0 || !r.record.auto_refresh || r.db.is_none() || r.job.is_some() {
+/// has auto-refresh off (as have all with the agent's default interval 0,
+/// whatever their own).
+fn next_refresh(r: &Region, refresh: Refresh) -> Option<u64> {
+    if refresh.days == 0 || !r.record.auto_refresh || r.db.is_none() || r.job.is_some() {
         return None;
     }
     let imported = r.record.imported_unix?;
-    let due = imported.saturating_add(u64::from(refresh_days) * 86_400);
+    let days = refresh.days_for(r.record.refresh_days);
+    let due = imported.saturating_add(u64::from(days) * 86_400);
     Some(match r.record.last_attempt_unix {
         Some(t) if t > imported => due.max(t.saturating_add(RETRY_REFRESH_AFTER)),
         _ => due,
     })
 }
 
-fn build_snapshot(s: &State, max_download_bytes: u64, refresh_days: u32) -> RegionsSnapshot {
+fn build_snapshot(s: &State, max_download_bytes: u64, refresh: Refresh) -> RegionsSnapshot {
     RegionsSnapshot {
         version: s.version,
         regions: s
@@ -550,14 +606,17 @@ fn build_snapshot(s: &State, max_download_bytes: u64, refresh_days: u32) -> Regi
                 imported_unix: r.record.imported_unix,
                 last_attempt_unix: r.record.last_attempt_unix,
                 auto_refresh: r.record.auto_refresh,
-                next_refresh_unix: next_refresh(r, refresh_days),
+                refresh_days: r.record.refresh_days.map(|d| refresh.days_for(Some(d))),
+                next_refresh_unix: next_refresh(r, refresh),
                 disk_bytes: r.record.disk_bytes,
                 job: r.job.as_ref().map(|(_, v)| v.clone()),
                 last_error: r.record.last_error.clone(),
             })
             .collect(),
         max_download_bytes,
-        refresh_days,
+        refresh_days: refresh.days,
+        min_refresh_days: refresh.min_days,
+        max_refresh_days: refresh.max_days,
     }
 }
 
@@ -710,7 +769,10 @@ mod tests {
     async fn auto_refresh_can_be_turned_off_per_region() {
         let dir = tempfile::tempdir().unwrap();
         let reg = Registry::open(dir.path(), 1, 1).unwrap();
-        assert_eq!(reg.set_auto_refresh("a", false), Err(ActionError::NotFound));
+        assert_eq!(
+            reg.change_settings("a", Some(false), None),
+            Err(ActionError::NotFound)
+        );
         reg.enqueue("a", "A").unwrap();
         let (id, job) = reg.next_job().await;
         reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
@@ -727,12 +789,12 @@ mod tests {
         assert_eq!(reg.due_for_refresh().len(), 1);
 
         let version = reg.snapshot().version;
-        reg.set_auto_refresh("a", false).unwrap();
+        reg.change_settings("a", Some(false), None).unwrap();
         assert!(reg.due_for_refresh().is_empty());
         let r = &reg.snapshot().regions[0];
         assert!(!r.auto_refresh);
         assert_eq!(r.next_refresh_unix, None);
-        reg.set_auto_refresh("a", false).unwrap();
+        reg.change_settings("a", Some(false), None).unwrap();
         assert_eq!(reg.snapshot().version, version + 1, "no change, no publish");
 
         // Persisted across restarts.
@@ -740,8 +802,54 @@ mod tests {
         let reopened = Registry::open(dir.path(), 1, 1).unwrap();
         assert!(!reopened.snapshot().regions[0].auto_refresh);
         assert!(reopened.due_for_refresh().is_empty());
-        reopened.set_auto_refresh("a", true).unwrap();
+        reopened.change_settings("a", Some(true), None).unwrap();
         assert_eq!(reopened.due_for_refresh().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_region_can_have_its_own_interval() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::open(dir.path(), 1, 7).unwrap();
+        assert_eq!(reg.refresh_range(), 7..=365, "the defaults");
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
+        let imported_at = now_unix() - 10 * 86_400;
+        {
+            let mut state = reg.lock();
+            let r = &mut state.regions.get_mut("a").unwrap().record;
+            r.imported_unix = Some(imported_at);
+            r.last_attempt_unix = r.imported_unix;
+        }
+        assert_eq!(
+            reg.due_for_refresh().len(),
+            1,
+            "the agent's 7 days have passed"
+        );
+
+        reg.change_settings("a", None, Some(30)).unwrap();
+        assert!(reg.due_for_refresh().is_empty(), "its own 30 days have not");
+        let r = &reg.snapshot().regions[0];
+        assert_eq!(r.refresh_days, Some(30));
+        assert!(r.auto_refresh, "untouched");
+        assert_eq!(r.next_refresh_unix, Some(imported_at + 30 * 86_400));
+
+        // Turning it off and on keeps the interval, and it survives a restart.
+        reg.change_settings("a", Some(false), None).unwrap();
+        reg.change_settings("a", Some(true), None).unwrap();
+        drop(reg);
+        // A narrower range clamps it.
+        let narrow = Registry::open(dir.path(), 1, 7)
+            .unwrap()
+            .with_refresh_range(1, 14);
+        let snap = narrow.snapshot();
+        assert_eq!((snap.min_refresh_days, snap.max_refresh_days), (1, 14));
+        assert_eq!(snap.regions[0].refresh_days, Some(14));
+        assert_eq!(narrow.due_for_refresh().len(), 0, "14 days have not passed");
+        drop(narrow);
+        // A default interval of 0 still turns every scheduled refresh off.
+        let off = Registry::open(dir.path(), 1, 0).unwrap();
+        assert_eq!(off.snapshot().regions[0].next_refresh_unix, None);
     }
 
     #[test]

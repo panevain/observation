@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use observation_core::regions::{DEFAULT_MAX_REFRESH_DAYS, DEFAULT_MIN_REFRESH_DAYS};
 use observation_upstream::{UrlProblem, redact};
 use thiserror::Error;
 
@@ -28,6 +29,14 @@ pub enum ConfigError {
     AllowPrivate(String),
     #[error("OBS_LOG_FORMAT `{0}` is not `text` or `json`")]
     LogFormat(String),
+    #[error(
+        "OBS_REGIONS_MIN_REFRESH_DAYS ({0}) must be at least 1 and at most OBS_REGIONS_MAX_REFRESH_DAYS ({1})"
+    )]
+    RefreshRange(u32, u32),
+    #[error(
+        "OBS_REGIONS_REFRESH_DAYS was renamed to OBS_REGIONS_DEFAULT_REFRESH_DAYS (regions can now have their own interval); rename it"
+    )]
+    RenamedRefreshDays,
 }
 
 #[derive(Debug, Clone)]
@@ -47,8 +56,12 @@ pub struct Config {
     pub allow_private_upstreams: bool,
     /// Largest extract that will be downloaded (`OBS_REGIONS_MAX_DOWNLOAD_MB`).
     pub max_download_bytes: u64,
-    /// Re-import ready regions after this many days; 0 = never (`OBS_REGIONS_REFRESH_DAYS`).
+    /// Re-import ready regions after this many days; 0 = never (`OBS_REGIONS_DEFAULT_REFRESH_DAYS`).
     pub refresh_days: u32,
+    /// Shortest refresh interval a region can be given, days (`OBS_REGIONS_MIN_REFRESH_DAYS`).
+    pub min_refresh_days: u32,
+    /// Longest refresh interval a region can be given, days (`OBS_REGIONS_MAX_REFRESH_DAYS`).
+    pub max_refresh_days: u32,
     /// Bearer token every request but `/healthz` must carry (`OBS_REGIONS_TOKEN`).
     pub token: Option<String>,
     /// Queries run at once (`OBS_REGIONS_QUERY_CONCURRENCY`).
@@ -105,7 +118,24 @@ impl Config {
             Some("json") => true,
             Some(other) => return Err(ConfigError::LogFormat(other.to_owned())),
         };
-        let refresh_days = num("OBS_REGIONS_REFRESH_DAYS", 7)?;
+        // Renamed after 0.1.0-dev.2: refuse rather than silently use the default.
+        if get("OBS_REGIONS_REFRESH_DAYS").is_some()
+            && get("OBS_REGIONS_DEFAULT_REFRESH_DAYS").is_none()
+        {
+            return Err(ConfigError::RenamedRefreshDays);
+        }
+        let refresh_days = num("OBS_REGIONS_DEFAULT_REFRESH_DAYS", 7)?;
+        let days = |k: &'static str, d: u32| {
+            num(k, u64::from(d)).map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+        };
+        let min_refresh_days = days("OBS_REGIONS_MIN_REFRESH_DAYS", DEFAULT_MIN_REFRESH_DAYS)?;
+        let max_refresh_days = days("OBS_REGIONS_MAX_REFRESH_DAYS", DEFAULT_MAX_REFRESH_DAYS)?;
+        if min_refresh_days == 0 || min_refresh_days > max_refresh_days {
+            return Err(ConfigError::RefreshRange(
+                min_refresh_days,
+                max_refresh_days,
+            ));
+        }
         Ok(Self {
             bind,
             data_dir: or("OBS_REGIONS_DATA_DIR", "/data").into(),
@@ -115,6 +145,8 @@ impl Config {
             allow_private_upstreams,
             max_download_bytes: num("OBS_REGIONS_MAX_DOWNLOAD_MB", 2048)?.saturating_mul(1 << 20),
             refresh_days: u32::try_from(refresh_days).unwrap_or(u32::MAX),
+            min_refresh_days,
+            max_refresh_days,
             token: get("OBS_REGIONS_TOKEN"),
             query_concurrency: num("OBS_REGIONS_QUERY_CONCURRENCY", 4)?.clamp(1, 64) as usize,
             query_timeout: Duration::from_secs(30),
@@ -152,11 +184,12 @@ mod tests {
         assert_eq!(c.bind.port(), 8090);
         assert_eq!(c.max_download_bytes, 2048 << 20);
         assert_eq!(c.refresh_days, 7);
+        assert_eq!((c.min_refresh_days, c.max_refresh_days), (7, 365));
         assert_eq!(c.token, None);
 
         let c = Config::from_lookup(lookup(&[
             ("OBS_REGIONS_MAX_DOWNLOAD_MB", "10"),
-            ("OBS_REGIONS_REFRESH_DAYS", "0"),
+            ("OBS_REGIONS_DEFAULT_REFRESH_DAYS", "0"),
             ("OBS_REGIONS_TOKEN", " secret "),
         ]))
         .unwrap();
@@ -165,9 +198,28 @@ mod tests {
         assert_eq!(c.token.as_deref(), Some("secret"));
 
         assert!(matches!(
-            Config::from_lookup(lookup(&[("OBS_REGIONS_REFRESH_DAYS", "-1")])),
+            Config::from_lookup(lookup(&[("OBS_REGIONS_DEFAULT_REFRESH_DAYS", "-1")])),
             Err(ConfigError::Number(..))
         ));
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_REGIONS_MIN_REFRESH_DAYS", "1"),
+            ("OBS_REGIONS_MAX_REFRESH_DAYS", "30"),
+        ]))
+        .unwrap();
+        assert_eq!((c.min_refresh_days, c.max_refresh_days), (1, 30));
+        assert_eq!(
+            Config::from_lookup(lookup(&[("OBS_REGIONS_REFRESH_DAYS", "14")])).unwrap_err(),
+            ConfigError::RenamedRefreshDays
+        );
+        for (min, max) in [("0", "30"), ("31", "30")] {
+            assert!(matches!(
+                Config::from_lookup(lookup(&[
+                    ("OBS_REGIONS_MIN_REFRESH_DAYS", min),
+                    ("OBS_REGIONS_MAX_REFRESH_DAYS", max),
+                ])),
+                Err(ConfigError::RefreshRange(..))
+            ));
+        }
         assert!(matches!(
             Config::from_lookup(lookup(&[("OBS_REGIONS_CATALOG_URL", "ftp://x/")])),
             Err(ConfigError::CatalogUrl(_))
