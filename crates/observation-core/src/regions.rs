@@ -12,14 +12,50 @@ use crate::geo::BBox;
 
 /// Everything the agent knows about its regions. `version` increases on every
 /// change, so watchers can wait for the next one.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegionsSnapshot {
     pub version: u64,
     pub regions: Vec<RegionView>,
     /// Largest extract the agent will download, bytes.
     pub max_download_bytes: u64,
-    /// Ready regions are re-imported after this many days; 0 means never.
+    /// Ready regions with [`RegionView::auto_refresh`] on are re-imported
+    /// after this many days, unless they set their own
+    /// [`RegionView::refresh_days`]; 0 turns scheduled refreshes off for all.
     pub refresh_days: u32,
+    /// Shortest interval a region can be given, days.
+    #[serde(default = "default_min_refresh_days")]
+    pub min_refresh_days: u32,
+    /// Longest interval a region can be given, days.
+    #[serde(default = "default_max_refresh_days")]
+    pub max_refresh_days: u32,
+}
+
+impl Default for RegionsSnapshot {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            regions: Vec::new(),
+            max_download_bytes: 0,
+            refresh_days: 0,
+            min_refresh_days: DEFAULT_MIN_REFRESH_DAYS,
+            max_refresh_days: DEFAULT_MAX_REFRESH_DAYS,
+        }
+    }
+}
+
+/// Default shortest refresh interval a region can be given, days
+/// (`OBS_REGIONS_MIN_REFRESH_DAYS`).
+pub const DEFAULT_MIN_REFRESH_DAYS: u32 = 7;
+/// Default longest refresh interval a region can be given, days
+/// (`OBS_REGIONS_MAX_REFRESH_DAYS`).
+pub const DEFAULT_MAX_REFRESH_DAYS: u32 = 365;
+
+fn default_min_refresh_days() -> u32 {
+    DEFAULT_MIN_REFRESH_DAYS
+}
+
+fn default_max_refresh_days() -> u32 {
+    DEFAULT_MAX_REFRESH_DAYS
 }
 
 /// What the server tells the client: the agent's snapshot, whether the agent
@@ -28,7 +64,7 @@ pub struct RegionsSnapshot {
 pub struct RegionsStatus {
     /// The server reached the region agent on its last try.
     pub agent_online: bool,
-    /// The server accepts import, cancel and delete requests (with the admin token).
+    /// The server accepts management requests (with the admin token).
     pub manageable: bool,
     pub snapshot: RegionsSnapshot,
 }
@@ -48,12 +84,36 @@ pub struct RegionView {
     pub data_timestamp: Option<String>,
     /// When the data was imported, Unix seconds.
     pub imported_unix: Option<u64>,
+    /// When the last import ended, however it ended (Unix seconds).
+    #[serde(default)]
+    pub last_attempt_unix: Option<u64>,
+    /// The agent re-imports the region every [`RegionsSnapshot::refresh_days`].
+    #[serde(default = "yes")]
+    pub auto_refresh: bool,
+    /// This region's refresh interval, days, within the snapshot's
+    /// `min_refresh_days..=max_refresh_days`; `None` uses
+    /// [`RegionsSnapshot::refresh_days`].
+    #[serde(default)]
+    pub refresh_days: Option<u32>,
+    /// When the next scheduled refresh is due, Unix seconds (the agent checks
+    /// hourly). `None` when none is planned: not ready, auto-refresh off for
+    /// the region or the agent, or an import already queued.
+    #[serde(default)]
+    pub next_refresh_unix: Option<u64>,
     /// Size of the region's database on disk, bytes.
     pub disk_bytes: Option<u64>,
     /// Queued or running import.
     pub job: Option<JobView>,
     /// Why the last import failed.
     pub last_error: Option<String>,
+    /// When it failed, Unix seconds (unknown for failures recorded before
+    /// this field, and for a database found missing at start-up).
+    #[serde(default)]
+    pub last_error_unix: Option<u64>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// Progress of an import.
@@ -129,6 +189,25 @@ pub struct CatalogEntry {
     pub parent: Option<String>,
 }
 
+/// Most extracts whose download size can be asked for at once (the add list
+/// shows up to this many matches).
+pub const MAX_SIZE_IDS: usize = 40;
+
+/// Body of `POST /api/regions/catalog/sizes` (agent `/catalog/sizes`). The
+/// answer maps each id the catalog knows to its download size in bytes, or
+/// `null` when the download server did not say.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SizesRequest {
+    pub ids: Vec<String>,
+}
+
+impl SizesRequest {
+    /// Whether the request is small enough and names only valid ids.
+    pub fn is_valid(&self) -> bool {
+        self.ids.len() <= MAX_SIZE_IDS && self.ids.iter().all(|id| is_valid_region_id(id))
+    }
+}
+
 /// A region management action, named by the last part of its route
 /// (`/api/regions/import`, agent `/regions/import`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +215,9 @@ pub enum ActionKind {
     Import,
     Cancel,
     Delete,
+    /// Changes the region's settings ([`RegionAction::auto_refresh`],
+    /// [`RegionAction::refresh_days`]).
+    Settings,
 }
 
 impl ActionKind {
@@ -144,6 +226,7 @@ impl ActionKind {
             "import" => Some(Self::Import),
             "cancel" => Some(Self::Cancel),
             "delete" => Some(Self::Delete),
+            "settings" => Some(Self::Settings),
             _ => None,
         }
     }
@@ -153,6 +236,15 @@ impl ActionKind {
             Self::Import => "import",
             Self::Cancel => "cancel",
             Self::Delete => "delete",
+            Self::Settings => "settings",
+        }
+    }
+
+    /// What the action does to a region, for messages: `Could not {verb} monaco`.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Self::Settings => "change the settings of",
+            other => other.path(),
         }
     }
 }
@@ -171,10 +263,37 @@ pub fn bearer_matches(header: Option<&str>, secret: &str) -> bool {
             == 0
 }
 
-/// Body of the import, cancel and delete requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Body of the region management requests.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegionAction {
     pub id: String,
+    /// For [`ActionKind::Settings`]: turn scheduled refreshes on or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_refresh: Option<bool>,
+    /// For [`ActionKind::Settings`]: days between scheduled refreshes, within
+    /// the agent's [`RegionsSnapshot::min_refresh_days`] and
+    /// [`RegionsSnapshot::max_refresh_days`] (the agent checks). Absent
+    /// (`None`) leaves the interval as it is; `null` (`Some(None)`) returns the
+    /// region to [`RegionsSnapshot::refresh_days`].
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refresh_days: Option<Option<u32>>,
+}
+
+/// Deserializes a field that is present as `Some`, so `null` (`Some(None)`)
+/// differs from an absent field (`None`, from `default`).
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u32>>, D::Error> {
+    Option::<u32>::deserialize(d).map(Some)
+}
+
+impl RegionAction {
+    /// Whether a settings change changes anything.
+    pub fn has_settings(&self) -> bool {
+        self.auto_refresh.is_some() || self.refresh_days.is_some()
+    }
 }
 
 /// Whether `id` looks like a Geofabrik extract id: lowercase ASCII letters,
@@ -223,7 +342,12 @@ mod tests {
 
     #[test]
     fn actions_round_trip() {
-        for a in [ActionKind::Import, ActionKind::Cancel, ActionKind::Delete] {
+        for a in [
+            ActionKind::Import,
+            ActionKind::Cancel,
+            ActionKind::Delete,
+            ActionKind::Settings,
+        ] {
             assert_eq!(ActionKind::parse(a.path()), Some(a));
         }
         assert_eq!(ActionKind::parse("nuke"), None);
@@ -262,6 +386,10 @@ mod tests {
                 bbox: BBox::new(43.72, 7.40, 43.75, 7.44).ok(),
                 data_timestamp: Some("2026-10-19T20:21:11Z".into()),
                 imported_unix: Some(1),
+                last_attempt_unix: Some(1),
+                auto_refresh: false,
+                refresh_days: Some(30),
+                next_refresh_unix: None,
                 disk_bytes: Some(2),
                 job: Some(JobView {
                     phase: JobPhase::Importing,
@@ -270,12 +398,87 @@ mod tests {
                     since_unix: 3,
                 }),
                 last_error: None,
+                last_error_unix: None,
             }],
             max_download_bytes: 10,
             refresh_days: 7,
+            min_refresh_days: 1,
+            max_refresh_days: 30,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"phase\":\"importing\""));
         assert_eq!(serde_json::from_str::<RegionsSnapshot>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn regions_from_an_older_agent_refresh_automatically() {
+        let v: RegionView = serde_json::from_str(
+            r#"{"id":"a","name":"A","ready":true,"bbox":null,"data_timestamp":null,
+                "imported_unix":1,"disk_bytes":null,"job":null,"last_error":null}"#,
+        )
+        .unwrap();
+        assert!(v.auto_refresh);
+        assert_eq!(v.next_refresh_unix, None);
+        assert_eq!(v.refresh_days, None);
+        let s: RegionsSnapshot = serde_json::from_str(
+            r#"{"version":1,"regions":[],"max_download_bytes":1,"refresh_days":7}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (s.min_refresh_days, s.max_refresh_days),
+            (DEFAULT_MIN_REFRESH_DAYS, DEFAULT_MAX_REFRESH_DAYS)
+        );
+    }
+
+    #[test]
+    fn size_requests_are_bounded() {
+        let req = |ids: Vec<&str>| SizesRequest {
+            ids: ids.into_iter().map(str::to_owned).collect(),
+        };
+        assert!(req(vec!["monaco", "us/california"]).is_valid());
+        assert!(!req(vec!["monaco", "../x"]).is_valid());
+        assert!(!req(vec!["a"; MAX_SIZE_IDS + 1]).is_valid());
+    }
+
+    #[test]
+    fn an_interval_can_be_left_set_or_cleared() {
+        let parse = |json: &str| {
+            serde_json::from_str::<RegionAction>(json)
+                .unwrap()
+                .refresh_days
+        };
+        assert_eq!(
+            parse(r#"{"id":"a","auto_refresh":true}"#),
+            None,
+            "absent: leave it"
+        );
+        assert_eq!(parse(r#"{"id":"a","refresh_days":30}"#), Some(Some(30)));
+        assert_eq!(
+            parse(r#"{"id":"a","refresh_days":null}"#),
+            Some(None),
+            "null: clear it"
+        );
+        let clear = RegionAction {
+            id: "a".into(),
+            refresh_days: Some(None),
+            ..RegionAction::default()
+        };
+        assert!(clear.has_settings());
+        assert_eq!(
+            serde_json::to_string(&clear).unwrap(),
+            r#"{"id":"a","refresh_days":null}"#
+        );
+    }
+
+    #[test]
+    fn plain_actions_carry_only_the_id() {
+        let plain = RegionAction {
+            id: "monaco".into(),
+            ..RegionAction::default()
+        };
+        assert_eq!(serde_json::to_string(&plain).unwrap(), r#"{"id":"monaco"}"#);
+        let a: RegionAction =
+            serde_json::from_str(r#"{"id":"monaco","auto_refresh":false}"#).unwrap();
+        assert_eq!(a.auto_refresh, Some(false));
     }
 }

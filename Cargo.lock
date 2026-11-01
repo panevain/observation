@@ -4720,7 +4720,6 @@ dependencies = [
  "js-sys",
  "observation-core",
  "observation-tokens",
- "serde",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4789,7 +4788,6 @@ name = "observation-upstream"
 version = "0.1.0"
 dependencies = [
  "reqwest",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]

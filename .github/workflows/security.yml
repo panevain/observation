@@ -66,7 +66,7 @@ jobs:
         run: mise run zizmor --sarif zizmor.sarif
       - name: Upload SARIF
         if: ${{ !cancelled() && hashFiles('zizmor.sarif') != '' && env.UPLOAD_SARIF == 'true' }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: zizmor.sarif
           category: zizmor
@@ -88,6 +88,48 @@ jobs:
         with:
           tools: cargo-audit
       - run: mise run audit
+
+  # Every crate in the server side's tree (observation-core, the server, the region agent) is
+  # audited by us or by an imported audit set, or exempted (supply-chain/README.md). The imports
+  # come from supply-chain/imports.lock, so this needs no network beyond crates.io.
+  cargo-vet:
+    name: cargo-vet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-vet
+      # cargo-vet reads the dependency graph through `cargo metadata`.
+      - uses: $/.github/actions/setup-rust
+      - run: mise run vet
+
+  # Every crate version a pull request adds to Cargo.lock or fuzz/Cargo.lock, used directly or
+  # pulled in by another crate, must be at least .config/cargo-cooldown.toml's `days` old:
+  # Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec vulnerabilities at
+  # the base are exempt (cargo-audit finds those). Skipped outside pull requests.
+  cargo-cooldown:
+    name: cargo-cooldown
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent, the base branch.
+          fetch-depth: 2
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit
+      - run: mise run cooldown --base HEAD^1
 
   trivy:
     name: trivy (image + repo)
@@ -117,7 +159,7 @@ jobs:
 
       - name: Upload fs SARIF
         if: ${{ !cancelled() && hashFiles('trivy-fs.sarif') != '' && env.UPLOAD_SARIF == 'true' }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -155,7 +197,7 @@ jobs:
 
       - name: Upload image SARIF
         if: ${{ !cancelled() && hashFiles('trivy-image.sarif') != '' && env.UPLOAD_SARIF == 'true' }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image

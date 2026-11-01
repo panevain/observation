@@ -11,7 +11,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
-use observation_core::regions::ActionKind;
+use observation_core::regions::{ActionKind, RegionAction, SizesRequest};
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
 
@@ -24,6 +24,7 @@ enum Request {
     RegionsStatus,
     RegionsCatalog,
     RegionAction(ActionKind, String),
+    RegionsSizes(Vec<String>),
 }
 
 /// Settings published by the server at `/api/config`.
@@ -238,20 +239,45 @@ fn send_region_requests(net: Res<Net>, mut regions: ResMut<Regions>) {
                 regions.catalog = CatalogState::Loading;
                 net.get("/api/regions/catalog".to_owned(), Request::RegionsCatalog);
             }
-            RegionRequest::Action(action, id) => {
-                let body = serde_json::json!({ "id": id }).to_string();
+            RegionRequest::Action(action, id) => send_region_action(
+                &net,
+                &token,
+                action,
+                RegionAction {
+                    id,
+                    ..RegionAction::default()
+                },
+            ),
+            RegionRequest::Sizes(ids) => {
+                let body = SizesRequest { ids };
                 net.send(
                     HttpRequest {
-                        url: format!("/api/regions/{}", action.path()),
+                        url: "/api/regions/catalog/sizes".to_owned(),
                         method: "POST",
-                        body: Some(body),
-                        bearer: Some(token.clone()),
+                        body: serde_json::to_string(&body).ok(),
+                        bearer: None,
                     },
-                    Request::RegionAction(action, id),
+                    Request::RegionsSizes(body.ids),
                 );
+            }
+            RegionRequest::Settings(settings) => {
+                send_region_action(&net, &token, ActionKind::Settings, settings);
             }
         }
     }
+}
+
+fn send_region_action(net: &Net, token: &str, action: ActionKind, body: RegionAction) {
+    let id = body.id.clone();
+    net.send(
+        HttpRequest {
+            url: format!("/api/regions/{}", action.path()),
+            method: "POST",
+            body: serde_json::to_string(&body).ok(),
+            bearer: Some(token.to_owned()),
+        },
+        Request::RegionAction(action, id),
+    );
 }
 
 fn drain_replies(
@@ -304,6 +330,10 @@ fn drain_replies(
                     Err(e) => CatalogState::Failed(e),
                 };
             }
+            Request::RegionsSizes(asked) => {
+                let answer = res.ok().and_then(|b| serde_json::from_slice(&b).ok());
+                regions.take_sizes(&asked, answer, crate::regions::now_unix());
+            }
             Request::RegionAction(action, id) => {
                 if regions.busy.as_deref() == Some(id.as_str()) {
                     regions.busy = None;
@@ -317,7 +347,7 @@ fn drain_replies(
                             regions.store_token();
                         }
                     }
-                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.path())),
+                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.verb())),
                 }
             }
             Request::Area(request) => {

@@ -25,7 +25,9 @@ updates:
       timezone: Etc/UTC
     open-pull-requests-limit: 5
     # Wait a week after a release before proposing it (supply-chain hygiene);
-    # does not delay Dependabot *security* updates.
+    # does not delay Dependabot *security* updates. This covers only the crate being bumped: the
+    # cargo-cooldown check (security.yml, .config/cargo-cooldown.toml) holds every crate version
+    # a PR adds to the lockfiles, indirect ones included, to the same 7 days.
     cooldown:
       default-days: 7
     commit-message:
@@ -69,6 +71,23 @@ updates:
         update-types: [patch]
       actions-minor:
         update-types: [minor]
+
+  # The browser smoke test's one dependency (playwright-core, tests/browser); it ships nothing.
+  - package-ecosystem: npm
+    directory: /tests/browser
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:10"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "test"
+    groups:
+      npm:
+        patterns: ["*"]
 
   # Daily, with no cooldown: base images have no Dependabot security updates, so their digest
   # refreshes are how Debian security fixes reach develop. (Cooldown would also only apply to

@@ -6,7 +6,14 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::from_env()?;
+    // Printed with its message: returned, it would print as `Debug`.
+    let config = match Config::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("observation-regions: {e}");
+            std::process::exit(2);
+        }
+    };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     if config.json_logs {
         tracing_subscriber::fmt()

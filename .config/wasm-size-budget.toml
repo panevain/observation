@@ -1,0 +1,18 @@
+# Largest allowed size of each WebAssembly module in dist/, checked after every release build
+# by scripts/check-wasm-size.py (ci.yml's wasm job; locally `mise run build:budget` after
+# `mise run build`). Keys are the module names without trunk's content hash.
+#
+# The limits sit a few percent above the current sizes, so an unplanned jump fails the build
+# instead of passing unnoticed. When a change grows the bundle on purpose, raise the limit in
+# the same pull request and say why; docs/design.md#bundle-size lists what dominates it.
+# Sizes are bytes; gzip is zlib level 9 (the server sends gzip or brotli to browsers).
+
+[observation-client]
+# 26,683,425 raw and 8,020,291 gzip on develop at 5a18361 (Bevy 0.20.1).
+raw = 27_500_000
+gzip = 8_300_000
+
+[coverage-worker]
+# 48,722 raw and 22,190 gzip on develop at 5a18361.
+raw = 64_000
+gzip = 32_000

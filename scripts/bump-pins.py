@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bumps the pins Dependabot can't: the tools in mise.toml and mise.ci.toml (through
-`mise upgrade --bump`), fnox (a task tool, which mise does not bump), the CI mise version (setup-mise,
+`mise upgrade --bump`), fnox (a task tool, which mise does not bump; the cosign task tool follows
+CI's cosign), the CI mise version (setup-mise,
 mise.toml's min_version and the Dockerfile's mise image), Overpass in the Dockerfile, the Rust toolchain and
 the fuzz nightly. Used by pins.yml (weekly), which then runs `mise run lock` and
 `mise run sync` and opens a PR.
@@ -134,6 +135,16 @@ def bump_fnox(f, out):
         out.append(("fnox", cur, latest[0]))
 
 
+def sync_cosign(f, out):
+    """cosign is a CI tool (mise.ci.toml, which bump_mise_tools moves) and a task tool of the
+    verify and up tasks in mise.toml, which `mise upgrade` leaves alone: they follow CI's."""
+    ci = f.find("mise.ci.toml", r'^cosign = "([^"]+)"')
+    cur = f.find("mise.toml", r'^tools\.cosign = "([^"]+)"')
+    if cur != ci:
+        f.sub("mise.toml", r'^(tools\.cosign = )"[^"]+"', rf'\g<1>"{ci}"', count=2)
+        out.append(("cosign (task tool)", cur, ci))
+
+
 def bump_mise(f, out):
     cur = f.find(SETUP_MISE, r"^ +version: (\S+)$")
     latest = github_latest("jdx/mise", r"v(\d{4}\.\d+\.\d+)")
@@ -214,9 +225,11 @@ def bump_nightly(f, out):
         return
 
 
-# "tools" goes first: mise edits mise.toml itself, before bump_fnox reads it.
+# "tools" goes first: mise edits mise.toml and mise.ci.toml itself, before bump_fnox and
+# sync_cosign read them.
 BUMPS = {
-    "tools": bump_mise_tools, "fnox": bump_fnox, "mise": bump_mise, "overpass": bump_overpass,
+    "tools": bump_mise_tools, "fnox": bump_fnox, "cosign": sync_cosign, "mise": bump_mise,
+    "overpass": bump_overpass,
     "rust": bump_rust, "nightly": bump_nightly,
 }
 
