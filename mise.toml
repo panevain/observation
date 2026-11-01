@@ -138,8 +138,12 @@ run = "trunk build --locked"
 [tasks.serve]
 description = "Dev-build the client, then run the server from the repo root (`--release` builds both for release)"
 usage = 'flag "--release" help="Release-build the client and the server, as CI does"'
-depends = ["{% if usage.release %}build{% else %}build:dev{% endif %}"]
-run = "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}"
+# The client build is a step, not a templated `depends` entry, which `mise tasks validate`
+# can't resolve to a task.
+run = [
+  "trunk build --locked{% if usage.release %} --release{% endif %}",
+  "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}",
+]
 
 # The old name for `serve --release`. An alias can't pass the flag, so this is a task.
 [tasks."serve:release"]
