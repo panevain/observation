@@ -331,12 +331,29 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                 if (field.drag_stopped() || field.lost_focus())
                     && let Some((id, d)) = r.refresh_edit.take()
                     && id == region.id
-                    && region.refresh_days != Some(d)
+                    // Unchanged, or a default-following region dragged back
+                    // to the default: nothing to pin.
+                    && d != current
                     && !ui.input(|i| i.key_pressed(egui::Key::Escape))
                 {
                     r.request(RegionRequest::Settings(RegionAction {
                         id,
-                        refresh_days: Some(d),
+                        refresh_days: Some(Some(d)),
+                        ..RegionAction::default()
+                    }));
+                }
+                if region.refresh_days.is_some()
+                    && ui
+                        .add_enabled(enabled, secondary(t, "Default"))
+                        .on_hover_text(format!(
+                            "Follow the server's default of {refresh_days} days again"
+                        ))
+                        .on_disabled_hover_text(not_allowed)
+                        .clicked()
+                {
+                    r.request(RegionRequest::Settings(RegionAction {
+                        id: region.id.clone(),
+                        refresh_days: Some(None),
                         ..RegionAction::default()
                     }));
                 }
@@ -347,7 +364,7 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         }
         if let Some(e) = &region.last_error {
             let when = region
-                .last_attempt_unix
+                .last_error_unix
                 .map(|at| format!(" {}", ago(at, now)))
                 .unwrap_or_default();
             ui.add(

@@ -88,7 +88,8 @@ pub async fn catalog_sizes(
 
 /// `POST /api/regions/{import|cancel|delete}` with `{"id": "…"}`, or
 /// `/api/regions/settings` with `{"id": "…", "auto_refresh": bool,
-/// "refresh_days": n}` (either or both; the agent checks the range), and
+/// "refresh_days": n}` (either or both; the agent checks the range; `null`
+/// returns the region to the default interval), and
 /// `Authorization: Bearer <OBS_ADMIN_TOKEN>`.
 pub async fn act(
     State(state): State<AppState>,

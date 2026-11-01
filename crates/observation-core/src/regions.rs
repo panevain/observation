@@ -106,6 +106,10 @@ pub struct RegionView {
     pub job: Option<JobView>,
     /// Why the last import failed.
     pub last_error: Option<String>,
+    /// When it failed, Unix seconds (unknown for failures recorded before
+    /// this field, and for a database found missing at start-up).
+    #[serde(default)]
+    pub last_error_unix: Option<u64>,
 }
 
 fn yes() -> bool {
@@ -268,9 +272,21 @@ pub struct RegionAction {
     pub auto_refresh: Option<bool>,
     /// For [`ActionKind::Settings`]: days between scheduled refreshes, within
     /// the agent's [`RegionsSnapshot::min_refresh_days`] and
-    /// [`RegionsSnapshot::max_refresh_days`] (the agent checks).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_days: Option<u32>,
+    /// [`RegionsSnapshot::max_refresh_days`] (the agent checks). Absent
+    /// (`None`) leaves the interval as it is; `null` (`Some(None)`) returns the
+    /// region to [`RegionsSnapshot::refresh_days`].
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refresh_days: Option<Option<u32>>,
+}
+
+/// Deserializes a field that is present as `Some`, so `null` (`Some(None)`)
+/// differs from an absent field (`None`, from `default`).
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u32>>, D::Error> {
+    Option::<u32>::deserialize(d).map(Some)
 }
 
 impl RegionAction {
@@ -382,6 +398,7 @@ mod tests {
                     since_unix: 3,
                 }),
                 last_error: None,
+                last_error_unix: None,
             }],
             max_download_bytes: 10,
             refresh_days: 7,
@@ -421,6 +438,36 @@ mod tests {
         assert!(req(vec!["monaco", "us/california"]).is_valid());
         assert!(!req(vec!["monaco", "../x"]).is_valid());
         assert!(!req(vec!["a"; MAX_SIZE_IDS + 1]).is_valid());
+    }
+
+    #[test]
+    fn an_interval_can_be_left_set_or_cleared() {
+        let parse = |json: &str| {
+            serde_json::from_str::<RegionAction>(json)
+                .unwrap()
+                .refresh_days
+        };
+        assert_eq!(
+            parse(r#"{"id":"a","auto_refresh":true}"#),
+            None,
+            "absent: leave it"
+        );
+        assert_eq!(parse(r#"{"id":"a","refresh_days":30}"#), Some(Some(30)));
+        assert_eq!(
+            parse(r#"{"id":"a","refresh_days":null}"#),
+            Some(None),
+            "null: clear it"
+        );
+        let clear = RegionAction {
+            id: "a".into(),
+            refresh_days: Some(None),
+            ..RegionAction::default()
+        };
+        assert!(clear.has_settings());
+        assert_eq!(
+            serde_json::to_string(&clear).unwrap(),
+            r#"{"id":"a","refresh_days":null}"#
+        );
     }
 
     #[test]

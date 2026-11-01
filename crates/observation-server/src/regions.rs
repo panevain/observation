@@ -312,6 +312,7 @@ mod tests {
             disk_bytes: None,
             job: None,
             last_error: None,
+            last_error_unix: None,
         }
     }
 

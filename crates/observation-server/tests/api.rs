@@ -957,6 +957,7 @@ impl MockAgent {
             disk_bytes: Some(1),
             job: None,
             last_error: None,
+            last_error_unix: None,
         }];
     }
 }
@@ -1353,6 +1354,16 @@ async fn region_settings_are_forwarded_with_the_admin_token() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco","refresh_days":null}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "null clears the interval");
     // Other actions forward the id alone.
     let (status, _, _) = send(
         &h.app,
@@ -1369,6 +1380,7 @@ async fn region_settings_are_forwarded_with_the_admin_token() {
         vec![
             ("settings".to_owned(), "monaco".to_owned()),
             ("settings".to_owned(), "monaco".to_owned()),
+            ("settings".to_owned(), "monaco".to_owned()),
             ("delete".to_owned(), "monaco".to_owned()),
         ]
     );
@@ -1377,6 +1389,7 @@ async fn region_settings_are_forwarded_with_the_admin_token() {
         vec![
             serde_json::json!({"id": "monaco", "auto_refresh": false}),
             serde_json::json!({"id": "monaco", "refresh_days": 30}),
+            serde_json::json!({"id": "monaco", "refresh_days": null}),
             serde_json::json!({"id": "monaco"}),
         ]
     );

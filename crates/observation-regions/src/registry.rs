@@ -106,6 +106,9 @@ pub struct RegionRecord {
     pub imported_unix: Option<u64>,
     pub disk_bytes: Option<u64>,
     pub last_error: Option<String>,
+    /// When `last_error` happened (Unix seconds).
+    #[serde(default)]
+    pub last_error_unix: Option<u64>,
     /// When the last import ended, however it ended (Unix seconds).
     #[serde(default)]
     pub last_attempt_unix: Option<u64>,
@@ -431,19 +434,22 @@ impl Registry {
 
     /// Changes the refresh settings of `id`: turns scheduled refreshes on or
     /// off, and sets the days between them (the caller checks them against
-    /// [`Registry::refresh_range`]). `None` leaves a setting as it is. A
-    /// refresh already queued or running carries on (cancel it to stop it).
+    /// [`Registry::refresh_range`]) or, with `Some(None)`, returns the region
+    /// to the agent's default. `None` leaves a setting as it is. A refresh
+    /// already queued or running carries on (cancel it to stop it).
     pub fn change_settings(
         &self,
         id: &str,
         auto_refresh: Option<bool>,
-        refresh_days: Option<u32>,
+        refresh_days: Option<Option<u32>>,
     ) -> Result<(), ActionError> {
         let mut s = self.lock();
         let r = &mut s.regions.get_mut(id).ok_or(ActionError::NotFound)?.record;
         let before = (r.auto_refresh, r.refresh_days);
         r.auto_refresh = auto_refresh.unwrap_or(r.auto_refresh);
-        r.refresh_days = refresh_days.or(r.refresh_days);
+        if let Some(days) = refresh_days {
+            r.refresh_days = days;
+        }
         if (r.auto_refresh, r.refresh_days) != before {
             tracing::info!(region = id, on = r.auto_refresh, days = ?r.refresh_days, "refresh settings changed");
             self.commit(s, true);
@@ -522,12 +528,14 @@ impl Registry {
                     r.imported_unix = Some(now_unix());
                     r.disk_bytes = Some(imported.disk_bytes);
                     r.last_error = None;
+                    r.last_error_unix = None;
                     tracing::info!(region = id, "region ready");
                 }
                 // The region stays listed (with its old data, if any) so the error can be read.
                 Some(Err(e)) => {
                     tracing::warn!(region = id, error = %e, "region import failed");
                     region.record.last_error = Some(e);
+                    region.record.last_error_unix = Some(now_unix());
                 }
                 None => {}
             }
@@ -611,6 +619,7 @@ fn build_snapshot(s: &State, max_download_bytes: u64, refresh: Refresh) -> Regio
                 disk_bytes: r.record.disk_bytes,
                 job: r.job.as_ref().map(|(_, v)| v.clone()),
                 last_error: r.record.last_error.clone(),
+                last_error_unix: r.record.last_error_unix,
             })
             .collect(),
         max_download_bytes,
@@ -738,6 +747,11 @@ mod tests {
         reg.finish(&id, job, Some(Err("no space left".into())));
         let snap = reg.snapshot();
         assert_eq!(snap.regions[0].last_error.as_deref(), Some("no space left"));
+        assert!(
+            snap.regions[0]
+                .last_error_unix
+                .is_some_and(|t| t + 5 >= now_unix())
+        );
         assert!(!snap.regions[0].ready);
     }
 
@@ -827,7 +841,7 @@ mod tests {
             "the agent's 7 days have passed"
         );
 
-        reg.change_settings("a", None, Some(30)).unwrap();
+        reg.change_settings("a", None, Some(Some(30))).unwrap();
         assert!(reg.due_for_refresh().is_empty(), "its own 30 days have not");
         let r = &reg.snapshot().regions[0];
         assert_eq!(r.refresh_days, Some(30));
@@ -850,6 +864,67 @@ mod tests {
         // A default interval of 0 still turns every scheduled refresh off.
         let off = Registry::open(dir.path(), 1, 0).unwrap();
         assert_eq!(off.snapshot().regions[0].next_refresh_unix, None);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_does_not_move_the_failure_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = open(dir.path());
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Err("gone".into())));
+        // Pretend the failure was long ago.
+        reg.lock()
+            .regions
+            .get_mut("a")
+            .unwrap()
+            .record
+            .last_error_unix = Some(1);
+        reg.enqueue("a", "A").unwrap();
+        reg.cancel("a").unwrap();
+        let r = &reg.snapshot().regions[0];
+        assert_eq!(r.last_error.as_deref(), Some("gone"));
+        assert_eq!(r.last_error_unix, Some(1), "still when it failed");
+        assert!(
+            r.last_attempt_unix.is_some_and(|t| t > 1),
+            "the cancel is the last attempt"
+        );
+
+        // A successful import clears both.
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-2"))));
+        let r = &reg.snapshot().regions[0];
+        assert_eq!((r.last_error.as_deref(), r.last_error_unix), (None, None));
+    }
+
+    #[tokio::test]
+    async fn an_interval_can_be_cleared_back_to_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::open(dir.path(), 1, 7).unwrap();
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
+        {
+            let mut state = reg.lock();
+            let r = &mut state.regions.get_mut("a").unwrap().record;
+            r.imported_unix = Some(now_unix() - 10 * 86_400);
+            r.last_attempt_unix = r.imported_unix;
+        }
+        reg.change_settings("a", None, Some(Some(30))).unwrap();
+        assert!(reg.due_for_refresh().is_empty());
+        reg.change_settings("a", Some(true), None).unwrap();
+        assert_eq!(
+            reg.snapshot().regions[0].refresh_days,
+            Some(30),
+            "absent: left alone"
+        );
+        reg.change_settings("a", None, Some(None)).unwrap();
+        assert_eq!(reg.snapshot().regions[0].refresh_days, None);
+        assert_eq!(reg.due_for_refresh().len(), 1, "back on the 7-day default");
     }
 
     #[test]

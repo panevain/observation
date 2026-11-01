@@ -12,7 +12,7 @@
 //! | `GET /catalog` | importable extracts |
 //! | `POST /catalog/sizes` | [`SizesRequest`] -> `{"<id>": bytes or null}` |
 //! | `POST /regions/import`, `/cancel`, `/delete` | `{"id": "…"}` |
-//! | `POST /regions/settings` | `{"id": "…", "auto_refresh": true, "refresh_days": 30}` (either or both) |
+//! | `POST /regions/settings` | `{"id": "…", "auto_refresh": true, "refresh_days": 30}` (either or both; `"refresh_days": null` returns to the default) |
 //! | `POST /interpreter?bbox=s,w,n,e` | Overpass query (form field `data`) against the region holding the box; 404 if none |
 
 pub mod catalog;
@@ -395,7 +395,11 @@ async fn region_settings(
 ) -> Result<Json<RegionsSnapshot>, AgentError> {
     let id = action_id(&a)?;
     let range = agent.registry.refresh_range();
-    if !a.has_settings() || a.refresh_days.is_some_and(|d| !range.contains(&d)) {
+    if !a.has_settings()
+        || a.refresh_days
+            .flatten()
+            .is_some_and(|d| !range.contains(&d))
+    {
         return Err(err(
             StatusCode::BAD_REQUEST,
             format!(
