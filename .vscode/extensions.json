@@ -1,0 +1,24 @@
+{
+  "$schema": "vscode://schemas/extensions",
+  "recommendations": [
+    // Rust
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+    "fill-labs.dependi",
+    // Config files
+    "tamasfe.even-better-toml",
+    "redhat.vscode-yaml",
+    "editorconfig.editorconfig",
+    "hverlin.mise-vscode",
+    // Container, workflows, scripts
+    "ms-azuretools.vscode-containers",
+    "github.vscode-github-actions",
+    "timonwong.shellcheck",
+    // Spelling, in line with the typos CI check (.typos.toml)
+    "tekumara.typos-vscode"
+  ],
+  "unwantedRecommendations": [
+    // Superseded by rust-analyzer; running both duplicates diagnostics.
+    "rust-lang.rust"
+  ]
+}
