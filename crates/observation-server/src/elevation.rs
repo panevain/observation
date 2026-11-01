@@ -40,15 +40,15 @@ impl Elevation {
         };
         let ids = dem_tiles_for(bbox);
         let fetched =
-            futures_util::future::join_all(ids.iter().map(|&id| proxy.get(id, None))).await;
+            futures_util::future::join_all(ids.iter().map(|&id| proxy.get(id, None, None))).await;
         let mut pngs = Vec::with_capacity(ids.len());
         for (id, png) in ids.into_iter().zip(fetched) {
             // A missing tile is the elevation server's failure, not a missing area.
-            let png = png.map_err(|e| match e {
+            let tile = png.map_err(|e| match e {
                 ApiError::NotFound(why) => ApiError::Upstream(why.to_owned()),
                 other => other,
             })?;
-            pngs.push((id, png));
+            pngs.push((id, tile.bytes));
         }
         let (bbox, attribution) = (*bbox, self.attribution.clone());
         tokio::task::spawn_blocking(move || {

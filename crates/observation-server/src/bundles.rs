@@ -17,6 +17,7 @@ use crate::cache::Cache;
 use crate::elevation::Elevation;
 use crate::error::ApiError;
 use crate::overpass::{OsmData, OverpassClient};
+use crate::ratelimit::{ClientKey, RateLimiter};
 use crate::regions::Regions;
 
 /// Longest wait for a local region (they answer in well under a second), so
@@ -38,6 +39,8 @@ pub struct BundleService {
     elevation: Arc<Elevation>,
     attribution: String,
     in_flight: Mutex<HashMap<String, Flight>>,
+    /// Per-client limit on new builds.
+    limiter: RateLimiter,
 }
 
 impl BundleService {
@@ -47,6 +50,7 @@ impl BundleService {
         regions: Option<Arc<Regions>>,
         elevation: Arc<Elevation>,
         attribution: String,
+        limiter: RateLimiter,
     ) -> Self {
         Self {
             cache,
@@ -55,27 +59,46 @@ impl BundleService {
             elevation,
             attribution,
             in_flight: Mutex::new(HashMap::new()),
+            limiter,
         }
     }
 
     /// Returns the encoded bundle for `bbox`, which should already be snapped.
-    pub async fn get(self: &Arc<Self>, bbox: BBox) -> Result<Bytes, ApiError> {
+    /// Only a request that starts a new build is charged to `client`, and the
+    /// token is given back unless the build asks public Overpass (see
+    /// [`Self::produce`]). Cache hits and requests joining a build in progress
+    /// are free, and a client over its limit gets an expired copy if there is one.
+    pub async fn get(self: &Arc<Self>, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
-        if let Some((bytes, true)) = self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
-            metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
-            return Ok(bytes);
+        let stale = match self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
+            Some((bytes, true)) => {
+                metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
+                return Ok(bytes);
+            }
+            Some((bytes, false)) => Some(bytes),
+            None => None,
+        };
+        match (self.flight(key, bbox, client), stale) {
+            (Ok(flight), _) => flight.await,
+            (Err(ApiError::TooManyRequests { .. }), Some(stale)) => Ok(stale),
+            (Err(e), _) => Err(e),
         }
-        self.flight(key, bbox).await
     }
 
-    fn flight(self: &Arc<Self>, key: String, bbox: BBox) -> Flight {
+    fn flight(
+        self: &Arc<Self>,
+        key: String,
+        bbox: BBox,
+        client: ClientKey,
+    ) -> Result<Flight, ApiError> {
         let mut map = self
             .in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(f) = map.get(&key) {
-            return f.clone();
+            return Ok(f.clone());
         }
+        self.limiter.check(client)?;
         let this = Arc::clone(self);
         let task_key = key.clone();
         // Spawned while holding the lock: the task's own clean-up below cannot
@@ -84,7 +107,7 @@ impl BundleService {
         // (waiters that joined the flight share it).
         let handle = tokio::spawn(
             async move {
-                let result = this.produce(&task_key, bbox).await;
+                let result = this.produce(&task_key, bbox, client).await;
                 this.in_flight
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -101,14 +124,19 @@ impl BundleService {
         .boxed()
         .shared();
         map.insert(key, shared.clone());
-        shared
+        Ok(shared)
     }
 
-    /// Cache re-check, Overpass and elevation fetches, bundle build, cache
+    /// Cache re-check, elevation and map data fetches, bundle build, cache
     /// write. Falls back to an expired cached bundle when an upstream fails.
-    async fn produce(&self, key: &str, bbox: BBox) -> Result<Bytes, ApiError> {
+    /// `client` started the build and gets its token back when public
+    /// Overpass was not asked: a cache hit here, a local region's data, or
+    /// Overpass refusing as busy (mostly our own queue or cooldown). An
+    /// elevation failure is still charged: it cost an upstream request too.
+    async fn produce(&self, key: &str, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
         if let Some((bytes, true)) = self.cache.get_bundle(key, self.valid_after(&bbox)).await {
+            self.limiter.refund(client);
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
@@ -118,12 +146,17 @@ impl BundleService {
         // would be thrown away, so Overpass is not asked for nothing.
         let fetched = match self.elevation.terrain(&bbox).await {
             Ok(terrain) => match self.fetch_local(&bbox).await {
-                Some(d) => Ok((d, terrain)),
-                None => self
-                    .overpass
-                    .fetch_since(&bbox, started)
-                    .await
-                    .map(|d| (d, terrain)),
+                Some(d) => {
+                    self.limiter.refund(client);
+                    Ok((d, terrain))
+                }
+                None => {
+                    let fetched = self.overpass.fetch_since(&bbox, started).await;
+                    if matches!(fetched, Err(ApiError::RateLimited { .. })) {
+                        self.limiter.refund(client);
+                    }
+                    fetched.map(|d| (d, terrain))
+                }
             },
             Err(e) => Err(e),
         };

@@ -14,6 +14,7 @@ pub mod elevation;
 pub mod error;
 pub mod metrics;
 pub mod overpass;
+pub mod ratelimit;
 pub mod regions;
 pub mod routes;
 pub mod tiles;
@@ -38,6 +39,7 @@ use crate::cache::{Cache, CacheCaps};
 use crate::config::Config;
 use crate::elevation::Elevation;
 use crate::overpass::OverpassClient;
+use crate::ratelimit::RateLimiter;
 use crate::regions::Regions;
 use crate::tiles::TileProxy;
 
@@ -162,6 +164,7 @@ impl AppState {
             regions.clone(),
             elevation,
             config.attribution.clone(),
+            RateLimiter::new("area", config.area_rate),
         ));
         let tiles = TileProxy::new(tile_client, &config, cache);
 
