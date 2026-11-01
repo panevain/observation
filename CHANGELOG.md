@@ -53,6 +53,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Changed
 
+- `mise run check` also runs typos, cargo-shear and cargo-deny, so it covers every CI check that needs no Docker, browser or CI-only tool. Their tools and cargo-nextest move from `mise.ci.toml` to `mise.toml` (`mise install` now installs them), and `mise run typos`, `shear` and `deny` work without `-E ci`. `mise run test` always uses cargo-nextest.
 - Scene files are version 2: camera positions are over the terrain, with `y = 0` at the ground at the area's centre. Version 1 files and autosaves still load, and their cameras are raised onto the terrain once the area arrives, keeping their height above the ground. The coverage worker's message version is 2.
 - mise 2026.7.15 or newer is required for every task, including `mise run up` and `down`: task scripts now run under bash with errexit, nounset and pipefail (`[task_config] shell`), which an older mise ignores. A mise older than CI's (2026.10.18) still only warns.
 - `mise run serve --release` replaces `mise run serve:release`, which still works; `mise run rulesets:apply` asks before changing the live rulesets.
