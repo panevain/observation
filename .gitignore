@@ -1,5 +1,6 @@
 /target
 /dist
+/web/tokens.css
 /cache
 *.swp
 .DS_Store

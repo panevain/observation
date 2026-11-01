@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Design-token guard: the Bevy/egui client must take every colour from
-# crates/observation-client/src/theme.rs. Any other .rs file under
+# crates/observation-client/src/theme.rs (which takes the UI colour roles
+# from crates/observation-tokens). Any other .rs file under
 # crates/observation-client/src/ that hard-codes a colour literal fails the
 # check. Prints file:line:match for each offence and exits 1.
 set -euo pipefail

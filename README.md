@@ -73,8 +73,9 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | `crates/observation-core` | Engine-free logic shared by client and server: projection, tiles, building extrusion, bundle format, cameras, view cones, occlusion, coverage, scene files |
 | `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, region management relay, static files |
 | `crates/observation-regions` | Optional region agent (`regions` image target): imports Geofabrik extracts into local Overpass databases and answers queries for them |
+| `crates/observation-tokens` | Design token values (scales, minimum viewport, UI colour roles) shared by the client theme and `web/index.html`'s CSS, which trunk writes with its `token-css` binary |
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
-| `web/` | `index.html` trunk entry point: loading screen and small-screen gate |
+| `web/` | `index.html` trunk entry point: loading screen and small-screen gate (`tokens.css` is generated) |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |
 | `scripts/` | `check-design-tokens.sh` (colour-literal guard run in CI); `wasm-size-report.sh` and `wasm-size-treemap.py` (regenerate the bundle-size treemap) |
 | `.github/` | CI, security, CodeQL, Scorecard and release workflows; Dependabot config |

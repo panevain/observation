@@ -236,6 +236,8 @@ jobs:
           compgen -G 'dist/*.js' >/dev/null || { echo "::error::no .js in dist/"; exit 1; }
           # The app starts the coverage worker from this fixed (unhashed) name.
           test -f dist/coverage-worker_loader.js || { echo "::error::dist/coverage-worker_loader.js missing"; exit 1; }
+          # trunk's pre_build hook wrote web/tokens.css and index.html inlined it.
+          grep -q -- '--obs-bg:' dist/index.html || { echo "::error::design-token CSS not inlined into dist/index.html"; exit 1; }
       - name: Wasm size report
         if: github.event_name == 'push'
         run: |
