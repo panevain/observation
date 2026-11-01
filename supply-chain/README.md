@@ -28,7 +28,9 @@ do it when the exemptions can be carried.
 ## When the check fails
 
 A pull request brought in a crate version (a new crate, or a new version of one) that is in the
-server side's tree and that nobody we trust has audited. `cargo vet` prints which, and
+server side's tree and that nobody we trust has audited. `cargo vet` prints which. First run
+`mise -E ci run vet:imports`: `imports.lock` only changes when someone refreshes it, and one of
+the imported sets may have audited the version since. If that is not enough,
 `cargo vet suggest` lists the smallest diffs to review. Then either:
 
 - **Review it**: `cargo vet diff <crate> <old> <new>` (or `cargo vet inspect <crate> <version>`
@@ -37,9 +39,11 @@ server side's tree and that nobody we trust has audited. `cargo vet` prints whic
 - **Exempt it**, when a review is not worth it (a large, well-known crate that an import will
   soon cover, say): `cargo vet add-exemption <crate> <version>`, and say why in the pull request.
 
-Dependabot pull requests that fail the check are not merged automatically: whoever pushes the
-audit to the Dependabot branch merges it once it is green (the auto-merge sweep only takes pull
-requests whose commits are all Dependabot's).
+A Dependabot patch update that fails the check stays open: the auto-merge sweep turns auto-merge
+on for it, but the required check holds it. Push the audit (or exemption) to its branch; auto-merge
+stays on for a push by someone with write access, so it then merges once the checks pass. Label it
+`hold` first if it should wait for something else. (After such a push Dependabot no longer rebases
+the branch, and the sweep no longer selects it: its commits are not all Dependabot's.)
 
 `mise -E ci run vet:imports` fetches the imported sets again and drops exemptions they now
 cover; run it now and then, and commit what changes.
