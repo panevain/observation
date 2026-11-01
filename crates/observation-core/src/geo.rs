@@ -119,17 +119,19 @@ impl BBox {
 
     /// Checks the box is within the allowed request size.
     pub fn validate_size(&self) -> Result<(), BBoxError> {
+        self.validate_size_within(MIN_BBOX_SIDE_M, MAX_BBOX_SIDE_M)
+    }
+
+    /// Checks each side is `min..=max` metres, give or take float noise, so
+    /// that a box built to exactly a limit passes.
+    pub fn validate_size_within(&self, min: f64, max: f64) -> Result<(), BBoxError> {
+        const EPS: f64 = 1e-6;
         let (w, h) = (self.width_m(), self.height_m());
-        let ok = |v: f64| (MIN_BBOX_SIDE_M..=MAX_BBOX_SIDE_M + 1e-6).contains(&v);
+        let ok = |v: f64| (min - EPS..=max + EPS).contains(&v);
         if ok(w) && ok(h) {
             Ok(())
         } else {
-            Err(BBoxError::Size {
-                w,
-                h,
-                min: MIN_BBOX_SIDE_M,
-                max: MAX_BBOX_SIDE_M,
-            })
+            Err(BBoxError::Size { w, h, min, max })
         }
     }
 
@@ -226,6 +228,25 @@ mod tests {
         assert_eq!(BBox::parse("89,0,89.5,1"), Err(BBoxError::Range));
         let big = BBox::parse("51.0,0.0,51.1,0.1").unwrap();
         assert!(matches!(big.validate_size(), Err(BBoxError::Size { .. })));
+    }
+
+    #[test]
+    fn a_box_built_to_exactly_a_limit_passes() {
+        let c = LatLon::new(47.6, -122.3);
+        for side in [MIN_BBOX_SIDE_M, MAX_BBOX_SIDE_M, 200.0] {
+            let b = BBox::around(c, side);
+            assert!(b.validate_size_within(side, side).is_ok(), "{side}");
+        }
+        assert!(
+            BBox::around(c, 201.0)
+                .validate_size_within(20.0, 200.0)
+                .is_err()
+        );
+        assert!(
+            BBox::around(c, 49.0)
+                .validate_size_within(50.0, 500.0)
+                .is_err()
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use bevy::prelude::Resource;
 use bevy_egui::egui::{
     self, Align2, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, vec2,
 };
-use observation_core::geo::{BBox, LatLon};
+use observation_core::geo::{BBox, BBoxError, LatLon};
 use observation_core::tiles::{TileId, lat_to_y, lon_to_x, x_to_lon, y_to_lat};
 
 const TILE_PX: f64 = 256.0;
@@ -138,18 +138,15 @@ impl MapPicker {
 /// Validation message for a selection against the server's side limits, or
 /// `None` if it can be loaded.
 fn problem(b: &BBox, c: &ServerConfig) -> Option<String> {
-    let (w, h) = (b.width_m(), b.height_m());
-    let (min, max) = (c.min_bbox_side_m, c.max_bbox_side_m);
-    if w > max || h > max {
-        Some(format!(
-            "Too large: {w:.0} × {h:.0} m, but sides must be ≤ {max:.0} m"
-        ))
-    } else if w < min || h < min {
-        Some(format!(
-            "Too small: {w:.0} × {h:.0} m, but sides must be ≥ {min:.0} m"
-        ))
-    } else {
-        None
+    match b.validate_size_within(c.min_bbox_side_m, c.max_bbox_side_m) {
+        Ok(()) => None,
+        Err(BBoxError::Size { w, h, max, .. }) if w.max(h) > max => Some(format!(
+            "Too large: {w:.0} × {h:.0} m, but sides must be ≤ {max} m"
+        )),
+        Err(BBoxError::Size { w, h, min, .. }) => Some(format!(
+            "Too small: {w:.0} × {h:.0} m, but sides must be ≥ {min} m"
+        )),
+        Err(e) => Some(e.to_string()),
     }
 }
 
@@ -235,7 +232,8 @@ pub fn window(
 ) -> Option<BBox> {
     let mut result = None;
     let max = config.max_bbox_side_m;
-    let square = DEFAULT_SIDE_M.clamp(config.min_bbox_side_m, max);
+    // Not `clamp`, which panics if the limits are ever crossed.
+    let square = DEFAULT_SIDE_M.max(config.min_bbox_side_m).min(max);
     let screen = ctx.viewport_rect();
     let size = vec2(
         (screen.width() * 0.8).min(1100.0),
@@ -274,7 +272,7 @@ pub fn window(
                 ui,
                 t,
                 &format!(
-                    "Drag to pan, scroll to zoom. Turn on Draw area (or hold Shift) and drag to draw a box up to {max:.0} m × {max:.0} m."
+                    "Drag to pan, scroll to zoom. Turn on Draw area (or hold Shift) and drag to draw a box up to {max} m × {max} m."
                 ),
             );
             ui.add_space(t.space.xs);
@@ -394,13 +392,12 @@ pub fn window(
                     p.selection = Some(BBox::around(p.center, square));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let problem = |b: &BBox| problem(b, config);
-                    let valid = p.selection.filter(|b| problem(b).is_none());
+                    let valid = p.selection.filter(|b| problem(b, config).is_none());
                     if ui.add_enabled(valid.is_some(), primary(t, "Load area")).clicked() {
                         result = valid;
                         *open = false;
                     }
-                    match p.selection.as_ref().and_then(problem) {
+                    match p.selection.as_ref().and_then(|b| problem(b, config)) {
                         Some(msg) => {
                             ui.label(RichText::new(msg).color(t.danger));
                         }
