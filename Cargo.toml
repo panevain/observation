@@ -39,7 +39,7 @@ metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 # client
-bevy = { version = "0.20", default-features = false }
+bevy = { version = "0.20.1", default-features = false } # 0.20.1: ruzstd 0.9.1 (RUSTSEC-2026-0344)
 bevy_egui = { version = "0.43", default-features = false }
 
 [workspace.lints.rust]
