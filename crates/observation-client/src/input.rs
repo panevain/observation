@@ -3,7 +3,7 @@
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState};
-use crate::world::{AreaLoadSet, BuildingMesh, GroundMesh};
+use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::math::Affine3A;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
@@ -13,6 +13,7 @@ use bevy_egui::input::EguiWantsInput;
 use observation_core::address::{Address, ON_OUTLINE_M};
 use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
 use observation_core::coverage::{MAX_REGION_POINTS, Region};
+use observation_core::terrain::Terrain;
 
 /// Pixels a press may travel and still count as a click/tap.
 const CLICK_SLOP_PX: f32 = 5.0;
@@ -30,7 +31,15 @@ const ORBIT_SPEED: f32 = 0.006;
 /// down to 0.1 m when the camera is low enough that 1 m would clip the ground.
 const NEAR_PLANE_M: std::ops::RangeInclusive<f32> = 0.1..=1.0;
 
-/// Spherical orbit around a focus point.
+/// Orbit pitch limits, radians: from nearly straight down to just above level.
+const MIN_PITCH: f32 = -1.52;
+const MAX_PITCH: f32 = -0.05;
+/// Least height of the orbit camera above the ground under it, metres.
+const EYE_CLEARANCE_M: f32 = 1.5;
+/// Farthest a pointer ray is followed to the ground, metres.
+const MAX_GROUND_RAY_M: f32 = 5_000.0;
+
+/// Spherical orbit around a focus point, which stays on the ground.
 #[derive(Debug, Component)]
 pub struct OrbitCamera {
     pub focus: Vec3,
@@ -53,8 +62,9 @@ impl Default for OrbitCamera {
 }
 
 impl OrbitCamera {
-    /// Half the camera's height above the ground, within [`NEAR_PLANE_M`]: the
-    /// ground at the bottom of the frame is never closer than the height.
+    /// Half the camera's height above the ground at the focus, within
+    /// [`NEAR_PLANE_M`]: the ground at the bottom of the frame is never closer
+    /// than the height.
     fn near_plane(&self) -> f32 {
         let height = self.focus.y - self.distance * self.pitch.sin();
         (height * 0.5).clamp(*NEAR_PLANE_M.start(), *NEAR_PLANE_M.end())
@@ -117,7 +127,13 @@ impl Plugin for InputPlugin {
             // once the address state has been cleared for the new one.
             .add_systems(
                 Update,
-                (keyboard, pointer.after(AreaLoadSet), apply_orbit).chain(),
+                (
+                    keyboard,
+                    pointer.after(AreaLoadSet),
+                    focus_on_ground,
+                    apply_orbit,
+                )
+                    .chain(),
             )
             // Undo and import replace the custom models (and the inspector
             // deletes them, after the frame's input): a click must never place
@@ -170,6 +186,36 @@ fn spawn_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSe
             ..default()
         },
     ));
+}
+
+/// Keeps the orbit focus on the ground as it pans over the terrain, and the
+/// eye above the ground: looking along a slope, the lowest pitch would put
+/// it inside the hill behind it, so the view tilts down instead.
+fn focus_on_ground(area: Option<Res<Area>>, mut q: Query<&mut OrbitCamera>) {
+    let Some(area) = area else { return };
+    let terrain = &area.bundle.terrain;
+    for mut o in &mut q {
+        let f = o.focus;
+        let y = terrain.height_at(Vec2::new(f.x, f.z));
+        if (f.y - y).abs() > 1e-3 {
+            o.focus.y = y;
+        }
+        // The ground under the eye moves as the pitch changes, so settle it
+        // in a few rounds.
+        let mut pitch = o.pitch;
+        for _ in 0..3 {
+            let eye = OrbitCamera { pitch, ..*o }.transform().translation;
+            let floor = terrain.height_at(Vec2::new(eye.x, eye.z)) + EYE_CLEARANCE_M;
+            if eye.y >= floor - 1e-3 {
+                break;
+            }
+            let sin = ((o.focus.y - floor) / o.distance).clamp(-1.0, 1.0);
+            pitch = sin.asin().clamp(MIN_PITCH, MAX_PITCH);
+        }
+        if pitch != o.pitch {
+            o.pitch = pitch;
+        }
+    }
 }
 
 fn apply_orbit(
@@ -245,6 +291,7 @@ fn keyboard(
         && let Some(c) = ui.selected.and_then(|id| scene.camera(id))
         && let Ok(mut o) = orbit.single_mut()
     {
+        // `focus_on_ground` puts it on the ground under the camera.
         o.focus = Vec3::from_array(c.position).with_y(0.0);
         o.distance = o.distance.min(60.0);
     }
@@ -287,7 +334,6 @@ struct RawInput<'w> {
 #[derive(bevy::ecs::system::SystemParam)]
 struct Targets<'w, 's> {
     buildings: Query<'w, 's, (), With<BuildingMesh>>,
-    grounds: Query<'w, 's, (), With<GroundMesh>>,
     bodies: Query<'w, 's, (&'static CameraBody, &'static GlobalTransform)>,
     area: Option<Res<'w, Area>>,
 }
@@ -315,39 +361,59 @@ fn pointer(
     } = input;
     let Targets {
         buildings,
-        grounds,
         bodies,
         area,
     } = targets;
+    let flat = Terrain::default();
+    let terrain = area.as_deref().map_or(&flat, |a| &a.bundle.terrain);
+    // The ground the tiles cover; a ray past it meets nothing.
+    let ground_rect = area.as_deref().map(|a| {
+        (
+            a.layers.grid.min - GROUND_MARGIN_M,
+            a.layers.grid.max() + GROUND_MARGIN_M,
+        )
+    });
     let Ok((camera, cam_t, mut orbit)) = cam.single_mut() else {
         return;
     };
 
     // `bodies_only` tests just the camera bodies: a cheap first pass for
     // hover, where testing every building triangle on each mouse move is not
-    // worth it unless a body is under the pointer at all.
+    // worth it unless a body is under the pointer at all. The ground is the
+    // terrain itself rather than a mesh, out to the edge of the tiles.
     let mut cast = |screen: Vec2, bodies_only: bool| -> Option<Hit> {
         // Takes window coordinates: it maps the camera's viewport rect itself.
         let ray = camera.viewport_to_world(cam_t, screen).ok()?;
-        let filter = |e: Entity| {
-            bodies.contains(e) || (!bodies_only && (buildings.contains(e) || grounds.contains(e)))
-        };
+        let filter = |e: Entity| bodies.contains(e) || (!bodies_only && buildings.contains(e));
         let settings = MeshRayCastSettings::default()
             .with_filter(&filter)
             .with_visibility(RayCastVisibility::Any);
-        let (e, hit) = ray_cast.cast_ray(ray, &settings).first()?;
-        let target = if let Ok((b, _)) = bodies.get(*e) {
-            HitTarget::Camera(b.0)
-        } else if buildings.contains(*e) {
-            HitTarget::Building
-        } else {
-            HitTarget::Ground
-        };
-        Some(Hit {
-            point: hit.point,
-            normal: hit.normal.normalize_or(Vec3::Y),
-            target,
-        })
+        let mesh = ray_cast.cast_ray(ray, &settings).first().map(|(e, hit)| {
+            let target = match bodies.get(*e) {
+                Ok((b, _)) => HitTarget::Camera(b.0),
+                Err(_) => HitTarget::Building,
+            };
+            Hit {
+                point: hit.point,
+                normal: hit.normal.normalize_or(Vec3::Y),
+                target,
+            }
+        });
+        let ground = (!bodies_only)
+            .then(|| ground_hit(terrain, ground_rect, ray.origin, *ray.direction))
+            .flatten()
+            .map(|point| Hit {
+                point,
+                normal: terrain.normal_at(Vec2::new(point.x, point.z)),
+                target: HitTarget::Ground,
+            });
+        match (mesh, ground) {
+            (Some(m), Some(g)) => {
+                let d = |h: &Hit| h.point.distance_squared(ray.origin);
+                Some(if d(&g) < d(&m) { g } else { m })
+            }
+            (m, g) => m.or(g),
+        }
     };
 
     // The camera body nearest `screen` whose centre is within `radius` px. Its
@@ -377,7 +443,7 @@ fn pointer(
             let area = area.as_deref()?;
             let at = cast(screen, false)
                 .map(|h| [h.point.x, h.point.z])
-                .or_else(|| ground_point(camera, cam_t, screen))?;
+                .or_else(|| ground_point(camera, cam_t, screen, terrain))?;
             area.bundle.address_pointed_at(at, ON_OUTLINE_M).cloned()
         };
     if area.as_ref().is_some_and(|a| a.is_changed()) {
@@ -461,7 +527,7 @@ fn pointer(
     } else {
         let hover = pos
             .filter(|_| !over_ui)
-            .and_then(|p| ground_point(camera, cam_t, p))
+            .and_then(|p| ground_point(camera, cam_t, p, terrain))
             .map(|p| clamp_to_area(p, area.as_deref()));
         if ui.region_hover != hover {
             ui.region_hover = hover;
@@ -554,7 +620,7 @@ fn pointer(
             }
             Gesture::Orbit => {
                 orbit.yaw -= delta.x * ORBIT_SPEED;
-                orbit.pitch = (orbit.pitch - delta.y * ORBIT_SPEED).clamp(-1.52, -0.05);
+                orbit.pitch = (orbit.pitch - delta.y * ORBIT_SPEED).clamp(MIN_PITCH, MAX_PITCH);
             }
             Gesture::Pan => pan(&mut orbit, delta, window.height()),
             Gesture::Tool => {
@@ -575,7 +641,7 @@ fn pointer(
         } = st.gesture
         {
             if ui.tool == Tool::Region {
-                if let Some(p) = ground_point(camera, cam_t, pos) {
+                if let Some(p) = ground_point(camera, cam_t, pos, terrain) {
                     region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
                 }
             } else if ui.tool == Tool::Address {
@@ -620,15 +686,33 @@ fn pointer(
     }
 }
 
-/// Where the pointer's ray meets the ground plane, world `[x, z]`.
-fn ground_point(camera: &Camera, cam_t: &GlobalTransform, window_pos: Vec2) -> Option<[f32; 2]> {
+/// Where the pointer's ray meets the ground, world `[x, z]`, however far out
+/// (beyond the terrain grid the ground keeps its edge height).
+fn ground_point(
+    camera: &Camera,
+    cam_t: &GlobalTransform,
+    window_pos: Vec2,
+    terrain: &Terrain,
+) -> Option<[f32; 2]> {
     let ray = camera.viewport_to_world(cam_t, window_pos).ok()?;
-    let dy = ray.direction.y;
-    if dy > -1e-4 {
+    if ray.direction.y > -1e-4 {
         return None;
     }
-    let p = ray.origin + *ray.direction * (-ray.origin.y / dy);
+    let p = terrain.ray_hit(ray.origin, *ray.direction, MAX_GROUND_RAY_M)?;
     Some([p.x, p.z])
+}
+
+/// Where a ray meets the ground inside `rect` (`x, z` min and max), if it does.
+fn ground_hit(
+    terrain: &Terrain,
+    rect: Option<(Vec2, Vec2)>,
+    origin: Vec3,
+    dir: Vec3,
+) -> Option<Vec3> {
+    let (lo, hi) = rect?;
+    let p = terrain.ray_hit(origin, dir, MAX_GROUND_RAY_M)?;
+    let xz = Vec2::new(p.x, p.z);
+    (xz.cmpge(lo).all() && xz.cmple(hi).all()).then_some(p)
 }
 
 /// How close to the first corner a click closes the region, metres: it grows

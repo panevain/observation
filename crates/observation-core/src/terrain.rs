@@ -212,6 +212,55 @@ impl Terrain {
         None
     }
 
+    /// Coordinates along one axis from `lo` to `hi` (both included) with the
+    /// grid's sample lines in between, so a surface built on them meets the
+    /// samples exactly. `axis` is 0 for `x`, 1 for `z`. Just the two ends
+    /// for a flat grid.
+    pub fn breaks(&self, lo: f32, hi: f32, axis: usize) -> Vec<f32> {
+        let mut out = vec![lo];
+        if self.usable() && lo.is_finite() && hi.is_finite() && hi > lo {
+            let origin = self.min[axis];
+            let first = ((lo - origin) / self.cell_m).floor() + 1.0;
+            let last = ((hi - origin) / self.cell_m).ceil() - 1.0;
+            if last >= first && last - first < 4096.0 {
+                for k in first as i64..=last as i64 {
+                    let v = origin + k as f32 * self.cell_m;
+                    if v > lo + 1e-3 && v < hi - 1e-3 {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out.push(hi);
+        out
+    }
+
+    /// Unit surface normal at world `[x, z]`.
+    pub fn normal_at(&self, p: Vec2) -> Vec3 {
+        let e = (self.cell_m * 0.5).max(0.1);
+        let dx = self.height_at(p + Vec2::X * e) - self.height_at(p - Vec2::X * e);
+        let dz = self.height_at(p + Vec2::Y * e) - self.height_at(p - Vec2::Y * e);
+        Vec3::new(-dx, 2.0 * e, -dz).normalize_or(Vec3::Y)
+    }
+
+    /// The line from `a` to `b` (world `[x, z]`) laid on the ground, `lift`
+    /// metres above it: points at least every half cell (just the ends on
+    /// flat ground), `a` first, `b` excluded so polylines can be chained.
+    pub fn drape(&self, a: Vec2, b: Vec2, lift: f32) -> Vec<Vec3> {
+        let len = a.distance(b);
+        let steps = if self.usable() && len.is_finite() {
+            (len / (self.cell_m * 0.5)).ceil().clamp(1.0, 1024.0) as u32
+        } else {
+            1
+        };
+        (0..steps)
+            .map(|i| {
+                let p = a.lerp(b, i as f32 / steps as f32);
+                Vec3::new(p.x, self.height_at(p) + lift, p.y)
+            })
+            .collect()
+    }
+
     /// Samples a grid over `[min, max]` (world `[x, z]`) from elevations
     /// above sea level, with `y = 0` at the elevation of the world origin.
     /// `None` if `elevation` has no value somewhere.
@@ -469,6 +518,25 @@ pub(crate) mod tests {
             .ray_hit(Vec3::new(0.0, 10.0, 0.0), Vec3::new(1.0, -1.0, 0.0), 100.0)
             .unwrap();
         assert!((hit - Vec3::new(10.0, 0.0, 0.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn surfaces_and_lines_follow_the_samples() {
+        let t = slope();
+        // Samples every 5 m from -200.
+        assert_eq!(t.breaks(-12.0, 3.0, 0), vec![-12.0, -10.0, -5.0, 0.0, 3.0]);
+        assert_eq!(t.breaks(0.0, 5.0, 1), vec![0.0, 5.0]);
+        assert_eq!(Terrain::default().breaks(-12.0, 3.0, 0), vec![-12.0, 3.0]);
+        let n = t.normal_at(Vec2::new(10.0, 10.0));
+        assert!(
+            (n - Vec3::new(-0.1, 1.0, 0.0).normalize()).length() < 1e-3,
+            "{n}"
+        );
+        assert_eq!(Terrain::default().normal_at(Vec2::ZERO), Vec3::Y);
+        let line = t.drape(Vec2::ZERO, Vec2::new(10.0, 0.0), 0.5);
+        assert_eq!(line.len(), 4);
+        assert!(line.iter().all(|p| (p.y - p.x / 10.0 - 0.5).abs() < 0.06));
+        assert_eq!(Terrain::default().drape(Vec2::ZERO, Vec2::X, 0.0).len(), 1);
     }
 
     #[test]

@@ -217,6 +217,9 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
     });
 }
 
+/// Who the elevation data comes from, in full: the bundle names the set.
+const ELEVATION_CREDITS: &str = "https://github.com/tilezen/joerd/blob/master/docs/attribution.md";
+
 /// Shortcuts for the active tool on the left; the coverage figures and the
 /// attribution on the right, so the figures stay in view while the inspector
 /// is scrolled.
@@ -239,6 +242,17 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
                     .color(t.text_muted),
                 "https://www.openstreetmap.org/copyright",
             );
+            if let Some(dem) = d
+                .area
+                .as_ref()
+                .map(|a| a.bundle.terrain.attribution.as_str())
+                .filter(|a| !a.is_empty())
+            {
+                ui.hyperlink_to(
+                    RichText::new(dem).size(t.font.caption).color(t.text_muted),
+                    ELEVATION_CREDITS,
+                );
+            }
             ui.separator();
             save_status(ui, d);
             ui.separator();

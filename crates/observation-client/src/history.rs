@@ -123,7 +123,9 @@ pub fn record(
         ui.history_request = None;
         // The first snapshot can be taken mid-load: the start-up restore must
         // be undoable to if the user replaces it before its area arrives.
-        if h.last.is_none() && scene.area.is_some() {
+        // Not while its cameras still wait to be lifted onto the terrain:
+        // undoing to that would sink them.
+        if h.last.is_none() && scene.area.is_some() && !scene.on_flat_ground {
             h.last = Some(scene.snapshot(&models));
             h.last_revision = scene.revision;
         }

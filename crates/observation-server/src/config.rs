@@ -17,8 +17,7 @@ pub const DEFAULT_DEM_URL: &str =
 /// Default credit for the elevation data, embedded in bundles. The sources
 /// behind it are listed at
 /// <https://github.com/tilezen/joerd/blob/master/docs/attribution.md>.
-pub const DEFAULT_DEM_ATTRIBUTION: &str =
-    "Elevation: Mapzen Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, Copernicus EU-DEM and others)";
+pub const DEFAULT_DEM_ATTRIBUTION: &str = "Elevation: Mapzen Terrain Tiles, USGS and others";
 /// `OBS_DEM_URL` value that turns elevation off (flat ground).
 pub const DEM_OFF: &str = "off";
 /// Default Overpass interpreter endpoint.

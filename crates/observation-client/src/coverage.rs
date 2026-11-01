@@ -318,9 +318,24 @@ fn draw_region(
     scene: Res<Scene>,
     ui: Res<UiState>,
     tokens: Res<Tokens>,
+    area: Option<Res<Area>>,
 ) {
+    let flat = observation_core::terrain::Terrain::default();
+    let terrain = area.as_deref().map_or(&flat, |a| &a.bundle.terrain);
     let color = to_bevy(tokens.world.region);
-    let at = |p: [f32; 2]| Vec3::new(p[0], REGION_Y_M, p[1]);
+    let at = |p: [f32; 2]| {
+        let p = Vec2::from_array(p);
+        Vec3::new(p.x, terrain.height_at(p) + REGION_Y_M, p.y)
+    };
+    // The outline through `points`, laid over the ground between corners.
+    let draped = |points: Vec<[f32; 2]>| -> Vec<Vec3> {
+        let mut out: Vec<Vec3> = points
+            .windows(2)
+            .flat_map(|w| terrain.drape(Vec2::from_array(w[0]), Vec2::from_array(w[1]), REGION_Y_M))
+            .collect();
+        out.extend(points.last().map(|p| at(*p)));
+        out
+    };
     if let Some(r) = &scene.region
         && ui.region_draft.is_empty()
     {
@@ -329,13 +344,15 @@ fn draw_region(
         } else {
             color.with_alpha(0.35)
         };
-        gizmos.linestrip(r.points.iter().chain(r.points.first()).map(|p| at(*p)), c);
+        let ring = r.points.iter().chain(r.points.first()).copied().collect();
+        gizmos.linestrip(draped(ring), c);
     }
     if ui.tool != Tool::Region {
         return;
     }
     let draft = &ui.region_draft;
-    gizmos.linestrip(draft.iter().chain(&ui.region_hover).map(|p| at(*p)), color);
+    let path = draft.iter().chain(&ui.region_hover).copied().collect();
+    gizmos.linestrip(draped(path), color);
     let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for (i, p) in draft.iter().enumerate() {
         // Once clicking it would close the region, the first corner shows
