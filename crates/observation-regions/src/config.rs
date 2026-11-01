@@ -118,9 +118,11 @@ impl Config {
             Some("json") => true,
             Some(other) => return Err(ConfigError::LogFormat(other.to_owned())),
         };
-        // Renamed after 0.1.0-dev.2: refuse rather than silently use the default.
-        if get("OBS_REGIONS_REFRESH_DAYS").is_some()
-            && get("OBS_REGIONS_DEFAULT_REFRESH_DAYS").is_none()
+        // Renamed after 0.1.0-dev.2: refuse rather than silently use another
+        // value. Compared, not just checked for: compose.yaml and `mise run up`
+        // set the new name to its default whether or not the user did.
+        if let Some(old) = get("OBS_REGIONS_REFRESH_DAYS")
+            && get("OBS_REGIONS_DEFAULT_REFRESH_DAYS").as_deref() != Some(old.as_str())
         {
             return Err(ConfigError::RenamedRefreshDays);
         }
@@ -211,6 +213,21 @@ mod tests {
             Config::from_lookup(lookup(&[("OBS_REGIONS_REFRESH_DAYS", "14")])).unwrap_err(),
             ConfigError::RenamedRefreshDays
         );
+        // As compose.yaml passes them: the new name at its default, the old one set.
+        assert_eq!(
+            Config::from_lookup(lookup(&[
+                ("OBS_REGIONS_REFRESH_DAYS", "14"),
+                ("OBS_REGIONS_DEFAULT_REFRESH_DAYS", "7"),
+            ]))
+            .unwrap_err(),
+            ConfigError::RenamedRefreshDays
+        );
+        let c = Config::from_lookup(lookup(&[
+            ("OBS_REGIONS_REFRESH_DAYS", "14"),
+            ("OBS_REGIONS_DEFAULT_REFRESH_DAYS", "14"),
+        ]))
+        .unwrap();
+        assert_eq!(c.refresh_days, 14, "both names, one value");
         for (min, max) in [("0", "30"), ("31", "30")] {
             assert!(matches!(
                 Config::from_lookup(lookup(&[

@@ -26,8 +26,9 @@ const SIZE_RETRY_AFTER: Duration = Duration::from_secs(600);
 const SIZE_CONCURRENCY: usize = 4;
 /// Longest one `HEAD` may take.
 const SIZE_TIMEOUT: Duration = Duration::from_secs(5);
-/// Longest one [`Catalog::sizes`] call spends asking; sizes not asked for by
-/// then are answered as unknown (and not cached, so they are asked next time).
+/// Longest one [`Catalog::sizes`] call spends waiting for the cache and
+/// asking; sizes not asked for by then are answered as unknown (and not
+/// cached, so they are asked next time).
 const SIZES_BUDGET: Duration = Duration::from_secs(10);
 
 /// An extract with the URLs needed to import it.
@@ -152,6 +153,9 @@ impl Catalog {
             .iter()
             .filter_map(|id| list.iter().find(|x| &x.entry.id == id))
             .collect();
+        // Counted from before the lock: a caller queued behind a slow one
+        // answers from what that one found instead of starting its own budget.
+        let deadline = Instant::now() + SIZES_BUDGET;
         let mut cache = self.sizes.lock().await;
         let fresh = |e: &(Instant, Option<u64>)| {
             let ttl = if e.1.is_some() {
@@ -169,20 +173,21 @@ impl Catalog {
             .collect();
         missing.sort();
         missing.dedup();
-        let deadline = Instant::now() + SIZES_BUDGET;
-        for chunk in missing.chunks(SIZE_CONCURRENCY) {
-            if Instant::now() + SIZE_TIMEOUT > deadline {
-                break;
-            }
-            let mut set = tokio::task::JoinSet::new();
-            for (id, url) in chunk.iter().cloned() {
+        // Up to SIZE_CONCURRENCY in flight, a new one started as each ends
+        // (if it can end before the deadline), so one slow `HEAD` holds up no other.
+        let mut queue = missing.into_iter();
+        let mut set = tokio::task::JoinSet::new();
+        loop {
+            while set.len() < SIZE_CONCURRENCY && Instant::now() + SIZE_TIMEOUT <= deadline {
+                let Some((id, url)) = queue.next() else { break };
                 let client = self.client.clone();
                 set.spawn(async move { (id, head_size(&client, &url).await) });
             }
-            while let Some(done) = set.join_next().await {
-                if let Ok((id, size)) = done {
-                    cache.insert(id, (Instant::now(), size));
-                }
+            let Some(done) = set.join_next().await else {
+                break;
+            };
+            if let Ok((id, size)) = done {
+                cache.insert(id, (Instant::now(), size));
             }
         }
         Ok(wanted

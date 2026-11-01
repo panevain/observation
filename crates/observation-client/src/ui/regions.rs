@@ -7,10 +7,10 @@ use crate::icons;
 use crate::regions::{CatalogState, RegionRequest, Regions, now_unix};
 use crate::theme::{Tokens, strong_family};
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
-use observation_core::regions::{ActionKind, JobPhase, RegionAction, RegionView};
+use observation_core::regions::{ActionKind, JobPhase, MAX_SIZE_IDS, RegionAction, RegionView};
 
-/// Matches shown at once in the add list.
-const MAX_MATCHES: usize = 40;
+/// Matches shown at once in the add list (their sizes are asked for in one request).
+const MAX_MATCHES: usize = MAX_SIZE_IDS;
 
 /// `12.3 MB`.
 pub fn megabytes(bytes: u64) -> String {
@@ -315,6 +315,10 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                         enabled,
                         egui::DragValue::new(&mut days)
                             .range(refresh_range.clone())
+                            // The server's default may lie outside the range:
+                            // show it as it is (clamping it would count as an
+                            // edit every frame). Edits are still clamped.
+                            .clamp_existing_to_range(false)
                             .speed(0.5)
                             .suffix(unit),
                     )
@@ -323,10 +327,12 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                 if field.changed() {
                     r.refresh_edit = Some((region.id.clone(), days));
                 }
+                // Escape drops the edit (the field has already taken the typed value).
                 if (field.drag_stopped() || field.lost_focus())
                     && let Some((id, d)) = r.refresh_edit.take()
                     && id == region.id
                     && region.refresh_days != Some(d)
+                    && !ui.input(|i| i.key_pressed(egui::Key::Escape))
                 {
                     r.request(RegionRequest::Settings(RegionAction {
                         id,

@@ -9,7 +9,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Changed
 
-- The region agent's `OBS_REGIONS_REFRESH_DAYS` is now `OBS_REGIONS_DEFAULT_REFRESH_DAYS`, since regions can have their own interval. The agent refuses to start with only the old name set, so rename it if you set it on 0.1.0-dev.1 or dev.2.
+- The region agent's `OBS_REGIONS_REFRESH_DAYS` is now `OBS_REGIONS_DEFAULT_REFRESH_DAYS`, since regions can have their own interval. The agent refuses to start while the old name is set (unless the new one has the same value), so rename it if you set it on 0.1.0-dev.1 or dev.2.
 
 ### Added
 
