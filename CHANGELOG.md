@@ -7,6 +7,8 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-01
+
 ### Added
 
 - More region controls in **Local map data**: each region shows how long ago it was downloaded, and a failed import says when it failed. Scheduled refreshes can be turned off and on per region with a checkbox, and each region can have its own interval (or go back to the server's with **Default**), 7 to 365 days (`OBS_REGIONS_MIN_REFRESH_DAYS` and `OBS_REGIONS_MAX_REFRESH_DAYS` change the range); the row says when the next refresh is due. Above the list are the region count and total disk use. The search list shows each extract's download size (asked of Geofabrik with `HEAD` and cached a day, via the new `POST /api/regions/catalog/sizes`) and marks extracts over `OBS_REGIONS_MAX_DOWNLOAD_MB` as **Too large** instead of offering **Import**. The server takes the settings at `POST /api/regions/settings` (`{"id", "auto_refresh", "refresh_days"}`, where `"refresh_days": null` returns to the default; admin token), and the agent keeps them in `regions.json`. Existing regions keep refreshing.
@@ -93,3 +95,4 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`) are ignored for upstream requests unless `OBS_ALLOW_PRIVATE_UPSTREAMS=1`, since a proxy resolves names past the filter.
 - Credentials in upstream URLs are removed from startup errors.
 - Bevy 0.20.1, which moves `ruzstd` to 0.9.1 and so fixes RUSTSEC-2026-0344 (a decompression bomb in its zstd decoder). The client never reached the vulnerable code, and the advisory is no longer ignored.
+

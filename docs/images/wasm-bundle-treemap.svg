@@ -1,252 +1,258 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="832" viewBox="0 0 1200 832" role="img" aria-labelledby="t d" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
 <title id="t">WebAssembly bundle size by crate (treemap)</title>
-<desc id="d">Treemap of the shipped WebAssembly module, one rectangle per dependency crate, grouped by family. Total 26.13 MB raw (24.92 MiB) · 7.76 MB gzip · rectangle area is proportional to bytes of code and data.</desc>
+<desc id="d">Treemap of the shipped WebAssembly module, one rectangle per dependency crate, grouped by family. Total 26.72 MB raw (25.48 MiB) · 8.02 MB gzip · rectangle area is proportional to bytes of code and data.</desc>
 <rect width="1200" height="832" fill="#f6f8fa"/>
 <text x="16" y="30" font-size="21" font-weight="700" fill="#1f2328">WebAssembly bundle by crate</text>
-<text x="16" y="50" font-size="13" fill="#57606a">Total 26.13 MB raw (24.92 MiB) · 7.76 MB gzip · rectangle area is proportional to bytes of code and data</text>
-<text x="16" y="68" font-size="12" fill="#57606a">observation-client, wasm-release profile, after wasm-bindgen and wasm-opt -Os · commit 2c0bdd7db · 2026-10-18</text>
-<g><title>Bevy: 12.55 MiB (50.4%)</title>
-<rect x="16.0" y="78.0" width="588.4" height="720.0" fill="#5c2d00"/>
-<text x="22.0" y="93.0" font-size="13" font-weight="700" fill="#ffffff">Bevy  12.55 MiB  50.4%</text>
+<text x="16" y="50" font-size="13" fill="#57606a">Total 26.72 MB raw (25.48 MiB) · 8.02 MB gzip · rectangle area is proportional to bytes of code and data</text>
+<text x="16" y="68" font-size="12" fill="#57606a">observation-client, wasm-release profile, after wasm-bindgen and wasm-opt -Os · commit 358bd5a3c · 2026-11-01</text>
+<g><title>Bevy: 12.55 MiB (49.3%)</title>
+<rect x="16.0" y="78.0" width="575.4" height="720.0" fill="#5c2d00"/>
+<text x="22.0" y="93.0" font-size="13" font-weight="700" fill="#ffffff">Bevy  12.55 MiB  49.3%</text>
 </g>
-<g><title>bevy_ecs: 6.77 MiB (7,101,511 bytes, 27.18%)</title>
-<rect x="18.8" y="100.8" width="582.9" height="374.0" fill="#9a4b00" stroke="#5c2d00" stroke-width="1.5"/>
+<g><title>bevy_ecs: 6.92 MiB (7,251,363 bytes, 27.14%)</title>
+<rect x="18.8" y="100.8" width="569.9" height="382.0" fill="#9a4b00" stroke="#5c2d00" stroke-width="1.5"/>
 <text x="23.0" y="116.0" font-size="12" font-weight="700" fill="#ffffff">bevy_ecs</text>
-<text x="23.0" y="131.0" font-size="11" fill="#ffffff">6.77 MiB · 27.2%</text>
+<text x="23.0" y="131.0" font-size="11" fill="#ffffff">6.92 MiB · 27.1%</text>
 </g>
-<g><title>bevy_reflect: 846 KiB (865,991 bytes, 3.31%)</title>
-<rect x="18.8" y="476.3" width="155.2" height="169.3" fill="#984a00" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="23.0" y="491.5" font-size="12" font-weight="700" fill="#ffffff">bevy_reflect</text>
-<text x="23.0" y="506.5" font-size="11" fill="#ffffff">846 KiB · 3.3%</text>
+<g><title>bevy_reflect: 844 KiB (864,189 bytes, 3.23%)</title>
+<rect x="18.8" y="484.2" width="155.3" height="165.1" fill="#984a00" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="23.0" y="499.5" font-size="12" font-weight="700" fill="#ffffff">bevy_reflect</text>
+<text x="23.0" y="514.5" font-size="11" fill="#ffffff">844 KiB · 3.2%</text>
 </g>
-<g><title>bevy_render: 741 KiB (758,974 bytes, 2.91%)</title>
-<rect x="18.8" y="647.1" width="155.2" height="148.2" fill="#954900" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="23.0" y="662.3" font-size="12" font-weight="700" fill="#ffffff">bevy_render</text>
-<text x="23.0" y="677.3" font-size="11" fill="#ffffff">741 KiB · 2.9%</text>
+<g><title>bevy_render: 740 KiB (757,265 bytes, 2.83%)</title>
+<rect x="18.8" y="650.8" width="155.3" height="144.5" fill="#954900" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="23.0" y="666.0" font-size="12" font-weight="700" fill="#ffffff">bevy_render</text>
+<text x="23.0" y="681.0" font-size="11" fill="#ffffff">740 KiB · 2.8%</text>
 </g>
-<g><title>bevy_pbr: 517 KiB (529,469 bytes, 2.03%)</title>
-<rect x="175.4" y="476.3" width="136.9" height="116.7" fill="#934700" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="179.7" y="491.5" font-size="12" font-weight="700" fill="#ffffff">bevy_pbr</text>
-<text x="179.7" y="506.5" font-size="11" fill="#ffffff">517 KiB · 2.0%</text>
+<g><title>bevy_pbr: 503 KiB (515,478 bytes, 1.93%)</title>
+<rect x="175.5" y="484.2" width="133.3" height="114.1" fill="#934700" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="179.8" y="499.5" font-size="12" font-weight="700" fill="#ffffff">bevy_pbr</text>
+<text x="179.8" y="514.5" font-size="11" fill="#ffffff">503 KiB · 1.9%</text>
 </g>
-<g><title>bevy_asset: 453 KiB (463,820 bytes, 1.78%)</title>
-<rect x="175.4" y="594.5" width="136.9" height="102.1" fill="#904600" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="179.7" y="609.7" font-size="12" font-weight="700" fill="#ffffff">bevy_asset</text>
-<text x="179.7" y="624.7" font-size="11" fill="#ffffff">453 KiB · 1.8%</text>
+<g><title>bevy_asset: 451 KiB (462,081 bytes, 1.73%)</title>
+<rect x="175.5" y="599.8" width="133.3" height="102.1" fill="#904600" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="179.8" y="615.0" font-size="12" font-weight="700" fill="#ffffff">bevy_asset</text>
+<text x="179.8" y="630.0" font-size="11" fill="#ffffff">451 KiB · 1.7%</text>
 </g>
-<g><title>bevy_input: 432 KiB (442,130 bytes, 1.69%)</title>
-<rect x="175.4" y="698.0" width="136.9" height="97.2" fill="#8e4500" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="179.7" y="713.3" font-size="12" font-weight="700" fill="#ffffff">bevy_input</text>
-<text x="179.7" y="728.3" font-size="11" fill="#ffffff">432 KiB · 1.7%</text>
+<g><title>bevy_input: 407 KiB (416,676 bytes, 1.56%)</title>
+<rect x="175.5" y="703.3" width="133.3" height="91.9" fill="#8e4500" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="179.8" y="718.6" font-size="12" font-weight="700" fill="#ffffff">bevy_input</text>
+<text x="179.8" y="733.6" font-size="11" fill="#ffffff">407 KiB · 1.6%</text>
 </g>
-<g><title>bevy_picking: 358 KiB (367,040 bytes, 1.40%)</title>
-<rect x="313.9" y="476.3" width="108.4" height="101.7" fill="#8c4400" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="318.1" y="491.5" font-size="12" font-weight="700" fill="#ffffff">bevy_picking</text>
-<text x="318.1" y="506.5" font-size="11" fill="#ffffff">358 KiB · 1.4%</text>
+<g><title>bevy_picking: 347 KiB (355,426 bytes, 1.33%)</title>
+<rect x="310.3" y="484.2" width="104.2" height="100.1" fill="#8c4400" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="314.6" y="499.5" font-size="12" font-weight="700" fill="#ffffff">bevy_picking</text>
+<text x="314.6" y="514.5" font-size="11" fill="#ffffff">347 KiB · 1.3%</text>
 </g>
-<g><title>bevy_window: 314 KiB (321,298 bytes, 1.23%)</title>
-<rect x="423.8" y="476.3" width="94.7" height="101.7" fill="#894300" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="428.0" y="491.5" font-size="12" font-weight="700" fill="#ffffff">bevy_window</text>
-<text x="428.0" y="506.5" font-size="11" fill="#ffffff">314 KiB</text>
+<g><title>bevy_window: 300 KiB (307,315 bytes, 1.15%)</title>
+<rect x="416.0" y="484.2" width="89.9" height="100.1" fill="#894300" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="420.2" y="499.5" font-size="12" font-weight="700" fill="#ffffff">bevy_wind…</text>
+<text x="420.2" y="514.5" font-size="11" fill="#ffffff">300 KiB</text>
 </g>
-<g><title>bevy_platform: 271 KiB (277,691 bytes, 1.06%)</title>
-<rect x="520.0" y="476.3" width="81.7" height="101.7" fill="#874200" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="524.3" y="491.5" font-size="12" font-weight="700" fill="#ffffff">bevy_pla…</text>
-<text x="524.3" y="506.5" font-size="11" fill="#ffffff">271 KiB</text>
+<g><title>bevy_platform: 272 KiB (278,405 bytes, 1.04%)</title>
+<rect x="507.4" y="484.2" width="81.3" height="100.1" fill="#874200" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="511.6" y="499.5" font-size="12" font-weight="700" fill="#ffffff">bevy_pla…</text>
+<text x="511.6" y="514.5" font-size="11" fill="#ffffff">272 KiB</text>
 </g>
-<g><title>bevy_camera: 232 KiB (237,786 bytes, 0.91%)</title>
-<rect x="313.9" y="579.4" width="94.7" height="74.9" fill="#844000" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="318.1" y="594.7" font-size="12" font-weight="700" fill="#ffffff">bevy_camera</text>
-<text x="318.1" y="609.7" font-size="11" fill="#ffffff">232 KiB</text>
+<g><title>bevy_camera: 221 KiB (226,455 bytes, 0.85%)</title>
+<rect x="310.3" y="585.8" width="89.4" height="73.8" fill="#844000" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="314.6" y="601.1" font-size="12" font-weight="700" fill="#ffffff">bevy_came…</text>
+<text x="314.6" y="616.1" font-size="11" fill="#ffffff">221 KiB</text>
 </g>
-<g><title>bevy_mesh: 224 KiB (229,724 bytes, 0.88%)</title>
-<rect x="313.9" y="655.9" width="94.7" height="72.3" fill="#823f00" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="318.1" y="671.1" font-size="12" font-weight="700" fill="#ffffff">bevy_mesh</text>
-<text x="318.1" y="686.1" font-size="11" fill="#ffffff">224 KiB</text>
+<g><title>bevy_mesh: 210 KiB (214,758 bytes, 0.80%)</title>
+<rect x="310.3" y="661.1" width="89.4" height="69.9" fill="#823f00" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="314.6" y="676.4" font-size="12" font-weight="700" fill="#ffffff">bevy_mesh</text>
+<text x="314.6" y="691.4" font-size="11" fill="#ffffff">210 KiB</text>
 </g>
-<g><title>bevy_light: 204 KiB (208,697 bytes, 0.80%)</title>
-<rect x="313.9" y="729.7" width="94.7" height="65.6" fill="#803e00" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="318.1" y="744.9" font-size="12" font-weight="700" fill="#ffffff">bevy_light</text>
-<text x="318.1" y="759.9" font-size="11" fill="#ffffff">204 KiB</text>
+<g><title>bevy_light: 189 KiB (193,034 bytes, 0.72%)</title>
+<rect x="310.3" y="732.6" width="89.4" height="62.7" fill="#803e00" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="314.6" y="747.8" font-size="12" font-weight="700" fill="#ffffff">bevy_light</text>
+<text x="314.6" y="762.8" font-size="11" fill="#ffffff">189 KiB</text>
 </g>
-<g><title>bevy_shape: 179 KiB (183,375 bytes, 0.70%)</title>
-<rect x="410.0" y="579.4" width="64.6" height="84.3" fill="#7d3d00" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="414.3" y="594.7" font-size="12" font-weight="700" fill="#ffffff">bevy_s…</text>
-<text x="414.3" y="609.7" font-size="11" fill="#ffffff">179 KiB</text>
+<g><title>bevy_core_pipeline: 177 KiB (181,356 bytes, 0.68%)</title>
+<rect x="401.2" y="585.8" width="64.5" height="81.6" fill="#7d3d00" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="405.4" y="601.1" font-size="12" font-weight="700" fill="#ffffff">bevy_c…</text>
+<text x="405.4" y="616.1" font-size="11" fill="#ffffff">177 KiB</text>
 </g>
-<g><title>bevy_core_pipeline: 177 KiB (181,558 bytes, 0.69%)</title>
-<rect x="476.1" y="579.4" width="63.9" height="84.3" fill="#7b3c00" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="480.4" y="594.7" font-size="12" font-weight="700" fill="#ffffff">bevy_c…</text>
-<text x="480.4" y="609.7" font-size="11" fill="#ffffff">177 KiB</text>
+<g><title>bevy_shape: 166 KiB (169,764 bytes, 0.64%)</title>
+<rect x="467.1" y="585.8" width="60.2" height="81.6" fill="#7b3c00" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="471.4" y="601.1" font-size="12" font-weight="700" fill="#ffffff">bevy_…</text>
+<text x="471.4" y="616.1" font-size="11" fill="#ffffff">166 KiB</text>
 </g>
-<g><title>bevy_gizmos: 167 KiB (171,171 bytes, 0.66%)</title>
-<rect x="541.5" y="579.4" width="60.2" height="84.3" fill="#783b00" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="545.8" y="594.7" font-size="12" font-weight="700" fill="#ffffff">bevy_…</text>
-<text x="545.8" y="609.7" font-size="11" fill="#ffffff">167 KiB</text>
+<g><title>bevy_gizmos: 165 KiB (168,471 bytes, 0.63%)</title>
+<rect x="528.9" y="585.8" width="59.8" height="81.6" fill="#783b00" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="533.1" y="601.1" font-size="12" font-weight="700" fill="#ffffff">bevy_…</text>
+<text x="533.1" y="616.1" font-size="11" fill="#ffffff">165 KiB</text>
 </g>
-<g><title>bevy_color: 134 KiB (137,358 bytes, 0.53%)</title>
-<rect x="410.0" y="665.2" width="30.8" height="130.0" fill="#763900" stroke="#5c2d00" stroke-width="1.5"/>
+<g><title>bevy_color: 131 KiB (134,579 bytes, 0.50%)</title>
+<rect x="401.2" y="668.9" width="30.3" height="126.3" fill="#763900" stroke="#5c2d00" stroke-width="1.5"/>
 </g>
-<g><title>other crates (19): 669 KiB (684,744 bytes, 2.62%)</title>
-<rect x="442.3" y="665.2" width="159.4" height="130.0" fill="#743800" stroke="#5c2d00" stroke-width="1.5"/>
-<text x="446.6" y="680.5" font-size="12" font-weight="700" fill="#ffffff">other crates (19)</text>
-<text x="446.6" y="695.5" font-size="11" fill="#ffffff">669 KiB · 2.6%</text>
+<g><title>other crates (19): 649 KiB (664,823 bytes, 2.49%)</title>
+<rect x="433.0" y="668.9" width="155.7" height="126.3" fill="#743800" stroke="#5c2d00" stroke-width="1.5"/>
+<text x="437.2" y="684.2" font-size="12" font-weight="700" fill="#ffffff">other crates (19)</text>
+<text x="437.2" y="699.2" font-size="11" fill="#ffffff">649 KiB · 2.5%</text>
 </g>
-<g><title>Other dependencies: 3.72 MiB (14.9%)</title>
-<rect x="927.1" y="78.0" width="256.9" height="489.3" fill="#5e1730"/>
-<text x="933.1" y="93.0" font-size="13" font-weight="700" fill="#ffffff">Other dependencies</text>
+<g><title>Other dependencies: 3.80 MiB (14.9%)</title>
+<rect x="925.4" y="78.0" width="258.6" height="485.5" fill="#5e1730"/>
+<text x="931.4" y="93.0" font-size="13" font-weight="700" fill="#ffffff">Other dependencies</text>
 </g>
-<g><title>erased_serde: 526 KiB (539,121 bytes, 2.06%)</title>
-<rect x="929.8" y="100.8" width="132.1" height="120.1" fill="#a1294f" stroke="#5e1730" stroke-width="1.5"/>
-<text x="934.1" y="116.0" font-size="12" font-weight="700" fill="#ffffff">erased_serde</text>
-<text x="934.1" y="131.0" font-size="11" fill="#ffffff">526 KiB · 2.1%</text>
+<g><title>erased_serde: 527 KiB (539,434 bytes, 2.02%)</title>
+<rect x="928.1" y="100.8" width="133.1" height="116.5" fill="#a1294f" stroke="#5e1730" stroke-width="1.5"/>
+<text x="932.4" y="116.0" font-size="12" font-weight="700" fill="#ffffff">erased_serde</text>
+<text x="932.4" y="131.0" font-size="11" fill="#ffffff">527 KiB · 2.0%</text>
 </g>
-<g><title>wgsl_parse: 470 KiB (481,613 bytes, 1.84%)</title>
-<rect x="1063.4" y="100.8" width="117.8" height="120.1" fill="#9d284d" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1067.7" y="116.0" font-size="12" font-weight="700" fill="#ffffff">wgsl_parse</text>
-<text x="1067.7" y="131.0" font-size="11" fill="#ffffff">470 KiB · 1.8%</text>
+<g><title>wgsl_parse: 469 KiB (480,754 bytes, 1.80%)</title>
+<rect x="1062.7" y="100.8" width="118.5" height="116.5" fill="#9d284d" stroke="#5e1730" stroke-width="1.5"/>
+<text x="1067.0" y="116.0" font-size="12" font-weight="700" fill="#ffffff">wgsl_parse</text>
+<text x="1067.0" y="131.0" font-size="11" fill="#ffffff">469 KiB · 1.8%</text>
 </g>
-<g><title>hashbrown: 339 KiB (346,741 bytes, 1.33%)</title>
-<rect x="929.8" y="222.4" width="100.6" height="100.8" fill="#9a274b" stroke="#5e1730" stroke-width="1.5"/>
-<text x="934.1" y="237.6" font-size="12" font-weight="700" fill="#ffffff">hashbrown</text>
-<text x="934.1" y="252.6" font-size="11" fill="#ffffff">339 KiB · 1.3%</text>
+<g><title>hashbrown: 344 KiB (352,203 bytes, 1.32%)</title>
+<rect x="928.1" y="218.8" width="102.9" height="97.9" fill="#9a274b" stroke="#5e1730" stroke-width="1.5"/>
+<text x="932.4" y="234.0" font-size="12" font-weight="700" fill="#ffffff">hashbrown</text>
+<text x="932.4" y="249.0" font-size="11" fill="#ffffff">344 KiB · 1.3%</text>
 </g>
-<g><title>glam: 272 KiB (278,379 bytes, 1.07%)</title>
-<rect x="1031.9" y="222.4" width="80.5" height="100.8" fill="#96264a" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1036.2" y="237.6" font-size="12" font-weight="700" fill="#ffffff">glam</text>
-<text x="1036.2" y="252.6" font-size="11" fill="#ffffff">272 KiB</text>
+<g><title>glam: 268 KiB (274,455 bytes, 1.03%)</title>
+<rect x="1032.5" y="218.8" width="79.8" height="97.9" fill="#96264a" stroke="#5e1730" stroke-width="1.5"/>
+<text x="1036.7" y="234.0" font-size="12" font-weight="700" fill="#ffffff">glam</text>
+<text x="1036.7" y="249.0" font-size="11" fill="#ffffff">268 KiB</text>
 </g>
-<g><title>skrifa: 228 KiB (233,667 bytes, 0.89%)</title>
-<rect x="1113.9" y="222.4" width="67.3" height="100.8" fill="#922548" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1118.2" y="237.6" font-size="12" font-weight="700" fill="#ffffff">skrifa</text>
-<text x="1118.2" y="252.6" font-size="11" fill="#ffffff">228 KiB</text>
+<g><title>skrifa: 227 KiB (232,576 bytes, 0.87%)</title>
+<rect x="1113.8" y="218.8" width="67.4" height="97.9" fill="#922548" stroke="#5e1730" stroke-width="1.5"/>
+<text x="1118.1" y="234.0" font-size="12" font-weight="700" fill="#ffffff">skrifa</text>
+<text x="1118.1" y="249.0" font-size="11" fill="#ffffff">227 KiB</text>
 </g>
-<g><title>fearless_simd: 189 KiB (194,042 bytes, 0.74%)</title>
-<rect x="929.8" y="324.7" width="65.4" height="86.0" fill="#8f2446" stroke="#5e1730" stroke-width="1.5"/>
-<text x="934.1" y="339.9" font-size="12" font-weight="700" fill="#ffffff">fearle…</text>
-<text x="934.1" y="354.9" font-size="11" fill="#ffffff">189 KiB</text>
+<g><title>fearless_simd: 189 KiB (194,015 bytes, 0.73%)</title>
+<rect x="928.1" y="318.2" width="63.2" height="86.8" fill="#8f2446" stroke="#5e1730" stroke-width="1.5"/>
+<text x="932.4" y="333.4" font-size="12" font-weight="700" fill="#ffffff">fearle…</text>
+<text x="932.4" y="348.4" font-size="11" fill="#ffffff">189 KiB</text>
 </g>
-<g><title>harfrust: 167 KiB (170,873 bytes, 0.65%)</title>
-<rect x="929.8" y="412.1" width="65.4" height="75.5" fill="#8b2344" stroke="#5e1730" stroke-width="1.5"/>
-<text x="934.1" y="427.4" font-size="12" font-weight="700" fill="#ffffff">harfru…</text>
-<text x="934.1" y="442.4" font-size="11" fill="#ffffff">167 KiB</text>
+<g><title>ron: 168 KiB (172,444 bytes, 0.65%)</title>
+<rect x="928.1" y="406.5" width="63.2" height="77.0" fill="#8b2344" stroke="#5e1730" stroke-width="1.5"/>
+<text x="932.4" y="421.7" font-size="12" font-weight="700" fill="#ffffff">ron</text>
+<text x="932.4" y="436.7" font-size="11" fill="#ffffff">168 KiB</text>
 </g>
-<g><title>ron: 167 KiB (170,631 bytes, 0.65%)</title>
-<rect x="929.8" y="489.2" width="65.4" height="75.4" fill="#872242" stroke="#5e1730" stroke-width="1.5"/>
-<text x="934.1" y="504.4" font-size="12" font-weight="700" fill="#ffffff">ron</text>
-<text x="934.1" y="519.4" font-size="11" fill="#ffffff">167 KiB</text>
+<g><title>harfrust: 166 KiB (169,968 bytes, 0.64%)</title>
+<rect x="928.1" y="484.9" width="63.2" height="75.9" fill="#872242" stroke="#5e1730" stroke-width="1.5"/>
+<text x="932.4" y="500.2" font-size="12" font-weight="700" fill="#ffffff">harfru…</text>
+<text x="932.4" y="515.2" font-size="11" fill="#ffffff">166 KiB</text>
 </g>
-<g><title>read_fonts: 160 KiB (164,140 bytes, 0.63%)</title>
-<rect x="996.7" y="324.7" width="62.5" height="75.7" fill="#842241" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1000.9" y="339.9" font-size="12" font-weight="700" fill="#ffffff">read_f…</text>
-<text x="1000.9" y="354.9" font-size="11" fill="#ffffff">160 KiB</text>
+<g><title>read_fonts: 160 KiB (163,924 bytes, 0.61%)</title>
+<rect x="992.8" y="318.2" width="64.9" height="71.2" fill="#842241" stroke="#5e1730" stroke-width="1.5"/>
+<text x="997.1" y="333.4" font-size="12" font-weight="700" fill="#ffffff">read_f…</text>
+<text x="997.1" y="348.4" font-size="11" fill="#ffffff">160 KiB</text>
 </g>
-<g><title>vello_cpu: 157 KiB (161,235 bytes, 0.62%)</title>
-<rect x="1060.7" y="324.7" width="61.4" height="75.7" fill="#80213f" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1065.0" y="339.9" font-size="12" font-weight="700" fill="#ffffff">vello_…</text>
-<text x="1065.0" y="354.9" font-size="11" fill="#ffffff">157 KiB</text>
+<g><title>vello_cpu: 157 KiB (160,724 bytes, 0.60%)</title>
+<rect x="1059.3" y="318.2" width="63.6" height="71.2" fill="#80213f" stroke="#5e1730" stroke-width="1.5"/>
+<text x="1063.5" y="333.4" font-size="12" font-weight="700" fill="#ffffff">vello_…</text>
+<text x="1063.5" y="348.4" font-size="11" fill="#ffffff">157 KiB</text>
 </g>
-<g><title>winit: 148 KiB (151,550 bytes, 0.58%)</title>
-<rect x="1123.6" y="324.7" width="57.6" height="75.7" fill="#7c203d" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1127.9" y="339.9" font-size="12" font-weight="700" fill="#ffffff">winit</text>
-<text x="1127.9" y="354.9" font-size="11" fill="#ffffff">148 KiB</text>
+<g><title>winit: 141 KiB (143,919 bytes, 0.54%)</title>
+<rect x="1124.4" y="318.2" width="56.8" height="71.2" fill="#7c203d" stroke="#5e1730" stroke-width="1.5"/>
+<text x="1128.7" y="333.4" font-size="12" font-weight="700" fill="#ffffff">winit</text>
+<text x="1128.7" y="348.4" font-size="11" fill="#ffffff">141 KiB</text>
 </g>
-<g><title>other crates (97): 990 KiB (1,013,703 bytes, 3.88%)</title>
-<rect x="996.7" y="401.9" width="184.6" height="162.7" fill="#791f3b" stroke="#5e1730" stroke-width="1.5"/>
-<text x="1000.9" y="417.2" font-size="12" font-weight="700" fill="#ffffff">other crates (97)</text>
-<text x="1000.9" y="432.2" font-size="11" fill="#ffffff">990 KiB · 3.9%</text>
+<g><title>other crates (106): 1.05 MiB (1,105,313 bytes, 4.14%)</title>
+<rect x="992.8" y="390.8" width="188.4" height="169.9" fill="#791f3b" stroke="#5e1730" stroke-width="1.5"/>
+<text x="997.1" y="406.1" font-size="12" font-weight="700" fill="#ffffff">other crates (106)</text>
+<text x="997.1" y="421.1" font-size="11" fill="#ffffff">1.05 MiB · 4.1%</text>
 </g>
-<g><title>Rust std: 1.70 MiB (6.8%)</title>
-<rect x="604.4" y="567.3" width="249.2" height="230.7" fill="#2f363d"/>
-<text x="610.4" y="582.3" font-size="13" font-weight="700" fill="#ffffff">Rust std  1.70 MiB  6.8%</text>
+<g><title>Rust std: 1.77 MiB (6.9%)</title>
+<rect x="591.4" y="563.5" width="249.2" height="234.5" fill="#2f363d"/>
+<text x="597.4" y="578.5" font-size="13" font-weight="700" fill="#ffffff">Rust std  1.77 MiB  6.9%</text>
 </g>
-<g><title>core: 1.27 MiB (1,333,306 bytes, 5.10%)</title>
-<rect x="607.2" y="590.1" width="181.6" height="205.2" fill="#55606b" stroke="#2f363d" stroke-width="1.5"/>
-<text x="611.4" y="605.3" font-size="12" font-weight="700" fill="#ffffff">core</text>
-<text x="611.4" y="620.3" font-size="11" fill="#ffffff">1.27 MiB · 5.1%</text>
+<g><title>core: 1.33 MiB (1,396,396 bytes, 5.23%)</title>
+<rect x="594.1" y="586.3" width="183.0" height="209.0" fill="#55606b" stroke="#2f363d" stroke-width="1.5"/>
+<text x="598.4" y="601.5" font-size="12" font-weight="700" fill="#ffffff">core</text>
+<text x="598.4" y="616.5" font-size="11" fill="#ffffff">1.33 MiB · 5.2%</text>
 </g>
-<g><title>alloc: 341 KiB (349,050 bytes, 1.34%)</title>
-<rect x="790.3" y="590.1" width="60.6" height="158.0" fill="#4a545e" stroke="#2f363d" stroke-width="1.5"/>
-<text x="794.5" y="605.3" font-size="12" font-weight="700" fill="#ffffff">alloc</text>
-<text x="794.5" y="620.3" font-size="11" fill="#ffffff">341 KiB</text>
+<g><title>alloc: 346 KiB (354,642 bytes, 1.33%)</title>
+<rect x="778.6" y="586.3" width="59.3" height="160.7" fill="#4a545e" stroke="#2f363d" stroke-width="1.5"/>
+<text x="782.9" y="601.5" font-size="12" font-weight="700" fill="#ffffff">alloc</text>
+<text x="782.9" y="616.5" font-size="11" fill="#ffffff">346 KiB</text>
 </g>
-<g><title>other crates (3): 101 KiB (103,202 bytes, 0.40%)</title>
-<rect x="790.3" y="749.6" width="60.6" height="45.7" fill="#404850" stroke="#2f363d" stroke-width="1.5"/>
-<text x="794.5" y="764.8" font-size="12" font-weight="700" fill="#ffffff">other …</text>
-<text x="794.5" y="779.8" font-size="11" fill="#ffffff">101 KiB</text>
+<g><title>other crates (3): 103 KiB (105,387 bytes, 0.39%)</title>
+<rect x="778.6" y="748.5" width="59.3" height="46.7" fill="#404850" stroke="#2f363d" stroke-width="1.5"/>
+<text x="782.9" y="763.8" font-size="12" font-weight="700" fill="#ffffff">other…</text>
+<text x="782.9" y="778.8" font-size="11" fill="#ffffff">103 KiB</text>
 </g>
-<g><title>wgpu: 1.35 MiB (5.4%)</title>
-<rect x="853.6" y="567.3" width="197.8" height="230.7" fill="#3d2368"/>
-<text x="859.6" y="582.3" font-size="13" font-weight="700" fill="#ffffff">wgpu  1.35 MiB  5.4%</text>
+<g><title>wgpu: 1.34 MiB (5.3%)</title>
+<rect x="840.6" y="563.5" width="188.6" height="234.5" fill="#3d2368"/>
+<text x="846.6" y="578.5" font-size="13" font-weight="700" fill="#ffffff">wgpu  1.34 MiB  5.3%</text>
 </g>
-<g><title>naga: 672 KiB (688,526 bytes, 2.64%)</title>
-<rect x="856.3" y="590.1" width="192.3" height="98.9" fill="#6a3fb0" stroke="#3d2368" stroke-width="1.5"/>
-<text x="860.6" y="605.3" font-size="12" font-weight="700" fill="#ffffff">naga</text>
-<text x="860.6" y="620.3" font-size="11" fill="#ffffff">672 KiB · 2.6%</text>
+<g><title>naga: 664 KiB (680,013 bytes, 2.55%)</title>
+<rect x="843.4" y="586.3" width="183.1" height="100.4" fill="#6a3fb0" stroke="#3d2368" stroke-width="1.5"/>
+<text x="847.6" y="601.5" font-size="12" font-weight="700" fill="#ffffff">naga</text>
+<text x="847.6" y="616.5" font-size="11" fill="#ffffff">664 KiB · 2.5%</text>
 </g>
-<g><title>wgpu_core: 276 KiB (282,822 bytes, 1.08%)</title>
-<rect x="856.3" y="690.5" width="73.7" height="104.8" fill="#633ba5" stroke="#3d2368" stroke-width="1.5"/>
-<text x="860.6" y="705.7" font-size="12" font-weight="700" fill="#ffffff">wgpu_co…</text>
-<text x="860.6" y="720.7" font-size="11" fill="#ffffff">276 KiB</text>
+<g><title>wgpu_core: 275 KiB (282,111 bytes, 1.06%)</title>
+<rect x="843.4" y="688.2" width="70.4" height="107.1" fill="#633ba5" stroke="#3d2368" stroke-width="1.5"/>
+<text x="847.6" y="703.4" font-size="12" font-weight="700" fill="#ffffff">wgpu_co…</text>
+<text x="847.6" y="718.4" font-size="11" fill="#ffffff">275 KiB</text>
 </g>
-<g><title>wgpu: 213 KiB (217,855 bytes, 0.83%)</title>
-<rect x="931.5" y="690.5" width="56.4" height="104.8" fill="#5d379a" stroke="#3d2368" stroke-width="1.5"/>
-<text x="935.8" y="705.7" font-size="12" font-weight="700" fill="#ffffff">wgpu</text>
-<text x="935.8" y="720.7" font-size="11" fill="#ffffff">213 KiB</text>
+<g><title>wgpu: 212 KiB (217,451 bytes, 0.81%)</title>
+<rect x="915.2" y="688.2" width="53.9" height="107.1" fill="#5d379a" stroke="#3d2368" stroke-width="1.5"/>
+<text x="919.5" y="703.4" font-size="12" font-weight="700" fill="#ffffff">wgpu</text>
+<text x="919.5" y="718.4" font-size="11" fill="#ffffff">212 KiB</text>
 </g>
-<g><title>wgpu_hal: 143 KiB (146,264 bytes, 0.56%)</title>
-<rect x="989.5" y="690.5" width="59.2" height="66.6" fill="#56338f" stroke="#3d2368" stroke-width="1.5"/>
-<text x="993.7" y="705.7" font-size="12" font-weight="700" fill="#ffffff">wgpu_…</text>
-<text x="993.7" y="720.7" font-size="11" fill="#ffffff">143 KiB</text>
+<g><title>wgpu_hal: 143 KiB (146,505 bytes, 0.55%)</title>
+<rect x="970.6" y="688.2" width="55.8" height="69.2" fill="#56338f" stroke="#3d2368" stroke-width="1.5"/>
+<text x="974.9" y="703.4" font-size="12" font-weight="700" fill="#ffffff">wgpu_…</text>
+<text x="974.9" y="718.4" font-size="11" fill="#ffffff">143 KiB</text>
 </g>
-<g><title>other crates (4): 80 KiB (81,984 bytes, 0.31%)</title>
-<rect x="989.5" y="758.6" width="59.2" height="36.7" fill="#502f84" stroke="#3d2368" stroke-width="1.5"/>
-<text x="993.7" y="773.8" font-size="12" font-weight="700" fill="#ffffff">other…</text>
-<text x="993.7" y="788.8" font-size="11" fill="#ffffff">80 KiB</text>
+<g><title>other crates (4): 77 KiB (78,597 bytes, 0.29%)</title>
+<rect x="970.6" y="758.8" width="55.8" height="36.4" fill="#502f84" stroke="#3d2368" stroke-width="1.5"/>
+<text x="974.9" y="774.1" font-size="12" font-weight="700" fill="#ffffff">other…</text>
+<text x="974.9" y="789.1" font-size="11" fill="#ffffff">77 KiB</text>
 </g>
-<g><title>egui: 735 KiB (2.9%)</title>
-<rect x="1051.4" y="567.3" width="132.6" height="182.7" fill="#06374f"/>
-<text x="1057.4" y="582.3" font-size="13" font-weight="700" fill="#ffffff">egui</text>
+<g><title>egui: 791 KiB (3.0%)</title>
+<rect x="1029.2" y="563.5" width="154.8" height="164.7" fill="#06374f"/>
+<text x="1035.2" y="578.5" font-size="13" font-weight="700" fill="#ffffff">egui</text>
 </g>
-<g><title>egui: 367 KiB (375,505 bytes, 1.44%)</title>
-<rect x="1054.1" y="590.1" width="127.1" height="77.7" fill="#0b5f8a" stroke="#06374f" stroke-width="1.5"/>
-<text x="1058.4" y="605.3" font-size="12" font-weight="700" fill="#ffffff">egui</text>
-<text x="1058.4" y="620.3" font-size="11" fill="#ffffff">367 KiB · 1.4%</text>
+<g><title>egui: 412 KiB (421,783 bytes, 1.58%)</title>
+<rect x="1032.0" y="586.3" width="77.0" height="139.2" fill="#0b5f8a" stroke="#06374f" stroke-width="1.5"/>
+<text x="1036.2" y="601.5" font-size="12" font-weight="700" fill="#ffffff">egui</text>
+<text x="1036.2" y="616.5" font-size="11" fill="#ffffff">412 KiB</text>
 </g>
-<g><title>epaint: 243 KiB (248,559 bytes, 0.95%)</title>
-<rect x="1054.1" y="669.2" width="83.2" height="78.1" fill="#0a5379" stroke="#06374f" stroke-width="1.5"/>
-<text x="1058.4" y="684.5" font-size="12" font-weight="700" fill="#ffffff">epaint</text>
-<text x="1058.4" y="699.5" font-size="11" fill="#ffffff">243 KiB</text>
+<g><title>epaint: 240 KiB (245,994 bytes, 0.92%)</title>
+<rect x="1110.5" y="586.3" width="70.7" height="87.7" fill="#0a577e" stroke="#06374f" stroke-width="1.5"/>
+<text x="1114.8" y="601.5" font-size="12" font-weight="700" fill="#ffffff">epaint</text>
+<text x="1114.8" y="616.5" font-size="11" fill="#ffffff">240 KiB</text>
 </g>
-<g><title>other crates (3): 126 KiB (128,835 bytes, 0.49%)</title>
-<rect x="1138.8" y="669.2" width="42.4" height="78.1" fill="#084768" stroke="#06374f" stroke-width="1.5"/>
+<g><title>bevy_egui: 132 KiB (135,239 bytes, 0.51%)</title>
+<rect x="1110.5" y="675.5" width="67.3" height="50.0" fill="#094f73" stroke="#06374f" stroke-width="1.5"/>
+<text x="1114.8" y="690.8" font-size="12" font-weight="700" fill="#ffffff">bevy_e…</text>
+<text x="1114.8" y="705.8" font-size="11" fill="#ffffff">132 KiB</text>
 </g>
-<g><title>observation: 193 KiB (0.8%)</title>
-<rect x="1051.4" y="750.1" width="132.6" height="47.9" fill="#0d4019"/>
-<text x="1057.4" y="765.1" font-size="13" font-weight="700" fill="#ffffff">observation</text>
+<g><title>other crates (2): 7 KiB (6,663 bytes, 0.02%)</title>
+<rect x="1179.4" y="675.5" width="1.9" height="50.0" fill="#084768" stroke="#06374f" stroke-width="1.5"/>
 </g>
-<g><title>observation_client: 163 KiB (166,499 bytes, 0.64%)</title>
-<rect x="1054.1" y="772.8" width="106.9" height="22.4" fill="#1a7332" stroke="#0d4019" stroke-width="1.5"/>
-<text x="1058.4" y="788.1" font-size="12" font-weight="700" fill="#ffffff">observation_…</text>
+<g><title>observation: 335 KiB (1.3%)</title>
+<rect x="1029.2" y="728.2" width="154.8" height="69.8" fill="#0d4019"/>
+<text x="1035.2" y="743.2" font-size="13" font-weight="700" fill="#ffffff">observation</text>
 </g>
-<g><title>observation_core: 30 KiB (31,001 bytes, 0.12%)</title>
-<rect x="1162.6" y="772.8" width="18.7" height="22.4" fill="#145626" stroke="#0d4019" stroke-width="1.5"/>
+<g><title>observation_client: 288 KiB (294,533 bytes, 1.10%)</title>
+<rect x="1032.0" y="751.0" width="127.9" height="44.3" fill="#1a7332" stroke="#0d4019" stroke-width="1.5"/>
+<text x="1036.2" y="766.2" font-size="12" font-weight="700" fill="#ffffff">observation_cli…</text>
+<text x="1036.2" y="781.2" font-size="11" fill="#ffffff">288 KiB · 1.1%</text>
 </g>
-<g><title>Data and module structure: 4.68 MiB (18.8%)</title>
-<rect x="604.4" y="78.0" width="322.6" height="489.3" fill="#222c36"/>
-<text x="610.4" y="93.0" font-size="13" font-weight="700" fill="#ffffff">Data and module structure</text>
+<g><title>observation_core: 47 KiB (48,593 bytes, 0.18%)</title>
+<rect x="1161.4" y="751.0" width="19.9" height="44.3" fill="#145626" stroke="#0d4019" stroke-width="1.5"/>
 </g>
-<g><title>data segments: 4.40 MiB (4,612,791 bytes, 17.66%)</title>
-<rect x="607.2" y="100.8" width="317.1" height="436.1" fill="#3f4e5e" stroke="#222c36" stroke-width="1.5"/>
-<text x="611.4" y="116.0" font-size="12" font-weight="700" fill="#ffffff">data segments</text>
-<text x="611.4" y="131.0" font-size="11" fill="#ffffff">4.40 MiB · 17.7%</text>
+<g><title>Data and module structure: 4.91 MiB (19.3%)</title>
+<rect x="591.4" y="78.0" width="334.0" height="485.5" fill="#222c36"/>
+<text x="597.4" y="93.0" font-size="13" font-weight="700" fill="#ffffff">Data and module structure</text>
 </g>
-<g><title>module structure: 263 KiB (269,382 bytes, 1.03%)</title>
-<rect x="607.2" y="538.4" width="292.8" height="26.2" fill="#374452" stroke="#222c36" stroke-width="1.5"/>
-<text x="611.4" y="553.6" font-size="12" font-weight="700" fill="#ffffff">module structure</text>
+<g><title>data segments: 4.63 MiB (4,852,211 bytes, 18.16%)</title>
+<rect x="594.1" y="100.8" width="328.5" height="433.2" fill="#3f4e5e" stroke="#222c36" stroke-width="1.5"/>
+<text x="598.4" y="116.0" font-size="12" font-weight="700" fill="#ffffff">data segments</text>
+<text x="598.4" y="131.0" font-size="11" fill="#ffffff">4.63 MiB · 18.2%</text>
 </g>
-<g><title>other / unnamed: 22 KiB (22,307 bytes, 0.09%)</title>
-<rect x="901.5" y="538.4" width="22.9" height="26.2" fill="#2f3a46" stroke="#222c36" stroke-width="1.5"/>
+<g><title>module structure: 270 KiB (276,598 bytes, 1.04%)</title>
+<rect x="594.1" y="535.5" width="303.5" height="25.3" fill="#374452" stroke="#222c36" stroke-width="1.5"/>
+<text x="598.4" y="550.7" font-size="12" font-weight="700" fill="#ffffff">module structure</text>
+</g>
+<g><title>other / unnamed: 22 KiB (22,588 bytes, 0.08%)</title>
+<rect x="899.2" y="535.5" width="23.4" height="25.3" fill="#2f3a46" stroke="#222c36" stroke-width="1.5"/>
 </g>
 <text x="16" y="820" font-size="11" fill="#57606a">Attributed from symbol names after wasm-opt; inlined and merged code is credited to the surviving symbol. Percentages are of code, data and module structure (names excluded).</text>
 </svg>
