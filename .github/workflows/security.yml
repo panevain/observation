@@ -5,9 +5,10 @@ on:
     branches: [main, develop]
   pull_request:
   schedule:
-    # Daily, deliberately off the hour: a new advisory against develop fails this run.
-    # Advisories against the latest release are tracked by release-watch.yml.
-    - cron: "17 4 * * *"
+    # Nightly checks, after Fuzz (00:00) and before Release watch (02:00): a new advisory
+    # against develop fails this run. Advisories against the latest release are tracked by
+    # release-watch.yml.
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 concurrency:
