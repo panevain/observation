@@ -10,6 +10,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::error::ApiError;
+use crate::ratelimit::ClientKey;
 
 /// Grid used to snap requested boxes for caching (≈ 10 m).
 const SNAP_DEG: f64 = 0.0001;
@@ -39,6 +40,7 @@ fn bundle_response(bytes: Bytes, cache_control: &'static str) -> Response {
 /// `GET /api/area?bbox=south,west,north,east`
 pub async fn area(
     State(state): State<AppState>,
+    client: ClientKey,
     Query(params): Query<AreaParams>,
 ) -> Result<Response, ApiError> {
     let raw = params.bbox.ok_or_else(|| {
@@ -47,7 +49,7 @@ pub async fn area(
     let bbox = BBox::parse(&raw).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     bbox.validate_size()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let bytes = state.bundles().get(bbox.snapped(SNAP_DEG)).await?;
+    let bytes = state.bundles().get(bbox.snapped(SNAP_DEG), client).await?;
     Ok(bundle_response(bytes, "public, max-age=86400"))
 }
 

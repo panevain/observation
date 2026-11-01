@@ -43,12 +43,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("could not bind OBS_BIND {bind}: {e}"))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
     let streams = state.clone();
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            streams.begin_shutdown();
-        })
-        .await?;
+    axum::serve(
+        listener,
+        app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        streams.begin_shutdown();
+    })
+    .await?;
     tracing::info!("shut down");
     Ok(())
 }
