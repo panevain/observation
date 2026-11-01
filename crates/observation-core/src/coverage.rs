@@ -1,14 +1,16 @@
 //! Occlusion-aware coverage on a ground raster and on building façades.
 //!
 //! Every ground cell / façade cell centre inside a camera's view cone is
-//! tested for line of sight with [`Occluders::segment_blocked`]. The same
-//! results drive the on-screen overlay and the statistics, so the two always agree.
+//! tested for line of sight with [`Occluders::segment_blocked`] and against
+//! the ground with [`Terrain::segment_blocked`]. The same results drive the
+//! on-screen overlay and the statistics, so the two always agree.
 
 use crate::building::{Footprint, clean_ring, signed_area2};
 use crate::bundle::AreaBundle;
 use crate::camera::{DoriLevel, Lighting, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM};
 use crate::frustum::ViewCone;
 use crate::occlusion::{Occluders, point_in_ring};
+use crate::terrain::Terrain;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -195,7 +197,7 @@ impl RegionMask {
     }
 }
 
-/// Regular raster over the ground plane, row-major with rows along `+Z` (south).
+/// Regular raster over the ground (in plan), row-major with rows along `+Z` (south).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct GroundGrid {
     /// North-west (min x, min z) corner, metres.
@@ -282,18 +284,21 @@ const MAX_FACADE_COLS: f32 = 256.0;
 const MAX_FACADE_ROWS: f32 = 128.0;
 
 /// Splits every wall into roughly `cell_m`-sized patches, at most 256 along and
-/// 128 up a wall (longer or taller walls get coarser patches).
+/// 128 up a wall (longer or taller walls get coarser patches). Walls standing
+/// on the ground start where the ground meets them outside, so the part a
+/// slope buries has no patches.
 pub fn facade_cells<'a>(
     footprints: impl IntoIterator<Item = &'a Footprint>,
     cell_m: f32,
+    terrain: &Terrain,
 ) -> Vec<FacadeCell> {
     let mut out = Vec::new();
     for fp in footprints {
-        let (y0, y1) = (fp.min_height_m, fp.height_m);
-        if !(y1 - y0).is_finite() {
+        let (bottom, y1) = (fp.bottom_y(), fp.roof_y());
+        if !(y1 - bottom).is_finite() {
             continue;
         }
-        let rows = ((y1 - y0) / cell_m).ceil().clamp(1.0, MAX_FACADE_ROWS) as usize;
+        let on_ground = fp.min_height_m <= 0.05;
         let rings = std::iter::once((clean_ring(&fp.outer), false))
             .chain(fp.holes.iter().map(|h| (clean_ring(h), true)));
         for (ring, is_hole) in rings {
@@ -318,6 +323,16 @@ pub fn facade_cells<'a>(
                 for c in 0..cols {
                     let (s0, s1) = (c as f32 / cols as f32, (c + 1) as f32 / cols as f32);
                     let (p0, p1) = (a + d * s0, a + d * s1);
+                    let y0 = if on_ground {
+                        let outside = (p0 + p1) * 0.5 + n2 * FACADE_OFFSET_M;
+                        bottom.max(terrain.height_at(outside))
+                    } else {
+                        bottom
+                    };
+                    if y1 - y0 < 0.1 {
+                        continue;
+                    }
+                    let rows = ((y1 - y0) / cell_m).ceil().clamp(1.0, MAX_FACADE_ROWS) as usize;
                     for r in 0..rows {
                         let ya = y0 + (y1 - y0) * r as f32 / rows as f32;
                         let yb = y0 + (y1 - y0) * (r + 1) as f32 / rows as f32;
@@ -356,6 +371,10 @@ pub struct StaticLayers {
     /// Ground cells on a road surface (and not under a building).
     pub street_mask: Vec<bool>,
     pub facades: Vec<FacadeCell>,
+    /// Private, so it cannot change under [`Self::terrain_top`].
+    terrain: Terrain,
+    /// [`Terrain::top`], for the sight-line tests.
+    terrain_top: f32,
 }
 
 impl StaticLayers {
@@ -366,6 +385,7 @@ impl StaticLayers {
             &footprints,
             &bundle.roads,
             facade_cell_m,
+            bundle.terrain.clone(),
         )
     }
 
@@ -388,6 +408,7 @@ impl StaticLayers {
         footprints: &[&Footprint],
         roads: &[crate::bundle::Road],
         facade_cell_m: f32,
+        terrain: Terrain,
     ) -> Self {
         let occluders = Occluders::new(footprints.iter().copied());
         let building_mask: Vec<bool> = (0..grid.len())
@@ -411,14 +432,33 @@ impl StaticLayers {
                 }
             }
         }
-        let facades = facade_cells(footprints.iter().copied(), facade_cell_m);
+        let facades = facade_cells(footprints.iter().copied(), facade_cell_m, &terrain);
         Self {
             grid,
             occluders,
             building_mask,
             street_mask,
             facades,
+            terrain_top: terrain.top(),
+            terrain,
         }
+    }
+
+    /// The ground the layers stand on.
+    pub fn terrain(&self) -> &Terrain {
+        &self.terrain
+    }
+
+    /// Whether the line from `a` to `b` is blocked by a building or the ground.
+    pub fn segment_blocked(&self, a: Vec3, b: Vec3) -> bool {
+        self.occluders.segment_blocked(a, b) || self.terrain.segment_blocked(a, b, self.terrain_top)
+    }
+
+    /// World point of a ground cell's subject, `subject_height_m` above the
+    /// ground.
+    pub fn ground_subject(&self, i: usize, subject_height_m: f32) -> Vec3 {
+        let c = self.grid.center(i);
+        Vec3::new(c.x, self.terrain.height_at(c) + subject_height_m, c.y)
     }
 
     /// Ground and façade cells a single camera can see.
@@ -433,9 +473,8 @@ impl StaticLayers {
                     if self.building_mask[i] {
                         continue;
                     }
-                    let c = self.grid.center(i);
-                    let p = Vec3::new(c.x, subject_height_m, c.y);
-                    if cone.contains(p) && !self.occluders.segment_blocked(cone.eye, p) {
+                    let p = self.ground_subject(i, subject_height_m);
+                    if cone.contains(p) && !self.segment_blocked(cone.eye, p) {
                         ground.push(i as u32);
                     }
                 }
@@ -452,7 +491,7 @@ impl StaticLayers {
             })
             .filter(|(_, f)| {
                 let p = f.center + f.normal * FACADE_OFFSET_M;
-                cone.contains(p) && !self.occluders.segment_blocked(cone.eye, p)
+                cone.contains(p) && !self.segment_blocked(cone.eye, p)
             })
             .map(|(i, _)| i as u32)
             .collect();
@@ -608,6 +647,7 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 6.0,
+            base_m: 0.0,
         };
         let road = Road {
             osm_id: 1,
@@ -617,7 +657,60 @@ mod tests {
             points: vec![[-50.0, 0.0], [50.0, 0.0]],
         };
         let grid = GroundGrid::covering(Vec2::new(-50.0, -50.0), Vec2::new(50.0, 50.0), 1.0);
-        StaticLayers::from_parts(grid, &[&house], &[road], 1.0)
+        StaticLayers::from_parts(grid, &[&house], &[road], 1.0, Terrain::default())
+    }
+
+    #[test]
+    fn hills_hide_the_ground_behind_them() {
+        // A 6 m mound across x = 10 to 20 on otherwise level ground.
+        let mound = Terrain::sample_from(
+            Vec2::splat(-60.0),
+            Vec2::splat(60.0),
+            |p| {
+                Some(if (10.0..=20.0).contains(&p.x) {
+                    6.0
+                } else {
+                    0.0
+                })
+            },
+            "",
+        )
+        .unwrap();
+        let grid = GroundGrid::covering(Vec2::new(-50.0, -50.0), Vec2::new(50.0, 50.0), 1.0);
+        let flat = StaticLayers::from_parts(grid, &[], &[], 1.0, Terrain::default());
+        let hilly = StaticLayers::from_parts(grid, &[], &[], 1.0, mound.clone());
+        // Looking east along z = 0 from 2.5 m.
+        let cone =
+            ViewCone::from_angles(Vec3::new(0.0, 2.5, 0.0), 90.0, -5.0, 0.0, 40.0, 40.0, 40.0);
+        let seen = |l: &StaticLayers, x: f32| {
+            let i = l.grid.cell_at(Vec2::new(x, 0.0)).unwrap() as u32;
+            l.visibility(&cone, 1.0).ground.contains(&i)
+        };
+        assert!(seen(&flat, 30.0) && seen(&hilly, 5.0));
+        assert!(!seen(&hilly, 30.0), "behind the mound");
+        // The subject on top of the mound stands 6 m up.
+        let i = hilly.grid.cell_at(Vec2::new(15.5, 0.5)).unwrap();
+        assert!((hilly.ground_subject(i, 1.0).y - 7.0).abs() < 0.01);
+
+        // A wall half buried by the mound has patches only above the ground.
+        let shed = Footprint {
+            outer: vec![[16.0, -2.0], [24.0, -2.0], [24.0, 2.0], [16.0, 2.0]],
+            holes: vec![],
+            min_height_m: 0.0,
+            height_m: 10.0,
+            base_m: 0.0,
+        };
+        let cells = facade_cells([&shed], 1.0, &mound);
+        let west: Vec<_> = cells.iter().filter(|c| c.normal.x < -0.5).collect();
+        assert!(!west.is_empty());
+        assert!(
+            west.iter()
+                .all(|c| c.corners.iter().all(|p| p.y >= 6.0 - 1e-3))
+        );
+        // The east wall stands on the foot of the slope (interpolated
+        // between the 5 m samples).
+        let east = cells.iter().filter(|c| c.normal.x > 0.5);
+        assert!(east.clone().any(|c| c.corners[0].y < 2.0));
     }
 
     #[test]
@@ -629,14 +722,15 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 1.0e30,
+            base_m: 0.0,
         };
-        let cells = facade_cells([&fp], 1.0);
+        let cells = facade_cells([&fp], 1.0, &Terrain::default());
         assert!(cells.len() <= 3 * (MAX_FACADE_COLS * MAX_FACADE_ROWS) as usize);
         let nan = Footprint {
             height_m: f32::NAN,
             ..fp
         };
-        assert!(facade_cells([&nan], 1.0).is_empty());
+        assert!(facade_cells([&nan], 1.0, &Terrain::default()).is_empty());
     }
 
     #[test]

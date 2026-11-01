@@ -111,16 +111,16 @@ impl Occluders {
                     .chain(f.holes.iter().flatten())
                     .flatten()
                     .all(|v| v.is_finite())
-                    && f.min_height_m.is_finite()
-                    && f.height_m.is_finite()
+                    && f.bottom_y().is_finite()
+                    && f.roof_y().is_finite()
             })
             .map(|f| Prism {
                 rings: std::iter::once(&f.outer)
                     .chain(f.holes.iter())
                     .map(|r| r.iter().map(|p| Vec2::new(p[0], p[1])).collect())
                     .collect(),
-                min_y: f.min_height_m,
-                max_y: f.height_m,
+                min_y: f.bottom_y(),
+                max_y: f.roof_y(),
             })
             .collect();
         let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
@@ -278,6 +278,7 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: h,
+            base_m: 0.0,
         }
     }
 

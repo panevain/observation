@@ -1,7 +1,7 @@
 //! Camera bodies in the scene and their field-of-view outlines.
 
 use crate::coverage::cone_for;
-use crate::state::{Models, Scene, UiState};
+use crate::state::{Area, Models, Scene, UiState, terrain_of};
 use crate::theme::{Tokens, from_rgb, to_bevy, to_rgb};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
@@ -176,7 +176,9 @@ fn draw_frustums(
     models: Res<Models>,
     ui: Res<UiState>,
     tokens: Res<Tokens>,
+    area: Option<Res<Area>>,
 ) {
+    let terrain = terrain_of(area.as_deref());
     for c in &scene.cameras {
         let selected = ui.selected == Some(c.id);
         let hovered = ui.hovered() == Some(c.id);
@@ -218,22 +220,20 @@ fn draw_frustums(
             gizmos.sphere(Isometry3d::from_translation(cone.eye), 0.46, halo);
             gizmos.sphere(Isometry3d::from_translation(cone.eye), 0.4, mark);
             // Where the optical axis meets the ground.
-            if cone.forward.y < -1e-3 {
-                let t = -cone.eye.y / cone.forward.y;
-                if t <= r {
-                    let p = cone.eye + cone.forward * t;
-                    let aim = to_bevy(tokens.world.aim_target);
-                    gizmos.line(cone.eye, p, aim);
-                    let flat = |lift: f32| {
-                        Isometry3d::new(
-                            p + Vec3::Y * lift,
-                            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                        )
-                    };
-                    gizmos.circle(flat(0.04), 0.58, halo);
-                    gizmos.circle(flat(0.05), 0.5, aim);
-                    gizmos.circle(flat(0.05), 0.08, aim);
-                }
+            if cone.forward.y < -1e-3
+                && let Some(p) = terrain.ray_hit(cone.eye, cone.forward, r)
+            {
+                let aim = to_bevy(tokens.world.aim_target);
+                gizmos.line(cone.eye, p, aim);
+                let flat = |lift: f32| {
+                    Isometry3d::new(
+                        p + Vec3::Y * lift,
+                        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    )
+                };
+                gizmos.circle(flat(0.04), 0.58, halo);
+                gizmos.circle(flat(0.05), 0.5, aim);
+                gizmos.circle(flat(0.05), 0.08, aim);
             }
         }
     }

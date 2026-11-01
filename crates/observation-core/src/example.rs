@@ -6,6 +6,7 @@ use crate::bundle::{AreaBundle, FOOT_WAYS};
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
 use crate::coverage::closest_on_segment;
 use crate::occlusion::Occluders;
+use crate::terrain::Terrain;
 use glam::{Vec2, Vec3};
 
 /// Cameras sit this far in front of the wall they are mounted on, metres.
@@ -31,8 +32,8 @@ struct Candidate {
     normal: Vec2,
     /// Closest point on a street, `[x, z]`.
     street: Vec2,
-    /// Roof height of the building, metres.
-    roof_m: f32,
+    /// World `y` of the building's roof.
+    roof_y: f32,
 }
 
 /// Up to `count` example placements on house fronts that face a street,
@@ -48,6 +49,8 @@ pub fn example_cameras(
     }
     let footprints: Vec<_> = bundle.footprints().collect();
     let occluders = Occluders::new(footprints.iter().copied());
+    let terrain = &bundle.terrain;
+    let top = terrain.top();
     // Houses face proper streets; fall back to driveways and service roads
     // only where there are none.
     let segments = |keep: &dyn Fn(&str) -> bool| -> Vec<(Vec2, Vec2)> {
@@ -112,7 +115,7 @@ pub fn example_cameras(
                     at,
                     normal,
                     street,
-                    roof_m: fp.height_m,
+                    roof_y: fp.roof_y(),
                 },
             ));
         }
@@ -129,10 +132,11 @@ pub fn example_cameras(
     // camera fits under the roof and sees the street point it faces from its
     // own mount height.
     let suits = |c: &Candidate, model: &CameraModel| {
-        let h = model.kind.default_mount_height_m();
-        let eye = mount_point(c.at, c.normal, h);
-        c.roof_m >= h + BELOW_ROOF_M
-            && !occluders.segment_blocked(eye, Vec3::new(c.street.x, 1.0, c.street.y))
+        let eye = mount_point(terrain, c.at, c.normal, model.kind.default_mount_height_m());
+        let street = Vec3::new(c.street.x, terrain.height_at(c.street) + 1.0, c.street.y);
+        c.roof_y >= eye.y + BELOW_ROOF_M
+            && !occluders.segment_blocked(eye, street)
+            && !terrain.segment_blocked(eye, street, top)
     };
     let mut picked: Vec<(Candidate, &CameraModel)> = Vec::new();
     for spacing in [SPACING_M, SPACING_M / 2.0, 0.0] {
@@ -155,7 +159,7 @@ pub fn example_cameras(
         .iter()
         .map(|(c, model)| {
             let kind = model.kind;
-            let eye = mount_point(c.at, c.normal, kind.default_mount_height_m());
+            let eye = mount_point(terrain, c.at, c.normal, kind.default_mount_height_m());
             let facing = (c.street - c.at).normalize_or(c.normal);
             let yaw =
                 yaw_pitch_from_forward(Vec3::new(facing.x, 0.0, facing.y)).map_or(0.0, |(y, _)| y);
@@ -175,9 +179,10 @@ pub fn example_cameras(
         .collect()
 }
 
-fn mount_point(at: Vec2, normal: Vec2, height: f32) -> Vec3 {
+/// `height` above the ground in front of the wall at `at`.
+fn mount_point(terrain: &Terrain, at: Vec2, normal: Vec2, height: f32) -> Vec3 {
     let p = at + normal * WALL_OFFSET_M;
-    Vec3::new(p.x, height, p.y)
+    Vec3::new(p.x, terrain.height_at(p) + height, p.y)
 }
 
 #[cfg(test)]
@@ -205,6 +210,11 @@ mod tests {
     /// A street running east-west through the middle with a row of houses
     /// on each side.
     fn street() -> AreaBundle {
+        street_on(Terrain::default())
+    }
+
+    /// [`street`] on the given ground.
+    fn street_on(terrain: Terrain) -> AreaBundle {
         let bbox = BBox::around(LatLon::new(47.7, -122.2), 300.0);
         let o = bbox.center();
         let m_lat = 1.0 / 111_195.0;
@@ -239,7 +249,7 @@ mod tests {
             width_m: 6.0,
             points: vec![at(-150.0, 0.0), at(150.0, 0.0)],
         }];
-        build_bundle(bbox, &buildings, &roads, &[], "test", 0)
+        build_bundle(bbox, &buildings, &roads, &[], terrain, "test", 0)
     }
 
     #[test]
@@ -271,6 +281,30 @@ mod tests {
         }
         // Deterministic.
         assert_eq!(cams, example_cameras(&b, &[&door, &flood], 10));
+    }
+
+    #[test]
+    fn cameras_mount_above_the_local_ground() {
+        // Rising 1 m per 10 m southward: the houses south of the street sit
+        // higher than those north of it.
+        let terrain = Terrain::sample_from(
+            Vec2::splat(-400.0),
+            Vec2::splat(400.0),
+            |p| Some(20.0 + p.y / 10.0),
+            "",
+        )
+        .unwrap();
+        let b = street_on(terrain.clone());
+        let door = model("door", CameraKind::Doorbell);
+        let cams = example_cameras(&b, &[&door], 10);
+        assert_eq!(cams.len(), 10);
+        for c in &cams {
+            let ground = terrain.height_at(Vec2::new(c.position[0], c.position[2]));
+            assert!((c.position[1] - ground - 1.2).abs() < 1e-3, "{c:?}");
+        }
+        assert!(
+            cams.iter().any(|c| c.position[2] > 0.0) && cams.iter().any(|c| c.position[2] < 0.0)
+        );
     }
 
     #[test]

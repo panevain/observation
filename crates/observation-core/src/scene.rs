@@ -6,12 +6,18 @@ use crate::camera::{
 };
 use crate::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use crate::geo::{BBox, LatLon};
+use crate::terrain::Terrain;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 pub const SCENE_FORMAT: &str = "observation-scene";
-pub const SCENE_VERSION: u32 = 1;
+/// Version 2: camera positions are over the terrain, with `y = 0` at the
+/// ground at the origin. Version 1 assumed flat ground at `y = 0`; such
+/// cameras are raised onto the terrain with [`lift_onto_terrain`].
+pub const SCENE_VERSION: u32 = 2;
+/// The last version that assumed flat ground.
+pub const FLAT_GROUND_VERSION: u32 = 1;
 
 /// Which area a scene was built on.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -189,6 +195,23 @@ impl SceneFile {
     }
 }
 
+impl SceneFile {
+    /// Whether the camera heights were measured from flat ground at `y = 0`
+    /// and so need [`lift_onto_terrain`] once the area's terrain is known.
+    pub fn on_flat_ground(&self) -> bool {
+        self.version <= FLAT_GROUND_VERSION
+    }
+}
+
+/// Raises cameras placed on flat ground (scene version 1) by the ground
+/// height under each, so they keep their height above the ground.
+pub fn lift_onto_terrain(cameras: &mut [CameraPlacement], terrain: &Terrain) {
+    for c in cameras {
+        let [x, y, z] = c.position;
+        c.position[1] = y + terrain.height_at(glam::Vec2::new(x, z));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +232,22 @@ mod tests {
             group: None,
         });
         s
+    }
+
+    #[test]
+    fn flat_ground_scenes_are_lifted_onto_the_terrain() {
+        let old = scene()
+            .to_json()
+            .replace("\"version\": 2", "\"version\": 1");
+        let mut s = SceneFile::from_json(&old).unwrap();
+        assert!(s.on_flat_ground());
+        assert!(!scene().on_flat_ground());
+        let terrain = crate::terrain::tests::slope();
+        lift_onto_terrain(&mut s.cameras, &terrain);
+        // 1.2 m above the ground at x = 1, which is 0.1 m up the slope.
+        assert!((s.cameras[0].position[1] - 1.3).abs() < 0.01);
+        lift_onto_terrain(&mut s.cameras, &Terrain::default());
+        assert!((s.cameras[0].position[1] - 1.3).abs() < 0.01);
     }
 
     #[test]

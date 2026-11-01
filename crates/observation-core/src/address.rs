@@ -270,6 +270,7 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 6.0,
+            base_m: 0.0,
         }
     }
 

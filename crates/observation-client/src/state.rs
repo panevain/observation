@@ -8,6 +8,7 @@ use observation_core::camera::{
 use observation_core::coverage::{CoverageParams, GroundGrid, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::scene::{AreaRef, SceneFile};
+use observation_core::terrain::{FLAT, Terrain};
 
 /// Ground raster resolution, metres.
 pub const GROUND_CELL_M: f32 = 0.5;
@@ -454,6 +455,9 @@ pub struct Scene {
     pub params: CoverageParams,
     /// Area the coverage figures can be limited to.
     pub region: Option<Region>,
+    /// The cameras come from a scene saved before terrain and still stand on
+    /// flat ground; they are lifted onto the terrain when the area loads.
+    pub on_flat_ground: bool,
     next_id: u32,
     /// Bumped on every change; drives sync, coverage and autosave.
     pub revision: u64,
@@ -467,6 +471,7 @@ impl Default for Scene {
             cameras: Vec::new(),
             params: CoverageParams::default(),
             region: None,
+            on_flat_ground: false,
             next_id: 1,
             revision: 0,
         }
@@ -519,6 +524,10 @@ impl Scene {
         file.params = self.params;
         file.region = self.region.clone();
         file.custom_models = models.custom.clone();
+        if self.on_flat_ground {
+            // Saved before the area loaded: still in the old frame.
+            file.version = observation_core::scene::FLAT_GROUND_VERSION;
+        }
         Some(file)
     }
 
@@ -541,6 +550,9 @@ impl Scene {
         self.cameras = s.cameras.clone();
         self.params = s.params;
         self.region = s.region.clone();
+        // Every step was recorded with its cameras on the terrain (none is
+        // while a flat-ground scene waits for its area).
+        self.on_flat_ground = false;
         // Never hand out an id the restored cameras already use (an import
         // resets `next_id`, so undoing past one can bring back higher ids).
         let max = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
@@ -552,6 +564,7 @@ impl Scene {
     /// Replaces the document with a loaded file (custom models go to `models`).
     pub fn load_file(&mut self, file: SceneFile, models: &mut Models) {
         self.area = Some(file.area);
+        self.on_flat_ground = file.on_flat_ground();
         self.origin = file.origin;
         self.next_id = file.cameras.iter().map(|c| c.id).max().unwrap_or(0) + 1;
         self.cameras = file.cameras;
@@ -579,6 +592,14 @@ pub struct Area {
     pub area: AreaRef,
     pub bundle: AreaBundle,
     pub layers: StaticLayers,
+}
+
+/// Flat ground, for before an area has loaded.
+static FLAT_GROUND: Terrain = FLAT;
+
+/// The loaded area's ground, or flat ground before one has loaded.
+pub fn terrain_of(area: Option<&Area>) -> &Terrain {
+    area.map_or(&FLAT_GROUND, |a| &a.bundle.terrain)
 }
 
 impl Area {

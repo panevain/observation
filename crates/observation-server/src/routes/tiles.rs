@@ -25,7 +25,7 @@ pub async fn tile(
     let id = parse_tile(&z, &x, &y).ok_or(ApiError::NotFound("not a valid map tile address"))?;
     let tile = state
         .tiles()
-        .get(id, headers.get(header::REFERER), client)
+        .get(id, headers.get(header::REFERER), Some(client))
         .await?;
     // An expired copy is kept briefly, so the browser asks again once the
     // upstream (or the client's allowance) is back.

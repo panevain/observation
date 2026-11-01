@@ -7,7 +7,7 @@
 mod backend;
 
 use crate::input::OrbitCamera;
-use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState};
+use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState, terrain_of};
 use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
 use backend::CoverageBackend;
@@ -330,9 +330,23 @@ fn draw_region(
     scene: Res<Scene>,
     ui: Res<UiState>,
     tokens: Res<Tokens>,
+    area: Option<Res<Area>>,
 ) {
+    let terrain = terrain_of(area.as_deref());
     let color = to_bevy(tokens.world.region);
-    let at = |p: [f32; 2]| Vec3::new(p[0], REGION_Y_M, p[1]);
+    let at = |p: [f32; 2]| {
+        let p = Vec2::from_array(p);
+        Vec3::new(p.x, terrain.height_at(p) + REGION_Y_M, p.y)
+    };
+    // The outline through `points`, laid over the ground between corners.
+    let draped = |points: Vec<[f32; 2]>| -> Vec<Vec3> {
+        let mut out: Vec<Vec3> = points
+            .windows(2)
+            .flat_map(|w| terrain.drape(Vec2::from_array(w[0]), Vec2::from_array(w[1]), REGION_Y_M))
+            .collect();
+        out.extend(points.last().map(|p| at(*p)));
+        out
+    };
     if let Some(r) = &scene.region
         && ui.region_draft.is_empty()
     {
@@ -341,13 +355,15 @@ fn draw_region(
         } else {
             color.with_alpha(0.35)
         };
-        gizmos.linestrip(r.points.iter().chain(r.points.first()).map(|p| at(*p)), c);
+        let ring = r.points.iter().chain(r.points.first()).copied().collect();
+        gizmos.linestrip(draped(ring), c);
     }
     if ui.tool != Tool::Region {
         return;
     }
     let draft = &ui.region_draft;
-    gizmos.linestrip(draft.iter().chain(&ui.region_hover).map(|p| at(*p)), color);
+    let path = draft.iter().chain(&ui.region_hover).copied().collect();
+    gizmos.linestrip(draped(path), color);
     let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for (i, p) in draft.iter().enumerate() {
         // Once clicking it would close the region, the first corner shows
@@ -399,13 +415,23 @@ fn draw_outside_area(
     };
     let inner = area.bounds();
     let color = to_bevy(tokens.world.outside_area);
-    let at = |p: Vec2| Vec3::new(p.x, REGION_Y_M, p.y);
-    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-    edge.rect(
-        Isometry3d::new(at(inner.center()), flat),
-        inner.size(),
-        color,
-    );
+    let terrain = &area.bundle.terrain;
+    let at = |p: Vec2| Vec3::new(p.x, terrain.height_at(p) + REGION_Y_M, p.y);
+    // A line laid over the ground.
+    let draped = |a: Vec2, b: Vec2| {
+        let mut points = terrain.drape(a, b, REGION_Y_M);
+        points.push(at(b));
+        points
+    };
+    let corners = [
+        inner.min,
+        Vec2::new(inner.max.x, inner.min.y),
+        inner.max,
+        Vec2::new(inner.min.x, inner.max.y),
+    ];
+    for (i, &a) in corners.iter().enumerate() {
+        edge.linestrip(draped(a, corners[(i + 1) % 4]), color);
+    }
     let (eye, c) = (eye.translation(), color.with_alpha(HATCH_ALPHA));
     let outer = outside.outer;
     let first = (outer.min / HATCH_PATCH_M).floor();
@@ -418,7 +444,9 @@ fn draw_outside_area(
                 continue;
             }
             let spacing = hatch_spacing_m(eye.distance(at(patch.center())));
-            hatch(inner, patch, spacing, |a, b| hatching.line(at(a), at(b), c));
+            hatch(inner, patch, spacing, |a, b| {
+                hatching.linestrip(draped(a, b), c)
+            });
         }
     }
 }

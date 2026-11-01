@@ -44,8 +44,26 @@ pub struct Footprint {
     pub outer: Vec<[f32; 2]>,
     #[serde(default)]
     pub holes: Vec<Vec<[f32; 2]>>,
+    /// Bottom of the building part, metres above [`Self::base_m`].
     pub min_height_m: f32,
+    /// Roof, metres above [`Self::base_m`].
     pub height_m: f32,
+    /// World `y` of the ground the building stands on: the lowest ground
+    /// under the footprint, so it never floats.
+    #[serde(default)]
+    pub base_m: f32,
+}
+
+impl Footprint {
+    /// World `y` of the bottom of the solid.
+    pub fn bottom_y(&self) -> f32 {
+        self.base_m + self.min_height_m
+    }
+
+    /// World `y` of the roof.
+    pub fn roof_y(&self) -> f32 {
+        self.base_m + self.height_m
+    }
 }
 
 /// Parses an OSM length value (`"12"`, `"12 m"`, `"12.5m"`, `"40'"`, `"40 ft"`, `"12'6\""`) to metres.
@@ -159,7 +177,7 @@ pub fn extrude(fp: &Footprint, mesh: &mut MeshData) -> bool {
         .map(|h| clean_ring(h))
         .filter(|h| h.len() >= 3)
         .collect();
-    let (y0, y1) = (fp.min_height_m, fp.height_m);
+    let (y0, y1) = (fp.bottom_y(), fp.roof_y());
 
     // Walls: outward normal; holes face into the hole.
     let mut wall = |ring: &[[f32; 2]], is_hole: bool| {
@@ -209,7 +227,7 @@ pub fn extrude(fp: &Footprint, mesh: &mut MeshData) -> bool {
         }
     };
     cap(y1, [0.0, 1.0, 0.0]);
-    if y0 > 0.05 {
+    if fp.min_height_m > 0.05 {
         cap(y0, [0.0, -1.0, 0.0]);
     }
     true
@@ -283,6 +301,7 @@ mod tests {
                 holes: vec![],
                 min_height_m: 0.0,
                 height_m: 5.0,
+                base_m: 0.0,
             };
             let mut m = MeshData::default();
             assert!(extrude(&fp, &mut m));
@@ -310,6 +329,7 @@ mod tests {
             holes: vec![vec![[5.0, 5.0], [15.0, 5.0], [15.0, 15.0], [5.0, 15.0]]],
             min_height_m: 3.0,
             height_m: 9.0,
+            base_m: 0.0,
         };
         let mut m = MeshData::default();
         assert!(extrude(&fp, &mut m));
@@ -320,6 +340,7 @@ mod tests {
             holes: vec![],
             min_height_m: 0.0,
             height_m: 3.0,
+            base_m: 0.0,
         };
         assert!(!extrude(&degenerate, &mut m));
     }

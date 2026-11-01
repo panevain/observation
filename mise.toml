@@ -223,6 +223,11 @@ description = "Re-record the demo street's Overpass response (one real request; 
 dir = "{{config_root}}/crates/observation-server/fixtures"
 run = "./fetch.sh"
 
+[tasks."fixtures:demo-dem"]
+description = "Re-record the demo street's elevation tiles (two real requests; OBS_DEM_URL picks the source)"
+dir = "{{config_root}}/crates/observation-server/fixtures"
+run = "./fetch-dem.sh"
+
 [tasks."rulesets:check"]
 description = "Diff .github/rulesets/ against the repository's live rulesets (needs gh)"
 run = "scripts/rulesets.sh check"

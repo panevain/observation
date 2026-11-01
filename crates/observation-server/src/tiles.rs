@@ -4,6 +4,9 @@
 //! honoured but never below the configured minimum (7 days), conditional
 //! revalidation, at most 4 concurrent upstream fetches, no prefetching. Each
 //! client's upstream fetches are also rate limited (see [`crate::ratelimit`]).
+//! The same proxy, with its own cache directory, fetches the elevation tiles
+//! areas are built on (see [`crate::elevation`]); those are not limited per
+//! client, since the bundle builds that need them already are.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,7 +16,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use observation_core::tiles::TileId;
 use tokio::sync::Semaphore;
 
-use crate::cache::{Cache, TileMeta};
+use crate::cache::{Cache, TileMeta, TileSet};
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::ratelimit::{ClientKey, RateLimiter};
@@ -29,24 +32,68 @@ const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 pub struct TileProxy {
     client: reqwest::Client,
     template: String,
+    set: TileSet,
+    /// Checks a downloaded tile beyond its PNG signature; one that fails is
+    /// neither cached nor served.
+    usable: fn(&[u8]) -> bool,
     cache: Arc<Cache>,
     permits: Semaphore,
     min_ttl: Duration,
-    /// Per-client limit on upstream fetches.
-    limiter: RateLimiter,
+    /// Per-client limit on upstream fetches (map tiles only).
+    limiter: Option<RateLimiter>,
 }
 
 impl TileProxy {
-    /// `client` must already carry the project `User-Agent` and a timeout.
+    /// The map tile proxy. `client` must already carry the project
+    /// `User-Agent` and a timeout.
     pub fn new(client: reqwest::Client, config: &Config, cache: Arc<Cache>) -> Self {
         Self {
             client,
             template: config.tile_url.clone(),
+            set: TileSet::Map,
+            usable: |_| true,
             cache,
             permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
             min_ttl: config.tile_min_ttl,
-            limiter: RateLimiter::new("tiles", config.tile_rate),
+            limiter: Some(RateLimiter::new("tiles", config.tile_rate)),
         }
+    }
+
+    /// The elevation tile proxy for the `template` from `OBS_DEM_URL`, which
+    /// keeps only tiles `usable` accepts.
+    pub fn elevation(
+        client: reqwest::Client,
+        template: String,
+        usable: fn(&[u8]) -> bool,
+        config: &Config,
+        cache: Arc<Cache>,
+    ) -> Self {
+        Self {
+            client,
+            template,
+            set: TileSet::Dem,
+            usable,
+            cache,
+            permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
+            min_ttl: config.dem_min_ttl,
+            limiter: None,
+        }
+    }
+
+    /// The upstream, as named in errors.
+    fn server(&self) -> &'static str {
+        match self.set {
+            TileSet::Map => "tile server",
+            TileSet::Dem => "elevation server",
+        }
+    }
+
+    fn count(&self, result: &'static str) {
+        let name = match self.set {
+            TileSet::Map => crate::metrics::TILE_CACHE,
+            TileSet::Dem => crate::metrics::DEM_CACHE,
+        };
+        metrics::counter!(name, "result" => result).increment(1);
     }
 
     /// Returns the PNG for `id`, from cache when fresh, else from upstream.
@@ -57,16 +104,20 @@ impl TileProxy {
         &self,
         id: TileId,
         referer: Option<&HeaderValue>,
-        client: ClientKey,
+        client: Option<ClientKey>,
     ) -> Result<Tile, ApiError> {
-        let cached = self.cache.get_tile(id).await;
+        let cached = self.cache.get_tile_in(self.set, id).await;
         if let Some(c) = &cached
             && c.meta.expires_unix > unix_now()
         {
-            metrics::counter!(crate::metrics::TILE_CACHE, "result" => "hit").increment(1);
+            self.count("hit");
             return Ok(Tile::fresh(c.bytes.clone()));
         }
-        let fetched = match self.limiter.check(client) {
+        let allowed = match (&self.limiter, client) {
+            (Some(limiter), Some(client)) => limiter.check(client),
+            _ => Ok(()),
+        };
+        let fetched = match allowed {
             Ok(()) => {
                 self.fetch(id, cached.as_ref().map(|c| &c.meta), referer)
                     .await
@@ -81,33 +132,34 @@ impl TileProxy {
                 } else {
                     "miss"
                 };
-                metrics::counter!(crate::metrics::TILE_CACHE, "result" => result).increment(1);
-                match self.cache.put_tile(id, &bytes, &meta).await {
+                self.count(result);
+                match self.cache.put_tile_in(self.set, id, &bytes, &meta).await {
                     Ok(_) => {}
-                    Err(e) => tracing::warn!(error = %e, ?id, "could not cache tile"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, ?id, server = self.server(), "could not cache tile")
+                    }
                 }
                 Ok(Tile::fresh(bytes))
             }
             Ok(Upstream::NotModified(meta)) => {
                 let Some(c) = cached else {
-                    return Err(ApiError::Upstream(
-                        "the tile server sent an unexpected 'not modified' reply".into(),
-                    ));
+                    return Err(ApiError::Upstream(format!(
+                        "the {} sent an unexpected 'not modified' reply",
+                        self.server()
+                    )));
                 };
-                metrics::counter!(crate::metrics::TILE_CACHE, "result" => "revalidated")
-                    .increment(1);
-                if let Err(e) = self.cache.update_tile_meta(id, &meta).await {
-                    tracing::warn!(error = %e, ?id, "could not refresh tile metadata");
+                self.count("revalidated");
+                if let Err(e) = self.cache.update_tile_meta_in(self.set, id, &meta).await {
+                    tracing::warn!(error = %e, ?id, server = self.server(), "could not refresh tile metadata");
                 }
                 Ok(Tile::fresh(c.bytes))
             }
             Err(e) => match cached {
                 Some(c) => {
-                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "stale_served")
-                        .increment(1);
+                    self.count("stale_served");
                     // A client over its limit is routine, and counted on its own.
                     if !matches!(e, ApiError::TooManyRequests { .. }) {
-                        tracing::warn!(error = %e, ?id, "tile upstream failed, serving stale copy");
+                        tracing::warn!(error = %e, ?id, server = self.server(), "tile upstream failed, serving stale copy");
                     }
                     Ok(Tile {
                         bytes: c.bytes,
@@ -115,7 +167,7 @@ impl TileProxy {
                     })
                 }
                 None => {
-                    metrics::counter!(crate::metrics::TILE_CACHE, "result" => "error").increment(1);
+                    self.count("error");
                     Err(e)
                 }
             },
@@ -146,8 +198,11 @@ impl TileProxy {
             }
         }
         let resp = req.send().await.map_err(|e| {
-            tracing::warn!(error = %e.without_url(), ?id, "tile request failed");
-            ApiError::Upstream("could not reach the tile server; map tiles may be missing".into())
+            tracing::warn!(error = %e.without_url(), ?id, server = self.server(), "tile request failed");
+            ApiError::Upstream(match self.set {
+                TileSet::Map => "could not reach the tile server; map tiles may be missing".into(),
+                TileSet::Dem => "could not reach the elevation server".into(),
+            })
         })?;
         let status = resp.status();
         let header_str =
@@ -164,24 +219,35 @@ impl TileProxy {
                 let body = crate::read_capped(resp, MAX_TILE_BYTES)
                     .await
                     .map_err(|e| {
-                        tracing::warn!(error = %e.without_url(), ?id, "tile body failed");
-                        ApiError::Upstream("the tile download was interrupted".into())
+                        tracing::warn!(error = %e.without_url(), ?id, server = self.server(), "tile body failed");
+                        ApiError::Upstream(format!("the download from the {} was interrupted", self.server()))
                     })?
                     .ok_or_else(|| {
-                        tracing::warn!(max = MAX_TILE_BYTES, ?id, "tile body too large");
-                        ApiError::Upstream("tile server returned a tile that is too large".into())
+                        tracing::warn!(max = MAX_TILE_BYTES, ?id, server = self.server(), "tile body too large");
+                        ApiError::Upstream(format!("the {} returned a tile that is too large", self.server()))
                     })?;
                 if !body.starts_with(PNG_MAGIC) {
-                    return Err(ApiError::Upstream(
-                        "tile server returned something that is not a PNG".into(),
-                    ));
+                    return Err(ApiError::Upstream(format!(
+                        "the {} returned something that is not a PNG",
+                        self.server()
+                    )));
+                }
+                if !(self.usable)(&body) {
+                    tracing::warn!(?id, server = self.server(), "unusable tile");
+                    return Err(ApiError::Upstream(format!(
+                        "the {} sent an unusable tile",
+                        self.server()
+                    )));
                 }
                 Ok(Upstream::Fresh(body, meta))
             }
             StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(resp.headers(), stale))),
-            StatusCode::NOT_FOUND => Err(ApiError::NotFound("the tile server has no tile here")),
+            StatusCode::NOT_FOUND => Err(ApiError::NotFound(match self.set {
+                TileSet::Map => "the tile server has no tile here",
+                TileSet::Dem => "the elevation server has no tile here",
+            })),
             StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
-                tracing::warn!(%status, ?id, "tile server is limiting us");
+                tracing::warn!(%status, ?id, server = self.server(), "tile server is limiting us");
                 Err(ApiError::RateLimited {
                     retry_after_secs: 30,
                 })
@@ -192,12 +258,14 @@ impl TileProxy {
                     tracing::warn!(
                         status = %other,
                         location = ?resp.headers().get(header::LOCATION),
-                        "tile server redirected; point OBS_TILE_URL at the final URL"
+                        server = self.server(),
+                        "upstream redirected; point OBS_TILE_URL or OBS_DEM_URL at the final URL"
                     );
                 }
-                tracing::warn!(status = %other, ?id, "tile server error");
+                tracing::warn!(status = %other, ?id, server = self.server(), "tile server error");
                 Err(ApiError::Upstream(format!(
-                    "the tile server answered with an error (HTTP {})",
+                    "the {} answered with an error (HTTP {})",
+                    self.server(),
                     other.as_u16()
                 )))
             }

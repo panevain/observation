@@ -10,6 +10,7 @@ use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
 use observation_core::scene::AreaRef;
+use observation_core::terrain::{TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL};
 
 pub fn top_bar(
     ui: &mut egui::Ui,
@@ -239,6 +240,21 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
                     .color(t.text_muted),
                 "https://www.openstreetmap.org/copyright",
             );
+            if let Some(dem) = d
+                .area
+                .as_ref()
+                .map(|a| a.bundle.terrain.attribution.as_str())
+                .filter(|a| !a.is_empty())
+            {
+                let text = RichText::new(dem).size(t.font.caption).color(t.text_muted);
+                // The default source's credits are listed in full there; an
+                // operator's own source has only the text it was given.
+                if dem == TERRAIN_TILES_ATTRIBUTION {
+                    ui.hyperlink_to(text, TERRAIN_TILES_CREDITS_URL);
+                } else {
+                    ui.label(text);
+                }
+            }
             ui.separator();
             save_status(ui, d);
             ui.separator();

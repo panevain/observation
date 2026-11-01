@@ -18,11 +18,13 @@ use observation_core::camera::CameraModel;
 use observation_core::coverage::StaticLayers;
 use observation_core::example::example_cameras;
 use observation_core::geo::{LatLon, Projection};
-use observation_core::scene::AreaRef;
+use observation_core::scene::{AreaRef, lift_onto_terrain};
+use observation_core::terrain::{TERRAIN_MARGIN_M, Terrain};
 use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
 
-/// Extra ground drawn around the area so it doesn't float in the void, metres.
-const GROUND_MARGIN_M: f32 = 150.0;
+/// Extra ground drawn around the area so it doesn't float in the void, metres:
+/// as far as the bundle's terrain reaches.
+pub const GROUND_MARGIN_M: f32 = TERRAIN_MARGIN_M;
 /// Upper bound on ground tiles per area.
 const MAX_GROUND_TILES: usize = 64;
 /// Models used, in turn, for the example cameras on the demo street: a mix of
@@ -50,9 +52,6 @@ pub struct AreaEntity;
 
 #[derive(Component)]
 pub struct BuildingMesh;
-
-#[derive(Component)]
-pub struct GroundMesh;
 
 #[derive(Component)]
 struct GroundTile(TileId);
@@ -139,55 +138,108 @@ fn setup_lights(mut commands: Commands, tokens: Res<Tokens>) {
     ));
 }
 
-/// Flat quad on the ground plane with explicit UVs: `(min.x, min.z)` → uv(0,0).
-pub fn ground_quad(min: Vec2, max: Vec2, y: f32) -> Mesh {
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        vec![
-            [min.x, y, min.y],
-            [max.x, y, min.y],
-            [max.x, y, max.y],
-            [min.x, y, max.y],
-        ],
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 4])
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-    )
-    .with_inserted_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]))
+/// Lines every ground surface of an area puts vertices on, besides the
+/// terrain's sample lines: the edges of the map tiles, the coverage grid and
+/// the outside tint. Surfaces split the same way are the same surface where
+/// they overlap, so the overlay stays just above the tiles.
+#[derive(Debug, Default)]
+pub struct GroundLines {
+    xs: Vec<f32>,
+    zs: Vec<f32>,
 }
 
-/// Flat ring on the ground plane: `outer` with `inner` cut out.
-fn ground_frame(inner: Rect, outer: Rect, y: f32) -> Mesh {
-    let corners = |r: Rect| {
-        [
-            [r.min.x, y, r.min.y],
-            [r.max.x, y, r.min.y],
-            [r.max.x, y, r.max.y],
-            [r.min.x, y, r.max.y],
-        ]
-    };
-    // Outer corners 0-3, inner 4-7; one quad per side, wound like `ground_quad`.
-    let mut idx = Vec::with_capacity(24);
-    for i in 0..4 {
-        let j = (i + 1) % 4;
-        idx.extend([i, 4 + j, j, i, 4 + i, 4 + j]);
+impl GroundLines {
+    fn add(&mut self, r: Rect) {
+        self.xs.extend([r.min.x, r.max.x]);
+        self.zs.extend([r.min.y, r.max.y]);
     }
+
+    /// Vertex coordinates along one axis of `[lo, hi]`: both ends, the
+    /// terrain's sample lines and these lines in between.
+    fn along(&self, terrain: &Terrain, lo: f32, hi: f32, axis: usize) -> Vec<f32> {
+        let extra = if axis == 0 { &self.xs } else { &self.zs };
+        let mut out = terrain.breaks(lo, hi, axis);
+        out.extend(extra.iter().filter(|&&v| v > lo + 1e-3 && v < hi - 1e-3));
+        out.sort_by(f32::total_cmp);
+        out.dedup_by(|a, b| (*a - *b).abs() <= 1e-3);
+        out
+    }
+}
+
+/// Positions, normals, UVs and indices of a mesh being built.
+type MeshBuffers = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>);
+
+/// Appends the ground over the `x, z` rectangle `r`, `lift` metres above the
+/// terrain, to the mesh buffers, with UVs running across it: `r.min` →
+/// uv(0,0). A single quad on flat ground.
+fn ground_patch(terrain: &Terrain, lines: &GroundLines, r: Rect, lift: f32, buf: &mut MeshBuffers) {
+    let (pos, nrm, uv, idx) = buf;
+    let xs = lines.along(terrain, r.min.x, r.max.x, 0);
+    let zs = lines.along(terrain, r.min.y, r.max.y, 1);
+    let size = r.size().max(Vec2::splat(1e-3));
+    let base = pos.len() as u32;
+    for &z in &zs {
+        for &x in &xs {
+            let p = Vec2::new(x, z);
+            pos.push([x, terrain.height_at(p) + lift, z]);
+            nrm.push(terrain.normal_at(p).to_array());
+            uv.push(((p - r.min) / size).to_array());
+        }
+    }
+    let w = xs.len() as u32;
+    for row in 0..zs.len() as u32 - 1 {
+        for col in 0..w - 1 {
+            let (a, b) = (base + row * w + col, base + row * w + col + 1);
+            let (c, d) = (a + w, b + w);
+            // Counter-clockwise seen from above (+Y).
+            idx.extend([a, d, b, a, c, d]);
+        }
+    }
+}
+
+fn mesh_of(buf: MeshBuffers) -> Mesh {
+    let (pos, nrm, uv, idx) = buf;
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     )
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        [corners(outer), corners(inner)].concat(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 8])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
     .with_inserted_indices(Indices::U32(idx))
+}
+
+/// The ground over the `x, z` rectangle `r`, `lift` metres above the terrain;
+/// see [`ground_patch`].
+pub fn ground_mesh(terrain: &Terrain, lines: &GroundLines, r: Rect, lift: f32) -> Mesh {
+    let mut buf = Default::default();
+    ground_patch(terrain, lines, r, lift, &mut buf);
+    mesh_of(buf)
+}
+
+/// The ground between `inner` and `outer` (which holds it), `lift` metres
+/// above the terrain: four strips around the hole.
+fn ground_frame(
+    terrain: &Terrain,
+    lines: &GroundLines,
+    inner: Rect,
+    outer: Rect,
+    lift: f32,
+) -> Mesh {
+    let mut buf = Default::default();
+    let strips = [
+        Rect::new(outer.min.x, outer.min.y, outer.max.x, inner.min.y),
+        Rect::new(outer.min.x, inner.max.y, outer.max.x, outer.max.y),
+        Rect::new(outer.min.x, inner.min.y, inner.min.x, inner.max.y),
+        Rect::new(inner.max.x, inner.min.y, outer.max.x, inner.max.y),
+    ];
+    for r in strips
+        .into_iter()
+        .filter(|r| r.width() > 1e-3 && r.height() > 1e-3)
+    {
+        ground_patch(terrain, lines, r, lift, &mut buf);
+    }
+    mesh_of(buf)
 }
 
 /// Asset stores an area load writes to.
@@ -252,15 +304,10 @@ fn on_area_loaded(
         MeshMaterial3d(building.clone()),
     ));
 
-    // Pick target for ground clicks. It is not drawn: the tiles below cover
-    // it, and two coplanar surfaces would fight in the depth buffer.
+    // Ground clicks are found on the terrain itself (see `input::cast`), out
+    // to the margin.
+    let terrain = &bundle.terrain;
     let (gmin, gmax) = (grid.min - GROUND_MARGIN_M, grid.max() + GROUND_MARGIN_M);
-    commands.spawn((
-        AreaEntity,
-        GroundMesh,
-        Mesh3d(meshes.add(ground_quad(gmin, gmax, 0.0))),
-        Visibility::Hidden,
-    ));
 
     // Map tiles draped on the ground: plain ground colour until the image
     // arrives (or for good, if it fails).
@@ -274,16 +321,27 @@ fn on_area_loaded(
     let ground_tiles = tiles_covering(&tile_bbox, z);
     tiles.pin(ground_tiles.iter().copied());
     let inner = grid_bounds(&grid);
-    let mut outer = Rect::from_corners(gmin, gmax);
-    for t in ground_tiles {
-        let b = t.bounds();
-        let nw = world2(&proj, LatLon::new(b.north, b.west));
-        let se = world2(&proj, LatLon::new(b.south, b.east));
-        outer = outer.union(Rect::from_corners(nw, se));
+    let tile_rects: Vec<(TileId, Rect)> = ground_tiles
+        .into_iter()
+        .map(|t| {
+            let b = t.bounds();
+            let nw = world2(&proj, LatLon::new(b.north, b.west));
+            let se = world2(&proj, LatLon::new(b.south, b.east));
+            (t, Rect::from_corners(nw, se))
+        })
+        .collect();
+    let outer = tile_rects
+        .iter()
+        .fold(Rect::from_corners(gmin, gmax), |o, (_, r)| o.union(*r));
+    let mut lines = GroundLines::default();
+    for r in tile_rects.iter().map(|(_, r)| *r).chain([inner, outer]) {
+        lines.add(r);
+    }
+    for (t, r) in tile_rects {
         commands.spawn((
             AreaEntity,
             GroundTile(t),
-            Mesh3d(meshes.add(ground_quad(nw, se, 0.0))),
+            Mesh3d(meshes.add(ground_mesh(terrain, &lines, r, 0.0))),
             MeshMaterial3d(plain.clone()),
             NotShadowCaster,
             Pickable::IGNORE,
@@ -299,7 +357,7 @@ fn on_area_loaded(
     commands.spawn((
         AreaEntity,
         OutsideArea { outer },
-        Mesh3d(meshes.add(ground_frame(inner, outer, OVERLAY_Y_M))),
+        Mesh3d(meshes.add(ground_frame(terrain, &lines, inner, outer, OVERLAY_Y_M))),
         MeshMaterial3d(outside.clone()),
         Visibility::Hidden,
         NotShadowCaster,
@@ -325,7 +383,7 @@ fn on_area_loaded(
     ));
     commands.spawn((
         AreaEntity,
-        Mesh3d(meshes.add(ground_quad(grid.min, grid.max(), OVERLAY_Y_M))),
+        Mesh3d(meshes.add(ground_mesh(terrain, &lines, inner, OVERLAY_Y_M))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(ground_image.clone()),
             alpha_mode: AlphaMode::Blend,
@@ -386,7 +444,13 @@ fn on_area_loaded(
 
     // Document state.
     let area = msg.request.area;
-    if !msg.request.keep_cameras || scene.area != Some(area) {
+    let keep = msg.request.keep_cameras && scene.area == Some(area);
+    if keep && std::mem::take(&mut scene.on_flat_ground) {
+        // A scene saved before terrain: its cameras stood on flat ground.
+        lift_onto_terrain(&mut scene.cameras, terrain);
+    }
+    if !keep {
+        scene.on_flat_ground = false;
         scene.cameras.clear();
         // A region belongs to the area it was drawn on, as does one being
         // drawn.

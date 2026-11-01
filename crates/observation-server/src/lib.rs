@@ -10,6 +10,7 @@ pub mod bundles;
 pub mod cache;
 pub mod config;
 pub mod demo;
+pub mod elevation;
 pub mod error;
 pub mod metrics;
 pub mod overpass;
@@ -36,6 +37,7 @@ use tower_http::trace::TraceLayer;
 use crate::bundles::BundleService;
 use crate::cache::{Cache, CacheCaps};
 use crate::config::Config;
+use crate::elevation::Elevation;
 use crate::overpass::OverpassClient;
 use crate::ratelimit::RateLimiter;
 use crate::regions::Regions;
@@ -121,6 +123,7 @@ impl AppState {
             CacheCaps {
                 bundle_bytes: config.bundle_cache_cap_bytes,
                 tile_bytes: config.tile_cache_cap_bytes,
+                dem_bytes: config.dem_cache_cap_bytes,
             },
         ));
         // Off the request path: a cache from before a cap can be far over it.
@@ -150,10 +153,16 @@ impl AppState {
             }
             None => None,
         };
+        let elevation = Arc::new(Elevation::new(
+            tile_client.clone(),
+            &config,
+            Arc::clone(&cache),
+        ));
         let bundles = Arc::new(BundleService::new(
             Arc::clone(&cache),
             overpass,
             regions.clone(),
+            elevation,
             config.attribution.clone(),
             RateLimiter::new("area", config.area_rate),
         ));
@@ -162,7 +171,7 @@ impl AppState {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let demo = match demo::build_demo(&config.attribution, now) {
+        let demo = match demo::build_demo(&config.attribution, &config.dem_attribution, now) {
             Ok(b) => Some(b),
             Err(e) => {
                 tracing::error!(error = %e, "demo bundle unavailable");

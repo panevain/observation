@@ -4767,6 +4767,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "observation-core",
  "observation-upstream",
+ "png",
  "reqwest",
  "serde",
  "serde_json",

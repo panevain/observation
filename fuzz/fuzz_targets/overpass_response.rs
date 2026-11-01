@@ -6,6 +6,7 @@
 use libfuzzer_sys::fuzz_target;
 use observation_core::bundle::{AreaBundle, build_bundle};
 use observation_core::geo::{BBox, LatLon};
+use observation_core::terrain::Terrain;
 use observation_server::overpass::parse_response;
 
 fuzz_target!(|data: &[u8]| {
@@ -13,6 +14,14 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let bbox = BBox::around(LatLon::new(47.7086, -122.206), 300.0);
-    let bundle = build_bundle(bbox, &osm.buildings, &osm.roads, &osm.addresses, "fuzz", 0);
+    let bundle = build_bundle(
+        bbox,
+        &osm.buildings,
+        &osm.roads,
+        &osm.addresses,
+        Terrain::default(),
+        "fuzz",
+        0,
+    );
     AreaBundle::decode(&bundle.encode()).expect("built bundle decodes");
 });

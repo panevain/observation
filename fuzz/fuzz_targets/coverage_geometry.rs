@@ -11,11 +11,15 @@ use observation_core::bundle::Road;
 use observation_core::coverage::{CoverageCounts, CoverageStats, GroundGrid, StaticLayers};
 use observation_core::frustum::ViewCone;
 use observation_core::glam::{Vec2, Vec3};
+use observation_core::terrain::Terrain;
 
 #[derive(Debug, Arbitrary)]
 struct Input {
     rings: Vec<Vec<(f32, f32)>>,
     heights: (f32, f32),
+    base: f32,
+    /// Ground samples, on a 9 × 9 grid 5 m apart when there are enough.
+    ground: Vec<i16>,
     eye: (f32, f32, f32),
     angles: (f32, f32, f32),
     fov: (f32, f32),
@@ -34,6 +38,7 @@ fuzz_target!(|input: Input| {
             holes: vec![],
             min_height_m: input.heights.0,
             height_m: input.heights.1,
+            base_m: input.base,
         })
         .collect();
     let refs: Vec<&Footprint> = footprints.iter().collect();
@@ -45,7 +50,20 @@ fuzz_target!(|input: Input| {
         points: vec![[-20.0, 0.0], [20.0, 0.0]],
     };
     let grid = GroundGrid::covering(Vec2::splat(-20.0), Vec2::splat(20.0), 1.0);
-    let layers = StaticLayers::from_parts(grid, &refs, &[road], 1.0);
+    let terrain = if input.ground.len() >= 81 {
+        Terrain {
+            min: [-20.0, -20.0],
+            cell_m: 5.0,
+            cols: 9,
+            rows: 9,
+            heights_dm: input.ground[..81].to_vec(),
+            datum_m: 0.0,
+            attribution: String::new(),
+        }
+    } else {
+        Terrain::default()
+    };
+    let layers = StaticLayers::from_parts(grid, &refs, &[road], 1.0, terrain);
 
     let cone = ViewCone::from_angles(
         Vec3::new(input.eye.0, input.eye.1, input.eye.2),

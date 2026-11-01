@@ -3,7 +3,7 @@
 
 use super::UiData;
 use crate::icons;
-use crate::state::Tool;
+use crate::state::{Tool, terrain_of};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraAction {
@@ -75,7 +75,9 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
         CameraAction::Duplicate => {
             let mut copy = c;
             copy.label = String::new();
-            copy.position[0] += 1.0;
+            // A metre east, at the same height above the ground.
+            let [x, _, z] = copy.position;
+            copy.position = terrain_of(d.area.as_deref()).moved_to(copy.position, x + 1.0, z);
             let new = d.scene.add_camera(copy);
             d.ui.select(new);
         }
