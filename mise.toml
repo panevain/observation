@@ -53,8 +53,9 @@ cargo-nextest = "github:nextest-rs/nextest"
 [tools]
 # mise.lock records the release checksums; the Dockerfile installs trunk from it.
 trunk = "0.21.14"
-# The checks `check` runs besides cargo's own, which CI runs too (ci.yml's test and hygiene jobs,
-# security.yml's cargo-deny): tests, spelling, dependencies no code uses, and cargo-deny.
+# The checks `check` runs besides cargo's own, which CI runs too (ci.yml's test and hygiene jobs;
+# cargo-deny in security.yml and release.yml's tag gate): tests, spelling, unused dependencies
+# and cargo-deny.
 cargo-nextest = { version = "0.9.148", version_prefix = "cargo-nextest-" }
 typos = "1.51.1"
 cargo-shear = "1.14.0"
