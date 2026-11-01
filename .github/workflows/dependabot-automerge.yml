@@ -10,7 +10,8 @@ name: Dependabot auto-merge
 # not), and the app's key is only available to runs on develop.
 on:
   schedule:
-    - cron: "20 * * * *"
+    # Every 4 hours; the 06:00 run follows the 05:00-05:30 update window (Dependabot, Pins).
+    - cron: "0 2-22/4 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -43,7 +44,7 @@ jobs:
           prs="$(python3 scripts/dependabot-automerge.py list --repo "${REPO}")"
           echo "prs=${prs}" >> "${GITHUB_OUTPUT}"
 
-  # Only when there is something to do, so the hourly sweep does not deploy to `bot` each time.
+  # Only when there is something to do, so the sweep does not deploy to `bot` each time.
   merge:
     name: set auto-merge
     needs: find

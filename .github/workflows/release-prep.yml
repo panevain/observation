@@ -19,7 +19,7 @@ name: Prepare release
 on:
   schedule:
     # Tuesdays: after Monday's Dependabot and Pins pull requests have had a day to merge.
-    - cron: "17 13 * * 2"
+    - cron: "0 16 * * 2"
   workflow_dispatch:
     inputs:
       version:

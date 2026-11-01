@@ -6,7 +6,8 @@ on:
   pull_request:
     branches: [main, develop]
   schedule:
-    - cron: "41 5 * * 1"
+    # Weekly health checks, Sundays: CodeQL 06:00, Full image 06:30, Scorecard 07:00, Prune 09:00.
+    - cron: "0 6 * * 0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

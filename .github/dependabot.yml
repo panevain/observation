@@ -6,6 +6,9 @@
 # Settings -> Advanced Security. A fix for the latest *release* reaches main through a hotfix
 # (release-watch.yml and hotfix.yml), since Dependabot only looks at the default branch.
 #
+# Times are the Monday update window (05:00-05:15 UTC; Docker digests daily at 05:00), before
+# Pins (05:30) and the 06:00 auto-merge sweep.
+#
 # Patch and minor updates come in separate groups: Dependabot auto-merge
 # (dependabot-automerge.yml) merges patch updates and base image digest refreshes once their
 # checks pass, so a patch group never waits on a minor update that needs a person.
@@ -16,7 +19,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "06:30"
+      time: "05:05"
       timezone: Etc/UTC
     open-pull-requests-limit: 5
     # Wait a week after a release before proposing it (supply-chain hygiene);
@@ -47,7 +50,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "06:40"
+      time: "05:10"
       timezone: Etc/UTC
     open-pull-requests-limit: 2
     cooldown:
@@ -72,7 +75,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "06:45"
+      time: "05:15"
       timezone: Etc/UTC
     open-pull-requests-limit: 5
     # Wait a week after a release before proposing it (supply-chain hygiene);
@@ -94,7 +97,7 @@ updates:
     directory: /
     schedule:
       interval: daily
-      time: "07:00"
+      time: "05:00"
       timezone: Etc/UTC
     open-pull-requests-limit: 3
     commit-message:

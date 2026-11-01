@@ -12,7 +12,7 @@
 
 Add user-visible changes under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
-Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, hourly); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off within the hour if it was already on. Remove the label to let it merge.
+Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge.
 
 ### Releasing
 

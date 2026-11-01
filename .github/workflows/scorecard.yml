@@ -7,7 +7,8 @@ on:
   push:
     branches: [main, develop]
   schedule:
-    - cron: "23 6 * * 3"
+    # Weekly health checks, Sundays (after Full image).
+    - cron: "0 7 * * 0"
   branch_protection_rule:
   workflow_dispatch:
 

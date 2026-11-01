@@ -10,8 +10,8 @@ name: Release watch
 # Does nothing while a release or hotfix is waiting to be tagged, or a hotfix/* branch exists.
 on:
   schedule:
-    # After Security's daily run (04:17), off the hour.
-    - cron: "41 6 * * *"
+    # Nightly checks, last: after Security (01:00), so a hotfix PR has its checks by morning.
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 concurrency:

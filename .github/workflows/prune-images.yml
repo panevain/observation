@@ -20,7 +20,8 @@ name: Prune images
 # manually once and check the list before setting the variable.
 on:
   schedule:
-    - cron: "17 4 * * 1"
+    # Weekly health checks, Sundays, last (it also runs after every Release).
+    - cron: "0 9 * * 0"
   workflow_run:
     workflows: [Release]
     types: [completed]

@@ -7,8 +7,8 @@ name: Pins
 # from its own branch chore/pin-bumps.
 on:
   schedule:
-    # Mondays, after Dependabot's runs.
-    - cron: "23 8 * * 1"
+    # Monday update window, after Dependabot's runs (05:00-05:15).
+    - cron: "30 5 * * 1"
   workflow_dispatch:
 
 concurrency:
