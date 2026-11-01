@@ -14,7 +14,7 @@ use bevy_egui::egui::{
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::camera::CameraKind;
 
-use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE};
+use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors};
 pub use observation_tokens::{Layout, Radius, Space, TypeScale};
 
 /// Smallest supported viewport (CSS px). Below this the app shows a gate.
@@ -138,29 +138,12 @@ const COVERAGE_RAMP: [Color32; 4] = [
 
 impl Tokens {
     pub fn light() -> Self {
-        let ui = &observation_tokens::LIGHT;
-        Self {
-            dark: false,
-            bg: color(ui.bg),
-            surface: color(ui.surface),
-            surface_raised: color(ui.surface_raised),
-            surface_sunken: color(ui.surface_sunken),
-            border: color(ui.border),
-            border_strong: color(ui.border_strong),
-            hover: color(ui.hover),
-            shadow: color(ui.shadow),
-            text: color(ui.text),
-            text_muted: color(ui.text_muted),
-            accent: color(ui.accent),
-            on_accent: color(ui.on_accent),
-            danger: color(ui.danger),
-            warning: color(ui.warning),
-            scrim: color(ui.scrim),
-            camera_palette: CAMERA_PALETTE,
-            kind_colors: KIND_COLORS_LIGHT,
-            coverage_ramp: COVERAGE_RAMP,
-            selection_box: Color32::from_rgb(0x3B, 0x5B, 0xDB),
-            world: WorldColors {
+        Self::scheme(
+            false,
+            &observation_tokens::LIGHT,
+            CAMERA_PALETTE,
+            KIND_COLORS_LIGHT,
+            WorldColors {
                 sky: Color32::from_rgb(0xE9, 0xED, 0xF2),
                 ground: Color32::from_rgb(0xD8, 0xD6, 0xCF),
                 building: Color32::from_rgb(0xF0, 0xEE, 0xE9),
@@ -169,18 +152,38 @@ impl Tokens {
                 halo: Color32::from_rgb(0x1B, 0x1F, 0x24),
                 region: Color32::from_rgb(0x1B, 0x1F, 0x24),
             },
-            space: SPACE,
-            radius: RADIUS,
-            font: FONT,
-            layout: LAYOUT,
-            stroke_width: 1.0,
-        }
+        )
     }
 
     pub fn dark() -> Self {
-        let ui = &observation_tokens::DARK;
+        Self::scheme(
+            true,
+            &observation_tokens::DARK,
+            CAMERA_PALETTE_DARK,
+            KIND_COLORS_DARK,
+            WorldColors {
+                sky: Color32::from_rgb(0x1A, 0x1D, 0x22),
+                ground: Color32::from_rgb(0x2E, 0x31, 0x36),
+                building: Color32::from_rgb(0xB8, 0xBC, 0xC2),
+                selection: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+                aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+                halo: Color32::from_rgb(0x12, 0x14, 0x17),
+                region: Color32::from_rgb(0x12, 0x14, 0x17),
+            },
+        )
+    }
+
+    /// One colour scheme: its UI roles from `observation-tokens`, plus the
+    /// colours that only the app uses.
+    fn scheme(
+        dark: bool,
+        ui: &UiColors,
+        camera_palette: [Color32; 8],
+        kind_colors: [Color32; 7],
+        world: WorldColors,
+    ) -> Self {
         Self {
-            dark: true,
+            dark,
             bg: color(ui.bg),
             surface: color(ui.surface),
             surface_raised: color(ui.surface_raised),
@@ -196,19 +199,11 @@ impl Tokens {
             danger: color(ui.danger),
             warning: color(ui.warning),
             scrim: color(ui.scrim),
-            camera_palette: CAMERA_PALETTE_DARK,
-            kind_colors: KIND_COLORS_DARK,
+            camera_palette,
+            kind_colors,
             coverage_ramp: COVERAGE_RAMP,
-            selection_box: Color32::from_rgb(0x7C, 0x95, 0xF2),
-            world: WorldColors {
-                sky: Color32::from_rgb(0x1A, 0x1D, 0x22),
-                ground: Color32::from_rgb(0x2E, 0x31, 0x36),
-                building: Color32::from_rgb(0xB8, 0xBC, 0xC2),
-                selection: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-                aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-                halo: Color32::from_rgb(0x12, 0x14, 0x17),
-                region: Color32::from_rgb(0x12, 0x14, 0x17),
-            },
+            selection_box: color(ui.accent),
+            world,
             space: SPACE,
             radius: RADIUS,
             font: FONT,

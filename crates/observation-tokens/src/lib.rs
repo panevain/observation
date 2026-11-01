@@ -112,22 +112,40 @@ pub struct UiColors {
 impl UiColors {
     /// Every role with its CSS name, in declaration order.
     fn roles(&self) -> [(&'static str, Rgba); 15] {
+        // No `..`: a new role fails to compile until it is listed here.
+        let Self {
+            bg,
+            surface,
+            surface_raised,
+            surface_sunken,
+            border,
+            border_strong,
+            hover,
+            shadow,
+            text,
+            text_muted,
+            accent,
+            on_accent,
+            danger,
+            warning,
+            scrim,
+        } = *self;
         [
-            ("bg", self.bg),
-            ("surface", self.surface),
-            ("surface-raised", self.surface_raised),
-            ("surface-sunken", self.surface_sunken),
-            ("border", self.border),
-            ("border-strong", self.border_strong),
-            ("hover", self.hover),
-            ("shadow", self.shadow),
-            ("text", self.text),
-            ("text-muted", self.text_muted),
-            ("accent", self.accent),
-            ("on-accent", self.on_accent),
-            ("danger", self.danger),
-            ("warning", self.warning),
-            ("scrim", self.scrim),
+            ("bg", bg),
+            ("surface", surface),
+            ("surface-raised", surface_raised),
+            ("surface-sunken", surface_sunken),
+            ("border", border),
+            ("border-strong", border_strong),
+            ("hover", hover),
+            ("shadow", shadow),
+            ("text", text),
+            ("text-muted", text_muted),
+            ("accent", accent),
+            ("on-accent", on_accent),
+            ("danger", danger),
+            ("warning", warning),
+            ("scrim", scrim),
         ]
     }
 }
@@ -169,9 +187,10 @@ pub const DARK: UiColors = UiColors {
 };
 
 /// The tokens as a stylesheet: `--obs-*` custom properties on `:root` (the
-/// colours swapped under `prefers-color-scheme: dark`), and the media query
-/// that shows `#gate` and hides `#loader` and `#app` below [`MIN_VIEWPORT`],
-/// since custom properties cannot be used in media queries.
+/// colours swapped under `prefers-color-scheme: dark`), and the gate rules:
+/// `#gate` hidden, then shown (with `#loader` and `#app` hidden) below
+/// [`MIN_VIEWPORT`] by a media query, since custom properties cannot be used
+/// in media queries. Both gate rules live here so their order is fixed.
 pub fn css() -> String {
     let mut out = String::from(
         "/* Generated from crates/observation-tokens by trunk's pre_build hook (Trunk.toml). Do not edit. */\n:root {\n",
@@ -204,15 +223,13 @@ pub fn css() -> String {
     out.push_str("}\n@media (prefers-color-scheme: dark) {\n  :root {\n");
     push_colors(&mut out, &DARK, "    ");
     out.push_str("  }\n}\n");
-    // The largest widths and heights still below the minimum, as the browser
-    // may report fractional CSS px.
-    let [w, h] = MIN_VIEWPORT;
+    // Just below the minimum, as the browser may report fractional CSS px.
+    let [w, h] = MIN_VIEWPORT.map(|px| f64::from(px) - 0.02);
     writeln!(
         out,
-        "/* Phones and very small windows: show the gate immediately and hide the app (it still downloads; the app shows the same gate). */\n\
-         @media (max-width: {}px), (max-height: {}px) {{\n  #gate {{ display: block; }}\n  #loader, #app {{ display: none; }}\n}}",
-        w - 0.02,
-        h - 0.02,
+        "#gate {{ display: none; }}\n\
+         /* Phones and very small windows: show the gate immediately and hide the app (it still downloads; the app shows the same gate). */\n\
+         @media (max-width: {w:.2}px), (max-height: {h:.2}px) {{\n  #gate {{ display: block; }}\n  #loader, #app {{ display: none; }}\n}}",
     )
     .expect("write to String");
     out
@@ -248,5 +265,27 @@ mod tests {
         assert!(css.contains("--obs-radius-lg: 8px;\n"));
         assert!(css.contains("--obs-min-width: 768px;\n"));
         assert!(css.contains("@media (max-width: 767.98px), (max-height: 599.98px) {"));
+    }
+
+    #[test]
+    fn gate_is_hidden_before_the_media_query_shows_it() {
+        let css = css();
+        let hide = css
+            .find("#gate { display: none; }")
+            .expect("gate hidden by default");
+        let show = css
+            .find("#gate { display: block; }")
+            .expect("gate shown when small");
+        assert!(hide < show);
+    }
+
+    /// The gate's notice in `web/index.html` is hand-written; it must state
+    /// the same minimum as the media query and the in-app gate.
+    #[test]
+    fn index_html_states_the_minimum_viewport() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/index.html");
+        let html = std::fs::read_to_string(path).expect("read web/index.html");
+        let [w, h] = MIN_VIEWPORT;
+        assert!(html.contains(&format!("at least {w} × {h} pixels")));
     }
 }
