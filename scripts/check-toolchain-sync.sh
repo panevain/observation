@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fails when the pinned Rust, CI mise or cosign version differs between the files that repeat it,
+# Fails when the pinned Rust, CI mise, cosign or a task tool's version differs where it is repeated,
 # or when the advisory ignore lists disagree. rust-toolchain.toml is the source of truth for
 # Rust, .github/actions/setup-mise for the mise that the workflows, the Dockerfile and
 # mise.toml's min_version use, and
@@ -32,11 +32,20 @@ check "$mise" "$(first '^min_version = \{ hard = "[0-9.]+", soft = "[0-9.]+" \}'
 direct="$(grep -lE 'uses: *jdx/mise-action@' .github/workflows/*.y*ml .github/actions/*/action.y*ml 2>/dev/null |
   grep -vxF .github/actions/setup-mise/action.yml | paste -sd' ' - || true)"
 check "" "$direct" "jdx/mise-action used directly (use \$/.github/actions/setup-mise)"
-# cosign is a CI tool (mise.ci.toml) and a task tool of mise.toml's verify and up tasks.
+# Task tools (`tools.NAME = "VERSION"` on a task in mise.toml): every task that uses a tool pins
+# the same version (fnox for up and down, cosign for verify and up), and cosign's is CI's
+# (mise.ci.toml).
 cosign="$(first '^cosign *= *"[^"]+"' mise.ci.toml | sed -E 's/.*"([^"]+)"/\1/')"
-while read -r task_cosign; do
-  check "$cosign" "$task_cosign" "mise.toml tools.cosign (mise.ci.toml has cosign $cosign)"
-done < <(grep -E '^tools\.cosign *= *"' mise.toml | sed -E 's/.*"([^"]+)"/\1/')
+# "NAME VERSION" for each distinct task tool pin; a tool listed twice has two versions.
+task_pins="$(sed -nE 's/^tools\.([A-Za-z0-9_-]+) *= *"([^"]+)".*/\1 \2/p' mise.toml | sort -u)"
+task_pin() { awk -v n="$1" '$1 == n { print $2 }' <<<"$task_pins" | paste -sd' ' -; }
+for name in $(cut -d' ' -f1 <<<"$task_pins" | sort -u); do
+  pins="$(task_pin "$name")"
+  [[ "$pins" != *' '* ]] || { echo "mismatch: mise.toml's tasks pin $name at different versions: $pins" >&2; fail=1; }
+done
+fnox="$(task_pin fnox)"
+[[ -n "$fnox" ]] || { echo "mise.toml pins no fnox task tool" >&2; fail=1; }
+check "$cosign" "$(task_pin cosign)" "mise.toml tools.cosign (mise.ci.toml has cosign $cosign)"
 
 # Advisory ignores: the same IDs in all three files (sorted, one per line).
 # grep finds nothing when a list is empty, which is not a failure.
@@ -52,4 +61,4 @@ check "$deny_ids" "$(ignores .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/a
 check "$deny_ids" "$(sed -n '/^id *=/p' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
 
 if (( fail )); then exit 1; fi
-echo "versions in sync: rust $rust, mise $mise, cosign $cosign; advisory ignores: ${deny_ids:-none}"
+echo "versions in sync: rust $rust, mise $mise, cosign $cosign, fnox $fnox; advisory ignores: ${deny_ids:-none}"
