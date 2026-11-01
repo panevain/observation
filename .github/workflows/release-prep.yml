@@ -1,45 +1,158 @@
 name: Prepare release
 
-# Starts the git-flow release for you: creates release/<version> from develop, bumps the
-# workspace version, refreshes Cargo.lock, dates the CHANGELOG, and opens the PR into main.
-# Merging that PR is the release: release-tag.yml then tags main, Release publishes the
-# images and the GitHub release, and a back-merge PR into develop follows (CONTRIBUTING.md).
+# Starts the git-flow release: creates release/<version> from develop, bumps the workspace
+# version, refreshes Cargo.lock, dates the CHANGELOG, regenerates the bundle-size treemap and
+# opens the PR into main, which merges itself once its checks pass. That merge is the
+# release: release-tag.yml then tags main, Release publishes the images and the GitHub
+# release, and a back-merge PR into develop follows (CONTRIBUTING.md).
+#   Weekly: the version comes from CHANGELOG.md's [Unreleased] section, or is a patch release
+#   when only dependencies or pins changed; a week with no shipped change is skipped
+#   (scripts/release-plan.py).
+#   By hand: the same, or a given version, or a dev pre-release (X.Y.Z-dev.N).
+# Nothing starts while a release or hotfix is open or waits for its tag.
 on:
+  schedule:
+    # Tuesdays: after Monday's Dependabot and Pins pull requests have had a day to merge.
+    - cron: "17 13 * * 2"
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without the leading v (for example 0.2.0)"
-        required: true
+        description: "Release version without the leading v (for example 0.2.0); empty to work it out"
+        required: false
         type: string
+        default: ""
+      prerelease:
+        description: "Pre-release: dev makes X.Y.Z-dev.N (ignored when a version is given)"
+        required: false
+        type: choice
+        options: [none, dev]
+        default: none
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions: {}
 
+env:
+  MISE_ENV: ci
+
 jobs:
+  plan:
+    name: plan release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+          fetch-depth: 0 # tags, and the history since the latest release
+      - name: Version
+        id: plan
+        env:
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          scripts/release-state.sh > "${RUNNER_TEMP}/state"
+          # shellcheck disable=SC1091
+          . "${RUNNER_TEMP}/state"
+          skip() { echo "$1" | tee -a "${GITHUB_STEP_SUMMARY}"; exit 0; }
+          [ "${pending}" = false ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
+          [ "${hotfix}" = false ] || skip "A hotfix/* branch exists (a hotfix is in progress); skipping."
+          [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || skip "A release/* branch exists (a release is in progress); skipping."
+          args=()
+          if [ -n "${VERSION}" ]; then
+            args=(--version "${VERSION}")
+          elif [ "${PRERELEASE:-none}" != none ]; then
+            args=(--prerelease "${PRERELEASE}")
+          fi
+          python3 scripts/release-plan.py plan --repo . "${args[@]}" > "${RUNNER_TEMP}/plan"
+          cat "${RUNNER_TEMP}/plan"
+          # Not sourced: the reason is free text.
+          get() { sed -n "s/^$1=//p" "${RUNNER_TEMP}/plan"; }
+          version="$(get version)"; kind="$(get kind)"; reason="$(get reason)"
+          [ -n "${version}" ] || skip "${reason}"
+          echo "Release **${version}** (${kind}): ${reason}." | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+  # The bundle-size chart for the release, committed on the release branch below. The build is
+  # a separate fat-LTO compile with symbol names kept (15-20 minutes), with no token at hand.
+  treemap:
+    name: regenerate treemap
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The report stamps the develop commit the release starts from.
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
+          install_args: trunk
+          cache: false
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: mise run ci:toolchain
+      # As in treemap.yml: one fat-LTO compile with symbols kept serves both trunk and the report.
+      - name: Build (release, symbols kept)
+        env:
+          CARGO_PROFILE_WASM_RELEASE_STRIP: "false"
+          CARGO_PROFILE_WASM_RELEASE_DEBUG: "false"
+        run: mise run build
+      - name: Build report
+        run: scripts/wasm-size-report.sh --no-build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: treemap
+          path: docs/images/wasm-bundle-treemap.svg
+          if-no-files-found: error
+          retention-days: 7
+
   prepare:
     name: open release PR
+    needs: [plan, treemap]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # The bot app's key lives in this environment (develop, main and v* tags only). The app
     # pushes and opens the PR, so the PR's checks start (GITHUB_TOKEN-made ones wait for a
-    # manual approval).
+    # manual approval), and its auto-merge pushes to main, which starts release-tag.yml.
     environment: bot
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: develop
+          ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false # the token is added to the push below only
+          fetch-depth: 0 # tags, for the changelog's list of commits since the latest release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: treemap
+          path: ${{ runner.temp }}/treemap
       - name: Install toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal --no-self-update
-      - name: Bump version, lockfile and changelog
+      - name: Bump version, lockfile, changelog and treemap
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           scripts/set-version.sh "${VERSION}"
-          today="$(date -u +%F)"
-          sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${VERSION}] - ${today}/" CHANGELOG.md
+          python3 scripts/release-plan.py changelog --repo . --version "${VERSION}"
+          cp "${RUNNER_TEMP}/treemap/wasm-bundle-treemap.svg" docs/images/wasm-bundle-treemap.svg
+          git diff --stat
       # Minted after the build steps above, so nothing they ran can read it.
       - name: Bot token
         id: bot
@@ -53,7 +166,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           BOT: ${{ steps.bot.outputs.app-slug }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           branch="release/${VERSION}"
@@ -61,11 +174,13 @@ jobs:
           git switch -c "${branch}"
           git -c core.hooksPath=/dev/null commit -am "release: ${VERSION}"
           scripts/ci-git.sh push "${branch}"
-          if ! gh pr create --base main --head "${branch}" \
+          if ! url="$(gh pr create --base main --head "${branch}" \
             --title "release: ${VERSION}" \
-            --body "Release ${VERSION}. Merge with a merge commit when the checks pass: release-tag.yml then tags \`main\` as v${VERSION}, Release publishes the images and the GitHub release, and a back-merge PR into \`develop\` is opened."; then
+            --body "Release ${VERSION}, opened by Prepare release. It merges itself (merge commit) when the checks pass: release-tag.yml then tags \`main\` as v${VERSION}, Release publishes the images and the GitHub release, and a back-merge PR into \`develop\` is opened. To hold the release, disable auto-merge on this PR.")"; then
             # Branch rulesets forbid force-pushes, so a leftover branch would block a re-run.
             echo "could not open the pull request; removing ${branch} so the workflow can be re-run." >&2
             scripts/ci-git.sh delete "${branch}"
             exit 1
           fi
+          echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url}; merge it by hand when it is green."

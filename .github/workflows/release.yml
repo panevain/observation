@@ -202,8 +202,12 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
+          # Pre-releases (X.Y.Z-dev.N) have no section of their own: their notes are what is
+          # still under [Unreleased] (scripts/release-plan.py leaves it in place).
+          section="${version}"
+          if [[ "${version}" == *-* ]] && ! grep -qF "## [${version}]" CHANGELOG.md; then section="Unreleased"; fi
           {
-            awk -v h="## [${version}]" 'index($0, h) == 1 { f = 1; next } f && /^## \[/ { exit } f' CHANGELOG.md
+            awk -v h="## [${section}]" 'index($0, h) == 1 { f = 1; next } f && /^## \[/ { exit } f' CHANGELOG.md
             echo
             echo "## Images"
             echo

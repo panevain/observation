@@ -5,6 +5,10 @@
 # ignore this file's groups and commit prefixes. Security updates and alerts are enabled in
 # Settings -> Advanced Security. A fix for the latest *release* reaches main through a hotfix
 # (release-watch.yml and hotfix.yml), since Dependabot only looks at the default branch.
+#
+# Patch and minor updates come in separate groups: Dependabot auto-merge
+# (dependabot-automerge.yml) merges patch updates and base image digest refreshes once their
+# checks pass, so a patch group never waits on a minor update that needs a person.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -28,8 +32,10 @@ updates:
       - dependency-name: glam
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
-      cargo-minor-patch:
-        update-types: [minor, patch]
+      cargo-patch:
+        update-types: [patch]
+      cargo-minor:
+        update-types: [minor]
       # One pull request for every crate an advisory fix needs.
       cargo-security:
         applies-to: security-updates
@@ -53,6 +59,8 @@ updates:
       - dependency-name: glam
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
+      fuzz-patch:
+        update-types: [patch]
       fuzz-deps:
         patterns: ["*"]
       fuzz-security:
@@ -74,8 +82,10 @@ updates:
     commit-message:
       prefix: "ci"
     groups:
-      actions-minor-patch:
-        update-types: [minor, patch]
+      actions-patch:
+        update-types: [patch]
+      actions-minor:
+        update-types: [minor]
 
   # Daily, with no cooldown: base images have no Dependabot security updates, so their digest
   # refreshes are how Debian security fixes reach develop. (Cooldown would also only apply to
@@ -101,5 +111,7 @@ updates:
       - dependency-name: "*jdx/mise"
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
     groups:
-      docker-minor-patch:
-        update-types: [minor, patch]
+      docker-patch:
+        update-types: [patch]
+      docker-minor:
+        update-types: [minor]
