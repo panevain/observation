@@ -428,11 +428,11 @@ pub fn terrain_from_dem(
             x: tx,
             y: ty,
         })?;
-        let (ix, iy) = (
+        let (col, row) = (
             (gx - f64::from(tx) * px) as usize,
             (gy - f64::from(ty) * px) as usize,
         );
-        t.elevations.get(iy * DEM_TILE_PX as usize + ix).copied()
+        t.elevations.get(row * DEM_TILE_PX as usize + col).copied()
     };
     let proj = Projection::new(bbox.center());
     let elevation = |w: Vec2| -> Option<f32> {
