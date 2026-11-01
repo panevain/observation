@@ -1,5 +1,5 @@
 # cargo-fuzz needs nightly (-Zsanitizer). Pinned for reproducible CI; bump
 # deliberately. The main workspace stays on the stable toolchain in the root.
 [toolchain]
-channel = "nightly-2026-10-19"
+channel = "nightly-2026-11-01"
 profile = "minimal"
