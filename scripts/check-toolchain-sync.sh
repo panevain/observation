@@ -41,8 +41,12 @@ done < <(grep -E '^tools\.cosign *= *"' mise.toml | sed -E 's/.*"([^"]+)"/\1/')
 # Advisory ignores: the same IDs in all three files (sorted, one per line).
 # grep finds nothing when a list is empty, which is not a failure.
 ids() { { grep -Eo 'RUSTSEC-[0-9]{4}-[0-9]{4}|GHSA(-[0-9a-z]{4}){3}' || true; } | sort -u | paste -sd' ' -; }
-# The lines inside a file's `ignore = [ ... ]`; none for `ignore = []`.
-ignores() { awk '/^ignore = \[\]/ {exit} /^ignore = \[/ {f=1; next} f && /^\]/ {exit} f' "$1"; }
+# What is inside a file's `ignore = [ ... ]`, written on one line or over several (closed by a
+# line starting with `]`, so a `]` inside a reason string does not end the list).
+ignores() {
+  awk '/^ignore *= *\[/ { sub(/^ignore *= *\[/, ""); if (sub(/\][^]]*$/, "")) { print; exit } f=1; print; next }
+       f && /^ *\]/ { exit } f' "$1"
+}
 deny_ids="$(ignores deny.toml | sed '/^ *#/d' | ids)"
 check "$deny_ids" "$(ignores .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/audit.toml ignore"
 check "$deny_ids" "$(sed -n '/^id *=/p' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
