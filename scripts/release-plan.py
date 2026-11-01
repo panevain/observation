@@ -35,9 +35,10 @@ PATCH = {"Fixed", "Security"}
 # Paths that do not reach a published image: changes to only these are not a reason to release.
 # (Treemap refreshes docs/images after every release; Actions bumps only touch .github; the fuzz
 # workspace is excluded from the root workspace and built only by the Fuzz workflow; .config holds
-# CI-only settings: nextest's profile and the crate cooldown; .typos.toml is the spelling check's.)
+# CI-only settings: nextest's profile, the crate cooldown and the wasm size budget; .typos.toml is
+# the spelling check's; tests/browser is the browser smoke test, whose npm lockfile Dependabot bumps.)
 NOT_SHIPPED = [":(exclude).github", ":(exclude)docs", ":(exclude)fuzz", ":(exclude).config",
-               ":(exclude).typos.toml", ":(exclude,glob)*.md"]
+               ":(exclude).typos.toml", ":(exclude)tests/browser", ":(exclude,glob)*.md"]
 
 
 def git(repo, *args, check=True):
