@@ -65,7 +65,7 @@ jobs:
       # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
       # directories: without shims, nothing run in release/ resolves its own mise config.
       # No cache: they are downloaded fresh and checked against mise.ci.lock.
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
         if: steps.state.outputs.go == 'true'
         with:
           version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
