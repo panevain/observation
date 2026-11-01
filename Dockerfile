@@ -125,7 +125,7 @@ RUN cargo auditable build --release --locked -p observation-regions \
 
 # Overpass API from the release tarball, sha256-verified. Releases:
 # https://dev.overpass-api.de/releases/
-FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS overpass-build
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS overpass-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG OVERPASS_VERSION=0.7.62.11
@@ -150,7 +150,7 @@ RUN set -eux; \
     cp bin/osm3s_query bin/update_database /out/bin/; \
     mkdir -p /out/data
 
-FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS regions
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS regions
 
 LABEL org.opencontainers.image.title="observation-regions" \
       org.opencontainers.image.description="Region agent for Observation: local Overpass databases built from Geofabrik extracts" \
