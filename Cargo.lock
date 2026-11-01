@@ -4710,7 +4710,7 @@ dependencies = [
 
 [[package]]
 name = "observation-client"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "bevy",
  "bevy_egui",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "observation-core"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "earcut",
  "glam",
@@ -4741,7 +4741,7 @@ dependencies = [
 
 [[package]]
 name = "observation-regions"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "axum",
  "observation-core",
@@ -4758,7 +4758,7 @@ dependencies = [
 
 [[package]]
 name = "observation-server"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -4781,7 +4781,7 @@ dependencies = [
 
 [[package]]
 name = "observation-upstream"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "reqwest",
  "thiserror 2.0.21",
