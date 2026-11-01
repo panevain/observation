@@ -30,13 +30,11 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
         with:
-          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install_args: trunk
+          tools: trunk
           cache: false
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: mise run ci:toolchain
+      - uses: $/.github/actions/setup-rust
       # A release build makes trunk download the wasm-bindgen and wasm-opt versions matching
       # Cargo.lock into its cache (a dev build skips wasm-opt); the report script reuses them.
       #

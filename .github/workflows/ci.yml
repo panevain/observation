@@ -22,13 +22,14 @@ defaults:
 
 env:
   # mise.ci.toml on top of mise.toml: CI's tools, environment (cargo and nextest settings) and
-  # tasks. mise-action exports that environment to the later steps, so it runs before
-  # rust-cache, whose key includes the CARGO_* and RUST* variables.
+  # tasks. setup-mise (.github/actions/, which pins the mise version) exports that environment
+  # to the later steps, so it runs before setup-rust, whose rust-cache key includes the CARGO_*
+  # and RUST* variables.
   MISE_ENV: ci
-  MISE_VERSION: 2026.10.18
   # Caches are written only by develop (the default branch). Pull requests, release/hotfix
   # branches and main all restore the default branch's caches, so writes from anywhere else
-  # only use up the repository's cache quota and evict develop's entries.
+  # only use up the repository's cache quota and evict develop's entries. setup-mise and
+  # setup-rust apply the same rule; this is for the Docker layer caches below.
   SAVE_CACHE: ${{ github.ref == 'refs/heads/develop' }}
 
 jobs:
@@ -42,13 +43,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
-        with:
-          version: ${{ env.MISE_VERSION }}
-          install: false
-          cache_save: ${{ env.SAVE_CACHE }}
-      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain
+      - uses: $/.github/actions/setup-mise
+      - uses: $/.github/actions/setup-rust
       - run: mise run fmt
 
   clippy-native:
@@ -61,17 +57,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
+      - uses: $/.github/actions/setup-rust
         with:
-          version: ${{ env.MISE_VERSION }}
-          install: false
-          cache_save: ${{ env.SAVE_CACHE }}
-      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: native
-          save-if: ${{ env.SAVE_CACHE }}
+          cache-key: native
       - run: mise run clippy-native
 
   clippy-wasm:
@@ -84,17 +73,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
+      - uses: $/.github/actions/setup-rust
         with:
-          version: ${{ env.MISE_VERSION }}
-          install: false
-          cache_save: ${{ env.SAVE_CACHE }}
-      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: wasm-clippy
-          save-if: ${{ env.SAVE_CACHE }}
+          cache-key: wasm-clippy
       - run: mise run clippy-wasm
 
   test:
@@ -107,13 +89,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
-        with:
-          version: ${{ env.MISE_VERSION }}
-          install_args: cargo-nextest
-          cache_save: ${{ env.SAVE_CACHE }}
-      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain
       # Bevy's native audio/input backends need these headers to compile the
       # client's unit tests on Linux. The client has tests only once it has a
       # library target (the same condition `mise run test` uses).
@@ -122,10 +97,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: $/.github/actions/setup-mise
         with:
-          shared-key: test
-          save-if: ${{ env.SAVE_CACHE }}
+          tools: cargo-nextest
+      - uses: $/.github/actions/setup-rust
+        with:
+          cache-key: test
       # NEXTEST_PROFILE=ci (mise.ci.toml): .config/nextest.toml's profile for CI.
       - run: mise run test
 
@@ -142,19 +119,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
         with:
-          version: ${{ env.MISE_VERSION }}
-          install_args: cargo-llvm-cov
-          cache_save: ${{ env.SAVE_CACHE }}
-      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain llvm-tools-preview
+          tools: cargo-llvm-cov
       # Restores the test job's cache (registry and dependencies) and never saves one of its
       # own: an instrumented build for an informational job is not worth ~1 GB of cache quota.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: $/.github/actions/setup-rust
         with:
-          shared-key: test
-          save-if: false
+          components: llvm-tools-preview
+          cache-key: test
+          cache-save: false
       - name: Coverage
         run: |
           set -euo pipefail
@@ -183,11 +157,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
-        with:
-          version: ${{ env.MISE_VERSION }}
-          install: false
-          cache_save: ${{ env.SAVE_CACHE }}
+      - uses: $/.github/actions/setup-mise
       - run: mise run tokens
       - run: mise run sync
 
@@ -202,17 +172,12 @@ jobs:
         with:
           persist-credentials: false
       # trunk comes from mise.toml, checksum-verified via mise.lock.
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
         with:
-          version: ${{ env.MISE_VERSION }}
-          install_args: trunk
-          cache_save: ${{ env.SAVE_CACHE }}
-      - name: Install toolchain (from rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+          tools: trunk
+      - uses: $/.github/actions/setup-rust
         with:
-          shared-key: wasm-release
-          save-if: ${{ env.SAVE_CACHE }}
+          cache-key: wasm-release
           # trunk's wasm-bindgen and wasm-opt downloads (versions follow Cargo.lock and trunk).
           cache-directories: ~/.cache/trunk
       # The size report (about a minute of gzip -9 and brotli -q 11) runs on pushes only, to

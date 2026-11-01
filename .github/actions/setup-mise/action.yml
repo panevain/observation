@@ -1,0 +1,39 @@
+name: Set up mise
+description: >-
+  jdx/mise-action at the CI mise version. This file is the only place that version is pinned
+  in the workflows; the Dockerfile's build-tools stage and mise.toml's min_version repeat it
+  (mise run sync checks they agree, and the Pins workflow bumps all three). The calling
+  workflow sets MISE_ENV=ci, so mise.ci.toml's tools, environment and tasks apply.
+
+inputs:
+  tools:
+    description: Tools to install (mise-action's install_args); empty installs none
+    required: false
+    default: ""
+  cache:
+    description: >-
+      Restore mise's install cache (saved from develop only). false for jobs that publish or
+      prepare a release, so that nothing they run comes from a cache
+    required: false
+    default: "true"
+  shims:
+    description: >-
+      Put mise's shims on PATH. false when a step runs tools inside another checkout (a
+      release's), where the shims would resolve that checkout's mise config
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      with:
+        version: 2026.10.18
+        install: ${{ inputs.tools != '' }}
+        install_args: ${{ inputs.tools }}
+        cache: ${{ inputs.cache }}
+        # Caches are written only by develop (the default branch). Pull requests and the other
+        # branches restore develop's caches; writes from anywhere else would only use up the
+        # repository's cache quota and evict develop's entries.
+        cache_save: ${{ inputs.cache == 'true' && github.ref == 'refs/heads/develop' }}
+        add_shims_to_path: ${{ inputs.shims }}

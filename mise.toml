@@ -12,6 +12,11 @@
 # `up` task below; its tokens are fnox secrets (fnox.toml; values in the gitignored
 # fnox.local.toml).
 
+# The CI mise version (.github/actions/setup-mise, which the Pins workflow bumps along with this
+# line; mise run sync checks they agree). An older mise warns: some settings and task features
+# here are recent.
+min_version = { soft = "2026.10.18" }
+
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
 # needs a [[tools.rust]] entry for that version, because `mise install --locked` (used in CI)

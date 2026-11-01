@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bumps the pins Dependabot can't: the tools in mise.toml and mise.ci.toml (through
-`mise upgrade --bump`), fnox (a task tool, which mise does not bump), the CI mise version (the
-workflows and the Dockerfile's mise image), Overpass in the Dockerfile, the Rust toolchain and
+`mise upgrade --bump`), fnox (a task tool, which mise does not bump), the CI mise version (setup-mise,
+mise.toml's min_version and the Dockerfile's mise image), Overpass in the Dockerfile, the Rust toolchain and
 the fuzz nightly. Used by pins.yml (weekly), which then runs `mise run lock` and
 `mise run sync` and opens a PR.
 
@@ -31,6 +31,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 NOW = datetime.datetime.now(datetime.timezone.utc)
 CUTOFF = NOW - datetime.timedelta(days=COOLDOWN_DAYS)  # set again by --cooldown
 SEMVER = re.compile(r"\d+\.\d+\.\d+")
+# The workflows' mise version (mise-action's `version:`), also mise.toml's min_version.
+SETUP_MISE = ".github/actions/setup-mise/action.yml"
 
 
 def key(v):
@@ -133,7 +135,7 @@ def bump_fnox(f, out):
 
 
 def bump_mise(f, out):
-    cur = f.find(".github/workflows/ci.yml", r"^  MISE_VERSION: (\S+)$")
+    cur = f.find(SETUP_MISE, r"^ +version: (\S+)$")
     latest = github_latest("jdx/mise", r"v(\d{4}\.\d+\.\d+)")
     if not latest or key(latest[0]) <= key(cur):
         return
@@ -146,12 +148,8 @@ def bump_mise(f, out):
         print(f"mise {v}: {image} is not published yet; skipping", file=sys.stderr)
         return
     f.sub("Dockerfile", r"^FROM ghcr\.io/jdx/mise:\S+@sha256:[0-9a-f]{64} AS build-tools$", f"FROM {image}@{digest} AS build-tools")
-    f.sub(".github/workflows/ci.yml", r"^(  MISE_VERSION: )\S+$", rf"\g<1>{v}")
-    for wf in sorted((ROOT / ".github/workflows").glob("*.yml")):
-        rel = str(wf.relative_to(ROOT))
-        n = len(re.findall(r"^( +version: )\S+( # same as MISE_VERSION)", f.get(rel), re.M))
-        if n:
-            f.sub(rel, r"^( +version: )\S+( # same as MISE_VERSION)", rf"\g<1>{v}\g<2>", count=n)
+    f.sub(SETUP_MISE, r"^( +version: )\S+$", rf"\g<1>{v}")
+    f.sub("mise.toml", r'^(min_version = \{ soft = )"[^"]+"', rf'\g<1>"{v}"')
     out.append(("mise (CI)", cur, v))
 
 

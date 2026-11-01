@@ -10,6 +10,7 @@ on:
     # is among them.
     paths:
       - .github/workflows/fuzz.yml
+      - .github/actions/**
       - fuzz/**
       - Cargo.toml
       - crates/**
@@ -51,11 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
-        with:
-          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install: false
-          cache_save: ${{ github.ref == 'refs/heads/develop' }}
+      - uses: $/.github/actions/setup-mise
       # cargo-fuzz is built from crates.io (mise.ci.toml) with the root rust-toolchain.toml's
       # toolchain, which mise must have installed itself (a toolchain installed by rustup alone
       # does not count). Restored from mise's cache, cargo-fuzz is already there.
@@ -64,13 +61,11 @@ jobs:
           set -euo pipefail
           mise which cargo-fuzz >/dev/null 2>&1 || mise install --locked rust cargo-fuzz
           mise which cargo-fuzz
-      - name: Install toolchain (from fuzz/rust-toolchain.toml; the only one left installed)
-        run: mise run ci:toolchain -C fuzz
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: $/.github/actions/setup-rust
         with:
-          workspaces: fuzz -> target
-          shared-key: fuzz
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          dir: fuzz
+          cache-workspaces: fuzz -> target
+          cache-key: fuzz
       - name: Lockfile is current, build targets
         run: mise run fuzz:build
       # The working corpus carries over between runs: every run starts from the newest saved

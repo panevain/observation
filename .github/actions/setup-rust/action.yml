@@ -1,0 +1,52 @@
+name: Set up Rust
+description: >-
+  Installs the Rust toolchain that a directory's rust-toolchain.toml pins and uninstalls every
+  other one (mise.ci.toml's ci:toolchain), then optionally restores Swatinem/rust-cache. Runs
+  after setup-mise, whose environment (CARGO_*, RUST*) is part of rust-cache's key, as is the
+  toolchain.
+
+inputs:
+  dir:
+    description: Directory whose rust-toolchain.toml applies (fuzz, or a release checkout)
+    required: false
+    default: "."
+  components:
+    description: Extra components, space-separated (such as llvm-tools-preview)
+    required: false
+    default: ""
+  cache-key:
+    description: rust-cache's shared-key; empty for no cache
+    required: false
+    default: ""
+  cache-workspaces:
+    description: rust-cache's workspaces
+    required: false
+    default: ". -> target"
+  cache-directories:
+    description: rust-cache's cache-directories
+    required: false
+    default: ""
+  cache-save:
+    description: Save the cache (from develop only; see setup-mise). false to only restore it
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install toolchain (the only one left installed)
+      shell: bash
+      env:
+        DIR: ${{ inputs.dir }}
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        read -ra components <<<"${COMPONENTS}"
+        mise run ci:toolchain -C "${DIR}" "${components[@]}"
+    - if: inputs.cache-key != ''
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        workspaces: ${{ inputs.cache-workspaces }}
+        cache-directories: ${{ inputs.cache-directories }}
+        save-if: ${{ inputs.cache-save == 'true' && github.ref == 'refs/heads/develop' }}

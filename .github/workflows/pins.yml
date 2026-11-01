@@ -35,10 +35,8 @@ jobs:
         with:
           persist-credentials: false
       # mise upgrades its tools and refreshes both lockfiles.
-      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+      - uses: $/.github/actions/setup-mise
         with:
-          version: 2026.10.18 # same as MISE_VERSION in ci.yml (mise run sync)
-          install: false
           cache: false
       - name: Bump
         id: bump
@@ -95,7 +93,6 @@ jobs:
         with:
           name: pins
           path: ${{ runner.temp }}/pins
-      # workflows: write because MISE_VERSION lives in the workflow files.
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -104,7 +101,6 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-          permission-workflows: write
       - name: Open or update the pull request
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}

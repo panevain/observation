@@ -33,8 +33,9 @@ SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.]+)?$")
 MINOR = {"Added", "Changed", "Deprecated"}
 PATCH = {"Fixed", "Security"}
 # Paths that do not reach a published image: changes to only these are not a reason to release.
-# (Treemap refreshes docs/images after every release; Actions bumps only touch .github.)
-NOT_SHIPPED = [":(exclude).github", ":(exclude)docs", ":(exclude,glob)*.md"]
+# (Treemap refreshes docs/images after every release; Actions bumps only touch .github; the fuzz
+# workspace is excluded from the root workspace and built only by the Fuzz workflow.)
+NOT_SHIPPED = [":(exclude).github", ":(exclude)docs", ":(exclude)fuzz", ":(exclude,glob)*.md"]
 
 
 def git(repo, *args, check=True):

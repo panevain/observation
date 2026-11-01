@@ -6,7 +6,7 @@
 # checked against the checksums in mise.lock and mise.ci.lock. Installed with
 # `--locked`, so mise downloads only the locked URLs (no GitHub API calls).
 #   * mise from its official image, pinned by digest; the tag is the CI mise
-#     version (MISE_VERSION in ci.yml; mise run sync checks they agree).
+#     version (.github/actions/setup-mise; mise run sync checks they agree).
 #   * The chef stage copies in only the binaries, so a change to the mise files
 #     that leaves them alone keeps every later layer cached.
 # ---------------------------------------------------------------------------
