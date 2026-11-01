@@ -73,7 +73,7 @@ pub enum StateError {
     Client(#[from] reqwest::Error),
 }
 
-/// Shared, cheaply clonable application state.
+/// Shared, cheaply cloneable application state.
 #[derive(Debug, Clone)]
 pub struct AppState(Arc<Inner>);
 

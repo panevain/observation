@@ -77,7 +77,13 @@ versions or modified deployments.
 Every change is checked automatically (see `.github/workflows/`):
 
 - **cargo-deny** (`deny.toml`): RustSec advisories, yanked crates, licence
-  allow-list, banned or wildcard dependencies, and allowed crate sources.
+  allow-list, banned or wildcard dependencies, and allowed crate sources. The
+  ban list keeps TLS rustls-only (no OpenSSL or native-tls, as crates or as
+  reqwest features), keeps outbound HTTP inside `observation-upstream`'s
+  SSRF-guarded client (only it, the server and the region agent may depend on
+  reqwest), and refuses crates that fetch code at build time.
+- **cargo-shear** reports dependencies that no code uses, in both workspaces, so
+  nothing sits in the tree (and the audit surface) for no reason.
 - **cargo-audit**: `Cargo.lock` and the fuzz
   workspace's `fuzz/Cargo.lock`, on every change and daily; yanked crates fail too.
   Accepted advisories need a reason in `deny.toml` and are mirrored in

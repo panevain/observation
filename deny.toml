@@ -61,6 +61,31 @@ wildcards = "deny"
 # `path = "..."` workspace dependencies have no version requirement.
 allow-wildcard-paths = true
 highlight = "all"
+# Crates that must never enter the tree, each with the reason. `wrappers` lists the only
+# crates allowed to depend on one directly.
+deny = [
+    # TLS is rustls only (reqwest has default-features = false; observation-upstream builds every
+    # outbound client): one TLS stack to keep patched, and no system OpenSSL in the images.
+    { name = "openssl", reason = "TLS is rustls only" },
+    { name = "openssl-sys", reason = "TLS is rustls only; the distroless runtime has no libssl" },
+    { name = "native-tls", reason = "TLS is rustls only" },
+    { name = "hyper-tls", reason = "TLS is rustls only (hyper-rustls)" },
+    # Outbound HTTP goes through observation-upstream's address-filtering resolver and redirect
+    # policy (SSRF guards). The server and the region agent use reqwest only through it, plus
+    # the error and response types; the client talks only to its own server, through the browser.
+    { name = "reqwest", wrappers = ["observation-upstream", "observation-server", "observation-regions"], reason = "outbound HTTP must use observation-upstream's client_builder" },
+    # Build-time downloads without checksum verification, and git-based crates fetched at build
+    # time, defeat --locked and the Cargo.lock checksums.
+    { name = "protoc-prebuilt", reason = "downloads protoc at build time without verifying it" },
+    { name = "git2", reason = "nothing here needs git at build or run time" },
+    { name = "libgit2-sys", reason = "nothing here needs git at build or run time" },
+]
+
+# Features that must stay off.
+[[bans.features]]
+# The rustls-only rule above, at the feature level (reqwest 0.13's default-tls is rustls).
+crate = "reqwest"
+deny = ["native-tls", "native-tls-no-alpn", "native-tls-vendored", "native-tls-vendored-no-alpn"]
 
 [sources]
 unknown-registry = "deny"

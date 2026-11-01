@@ -127,7 +127,7 @@ fn host_is_private(host: &str) -> bool {
 }
 
 /// `raw` with any user name and password removed, for error messages and logs.
-/// An unparseable value that contains `@` is replaced outright, since it may
+/// An unparsable value that contains `@` is replaced outright, since it may
 /// still hold credentials.
 pub fn redact(raw: &str) -> String {
     match reqwest::Url::parse(raw) {

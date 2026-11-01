@@ -65,6 +65,10 @@
             "integration_id": 15368
           },
           {
+            "context": "hygiene (typos, unused deps)",
+            "integration_id": 15368
+          },
+          {
             "context": "wasm (trunk build)",
             "integration_id": 15368
           },

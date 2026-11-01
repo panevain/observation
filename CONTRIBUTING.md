@@ -69,7 +69,7 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | Workflow | Checks |
 | --- | --- |
 | Branch policy | `branch policy` (into `main`, only same-repo `release/*` and `hotfix/*`) |
-| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `wasm (trunk build)`, `docker (build + smoke test)` |
+| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)` |
 | Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
@@ -89,7 +89,7 @@ Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
 mise run build          # release wasm build, as the CI wasm job does
 mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
-mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, zizmor, scan:repo, fuzz
+mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz, typos, shear
 ```
 
 Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise run sync` keeps `Cargo.toml`, `mise.lock` and the Dockerfile equal to it). `cargo nextest` is used for tests when installed, and `mise run coverage` needs `cargo-llvm-cov` (both in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.

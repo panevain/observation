@@ -28,6 +28,8 @@ cargo-llvm-cov = "github:taiki-e/cargo-llvm-cov"
 cargo-fuzz = "cargo:cargo-fuzz"
 cargo-chef = "github:LukeMathWalker/cargo-chef"
 cargo-auditable = "github:rust-secure-code/cargo-auditable"
+typos = "aqua:crate-ci/typos"
+cargo-shear = "github:Boshen/cargo-shear"
 
 [tools]
 # Security checks (security.yml, release.yml, release-watch.yml, hotfix.yml). Trivy comes
@@ -38,6 +40,9 @@ cosign = "3.1.3"
 cargo-audit = { version = "0.22.2", version_prefix = "cargo-audit/v" }
 cargo-deny = "0.20.2"
 zizmor = "1.31.1"
+# Hygiene checks (ci.yml's hygiene job): spelling, and dependencies no code uses.
+typos = "1.51.1"
+cargo-shear = "1.14.0"
 # Tests and fuzzing (ci.yml, fuzz.yml). cargo-fuzz builds the targets for the platform it was
 # itself built for, and its only Linux release binary is the musl one, whose static libc the
 # sanitizers can't link; so it is built from crates.io (`cargo install --locked`).
@@ -105,6 +110,19 @@ run = [
 description = "Crate versions added to either lockfile since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
 usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
 run = 'python3 scripts/check-cargo-cooldown.py --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+
+[tasks.typos]
+description = "Spelling in code, docs and config (typos; correct words it does not know go in .typos.toml)"
+run = "typos"
+
+[tasks.shear]
+description = "Dependencies that no code uses, in both workspaces (cargo-shear); one used only for its features goes in [package.metadata.cargo-shear] ignored"
+# Both from the repository root: the fuzz workspace's `cargo metadata` then runs on the root
+# toolchain, so no nightly is needed. --locked: fuzz/Cargo.lock must already match its manifests.
+run = [
+  "cargo shear --locked --deny-warnings",
+  "cargo shear --locked --deny-warnings fuzz",
+]
 
 [tasks.deny]
 description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `mise -E ci run deny advisories` runs one check"
