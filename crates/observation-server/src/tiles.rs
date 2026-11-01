@@ -51,31 +51,29 @@ impl TileProxy {
 
     /// Returns the PNG for `id`, from cache when fresh, else from upstream.
     /// `referer` is the client's `Referer`, forwarded upstream as the policy asks.
-    /// Only a request that goes upstream is charged to `client`.
+    /// Only a request that goes upstream is charged to `client`; one over its
+    /// limit is treated like an upstream failure (an expired copy, else the 429).
     pub async fn get(
         &self,
         id: TileId,
         referer: Option<&HeaderValue>,
         client: ClientKey,
-    ) -> Result<Bytes, ApiError> {
+    ) -> Result<Tile, ApiError> {
         let cached = self.cache.get_tile(id).await;
         if let Some(c) = &cached
             && c.meta.expires_unix > unix_now()
         {
             metrics::counter!(crate::metrics::TILE_CACHE, "result" => "hit").increment(1);
-            return Ok(c.bytes.clone());
+            return Ok(Tile::fresh(c.bytes.clone()));
         }
-        if let Err(e) = self.limiter.check(client) {
-            // An expired copy is better than nothing, and costs no upstream request.
-            return match cached {
-                Some(c) => Ok(c.bytes),
-                None => Err(e),
-            };
-        }
-        match self
-            .fetch(id, cached.as_ref().map(|c| &c.meta), referer)
-            .await
-        {
+        let fetched = match self.limiter.check(client) {
+            Ok(()) => {
+                self.fetch(id, cached.as_ref().map(|c| &c.meta), referer)
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        match fetched {
             Ok(Upstream::Fresh(bytes, meta)) => {
                 // `refreshed`: an expired copy was replaced by a new body; `miss`: nothing cached.
                 let result = if cached.is_some() {
@@ -88,7 +86,7 @@ impl TileProxy {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, ?id, "could not cache tile"),
                 }
-                Ok(bytes)
+                Ok(Tile::fresh(bytes))
             }
             Ok(Upstream::NotModified(meta)) => {
                 let Some(c) = cached else {
@@ -101,14 +99,20 @@ impl TileProxy {
                 if let Err(e) = self.cache.update_tile_meta(id, &meta).await {
                     tracing::warn!(error = %e, ?id, "could not refresh tile metadata");
                 }
-                Ok(c.bytes)
+                Ok(Tile::fresh(c.bytes))
             }
             Err(e) => match cached {
                 Some(c) => {
                     metrics::counter!(crate::metrics::TILE_CACHE, "result" => "stale_served")
                         .increment(1);
-                    tracing::warn!(error = %e, ?id, "tile upstream failed, serving stale copy");
-                    Ok(c.bytes)
+                    // A client over its limit is routine, and counted on its own.
+                    if !matches!(e, ApiError::TooManyRequests { .. }) {
+                        tracing::warn!(error = %e, ?id, "tile upstream failed, serving stale copy");
+                    }
+                    Ok(Tile {
+                        bytes: c.bytes,
+                        stale: true,
+                    })
                 }
                 None => {
                     metrics::counter!(crate::metrics::TILE_CACHE, "result" => "error").increment(1);
@@ -197,6 +201,24 @@ impl TileProxy {
                     other.as_u16()
                 )))
             }
+        }
+    }
+}
+
+/// A tile for the client.
+#[derive(Debug)]
+pub struct Tile {
+    pub bytes: Bytes,
+    /// An expired copy, served because the upstream failed or the client is
+    /// over its limit; browsers should ask again soon.
+    pub stale: bool,
+}
+
+impl Tile {
+    fn fresh(bytes: Bytes) -> Self {
+        Self {
+            bytes,
+            stale: false,
         }
     }
 }

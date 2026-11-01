@@ -947,6 +947,56 @@ async fn joining_a_build_in_progress_is_free() {
 }
 
 #[tokio::test]
+async fn a_limited_client_gets_an_expired_area_rather_than_a_refusal() {
+    let (mock, url) = spawn_overpass().await;
+    let h = harness_with(
+        &url,
+        "http://127.0.0.1:9/t",
+        tempfile::tempdir().unwrap(),
+        |c| {
+            c.area_rate = rate(1, 1);
+            c.bundle_ttl = Duration::ZERO;
+        },
+    );
+    let a = "192.0.2.1";
+    let (status, _, first) = send(&h.app, from(&nth_area(0), a, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    // Expired at once, and no token left to rebuild it: the old copy is served.
+    let (status, _, again) = send(&h.app, from(&nth_area(0), a, None)).await;
+    assert_eq!((status, &again), (StatusCode::OK, &first));
+    assert_eq!(mock.hits.load(Ordering::SeqCst), 1);
+    // With nothing on disk the refusal stands.
+    assert_eq!(
+        send(&h.app, from(&nth_area(1), a, None)).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn builds_refused_as_busy_cost_no_token() {
+    let (mock, url) = spawn_overpass().await;
+    mock.script.lock().unwrap().extend([429, 429]);
+    let h = harness_with(
+        &url,
+        "http://127.0.0.1:9/t",
+        tempfile::tempdir().unwrap(),
+        |c| {
+            c.area_rate = rate(1, 1);
+        },
+    );
+    // The first goes upstream and is refused; the rest fail fast in the
+    // cooldown. All are 503s, not the client's own 429.
+    for n in 0..4 {
+        assert_eq!(
+            send(&h.app, from(&nth_area(n), "192.0.2.1", None)).await.0,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{n}"
+        );
+    }
+    assert_eq!(mock.hits.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn tile_fetches_are_limited_per_client_and_expired_copies_still_served() {
     let (mock, url) = spawn_tiles(0).await;
     let h = harness_with(
@@ -966,8 +1016,13 @@ async fn tile_fetches_are_limited_per_client_and_expired_copies_still_served() {
     assert!(headers.contains_key(header::RETRY_AFTER));
     // max-age=0: this tile is expired, so it would be revalidated, but the
     // limited client gets the copy on disk rather than a refusal.
-    let (status, _, body) = send(&h.app, from("/api/tiles/5/3/4.png", a, None)).await;
+    let (status, headers, body) = send(&h.app, from("/api/tiles/5/3/4.png", a, None)).await;
     assert_eq!((status, body.as_ref()), (StatusCode::OK, PNG));
+    assert_eq!(
+        headers[header::CACHE_CONTROL],
+        "public, max-age=300",
+        "an expired copy is not kept for a week"
+    );
     assert_eq!(mock.hits.load(Ordering::SeqCst), 2);
     assert_eq!(
         send(&h.app, from("/api/tiles/5/3/6.png", "192.0.2.2", None))

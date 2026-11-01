@@ -299,11 +299,25 @@ impl Config {
         Ok(config)
     }
 
-    /// Checks the upstream URLs. Run by [`Config::from_lookup`] and again by
-    /// `AppState::new`, so a hand-built config cannot skip it. Hosts that are names
-    /// rather than literal addresses are checked when connecting instead (see
-    /// `observation_upstream::FilteringResolver`).
+    /// Checks the upstream URLs and the per-client limits. Run by
+    /// [`Config::from_lookup`] and again by `AppState::new`, so a hand-built
+    /// config cannot skip it. Hosts that are names rather than literal addresses
+    /// are checked when connecting instead (see `observation_upstream::FilteringResolver`).
     pub fn validate(&self) -> Result<(), ConfigError> {
+        for (var, value, min) in [
+            ("OBS_AREA_RATE_PER_MIN", self.area_rate.per_minute, 0),
+            ("OBS_AREA_BURST", self.area_rate.burst, 1),
+            ("OBS_TILE_RATE_PER_MIN", self.tile_rate.per_minute, 0),
+            ("OBS_TILE_BURST", self.tile_rate.burst, 1),
+        ] {
+            if !(min..=MAX_RATE).contains(&value) {
+                return Err(ConfigError::Rate {
+                    var,
+                    value: value.to_string(),
+                    min,
+                });
+            }
+        }
         let allow = self.allow_private_upstreams;
         for u in &self.overpass_urls {
             check_upstream("OBS_OVERPASS_URL", u, allow, || {
@@ -720,6 +734,19 @@ mod tests {
 
     #[test]
     fn hand_built_configs_are_validated_too() {
+        let mut c = Config::for_tests("c", "s", "http://tiles/o", "http://tiles/{z}");
+        c.tile_rate = Rate {
+            per_minute: 10,
+            burst: 0,
+        };
+        assert!(matches!(
+            c.validate(),
+            Err(ConfigError::Rate {
+                var: "OBS_TILE_BURST",
+                ..
+            })
+        ));
+
         let mut c = Config::for_tests("c", "s", "http://169.254.169.254/o", "http://tiles/{z}");
         c.allow_private_upstreams = false;
         assert!(matches!(

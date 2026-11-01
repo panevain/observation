@@ -112,9 +112,9 @@ impl ClientKey {
             let hops = headers
                 .get_all("x-forwarded-for")
                 .iter()
-                .flat_map(|v| v.to_str().unwrap_or("?").split(','))
-                .collect::<Vec<_>>();
-            for hop in hops.iter().rev() {
+                .rev()
+                .flat_map(|v| v.to_str().unwrap_or("?").rsplit(','));
+            for hop in hops {
                 let Some(ip) = parse_hop(hop) else { break };
                 client = ip;
                 if !is_trusted(ip) {
@@ -126,13 +126,17 @@ impl ClientKey {
     }
 }
 
-/// One `X-Forwarded-For` entry: a bare address, or one with a port
-/// (`1.2.3.4:5678`, `[2001:db8::1]:5678`), as some proxies write it.
+/// One `X-Forwarded-For` entry: a bare address, or one in brackets or with a
+/// port (`[2001:db8::1]`, `1.2.3.4:5678`, `[2001:db8::1]:5678`), as some proxies write it.
 fn parse_hop(hop: &str) -> Option<IpAddr> {
     let hop = hop.trim();
     hop.parse()
         .ok()
         .or_else(|| hop.parse::<std::net::SocketAddr>().ok().map(|s| s.ip()))
+        .or_else(|| {
+            let inner = hop.strip_prefix('[')?.strip_suffix(']')?;
+            inner.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
+        })
 }
 
 /// Extracts the [`ClientKey`] of a request: the socket peer, or the forwarded
@@ -148,6 +152,15 @@ impl FromRequestParts<AppState> for ClientKey {
             .extensions
             .get::<ConnectInfo<std::net::SocketAddr>>()
             .map(|c| c.0.ip());
+        if peer.is_none() {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                tracing::warn!(
+                    "requests carry no peer address, so every client shares one rate limit; \
+                     serve the app with `into_make_service_with_connect_info::<SocketAddr>()`"
+                );
+            });
+        }
         Ok(Self::resolve(
             peer,
             &parts.headers,
@@ -239,13 +252,30 @@ impl RateLimiter {
             state.overflow.get_or_insert(fresh)
         };
         let tokens = refilled(bucket);
-        bucket.at = now;
+        // `now` is read before the lock, so a racing caller may have stored a later
+        // time; going back would count the time in between twice.
+        bucket.at = bucket.at.max(now);
         if tokens >= 1.0 {
             bucket.tokens = tokens - 1.0;
             Ok(())
         } else {
             bucket.tokens = tokens;
             Err(Duration::from_secs_f64((1.0 - tokens) / per_sec))
+        }
+    }
+
+    /// Gives back the token [`Self::check`] took for `key`, for work that turned
+    /// out not to need the upstream after all.
+    pub fn refund(&self, key: ClientKey) {
+        if self.rate.per_minute == 0 {
+            return;
+        }
+        let burst = f64::from(self.rate.burst);
+        let mut guard = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = &mut *guard;
+        // A client charged to the overflow bucket has no bucket of its own.
+        if let Some(b) = state.clients.get_mut(&key).or(state.overflow.as_mut()) {
+            b.tokens = (b.tokens + 1.0).min(burst);
         }
     }
 
@@ -344,6 +374,7 @@ mod tests {
             resolve("10.0.0.2", &["[2001:db8::1]:443"]),
             key("2001:db8::1")
         );
+        assert_eq!(resolve("10.0.0.2", &["[2001:db8::1]"]), key("2001:db8::1"));
         assert_eq!(resolve("10.0.0.2", &["192.0.2.1:5678"]), key("192.0.2.1"));
         // No header, or nothing but proxies: the nearest address is the client.
         assert_eq!(resolve("10.0.0.2", &[]), key("10.0.0.2"));
@@ -401,6 +432,29 @@ mod tests {
                 retry_after_secs: 1
             })
         );
+    }
+
+    #[test]
+    fn refunds_give_a_token_back_up_to_the_burst() {
+        let l = RateLimiter::new("test", RATE);
+        let t0 = Instant::now();
+        let a = key("192.0.2.1");
+        for _ in 0..3 {
+            l.check_at(a, t0).unwrap();
+        }
+        l.refund(a);
+        assert_eq!(l.check_at(a, t0), Ok(()));
+        assert!(l.check_at(a, t0).is_err());
+        for _ in 0..10 {
+            l.refund(a);
+        }
+        for _ in 0..3 {
+            l.check_at(a, t0).unwrap();
+        }
+        assert!(l.check_at(a, t0).is_err(), "refunds stop at the burst");
+        // A racing caller that read the clock earlier does not move the bucket back.
+        assert!(l.check_at(a, t0 - Duration::from_millis(900)).is_err());
+        assert!(l.check_at(a, t0 + Duration::from_millis(500)).is_err());
     }
 
     #[test]

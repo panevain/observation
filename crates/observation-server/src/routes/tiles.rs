@@ -23,19 +23,26 @@ pub async fn tile(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let id = parse_tile(&z, &x, &y).ok_or(ApiError::NotFound("not a valid map tile address"))?;
-    let bytes = state
+    let tile = state
         .tiles()
         .get(id, headers.get(header::REFERER), client)
         .await?;
+    // An expired copy is kept briefly, so the browser asks again once the
+    // upstream (or the client's allowance) is back.
+    let cache_control = if tile.stale {
+        "public, max-age=300"
+    } else {
+        "public, max-age=604800"
+    };
     Ok((
         [
             (header::CONTENT_TYPE, HeaderValue::from_static("image/png")),
             (
                 header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=604800"),
+                HeaderValue::from_static(cache_control),
             ),
         ],
-        bytes,
+        tile.bytes,
     )
         .into_response())
 }

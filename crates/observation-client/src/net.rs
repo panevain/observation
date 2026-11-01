@@ -123,7 +123,9 @@ pub fn tile_url(t: TileId) -> String {
 pub enum TileState {
     Pending,
     Ready(Handle<Image>),
-    Failed,
+    /// The request failed at this time (unix seconds); asked for again after
+    /// [`TILE_RETRY_SECS`].
+    Failed(u64),
 }
 
 /// Map tiles shared by the 3D ground and the 2D map picker.
@@ -140,11 +142,19 @@ pub struct Tiles {
 const MAX_IN_FLIGHT: usize = 6;
 /// Soft cap on decoded tiles kept in memory.
 const MAX_TILES: usize = 400;
+/// Wait before asking again for a tile that failed (the server may be limiting
+/// this client), so failed tiles are neither blank for good nor re-requested every frame.
+const TILE_RETRY_SECS: u64 = 30;
 
 impl Tiles {
     /// Returns the tile if loaded; queues it otherwise.
     pub fn get(&mut self, t: TileId) -> Option<Handle<Image>> {
-        if !self.tiles.contains_key(&t) {
+        let retry = match self.tiles.get(&t) {
+            None => true,
+            Some(TileState::Failed(at)) => crate::regions::now_unix() >= at + TILE_RETRY_SECS,
+            Some(_) => false,
+        };
+        if retry {
             self.tiles.insert(t, TileState::Pending);
             self.queue.push(t);
         }
@@ -383,16 +393,20 @@ fn drain_replies(
                         )
                         .map_err(|e| e.to_string())
                     })
-                    .map_or(TileState::Failed, |img| TileState::Ready(images.add(img)));
+                    .map_or(TileState::Failed(crate::regions::now_unix()), |img| {
+                        TileState::Ready(images.add(img))
+                    });
                 tiles.tiles.insert(t, state);
             }
         }
     }
     if tiles.tiles.len() > MAX_TILES {
-        // Drop failed entries so they can be retried; loaded tiles stay cached.
-        tiles
-            .tiles
-            .retain(|_, s| matches!(s, TileState::Ready(_) | TileState::Pending));
+        // Drop failed entries due for a retry; loaded tiles stay cached.
+        let now = crate::regions::now_unix();
+        tiles.tiles.retain(|_, s| match s {
+            TileState::Failed(at) => now < *at + TILE_RETRY_SECS,
+            TileState::Ready(_) | TileState::Pending => true,
+        });
     }
 }
 

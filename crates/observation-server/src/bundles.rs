@@ -59,15 +59,25 @@ impl BundleService {
     }
 
     /// Returns the encoded bundle for `bbox`, which should already be snapped.
-    /// Only a request that starts a new build is charged to `client`; cache
-    /// hits and requests joining a build in progress are free.
+    /// Only a request that starts a new build is charged to `client`, and the
+    /// token is given back unless the build asks public Overpass (see
+    /// [`Self::produce`]). Cache hits and requests joining a build in progress
+    /// are free, and a client over its limit gets an expired copy if there is one.
     pub async fn get(self: &Arc<Self>, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
-        if let Some((bytes, true)) = self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
-            metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
-            return Ok(bytes);
+        let stale = match self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
+            Some((bytes, true)) => {
+                metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
+                return Ok(bytes);
+            }
+            Some((bytes, false)) => Some(bytes),
+            None => None,
+        };
+        match (self.flight(key, bbox, client), stale) {
+            (Ok(flight), _) => flight.await,
+            (Err(ApiError::TooManyRequests { .. }), Some(stale)) => Ok(stale),
+            (Err(e), _) => Err(e),
         }
-        self.flight(key, bbox, client)?.await
     }
 
     fn flight(
@@ -92,7 +102,7 @@ impl BundleService {
         // (waiters that joined the flight share it).
         let handle = tokio::spawn(
             async move {
-                let result = this.produce(&task_key, bbox).await;
+                let result = this.produce(&task_key, bbox, client).await;
                 this.in_flight
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -113,10 +123,14 @@ impl BundleService {
     }
 
     /// Cache re-check, Overpass fetch, bundle build, cache write. Falls back to
-    /// an expired cached bundle when the upstream fails.
-    async fn produce(&self, key: &str, bbox: BBox) -> Result<Bytes, ApiError> {
+    /// an expired cached bundle when the upstream fails. `client` started the
+    /// build and gets its token back when public Overpass was not asked: a cache
+    /// hit here, a local region's data, or Overpass refusing as busy (mostly our
+    /// own queue or cooldown).
+    async fn produce(&self, key: &str, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
         if let Some((bytes, true)) = self.cache.get_bundle(key, self.valid_after(&bbox)).await {
+            self.limiter.refund(client);
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
@@ -124,8 +138,17 @@ impl BundleService {
         let started = std::time::Instant::now();
         let local = self.fetch_local(&bbox).await;
         let fetched = match local {
-            Some(d) => Ok(d),
-            None => self.overpass.fetch_since(&bbox, started).await,
+            Some(d) => {
+                self.limiter.refund(client);
+                Ok(d)
+            }
+            None => {
+                let fetched = self.overpass.fetch_since(&bbox, started).await;
+                if matches!(fetched, Err(ApiError::RateLimited { .. })) {
+                    self.limiter.refund(client);
+                }
+                fetched
+            }
         };
         let data = match fetched {
             Ok(d) => d,
