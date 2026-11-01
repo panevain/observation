@@ -63,7 +63,7 @@ def eligible(pr):
 
 def cmd_list(a):
     prs = gh("pr", "list", "--repo", a.repo, "--author", "app/dependabot", "--state", "open",
-             "--limit", "20", "--json",
+             "--limit", "100", "--json",
              "number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,commits")
     out = []
     for pr in prs:

@@ -9,7 +9,7 @@ name: Prepare release
 #   when only dependencies or pins changed; a week with no shipped change is skipped
 #   (scripts/release-plan.py).
 #   By hand: the same, or a given version, or a dev pre-release (X.Y.Z-dev.N).
-# Nothing starts while a release or hotfix is open or waits for its tag.
+# Nothing starts while a release or hotfix is open, waits for its tag or for its back-merge.
 on:
   schedule:
     # Tuesdays: after Monday's Dependabot and Pins pull requests have had a day to merge.
@@ -64,7 +64,11 @@ jobs:
           # shellcheck disable=SC1091
           . "${RUNNER_TEMP}/state"
           skip() { echo "$1" | tee -a "${GITHUB_STEP_SUMMARY}"; exit 0; }
-          [ "${pending}" = false ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
+          # Before the first tag (stable or pre-release), main's initial version was never
+          # tagged, so that alone is not a release waiting for its tag.
+          [ "${pending}" = false ] || [ -z "$(git tag -l 'v*')" ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
+          # Until the back-merge lands, develop's [Unreleased] still holds what v${latest} shipped.
+          [ -z "${latest}" ] || git merge-base --is-ancestor "v${latest}" HEAD || skip "develop does not contain v${latest} yet (its back-merge is still open); skipping."
           [ "${hotfix}" = false ] || skip "A hotfix/* branch exists (a hotfix is in progress); skipping."
           [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || skip "A release/* branch exists (a release is in progress); skipping."
           args=()

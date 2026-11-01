@@ -103,6 +103,8 @@ def cmd_plan(a):
         core(a.version)
         if a.version in taken:
             raise SystemExit(f"v{a.version} already exists")
+        if latest and core(a.version) <= core(latest):
+            raise SystemExit(f"{a.version} is not newer than the latest release v{latest}")
         out.update(version=a.version, kind="explicit", reason="version given")
         return out
 
@@ -152,7 +154,9 @@ def cmd_changelog(a):
     body = text[start:end].strip("\n")
     if not counts:
         latest = latest_stable(a.repo)
-        log = git(a.repo, "log", "--no-merges", "--format=%s", *([f"v{latest}..HEAD"] if latest else ["-50"])).stdout
+        rng = [f"v{latest}..HEAD"] if latest else ["-50"]
+        # Only the commits that changed shipped files: those are what this release is for.
+        log = git(a.repo, "log", "--no-merges", "--format=%s", *rng, "--", ".", *NOT_SHIPPED).stdout
         subjects = [s for s in log.splitlines() if s.strip()]
         body = "### Changed\n\n- Dependency and maintenance updates" + (":" if subjects else ".")
         body += "".join(f"\n  - {s}" for s in subjects)
