@@ -42,7 +42,7 @@ The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for tha
 You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) (the version pinned in [`mise.toml`](mise.toml)). [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
 
 ```sh
-mise install                          # Rust (via rustup) and trunk (checksum-verified via mise.lock)
+mise install                          # Rust (via rustup), trunk and the check tools (checksum-verified via mise.lock)
 cp mise.local.toml.example mise.local.toml   # then set OBS_CONTACT (gitignored)
 mise run serve                        # dev-build the client -> dist/, then run the server
 mise run dev                          # the same plus a region agent built from this checkout (Docker; mise.dev.toml)
