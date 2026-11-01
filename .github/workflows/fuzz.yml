@@ -10,6 +10,7 @@ on:
     # is among them.
     paths:
       - .github/workflows/fuzz.yml
+      - .github/actions/**
       - fuzz/**
       - Cargo.toml
       - crates/**

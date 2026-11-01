@@ -44,9 +44,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          prs="$(python3 scripts/dependabot-automerge.py list --repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")"
+          args=(--repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")
+          if [ "${DRY_RUN}" = true ]; then args+=(--dry-run); fi
+          prs="$(python3 scripts/dependabot-automerge.py list "${args[@]}")"
           echo "prs=${prs}" >> "${GITHUB_OUTPUT}"
 
   # Only when there is something to do, so the sweep does not deploy to `bot` each time, and

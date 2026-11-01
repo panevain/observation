@@ -41,6 +41,8 @@ updates:
         update-types: [patch]
       cargo-minor:
         update-types: [minor]
+      cargo-major:
+        update-types: [major]
       # One pull request for every crate an advisory fix needs.
       cargo-security:
         applies-to: security-updates

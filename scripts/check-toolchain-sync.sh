@@ -27,9 +27,11 @@ lock_rust="$(awk '/^\[\[tools\.rust\]\]/ {f=1; next} f && /^version = / {gsub(/[
 check "$rust" "$lock_rust" "mise.lock [[tools.rust]]"
 check "$mise" "$(first '^FROM ghcr.io/jdx/mise:[0-9.]+' Dockerfile | sed -E 's/.*://')" "Dockerfile FROM ghcr.io/jdx/mise:"
 check "$mise" "$(first '^min_version = \{ soft = "[0-9.]+" \}' mise.toml | sed -E 's/.*"([0-9.]+)".*/\1/')" "mise.toml min_version"
-# Workflows set up mise only through setup-mise, so its version is the only one to keep.
-direct="$(grep -lE 'uses: *jdx/mise-action@' .github/workflows/*.y*ml || true)"
-check "" "$direct" "workflows using jdx/mise-action directly (use $/.github/actions/setup-mise)"
+# Workflows and other composite actions set up mise only through setup-mise, so its version is
+# the only one to keep.
+direct="$(grep -lE 'uses: *jdx/mise-action@' .github/workflows/*.y*ml .github/actions/*/action.y*ml 2>/dev/null |
+  grep -vxF .github/actions/setup-mise/action.yml | paste -sd' ' - || true)"
+check "" "$direct" "jdx/mise-action used directly (use \$/.github/actions/setup-mise)"
 
 # Advisory ignores: the same IDs in all three files (sorted, one per line).
 ids() { grep -Eo 'RUSTSEC-[0-9]{4}-[0-9]{4}|GHSA(-[0-9a-z]{4}){3}' | sort -u | paste -sd' ' -; }

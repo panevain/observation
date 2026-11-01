@@ -2,10 +2,11 @@
 """Lists the open Dependabot pull requests that may merge themselves, and those on hold. Used
 by dependabot-automerge.yml, which enables or disables auto-merge on them as the bot app.
 
-  list --repo OWNER/NAME [--summary FILE]
+  list --repo OWNER/NAME [--summary FILE] [--dry-run]
       Prints {"merge": [...], "hold": [...]} (JSON, each item {"number", "sha"}), and appends a
       Markdown table of every open Dependabot PR and what happens to it to FILE (the job
-      summary).
+      summary). With --dry-run the table says what would happen (the workflow then changes
+      nothing).
       merge: each open, non-draft Dependabot PR into develop, without auto-merge yet and not
         labelled `hold`, whose commits are all Dependabot's and whose every updated dependency
         (from the commit's `updated-dependencies` metadata) is a semver patch update, or a
@@ -86,13 +87,14 @@ def cmd_list(a):
     prs = [gh("pr", "view", str(p["number"]), "--repo", a.repo, "--json", fields) for p in listed]
     out = {"merge": [], "hold": []}
     rows = []
+    would = "would " if a.dry_run else ""
     for pr in prs:
         item = {"number": pr["number"], "sha": pr["headRefOid"]}
         if HOLD in labels(pr) and pr["autoMergeRequest"]:
-            verdict = f"labelled {HOLD}: disable auto-merge"
+            verdict = f"labelled {HOLD}: {would}disable auto-merge"
             out["hold"].append(item)
         elif (why := eligible(pr)) is None:
-            verdict = "enable auto-merge"
+            verdict = f"{would}enable auto-merge"
             out["merge"].append(item)
         else:
             verdict = f"left alone: {why}"
@@ -100,7 +102,7 @@ def cmd_list(a):
         rows.append(f"| #{pr['number']} | {cell(pr['title'])} | {cell(verdict)} |")
     if a.summary:
         with open(a.summary, "a") as f:
-            f.write("### Open Dependabot pull requests\n\n")
+            f.write("### Open Dependabot pull requests" + (" (dry run: nothing changed)" if a.dry_run else "") + "\n\n")
             if rows:
                 f.write("| PR | Title | Auto-merge |\n| --- | --- | --- |\n" + "\n".join(rows) + "\n")
             else:
@@ -114,6 +116,7 @@ def main():
     p = sub.add_parser("list")
     p.add_argument("--repo", required=True)
     p.add_argument("--summary", help="append a Markdown table of the verdicts to this file")
+    p.add_argument("--dry-run", action="store_true", help="word the table as what would happen")
     cmd_list(ap.parse_args())
 
 
