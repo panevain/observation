@@ -57,10 +57,10 @@ cargo-chef = "0.1.78"
 cargo-auditable = "0.7.7"
 
 [env]
-# Kept unset: a RUSTUP_TOOLCHAIN from the environment would override fuzz/'s nightly and the
-# toolchains of the release checkouts that release-watch.yml and hotfix.yml scan. Without it,
-# rustup reads the rust-toolchain.toml of each directory. (CI installs the toolchains with
-# rustup: ci:toolchain.)
+# mise sets RUSTUP_TOOLCHAIN to the root rust-toolchain.toml's channel, which would override
+# fuzz/'s nightly and the toolchains of the release checkouts that release-watch.yml and
+# hotfix.yml scan. Without it, rustup reads the rust-toolchain.toml of each directory. (CI
+# installs the toolchains with rustup: ci:toolchain.)
 RUSTUP_TOOLCHAIN = false
 CARGO_TERM_COLOR = "always"
 CARGO_INCREMENTAL = "0"

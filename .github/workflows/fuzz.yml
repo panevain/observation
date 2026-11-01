@@ -54,15 +54,12 @@ jobs:
           persist-credentials: false
       - uses: $/.github/actions/setup-mise
       # cargo-fuzz is built from crates.io (mise.ci.toml) with the root rust-toolchain.toml's
-      # toolchain, which rustup installs first (setup-rust below then leaves only fuzz/'s
-      # nightly). Restored from mise's cache, cargo-fuzz is already there.
+      # toolchain, which mise must have installed itself (a toolchain installed by rustup alone
+      # does not count). Restored from mise's cache, cargo-fuzz is already there.
       - name: Install cargo-fuzz
         run: |
           set -euo pipefail
-          if ! mise which cargo-fuzz >/dev/null 2>&1; then
-            rustup toolchain install --profile minimal --no-self-update
-            mise install --locked cargo-fuzz
-          fi
+          mise which cargo-fuzz >/dev/null 2>&1 || mise install --locked rust cargo-fuzz
           mise which cargo-fuzz
       - uses: $/.github/actions/setup-rust
         with:

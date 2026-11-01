@@ -89,11 +89,10 @@ updates:
       npm:
         patterns: ["*"]
 
-  # The Rust toolchains: rust-toolchain.toml (stable) and fuzz/rust-toolchain.toml (the fuzz
-  # targets' dated nightly). They are set nowhere else, so each bump is one file. Patch releases
-  # merge themselves (dependabot-automerge.yml); a new minor can bring clippy lints.
+  # The fuzz targets' dated nightly (fuzz/rust-toolchain.toml, set nowhere else). The root
+  # toolchain is mise's too (mise.lock), so the Pins workflow bumps it and relocks.
   - package-ecosystem: rust-toolchain
-    directories: ["/", "/fuzz"]
+    directory: /fuzz
     schedule:
       interval: weekly
       day: monday
