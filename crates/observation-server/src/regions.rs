@@ -214,7 +214,11 @@ impl Regions {
     }
 
     /// Forwards an action and publishes the snapshot the agent answers with.
-    pub async fn act(&self, action: ActionKind, id: &str) -> Result<RegionsStatus, ApiError> {
+    pub async fn act(
+        &self,
+        action: ActionKind,
+        req: &RegionAction,
+    ) -> Result<RegionsStatus, ApiError> {
         if !self.manageable {
             return Err(ApiError::Forbidden(
                 "region management is turned off on this server (set OBS_ADMIN_TOKEN)",
@@ -225,7 +229,7 @@ impl Regions {
                 reqwest::Method::POST,
                 &format!("/regions/{}", action.path()),
             )
-            .json(&RegionAction { id: id.to_owned() })
+            .json(req)
             .timeout(Duration::from_secs(45))
             .send()
             .await
@@ -288,6 +292,9 @@ mod tests {
             bbox,
             data_timestamp: None,
             imported_unix: Some(1),
+            last_attempt_unix: None,
+            auto_refresh: true,
+            next_refresh_unix: None,
             disk_bytes: None,
             job: None,
             last_error: None,

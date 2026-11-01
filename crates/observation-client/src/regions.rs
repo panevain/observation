@@ -1,5 +1,5 @@
 //! Local map-data regions: the server's live status (server-sent events), the
-//! extract catalog, and import / cancel / delete requests from the UI.
+//! extract catalog, and import / cancel / delete / settings requests from the UI.
 
 use bevy::prelude::*;
 use observation_core::regions::{ActionKind, CatalogEntry, RegionView, RegionsStatus};
@@ -24,6 +24,8 @@ pub enum CatalogState {
 pub enum RegionRequest {
     Catalog,
     Action(ActionKind, String),
+    /// Turn scheduled refreshes of a region on or off.
+    AutoRefresh(String, bool),
 }
 
 #[derive(Debug, Default, Resource)]
@@ -80,7 +82,7 @@ impl Regions {
     }
 
     pub fn request(&mut self, r: RegionRequest) {
-        if let RegionRequest::Action(_, id) = &r {
+        if let RegionRequest::Action(_, id) | RegionRequest::AutoRefresh(id, _) = &r {
             self.busy = Some(id.clone());
         }
         self.outbox.push(r);
@@ -111,6 +113,20 @@ impl Regions {
             }
         }
         self.status = Some(status);
+    }
+}
+
+/// Seconds since the Unix epoch by this computer's clock.
+pub fn now_unix() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        (js_sys::Date::now() / 1000.0) as u64
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
     }
 }
 

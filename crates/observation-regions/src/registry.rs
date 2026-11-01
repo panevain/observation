@@ -109,6 +109,13 @@ pub struct RegionRecord {
     /// An import was queued or running; it is queued again after a restart.
     #[serde(default)]
     pub pending: bool,
+    /// Scheduled refreshes are on for this region.
+    #[serde(default = "yes")]
+    pub auto_refresh: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// A finished import, ready to be swapped in.
@@ -330,6 +337,7 @@ impl Registry {
         let region = s.regions.entry(id.to_owned()).or_insert_with(|| Region {
             record: RegionRecord {
                 id: id.to_owned(),
+                auto_refresh: true,
                 ..RegionRecord::default()
             },
             db: None,
@@ -373,6 +381,19 @@ impl Registry {
         s.abort_if_running(job);
         self.commit(s, true);
         drop(region);
+        Ok(())
+    }
+
+    /// Turns scheduled refreshes of `id` on or off. A refresh already queued
+    /// or running carries on (cancel it to stop it).
+    pub fn set_auto_refresh(&self, id: &str, on: bool) -> Result<(), ActionError> {
+        let mut s = self.lock();
+        let region = s.regions.get_mut(id).ok_or(ActionError::NotFound)?;
+        if region.record.auto_refresh != on {
+            region.record.auto_refresh = on;
+            tracing::info!(region = id, on, "auto-refresh changed");
+            self.commit(s, true);
+        }
         Ok(())
     }
 
@@ -486,31 +507,32 @@ impl Registry {
             .and_then(|r| Some((r.record.id.clone(), Arc::clone(r.db.as_ref()?))))
     }
 
-    /// Ready regions due for a scheduled refresh: imported more than the
-    /// refresh interval ago, and not attempted (failed or cancelled) within a day.
+    /// Regions due for a scheduled refresh (see [`next_refresh`]).
     pub fn due_for_refresh(&self) -> Vec<(String, String)> {
-        if self.refresh_days == 0 {
-            return Vec::new();
-        }
         let now = now_unix();
-        let cutoff = now.saturating_sub(u64::from(self.refresh_days) * 86_400);
-        let retry_cutoff = now.saturating_sub(RETRY_REFRESH_AFTER);
         self.lock()
             .regions
             .values()
-            .filter(|r| r.db.is_some() && r.job.is_none())
-            .filter(|r| {
-                let Some(imported) = r.record.imported_unix.filter(|t| *t < cutoff) else {
-                    return false;
-                };
-                // An attempt after the last import failed or was cancelled: back off.
-                r.record
-                    .last_attempt_unix
-                    .is_none_or(|t| t <= imported || t < retry_cutoff)
-            })
+            .filter(|r| next_refresh(r, self.refresh_days).is_some_and(|t| t < now))
             .map(|r| (r.record.id.clone(), r.record.name.clone()))
             .collect()
     }
+}
+
+/// When `r` is due for a scheduled refresh: `refresh_days` after its import,
+/// or, when a later attempt failed or was cancelled, a day after that attempt.
+/// `None` for a region that is not ready, has an import queued or running, or
+/// has auto-refresh off (as has the agent with `refresh_days` 0).
+fn next_refresh(r: &Region, refresh_days: u32) -> Option<u64> {
+    if refresh_days == 0 || !r.record.auto_refresh || r.db.is_none() || r.job.is_some() {
+        return None;
+    }
+    let imported = r.record.imported_unix?;
+    let due = imported.saturating_add(u64::from(refresh_days) * 86_400);
+    Some(match r.record.last_attempt_unix {
+        Some(t) if t > imported => due.max(t.saturating_add(RETRY_REFRESH_AFTER)),
+        _ => due,
+    })
 }
 
 fn build_snapshot(s: &State, max_download_bytes: u64, refresh_days: u32) -> RegionsSnapshot {
@@ -526,6 +548,9 @@ fn build_snapshot(s: &State, max_download_bytes: u64, refresh_days: u32) -> Regi
                 bbox: r.record.bbox,
                 data_timestamp: r.record.data_timestamp.clone(),
                 imported_unix: r.record.imported_unix,
+                last_attempt_unix: r.record.last_attempt_unix,
+                auto_refresh: r.record.auto_refresh,
+                next_refresh_unix: next_refresh(r, refresh_days),
                 disk_bytes: r.record.disk_bytes,
                 job: r.job.as_ref().map(|(_, v)| v.clone()),
                 last_error: r.record.last_error.clone(),
@@ -679,6 +704,50 @@ mod tests {
             reg.due_for_refresh().is_empty(),
             "retried after a day, not every hour"
         );
+    }
+
+    #[tokio::test]
+    async fn auto_refresh_can_be_turned_off_per_region() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::open(dir.path(), 1, 1).unwrap();
+        assert_eq!(reg.set_auto_refresh("a", false), Err(ActionError::NotFound));
+        reg.enqueue("a", "A").unwrap();
+        let (id, job) = reg.next_job().await;
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
+        let r = &reg.snapshot().regions[0];
+        assert!(r.auto_refresh, "on by default");
+        let imported = r.imported_unix.unwrap();
+        assert_eq!(r.next_refresh_unix, Some(imported + 86_400));
+        {
+            let mut state = reg.lock();
+            let r = &mut state.regions.get_mut("a").unwrap().record;
+            r.imported_unix = Some(now_unix() - 2 * 86_400);
+            r.last_attempt_unix = r.imported_unix;
+        }
+        assert_eq!(reg.due_for_refresh().len(), 1);
+
+        let version = reg.snapshot().version;
+        reg.set_auto_refresh("a", false).unwrap();
+        assert!(reg.due_for_refresh().is_empty());
+        let r = &reg.snapshot().regions[0];
+        assert!(!r.auto_refresh);
+        assert_eq!(r.next_refresh_unix, None);
+        reg.set_auto_refresh("a", false).unwrap();
+        assert_eq!(reg.snapshot().version, version + 1, "no change, no publish");
+
+        // Persisted across restarts.
+        drop(reg);
+        let reopened = Registry::open(dir.path(), 1, 1).unwrap();
+        assert!(!reopened.snapshot().regions[0].auto_refresh);
+        assert!(reopened.due_for_refresh().is_empty());
+        reopened.set_auto_refresh("a", true).unwrap();
+        assert_eq!(reopened.due_for_refresh().len(), 1);
+    }
+
+    #[test]
+    fn records_from_before_auto_refresh_keep_refreshing() {
+        let r: RegionRecord = serde_json::from_str(r#"{"id":"a","name":"A","db_dir":null,"bbox":null,"data_timestamp":null,"imported_unix":null,"disk_bytes":null,"last_error":null}"#).unwrap();
+        assert!(r.auto_refresh);
     }
 
     #[tokio::test]

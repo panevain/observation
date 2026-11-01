@@ -11,6 +11,7 @@
 //! | `GET /regions?since=<version>` | [`RegionsSnapshot`]; waits up to 25 s for a newer one |
 //! | `GET /catalog` | importable extracts |
 //! | `POST /regions/import`, `/cancel`, `/delete` | `{"id": "…"}` |
+//! | `POST /regions/settings` | `{"id": "…", "auto_refresh": true}` |
 //! | `POST /interpreter?bbox=s,w,n,e` | Overpass query (form field `data`) against the region holding the box; 404 if none |
 
 pub mod catalog;
@@ -249,6 +250,7 @@ pub fn app(agent: Arc<Agent>) -> Router {
         .route("/regions/import", post(import_region))
         .route("/regions/cancel", post(cancel_region))
         .route("/regions/delete", post(delete_region))
+        .route("/regions/settings", post(region_settings))
         .route("/interpreter", post(interpreter))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&agent),
@@ -357,6 +359,22 @@ async fn delete_region(
     Json(a): Json<RegionAction>,
 ) -> Result<Json<RegionsSnapshot>, AgentError> {
     match agent.registry.delete(action_id(&a)?) {
+        Ok(()) => Ok(Json(agent.registry.snapshot())),
+        Err(ActionError::NotFound | ActionError::Busy) => {
+            Err(err(StatusCode::NOT_FOUND, "no such region"))
+        }
+    }
+}
+
+async fn region_settings(
+    State(agent): State<Arc<Agent>>,
+    Json(a): Json<RegionAction>,
+) -> Result<Json<RegionsSnapshot>, AgentError> {
+    let id = action_id(&a)?;
+    let on = a
+        .auto_refresh
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "expected `auto_refresh`"))?;
+    match agent.registry.set_auto_refresh(id, on) {
         Ok(()) => Ok(Json(agent.registry.snapshot())),
         Err(ActionError::NotFound | ActionError::Busy) => {
             Err(err(StatusCode::NOT_FOUND, "no such region"))

@@ -11,7 +11,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
-use observation_core::regions::ActionKind;
+use observation_core::regions::{ActionKind, RegionAction};
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
 
@@ -238,20 +238,39 @@ fn send_region_requests(net: Res<Net>, mut regions: ResMut<Regions>) {
                 regions.catalog = CatalogState::Loading;
                 net.get("/api/regions/catalog".to_owned(), Request::RegionsCatalog);
             }
-            RegionRequest::Action(action, id) => {
-                let body = serde_json::json!({ "id": id }).to_string();
-                net.send(
-                    HttpRequest {
-                        url: format!("/api/regions/{}", action.path()),
-                        method: "POST",
-                        body: Some(body),
-                        bearer: Some(token.clone()),
-                    },
-                    Request::RegionAction(action, id),
-                );
-            }
+            RegionRequest::Action(action, id) => send_region_action(
+                &net,
+                &token,
+                action,
+                RegionAction {
+                    id,
+                    ..RegionAction::default()
+                },
+            ),
+            RegionRequest::AutoRefresh(id, on) => send_region_action(
+                &net,
+                &token,
+                ActionKind::Settings,
+                RegionAction {
+                    id,
+                    auto_refresh: Some(on),
+                },
+            ),
         }
     }
+}
+
+fn send_region_action(net: &Net, token: &str, action: ActionKind, body: RegionAction) {
+    let id = body.id.clone();
+    net.send(
+        HttpRequest {
+            url: format!("/api/regions/{}", action.path()),
+            method: "POST",
+            body: serde_json::to_string(&body).ok(),
+            bearer: Some(token.to_owned()),
+        },
+        Request::RegionAction(action, id),
+    );
 }
 
 fn drain_replies(
@@ -317,7 +336,7 @@ fn drain_replies(
                             regions.store_token();
                         }
                     }
-                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.path())),
+                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.verb())),
                 }
             }
             Request::Area(request) => {

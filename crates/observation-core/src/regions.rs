@@ -18,7 +18,8 @@ pub struct RegionsSnapshot {
     pub regions: Vec<RegionView>,
     /// Largest extract the agent will download, bytes.
     pub max_download_bytes: u64,
-    /// Ready regions are re-imported after this many days; 0 means never.
+    /// Ready regions with [`RegionView::auto_refresh`] on are re-imported
+    /// after this many days; 0 means never.
     pub refresh_days: u32,
 }
 
@@ -28,7 +29,7 @@ pub struct RegionsSnapshot {
 pub struct RegionsStatus {
     /// The server reached the region agent on its last try.
     pub agent_online: bool,
-    /// The server accepts import, cancel and delete requests (with the admin token).
+    /// The server accepts management requests (with the admin token).
     pub manageable: bool,
     pub snapshot: RegionsSnapshot,
 }
@@ -48,12 +49,27 @@ pub struct RegionView {
     pub data_timestamp: Option<String>,
     /// When the data was imported, Unix seconds.
     pub imported_unix: Option<u64>,
+    /// When the last import ended, however it ended (Unix seconds).
+    #[serde(default)]
+    pub last_attempt_unix: Option<u64>,
+    /// The agent re-imports the region every [`RegionsSnapshot::refresh_days`].
+    #[serde(default = "yes")]
+    pub auto_refresh: bool,
+    /// When the next scheduled refresh is due, Unix seconds (the agent checks
+    /// hourly). `None` when none is planned: not ready, auto-refresh off for
+    /// the region or the agent, or an import already queued.
+    #[serde(default)]
+    pub next_refresh_unix: Option<u64>,
     /// Size of the region's database on disk, bytes.
     pub disk_bytes: Option<u64>,
     /// Queued or running import.
     pub job: Option<JobView>,
     /// Why the last import failed.
     pub last_error: Option<String>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// Progress of an import.
@@ -136,6 +152,8 @@ pub enum ActionKind {
     Import,
     Cancel,
     Delete,
+    /// Changes the region's settings ([`RegionAction::auto_refresh`]).
+    Settings,
 }
 
 impl ActionKind {
@@ -144,6 +162,7 @@ impl ActionKind {
             "import" => Some(Self::Import),
             "cancel" => Some(Self::Cancel),
             "delete" => Some(Self::Delete),
+            "settings" => Some(Self::Settings),
             _ => None,
         }
     }
@@ -153,6 +172,15 @@ impl ActionKind {
             Self::Import => "import",
             Self::Cancel => "cancel",
             Self::Delete => "delete",
+            Self::Settings => "settings",
+        }
+    }
+
+    /// What the action does to a region, for messages: `Could not {verb} monaco`.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Self::Settings => "change the settings of",
+            other => other.path(),
         }
     }
 }
@@ -171,10 +199,13 @@ pub fn bearer_matches(header: Option<&str>, secret: &str) -> bool {
             == 0
 }
 
-/// Body of the import, cancel and delete requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Body of the region management requests.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegionAction {
     pub id: String,
+    /// For [`ActionKind::Settings`]: turn scheduled refreshes on or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_refresh: Option<bool>,
 }
 
 /// Whether `id` looks like a Geofabrik extract id: lowercase ASCII letters,
@@ -223,7 +254,12 @@ mod tests {
 
     #[test]
     fn actions_round_trip() {
-        for a in [ActionKind::Import, ActionKind::Cancel, ActionKind::Delete] {
+        for a in [
+            ActionKind::Import,
+            ActionKind::Cancel,
+            ActionKind::Delete,
+            ActionKind::Settings,
+        ] {
             assert_eq!(ActionKind::parse(a.path()), Some(a));
         }
         assert_eq!(ActionKind::parse("nuke"), None);
@@ -262,6 +298,9 @@ mod tests {
                 bbox: BBox::new(43.72, 7.40, 43.75, 7.44).ok(),
                 data_timestamp: Some("2026-10-19T20:21:11Z".into()),
                 imported_unix: Some(1),
+                last_attempt_unix: Some(1),
+                auto_refresh: false,
+                next_refresh_unix: None,
                 disk_bytes: Some(2),
                 job: Some(JobView {
                     phase: JobPhase::Importing,
@@ -277,5 +316,28 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"phase\":\"importing\""));
         assert_eq!(serde_json::from_str::<RegionsSnapshot>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn regions_from_an_older_agent_refresh_automatically() {
+        let v: RegionView = serde_json::from_str(
+            r#"{"id":"a","name":"A","ready":true,"bbox":null,"data_timestamp":null,
+                "imported_unix":1,"disk_bytes":null,"job":null,"last_error":null}"#,
+        )
+        .unwrap();
+        assert!(v.auto_refresh);
+        assert_eq!(v.next_refresh_unix, None);
+    }
+
+    #[test]
+    fn plain_actions_carry_only_the_id() {
+        let plain = RegionAction {
+            id: "monaco".into(),
+            ..RegionAction::default()
+        };
+        assert_eq!(serde_json::to_string(&plain).unwrap(), r#"{"id":"monaco"}"#);
+        let a: RegionAction =
+            serde_json::from_str(r#"{"id":"monaco","auto_refresh":false}"#).unwrap();
+        assert_eq!(a.auto_refresh, Some(false));
     }
 }

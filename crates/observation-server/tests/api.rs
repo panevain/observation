@@ -925,6 +925,8 @@ struct MockAgent {
     bboxes: Mutex<Vec<String>>,
     auth: Mutex<Vec<String>>,
     actions: Mutex<Vec<(String, String)>>,
+    /// Bodies of the action requests.
+    bodies: Mutex<Vec<serde_json::Value>>,
 }
 
 impl MockAgent {
@@ -948,6 +950,9 @@ impl MockAgent {
             bbox: BBox::new(47.0, -123.0, 48.0, -122.0).ok(),
             data_timestamp: None,
             imported_unix: Some(imported_unix),
+            last_attempt_unix: Some(imported_unix),
+            auto_refresh: true,
+            next_refresh_unix: None,
             disk_bytes: Some(1),
             job: None,
             last_error: None,
@@ -1009,6 +1014,7 @@ async fn agent_action(
             .into_response();
     }
     m.actions.lock().unwrap().push((action, id));
+    m.bodies.lock().unwrap().push(json(&body));
     let snap = {
         let mut s = m.snapshot.lock().unwrap();
         s.version += 1;
@@ -1252,6 +1258,73 @@ async fn region_actions_need_the_admin_token() {
     let (status, _, body) = get_uri(&h.app, "/api/regions/catalog").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json(&body)[0]["id"], "monaco");
+}
+
+#[tokio::test]
+async fn region_settings_are_forwarded_with_the_admin_token() {
+    let (h, _, agent) = region_harness(Some("admin-secret")).await;
+    wait_for_version(&h.app, 0).await;
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            None,
+            r#"{"id":"monaco","auto_refresh":false}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, body) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        json(&body)["error"]
+            .as_str()
+            .unwrap()
+            .contains("auto_refresh")
+    );
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco","auto_refresh":false}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Other actions forward the id alone.
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/delete",
+            Some("admin-secret"),
+            r#"{"id":"monaco","auto_refresh":true}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        *agent.actions.lock().unwrap(),
+        vec![
+            ("settings".to_owned(), "monaco".to_owned()),
+            ("delete".to_owned(), "monaco".to_owned()),
+        ]
+    );
+    assert_eq!(
+        *agent.bodies.lock().unwrap(),
+        vec![
+            serde_json::json!({"id": "monaco", "auto_refresh": false}),
+            serde_json::json!({"id": "monaco"}),
+        ]
+    );
 }
 
 #[tokio::test]

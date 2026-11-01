@@ -1,9 +1,10 @@
-//! "Local map data" dialog: imported regions with live import progress, and
-//! adding, updating, cancelling and deleting them.
+//! "Local map data" dialog: imported regions with their age, live import
+//! progress and refresh schedule, and adding, updating, cancelling, deleting
+//! and turning scheduled refreshes on or off.
 
 use super::widgets::{bar, danger, hint, primary, secondary, section};
 use crate::icons;
-use crate::regions::{CatalogState, RegionRequest, Regions};
+use crate::regions::{CatalogState, RegionRequest, Regions, now_unix};
 use crate::theme::{Tokens, strong_family};
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
 use observation_core::regions::{ActionKind, JobPhase, RegionView};
@@ -14,6 +15,46 @@ const MAX_MATCHES: usize = 40;
 /// `12.3 MB`.
 pub fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / f64::from(1 << 20))
+}
+
+/// `1.2 GB` from a gigabyte up, `12.3 MB` below.
+fn disk_size(bytes: u64) -> String {
+    if bytes >= 1 << 30 {
+        format!("{:.1} GB", bytes as f64 / f64::from(1 << 30))
+    } else {
+        megabytes(bytes)
+    }
+}
+
+/// A rough length of time: `5 min`, `3 h`, `1 day`, `4 days`.
+fn duration(secs: u64) -> String {
+    const HOUR: u64 = 3600;
+    const DAY: u64 = 24 * HOUR;
+    match secs {
+        s if s < HOUR => format!("{} min", (s / 60).max(1)),
+        s if s < DAY => format!("{} h", s / HOUR),
+        s if s < 2 * DAY => "1 day".to_owned(),
+        s => format!("{} days", s / DAY),
+    }
+}
+
+/// `3 days ago`, or `just now` within a minute (or a clock running behind the agent's).
+fn ago(then: u64, now: u64) -> String {
+    if now < then + 60 {
+        "just now".to_owned()
+    } else {
+        format!("{} ago", duration(now - then))
+    }
+}
+
+/// When the next scheduled refresh starts. The agent looks for due regions
+/// hourly, so one due within the hour (or overdue) starts within the hour.
+fn next_refresh(at: u64, now: u64) -> String {
+    if at <= now + 3600 {
+        "next within the hour".to_owned()
+    } else {
+        format!("next in {}", duration(at - now))
+    }
 }
 
 /// One line for the top bar while an import runs, e.g. `Monaco 42%`.
@@ -139,6 +180,29 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         );
         return;
     }
+    let now = now_unix();
+    let refresh_days = r.status.as_ref().map_or(0, |s| s.snapshot.refresh_days);
+    let disk: u64 = regions.iter().filter_map(|x| x.disk_bytes).sum();
+    let mut summary = format!(
+        "{} {} · {} on disk",
+        regions.len(),
+        if regions.len() == 1 {
+            "region"
+        } else {
+            "regions"
+        },
+        disk_size(disk)
+    );
+    if refresh_days == 0 {
+        summary.push_str(" · scheduled refreshes are off on this server");
+    }
+    hint(ui, t, &summary);
+    ui.add_space(t.space.xs);
+    let not_allowed = if r.manageable() {
+        "Enter the admin token first"
+    } else {
+        "Region management is off on this server"
+    };
     for region in &regions {
         let busy = r.busy.as_deref() == Some(region.id.as_str());
         ui.horizontal(|ui| {
@@ -194,6 +258,9 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         let mut facts = Vec::new();
         if region.ready {
             facts.push("Ready".to_owned());
+            if let Some(at) = region.imported_unix {
+                facts.push(format!("downloaded {}", ago(at, now)));
+            }
             if let Some(ts) = &region.data_timestamp {
                 facts.push(format!("data from {}", ts.get(..10).unwrap_or(ts)));
             }
@@ -206,12 +273,39 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         if !facts.is_empty() {
             hint(ui, t, &facts.join(" · "));
         }
+        if region.ready && refresh_days > 0 {
+            ui.horizontal(|ui| {
+                let mut on = region.auto_refresh;
+                let every = match refresh_days {
+                    1 => "Refresh daily".to_owned(),
+                    n => format!("Refresh every {n} days"),
+                };
+                if ui
+                    .add_enabled(can_act && !busy, egui::Checkbox::new(&mut on, every))
+                    .on_hover_text("Download and import the latest data on a schedule")
+                    .on_disabled_hover_text(not_allowed)
+                    .changed()
+                {
+                    r.request(RegionRequest::AutoRefresh(region.id.clone(), on));
+                }
+                if let Some(at) = region.next_refresh_unix {
+                    hint(ui, t, &next_refresh(at, now));
+                }
+            });
+        }
         if let Some(e) = &region.last_error {
+            let when = region
+                .last_attempt_unix
+                .map(|at| format!(" {}", ago(at, now)))
+                .unwrap_or_default();
             ui.add(
                 egui::Label::new(
-                    RichText::new(format!("{} Last import failed: {e}", icons::WARNING_CIRCLE))
-                        .size(t.font.caption)
-                        .color(t.danger),
+                    RichText::new(format!(
+                        "{} Last import failed{when}: {e}",
+                        icons::WARNING_CIRCLE
+                    ))
+                    .size(t.font.caption)
+                    .color(t.danger),
                 )
                 .wrap(),
             );
@@ -304,4 +398,26 @@ fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
                 });
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rough_durations() {
+        assert_eq!(duration(0), "1 min");
+        assert_eq!(duration(59 * 60), "59 min");
+        assert_eq!(duration(3600), "1 h");
+        assert_eq!(duration(86_399), "23 h");
+        assert_eq!(duration(86_400), "1 day");
+        assert_eq!(duration(3 * 86_400 + 5), "3 days");
+        assert_eq!(ago(100, 120), "just now");
+        assert_eq!(ago(100, 50), "just now", "agent clock ahead");
+        assert_eq!(ago(0, 7200), "2 h ago");
+        assert_eq!(next_refresh(100, 4000), "next within the hour", "overdue");
+        assert_eq!(next_refresh(2 * 86_400, 0), "next in 2 days");
+        assert_eq!(disk_size(3 << 29), "1.5 GB");
+        assert_eq!(disk_size(1 << 20), "1.0 MB");
+    }
 }

@@ -55,7 +55,8 @@ pub async fn catalog(State(state): State<AppState>) -> Result<Response, ApiError
         .into_response())
 }
 
-/// `POST /api/regions/{import|cancel|delete}` with `{"id": "…"}` and
+/// `POST /api/regions/{import|cancel|delete}` with `{"id": "…"}`, or
+/// `/api/regions/settings` with `{"id": "…", "auto_refresh": bool}`, and
 /// `Authorization: Bearer <OBS_ADMIN_TOKEN>`.
 pub async fn act(
     State(state): State<AppState>,
@@ -78,13 +79,23 @@ pub async fn act(
             "the admin token is missing or wrong",
         ));
     }
-    let req: RegionAction = serde_json::from_slice(&body)
+    let mut req: RegionAction = serde_json::from_slice(&body)
         .map_err(|_| ApiError::BadRequest("expected {\"id\": \"<region id>\"}".into()))?;
     if !is_valid_region_id(&req.id) {
         return Err(ApiError::BadRequest("not a region id".into()));
     }
-    tracing::info!(?action, region = %req.id, "region action");
-    let status = regions.act(action, &req.id).await?;
+    if action == ActionKind::Settings {
+        if req.auto_refresh.is_none() {
+            return Err(ApiError::BadRequest(
+                "expected {\"id\": \"<region id>\", \"auto_refresh\": true or false}".into(),
+            ));
+        }
+    } else {
+        // Only settings take more than the id.
+        req.auto_refresh = None;
+    }
+    tracing::info!(?action, region = %req.id, auto_refresh = ?req.auto_refresh, "region action");
+    let status = regions.act(action, &req).await?;
     Ok(no_store(Json(status).into_response()))
 }
 
