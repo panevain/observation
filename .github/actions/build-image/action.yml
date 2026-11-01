@@ -1,0 +1,72 @@
+name: Build image
+description: >-
+  Builds one of the Dockerfile's images into the local Docker daemon (never pushed), reading and
+  optionally writing a GitHub Actions layer cache. For target runtime-prebuilt it passes the
+  client-dist build context: a finished trunk dist/, or a stub index.html when none is given
+  (enough for the smoke test and Trivy, which never look at the client). Release's candidate
+  build uses it too (with setup-buildx false: its push then reuses the same builder).
+
+inputs:
+  tag:
+    description: Image tag in the local daemon, such as observation:ci
+    required: true
+  target:
+    description: Dockerfile target; empty for the default (runtime, which builds the client)
+    required: false
+    default: ""
+  client-dist:
+    description: For target runtime-prebuilt, the directory of a finished dist/; empty for a stub
+    required: false
+    default: ""
+  cache-scope:
+    description: Scope of the type=gha layer cache (image, image-prebuilt, image-regions)
+    required: true
+  cache-save:
+    description: >-
+      Write the cache. Takes effect on develop only (the default branch): every other ref reads
+      develop's cache, and writes from them would only use up the quota and evict its entries
+    required: false
+    default: "false"
+  setup-buildx:
+    description: Set up Buildx first; false when the job already has (a second build, or Release)
+    required: false
+    default: "true"
+  no-cache-filters:
+    description: Stages to rebuild without the cache (build-push-action's no-cache-filters)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Client dist
+      id: dist
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        DIST: ${{ inputs.client-dist }}
+      run: |
+        set -euo pipefail
+        if [ "${TARGET}" != runtime-prebuilt ]; then
+          [ -z "${DIST}" ] || { echo "::error::client-dist is only for target runtime-prebuilt, not '${TARGET:-the default}'"; exit 1; }
+          exit 0
+        fi
+        if [ -z "${DIST}" ]; then
+          DIST="${RUNNER_TEMP}/stub-dist"
+          mkdir -p "${DIST}"
+          echo '<!doctype html><html></html>' > "${DIST}/index.html"
+        fi
+        echo "dir=${DIST}" >> "${GITHUB_OUTPUT}"
+    - if: inputs.setup-buildx == 'true'
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      with:
+        context: .
+        target: ${{ inputs.target }}
+        build-contexts: ${{ steps.dist.outputs.dir && format('client-dist={0}', steps.dist.outputs.dir) || '' }}
+        push: false
+        load: true
+        tags: ${{ inputs.tag }}
+        cache-from: type=gha,scope=${{ inputs.cache-scope }}
+        no-cache-filters: ${{ inputs.no-cache-filters }}
+        cache-to: ${{ inputs.cache-save == 'true' && github.ref == 'refs/heads/develop' && format('type=gha,scope={0},mode=max', inputs.cache-scope) || '' }}

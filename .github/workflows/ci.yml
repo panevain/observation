@@ -26,11 +26,6 @@ env:
   # to the later steps, so it runs before setup-rust, whose rust-cache key includes the CARGO_*
   # and RUST* variables.
   MISE_ENV: ci
-  # Caches are written only by develop (the default branch). Pull requests, release/hotfix
-  # branches and main all restore the default branch's caches, so writes from anywhere else
-  # only use up the repository's cache quota and evict develop's entries. setup-mise and
-  # setup-rust apply the same rule; this is for the Docker layer caches below.
-  SAVE_CACHE: ${{ github.ref == 'refs/heads/develop' }}
 
 jobs:
   fmt:
@@ -255,36 +250,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Stub client dist
-        run: |
-          mkdir -p "${RUNNER_TEMP}/stub-dist"
-          echo '<!doctype html><html></html>' > "${RUNNER_TEMP}/stub-dist/index.html"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      # Writes both caches from develop; everything else reads them.
+      - name: Build image (stub dist/)
+        uses: $/.github/actions/build-image
         with:
-          context: .
+          tag: ${{ env.IMAGE }}
           target: runtime-prebuilt
-          build-contexts: |
-            client-dist=${{ runner.temp }}/stub-dist
-          push: false
-          load: true
-          tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=image-prebuilt
-          # Written from develop only (see SAVE_CACHE); everything else reads it.
-          cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,scope=image-prebuilt,mode=max' || '' }}
+          cache-scope: image-prebuilt
+          cache-save: true
       - name: Smoke test
         run: scripts/smoke-test-image.sh "${IMAGE}"
       - name: Build region agent image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: $/.github/actions/build-image
         with:
-          context: .
+          tag: observation-regions:ci
           target: regions
-          push: false
-          load: true
-          tags: observation-regions:ci
-          cache-from: type=gha,scope=image-regions
-          cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,scope=image-regions,mode=max' || '' }}
+          cache-scope: image-regions
+          cache-save: true
+          setup-buildx: false
       - name: Smoke test region agent
         run: scripts/smoke-test-regions.sh observation-regions:ci
 
@@ -309,20 +292,15 @@ jobs:
         with:
           name: dist
           path: ${{ runner.temp }}/dist
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # The docker job's image with this run's client instead of its stub: the server layers come
       # from the image-prebuilt cache.
       - name: Build image (this run's client)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: $/.github/actions/build-image
         with:
-          context: .
+          tag: ${{ env.IMAGE }}
           target: runtime-prebuilt
-          build-contexts: |
-            client-dist=${{ runner.temp }}/dist
-          push: false
-          load: true
-          tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=image-prebuilt
+          client-dist: ${{ runner.temp }}/dist
+          cache-scope: image-prebuilt
       # The runner image's Google Chrome and Node.js; playwright-core (tests/browser/package-lock.json)
       # downloads no browser.
       - name: Browser smoke test
