@@ -13,7 +13,6 @@
     "Dockerfile": "Dockerfile.*, *.Dockerfile, *.dockerfile, .dockerignore, compose.yaml, compose.*.yaml, compose.yml, compose.*.yml, docker-compose*.yaml, docker-compose*.yml",
     "package.json": "package-lock.json, .npmrc, .nvmrc",
     "README.md": "CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE*",
-    ".gitignore": ".gitattributes, .editorconfig, .typos.toml",
     ".env": ".env.*"
   },
 
