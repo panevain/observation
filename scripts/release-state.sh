@@ -11,7 +11,7 @@ set -euo pipefail
 semver='^[0-9]+\.[0-9]+\.[0-9]+$'
 latest="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' | { grep -E "${semver}" || true; } | sort -V | tail -n1)"
 git fetch --quiet --depth=1 origin main
-main="$(git show FETCH_HEAD:Cargo.toml | "$(dirname "${BASH_SOURCE[0]}")/workspace-version.sh" -)"
+main="$(git show FETCH_HEAD:Cargo.toml | "$(dirname "${BASH_SOURCE[0]}")/workspace-version.sh" - "Cargo.toml on main")"
 pending=false
 git ls-remote --exit-code --tags origin "refs/tags/v${main}" >/dev/null || pending=true
 hotfix=false

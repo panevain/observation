@@ -32,20 +32,36 @@ check "$mise" "$(first '^min_version = \{ hard = "[0-9.]+", soft = "[0-9.]+" \}'
 direct="$(grep -lE 'uses: *jdx/mise-action@' .github/workflows/*.y*ml .github/actions/*/action.y*ml 2>/dev/null |
   grep -vxF .github/actions/setup-mise/action.yml | paste -sd' ' - || true)"
 check "" "$direct" "jdx/mise-action used directly (use \$/.github/actions/setup-mise)"
-# Task tools (`tools.NAME = "VERSION"` on a task in mise.toml): every task that uses a tool pins
-# the same version (fnox for up and down, cosign for verify and up), and cosign's is CI's
-# (mise.ci.toml).
-cosign="$(first '^cosign *= *"[^"]+"' mise.ci.toml | sed -E 's/.*"([^"]+)"/\1/')"
+# Task tools (`tools.NAME = "VERSION"`, or `tools = { NAME = "VERSION", ... }`, on a task in
+# mise.toml): every task that uses a tool pins the same version, and so does a [tools] pin of it
+# in mise.toml or mise.ci.toml (cosign, for the verify and up tasks, is CI's).
 # "NAME VERSION" for each distinct task tool pin; a tool listed twice has two versions.
-task_pins="$(sed -nE 's/^tools\.([A-Za-z0-9_-]+) *= *"([^"]+)".*/\1 \2/p' mise.toml | sort -u)"
-task_pin() { awk -v n="$1" '$1 == n { print $2 }' <<<"$task_pins" | paste -sd' ' -; }
+task_pins="$(
+  { sed -nE 's/^tools\.([A-Za-z0-9_-]+) *= *"([^"]+)".*/\1 \2/p' mise.toml
+    sed -nE 's/^tools *= *\{(.*)\}.*/\1/p' mise.toml | tr ',' '\n' |
+      sed -nE 's/^ *([A-Za-z0-9_-]+) *= *"([^"]+)" *$/\1 \2/p'
+  } | sort -u
+)"
+# A file's [tools] pin of a tool: `NAME = "VERSION"` or `NAME = { version = "VERSION", ... }`.
+tools_pin() { # file name
+  awk -v n="$2" '/^\[/ { t = ($0 == "[tools]") }
+    t && $1 == n && $2 == "=" {
+      s = $0; if (match(s, /version *= *"[^"]+"/)) s = substr(s, RSTART, RLENGTH)
+      sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit
+    }' "$1"
+}
+synced=""
 for name in $(cut -d' ' -f1 <<<"$task_pins" | sort -u); do
-  pins="$(task_pin "$name")"
-  [[ "$pins" != *' '* ]] || { echo "mismatch: mise.toml's tasks pin $name at different versions: $pins" >&2; fail=1; }
+  pins="$(awk -v n="$name" '$1 == n { print $2 }' <<<"$task_pins" | paste -sd' ' -)"
+  if [[ "$pins" == *' '* ]]; then
+    echo "mismatch: mise.toml's tasks pin $name at different versions: $pins" >&2; fail=1; continue
+  fi
+  for f in mise.toml mise.ci.toml; do
+    pinned="$(tools_pin "$f" "$name")"
+    [[ -z "$pinned" ]] || check "$pinned" "$pins" "mise.toml tools.$name ($f [tools] has $pinned)"
+  done
+  synced+="${synced:+, }$name $pins"
 done
-fnox="$(task_pin fnox)"
-[[ -n "$fnox" ]] || { echo "mise.toml pins no fnox task tool" >&2; fail=1; }
-check "$cosign" "$(task_pin cosign)" "mise.toml tools.cosign (mise.ci.toml has cosign $cosign)"
 
 # Advisory ignores: the same IDs in all three files (sorted, one per line).
 # grep finds nothing when a list is empty, which is not a failure.
@@ -61,4 +77,4 @@ check "$deny_ids" "$(ignores .cargo/audit.toml | sed 's/#.*//' | ids)" ".cargo/a
 check "$deny_ids" "$(sed -n '/^id *=/p' osv-scanner.toml | ids)" "osv-scanner.toml IgnoredVulns"
 
 if (( fail )); then exit 1; fi
-echo "versions in sync: rust $rust, mise $mise, cosign $cosign, fnox $fnox; advisory ignores: ${deny_ids:-none}"
+echo "versions in sync: rust $rust, mise $mise; task tools: ${synced:-none}; advisory ignores: ${deny_ids:-none}"
