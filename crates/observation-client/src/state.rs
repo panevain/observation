@@ -5,7 +5,7 @@ use observation_core::bundle::AreaBundle;
 use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, fresh_custom_id,
 };
-use observation_core::coverage::{CoverageParams, Region, StaticLayers};
+use observation_core::coverage::{CoverageParams, GroundGrid, Region, StaticLayers};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::scene::{AreaRef, SceneFile};
 
@@ -579,6 +579,20 @@ pub struct Area {
     pub area: AreaRef,
     pub bundle: AreaBundle,
     pub layers: StaticLayers,
+}
+
+impl Area {
+    /// The loaded area, world `[x, z]`: see [`grid_bounds`].
+    pub fn bounds(&self) -> Rect {
+        grid_bounds(&self.layers.grid)
+    }
+}
+
+/// The ground a coverage grid spans, world `[x, z]`. Coverage is computed
+/// only here, so region corners are kept inside it, and the Region tool marks
+/// its edge.
+pub fn grid_bounds(grid: &GroundGrid) -> Rect {
+    Rect::from_corners(grid.min, grid.max())
 }
 
 /// Request to (re)load an area.

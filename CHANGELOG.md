@@ -77,6 +77,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- While the Region tool is on, the edge of the loaded area is drawn in red and the map beyond it is tinted and hatched. Corners clicked out there move to the edge, which used to look like part of the map refused corners for no reason (#71).
 - Selecting a camera no longer widens the inspector: a long model name is cut short in the model list's button, and the **Group** field takes only the width its pin button leaves, which also stops the button being cut off.
 - The demo street now has its 205 address nodes: the fixture had been recorded before the converter kept them, so many houses there had no address in the camera list or the Address tool.
 - A scene file with two custom models of the same id, or a custom model id without the `custom-` prefix (which could replace a catalogue model), no longer leaves a model unreachable in the custom model editor: on import or restore, each such model gets a new `custom-` id and the cameras that showed it follow it. Files the app wrote are unchanged, since it has always made unique `custom-` ids. Catalogue ids may not start with `custom-`.
