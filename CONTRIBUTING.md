@@ -69,7 +69,7 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | Workflow | Checks |
 | --- | --- |
 | Branch policy | `branch policy` (into `main`, only same-repo `release/*` and `hotfix/*`) |
-| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)` |
+| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)`, `browser (wasm smoke test)` |
 | Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
@@ -88,6 +88,8 @@ Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 ```sh
 mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
 mise run build          # release wasm build, as the CI wasm job does
+mise run build:budget   # then its size against .config/wasm-size-budget.toml
+mise run test:browser   # headless-browser smoke test against a running server (mise run serve:release)
 mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
 mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz, typos, shear
 ```

@@ -115,6 +115,18 @@ for f in dist/*.wasm; do
 done
 '''
 
+[tasks."build:budget"]
+description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `mise run build`)"
+run = 'python3 scripts/check-wasm-size.py ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+
+[tasks."test:browser"]
+description = "Headless-browser smoke test of the client against a running server (OBS_URL, default http://127.0.0.1:8080; start one with `mise run serve:release`). Needs Node.js and Chrome (or CHROME_PATH)"
+dir = "{{config_root}}/tests/browser"
+run = [
+  "npm ci --ignore-scripts --no-audit --no-fund",
+  "node smoke.cjs",
+]
+
 [tasks."build:dev"]
 description = "Fast unoptimised wasm client build into dist/"
 run = "trunk build --locked"

@@ -77,6 +77,10 @@
             "integration_id": 15368
           },
           {
+            "context": "browser (wasm smoke test)",
+            "integration_id": 15368
+          },
+          {
             "context": "zizmor (workflow audit)",
             "integration_id": 15368
           },
