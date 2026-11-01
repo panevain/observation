@@ -98,14 +98,7 @@ pub fn segmented<T: PartialEq + Copy>(
         ui.spacing_mut().item_spacing = vec2(t.space.xs, t.space.xs);
         for (v, label) in options {
             let on = *value == *v;
-            let text = RichText::new(*label).color(if on { t.on_accent } else { t.text });
-            let btn = egui::Button::new(text)
-                .fill(if on { t.accent } else { t.surface_sunken })
-                .stroke(Stroke::new(
-                    t.stroke_width,
-                    if on { t.accent } else { t.border },
-                ))
-                .min_size(vec2(0.0, t.layout.hit_target));
+            let btn = option_button(t, label, on).min_size(vec2(0.0, t.layout.hit_target));
             if ui.add(btn).clicked() && !on {
                 *value = *v;
                 changed = true;
@@ -132,14 +125,7 @@ pub fn tabs<T: PartialEq + Copy>(
         ui.spacing_mut().item_spacing.x = gap;
         for (v, label) in options {
             let on = *value == *v;
-            let text = RichText::new(*label).color(if on { t.on_accent } else { t.text });
-            let btn = egui::Button::new(text)
-                .truncate()
-                .fill(if on { t.accent } else { t.surface_sunken })
-                .stroke(Stroke::new(
-                    t.stroke_width,
-                    if on { t.accent } else { t.border },
-                ));
+            let btn = option_button(t, label, on).truncate();
             if ui.add_sized(vec2(w, t.layout.hit_target), btn).clicked() && !on {
                 *value = *v;
                 changed = true;
@@ -147,6 +133,16 @@ pub fn tabs<T: PartialEq + Copy>(
         }
     });
     changed
+}
+
+/// One option of [`segmented`] or [`tabs`]: accent fill when chosen.
+fn option_button<'a>(t: &Tokens, label: &'a str, on: bool) -> egui::Button<'a> {
+    egui::Button::new(RichText::new(label).color(if on { t.on_accent } else { t.text }))
+        .fill(if on { t.accent } else { t.surface_sunken })
+        .stroke(Stroke::new(
+            t.stroke_width,
+            if on { t.accent } else { t.border },
+        ))
 }
 
 /// Primary (accent) button.

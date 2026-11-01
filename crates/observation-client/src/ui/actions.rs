@@ -59,17 +59,17 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
         return;
     };
     match action {
-        CameraAction::Select => d.ui.selected = Some(id),
+        CameraAction::Select => d.ui.select(id),
         CameraAction::Focus => {
-            d.ui.selected = Some(id);
+            d.ui.select(id);
             d.ui.focus_request = true;
         }
         CameraAction::Aim => {
-            d.ui.selected = Some(id);
+            d.ui.select(id);
             d.ui.tool = Tool::Aim;
         }
         CameraAction::Move => {
-            d.ui.selected = Some(id);
+            d.ui.select(id);
             d.ui.tool = Tool::Move;
         }
         CameraAction::Duplicate => {
@@ -77,7 +77,7 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
             copy.label = String::new();
             copy.position[0] += 1.0;
             let new = d.scene.add_camera(copy);
-            d.ui.selected = Some(new);
+            d.ui.select(new);
         }
         CameraAction::ToggleEnabled => {
             if let Some(c) = d.scene.camera_mut(id) {

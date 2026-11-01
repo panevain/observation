@@ -23,12 +23,24 @@ use observation_core::scene::MAX_CUSTOM_MODELS;
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
     follow_selection(&mut d.ui);
+    if d.ui.jump_to_address {
+        let groups = d.addresses.groups(&d.scene.cameras);
+        if picked_group(d, &groups).is_some() {
+            // Show the list it scrolls.
+            d.ui.inspector_tab = InspectorTab::Cameras;
+        } else {
+            // No camera is listed there: nothing to scroll to.
+            d.ui.jump_to_address = false;
+        }
+    }
     ui.spacing_mut().item_spacing.y = t.space.sm;
     summary(ui, d, &t);
     let camera =
         d.ui.selected
             .and_then(|id| d.scene.camera(id))
-            .map_or("Camera", |c| c.label.as_str())
+            .map(|c| c.label.trim())
+            .filter(|l| !l.is_empty())
+            .unwrap_or("Camera")
             .to_owned();
     tabs(
         ui,
@@ -42,6 +54,11 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     );
     ui.separator();
     let tab = d.ui.inspector_tab;
+    // Only the list sets this; without it a row hovered last stays
+    // highlighted in the view.
+    if (tab != InspectorTab::Cameras || d.scene.cameras.is_empty()) && d.ui.hover_list.is_some() {
+        d.ui.hover_list = None;
+    }
     // One scroll area per tab, so each keeps its own position.
     ScrollArea::vertical()
         .id_salt(tab)
@@ -56,9 +73,8 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
         });
 }
 
-/// Opens the Camera tab when another camera is selected, wherever that
-/// happened, and goes back to the list when the selection is cleared there.
-/// A jump to an address shows the list it scrolls.
+/// Opens the Camera tab when the selection changes to another camera, and
+/// goes back to the list when the selection is cleared there.
 fn follow_selection(ui: &mut UiState) {
     if ui.selected != ui.inspector_seen {
         match ui.selected {
@@ -70,9 +86,18 @@ fn follow_selection(ui: &mut UiState) {
         }
         ui.inspector_seen = ui.selected;
     }
-    if ui.jump_to_address {
-        ui.inspector_tab = InspectorTab::Cameras;
-    }
+}
+
+/// The group the address picked with the Address tool is listed under, if
+/// any camera is listed there.
+fn picked_group<'a>(
+    d: &UiData,
+    groups: &[(Option<&'a str>, Vec<&'a CameraPlacement>)],
+) -> Option<&'a str> {
+    d.ui.selected_address
+        .as_ref()
+        .map(address_label)
+        .and_then(|label| d.addresses.group_for(groups, &label))
 }
 
 /// Always in view above the tabs: the figures, the region they are limited
@@ -89,7 +114,7 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             },
         ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            region_menu(ui, d, t);
+            region_menu(ui, d, t, in_region);
         });
     });
     let s = d.coverage.stats;
@@ -111,10 +136,15 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             );
             stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
         });
-        bar(ui, t, s.street_fraction(), t.coverage_color(1)).on_hover_text(format!(
-            "{:.0} m² of {:.0} m² street surface · {:.0} m² open ground seen",
-            s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
-        ));
+        bar(ui, t, s.street_fraction(), t.coverage_color(1));
+        hint(
+            ui,
+            t,
+            &format!(
+                "{:.0} m² of {:.0} m² street surface · {:.0} m² open ground seen",
+                s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
+            ),
+        );
     }
     let p = d.scene.params;
     let dori = match p.dori {
@@ -144,8 +174,8 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
 }
 
 /// Draw, toggle, redraw or clear the region the figures are limited to.
-fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    let active = d.scene.region.as_ref().is_some_and(|r| r.is_active());
+/// `active`: the figures are limited to the region.
+fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
     let label = RichText::new(format!("{}  Region", icons::POLYGON))
         .size(t.font.caption)
         .color(if active { t.accent } else { t.text_muted });
@@ -287,9 +317,9 @@ fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 .add_enabled(n > 1, secondary(t, icons::CARET_LEFT))
                 .on_hover_text("Previous camera in the list");
             if next.clicked() {
-                d.ui.selected = Some(order[(i + 1) % n]);
+                d.ui.select(order[(i + 1) % n]);
             } else if prev.clicked() {
-                d.ui.selected = Some(order[(i + n - 1) % n]);
+                d.ui.select(order[(i + n - 1) % n]);
             }
         });
     });
@@ -389,11 +419,7 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let headed = !matches!(groups.as_slice(), [(None, _)] | []);
     // The address picked with the Address tool: its group is shaded, and
     // scrolled into view once after a click.
-    let picked =
-        d.ui.selected_address
-            .as_ref()
-            .map(address_label)
-            .and_then(|label| d.addresses.group_for(&groups, &label));
+    let picked = picked_group(d, &groups);
     let jump = d.ui.jump_to_address;
     if jump {
         d.ui.jump_to_address = false;
@@ -431,12 +457,8 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             if eye.clicked() {
                 action = Some((c.id, CameraAction::ToggleEnabled));
             } else if resp.clicked() {
-                // Clicking the selected row deselects it.
-                if row.selected {
-                    d.ui.selected = None;
-                } else {
-                    action = Some((c.id, CameraAction::Select));
-                }
+                // Also for the selected row: back to its settings.
+                action = Some((c.id, CameraAction::Select));
             }
             resp.on_hover_text(&model).context_menu(|ui| {
                 for a in [
@@ -974,70 +996,64 @@ fn model_combo(
         .map_or_else(|| value.clone(), CameraModel::display_name);
     let query_id = egui::Id::new((id, "model-search"));
     let mut query: String = ui.data_mut(|m| m.get_temp(query_id)).unwrap_or_default();
-    // egui lays the name out against the available width and then adds the
-    // button's padding, so a long name would widen the panel: leave room for
-    // the padding, and cut the name short.
-    let width = ui.available_width();
-    let inner = (width - 2.0 * ui.spacing().button_padding.x).max(0.0);
-    let resp = ui.allocate_ui(egui::vec2(inner, 0.0), |ui| {
-        egui::ComboBox::from_id_salt(id)
-            .width(width)
-            .height(360.0)
-            .truncate()
-            .selected_text(current)
-            .show_ui(ui, |ui| {
-                let search = ui.add(
-                    TextEdit::singleline(&mut query)
-                        .hint_text("Search models…")
-                        .desired_width(f32::INFINITY),
+    // Cut a long name short rather than widen the panel.
+    let resp = egui::ComboBox::from_id_salt(id)
+        .width(ui.available_width())
+        .height(360.0)
+        .truncate()
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            let search = ui.add(
+                TextEdit::singleline(&mut query)
+                    .hint_text("Search models…")
+                    .desired_width(f32::INFINITY),
+            );
+            // Typing always goes to the search box while the list is open, even
+            // after Enter took its focus, so keys never reach the shortcuts.
+            let entered = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if !search.has_focus() {
+                search.request_focus();
+            }
+            let mut first = None;
+            let mut any = false;
+            for kind in CameraKind::ALL {
+                let items: Vec<&CameraModel> = catalog
+                    .iter()
+                    .chain(custom)
+                    .filter(|m| m.kind == kind && matches_query(m, &query))
+                    .collect();
+                if items.is_empty() {
+                    continue;
+                }
+                any = true;
+                ui.label(
+                    RichText::new(format!("{}  {}", icons::kind(kind), kind.label()))
+                        .small()
+                        .strong(),
                 );
-                // Typing always goes to the search box while the list is open, even
-                // after Enter took its focus, so keys never reach the shortcuts.
-                let entered = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if !search.has_focus() {
-                    search.request_focus();
-                }
-                let mut first = None;
-                let mut any = false;
-                for kind in CameraKind::ALL {
-                    let items: Vec<&CameraModel> = catalog
-                        .iter()
-                        .chain(custom)
-                        .filter(|m| m.kind == kind && matches_query(m, &query))
-                        .collect();
-                    if items.is_empty() {
-                        continue;
-                    }
-                    any = true;
-                    ui.label(
-                        RichText::new(format!("{}  {}", icons::kind(kind), kind.label()))
-                            .small()
-                            .strong(),
+                for m in items {
+                    first.get_or_insert(m.id.clone());
+                    ui.selectable_value(
+                        value,
+                        m.id.clone(),
+                        format!("{}  ({:.0}°)", m.display_name(), m.hfov_deg),
                     );
-                    for m in items {
-                        first.get_or_insert(m.id.clone());
-                        ui.selectable_value(
-                            value,
-                            m.id.clone(),
-                            format!("{}  ({:.0}°)", m.display_name(), m.hfov_deg),
-                        );
-                    }
                 }
-                if !any {
-                    ui.label(RichText::new("No matching models").weak());
-                }
-                // Enter picks the first match of a search (an empty one matches
-                // everything, so Enter alone changes nothing).
-                if entered
-                    && !query.trim().is_empty()
-                    && let Some(m) = first
-                {
-                    *value = m;
-                    ui.close();
-                }
-            })
-    });
-    if resp.inner.inner.is_none() {
+            }
+            if !any {
+                ui.label(RichText::new("No matching models").weak());
+            }
+            // Enter picks the first match of a search (an empty one matches
+            // everything, so Enter alone changes nothing).
+            if entered
+                && !query.trim().is_empty()
+                && let Some(m) = first
+            {
+                *value = m;
+                ui.close();
+            }
+        });
+    if resp.inner.is_none() {
         // Closed: start the next search afresh.
         query.clear();
     }

@@ -169,8 +169,8 @@ pub enum InspectorTab {
     Cameras,
     /// The selected camera's settings.
     Camera,
-    /// What the coverage figures count: detail level, lighting, subject
-    /// height, the overlay colours and the region.
+    /// What the coverage figures count (detail level, lighting, subject
+    /// height) and how the overlay colours the ground.
     Analysis,
 }
 
@@ -220,7 +220,7 @@ pub struct UiState {
     pub jump_to_address: bool,
     pub inspector_tab: InspectorTab,
     /// The selection the inspector last saw, so it can open the Camera tab
-    /// when another camera is selected (anywhere: list, view or shortcut).
+    /// when the selection changes some other way than [`UiState::select`].
     pub inspector_seen: Option<u32>,
 }
 
@@ -326,6 +326,13 @@ impl SaveFailure {
 }
 
 impl UiState {
+    /// Selects a camera and shows its settings in the inspector, even when
+    /// it was already selected.
+    pub fn select(&mut self, id: u32) {
+        self.selected = Some(id);
+        self.inspector_tab = InspectorTab::Camera;
+    }
+
     /// The camera to highlight: hovered in the list or in the 3D view.
     pub fn hovered(&self) -> Option<u32> {
         self.hover_list.or(self.hover_scene)
