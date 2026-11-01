@@ -3,7 +3,6 @@ name = "observation-client"
 description = "Bevy/WASM front-end for Observation"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

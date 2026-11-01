@@ -94,7 +94,7 @@ mise -E ci install      # once (and after tool bumps): the tools CI uses, from m
 mise -E ci run vet      # cargo-vet as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz
 ```
 
-Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise run sync` keeps `Cargo.toml`, `mise.lock` and the Dockerfile equal to it). Tests run under `cargo nextest`, and `mise run coverage` needs `cargo-llvm-cov` (in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
+Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise.lock` records it for mise; `mise run sync` checks the two agree and that nothing else repeats it). Tests run under `cargo nextest`, and `mise run coverage` needs `cargo-llvm-cov` (in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
 
 ### Tools (mise)
 

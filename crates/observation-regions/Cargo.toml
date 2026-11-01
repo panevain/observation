@@ -3,7 +3,6 @@ name = "observation-regions"
 description = "Region agent for Observation: imports Geofabrik extracts into local Overpass databases and queries them"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

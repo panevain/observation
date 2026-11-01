@@ -6,8 +6,8 @@
 # runs one of those locally.
 # rust-toolchain.toml is the single source of truth for the Rust version, components and
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
-# [settings]), and scripts/check-toolchain-sync.sh keeps Cargo.toml and the Dockerfile
-# aligned. Without mise, install rustup and run cargo; it fetches the toolchain itself.
+# [settings]; mise.lock records it, and the Pins workflow bumps both), and
+# scripts/check-toolchain-sync.sh checks nothing else repeats it. Without mise, install rustup and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start. Docker Compose settings default in
 # compose.yaml; its tokens are fnox secrets (fnox.toml; values in the gitignored
@@ -117,7 +117,7 @@ description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "The Rust and mise versions agree across rust-toolchain.toml, Cargo.toml, mise.lock, the Dockerfile and the workflows, task tool pins agree (cosign with CI's), and the advisory ignore lists agree"
+description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
 
 [tasks.lock]

@@ -3,7 +3,6 @@ name = "observation-upstream"
 description = "Guards for the server's outbound HTTP: address filtering, redirect policy, URL checks"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

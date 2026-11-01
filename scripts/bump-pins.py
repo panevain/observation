@@ -2,8 +2,8 @@
 """Bumps the pins Dependabot can't: the tools in mise.toml and mise.ci.toml (through
 `mise upgrade --bump`), fnox (a task tool, which mise does not bump; the cosign task tool follows
 CI's cosign), the CI mise version (setup-mise,
-mise.toml's min_version and the Dockerfile's mise image), Overpass in the Dockerfile, the Rust toolchain and
-the fuzz nightly. Used by pins.yml (weekly), which then runs `mise run lock` and
+mise.toml's min_version and the Dockerfile's mise image), Overpass in the Dockerfile and the Rust
+toolchain (rust-toolchain.toml, which mise.lock follows; Dependabot moves fuzz/'s nightly). Used by pins.yml (weekly), which then runs `mise run lock` and
 `mise run sync` and opens a PR.
 
 A release is taken once it is COOLDOWN_DAYS old (as Dependabot's cooldown does), and only a
@@ -184,51 +184,23 @@ def bump_overpass(f, out):
 
 
 def bump_rust(f, out):
+    """rust-toolchain.toml only: nothing else repeats the version (mise run sync checks), and
+    pins.yml's `mise run lock` then moves mise.lock's [[tools.rust]] with it."""
     cur = f.find("rust-toolchain.toml", r'^channel = "([^"]+)"')
     manifest = http("https://static.rust-lang.org/dist/channel-rust-stable.toml")
     v = re.search(r'^\[pkg\.rust\]\nversion = "(\d+\.\d+\.\d+) ', manifest, re.M).group(1)
     released = re.search(r'^date = "(\d{4}-\d{2}-\d{2})"', manifest, re.M).group(1)
     if key(v) <= key(cur) or date(released + "T00:00:00Z") > CUTOFF:
         return
-    suffix = f.find("Dockerfile", r"^FROM rust:[0-9.]+-(slim-\w+)@")
-    image = f"rust:{v}-{suffix}"
-    digest = image_digest(image)
-    if digest is None:
-        print(f"rust {v}: {image} is not published yet; skipping", file=sys.stderr)
-        return
     f.sub("rust-toolchain.toml", r'^channel = "[^"]+"', f'channel = "{v}"')
-    f.sub("Cargo.toml", r'^rust-version = "[^"]+"', f'rust-version = "{v}"')
-    f.sub("Dockerfile", r"^FROM rust:[0-9.]+-slim-\w+@sha256:[0-9a-f]{64} AS chef$", f"FROM {image}@{digest} AS chef")
-    f.sub("Dockerfile", r"imagetools inspect rust:[0-9.]+-slim-\w+$", f"imagetools inspect {image}")
     out.append(("Rust", cur, v))
-
-
-def bump_nightly(f, out):
-    rel = "fuzz/rust-toolchain.toml"
-    cur = f.find(rel, r'^channel = "nightly-(\d{4}-\d{2}-\d{2})"')
-    day = CUTOFF.date()
-    if day.isoformat() <= cur:
-        return
-    # A nightly that is missing from the archive (failed build) is skipped for an earlier one.
-    for back in range(7):
-        d = (day - datetime.timedelta(days=back)).isoformat()
-        if d <= cur:
-            return
-        try:
-            http(f"https://static.rust-lang.org/dist/{d}/channel-rust-nightly.toml.sha256")
-        except Exception:
-            continue
-        f.sub(rel, r'^channel = "nightly-[0-9-]+"', f'channel = "nightly-{d}"')
-        out.append(("fuzz nightly", cur, d))
-        return
 
 
 # "tools" goes first: mise edits mise.toml and mise.ci.toml itself, before bump_fnox and
 # sync_cosign read them.
 BUMPS = {
     "tools": bump_mise_tools, "fnox": bump_fnox, "cosign": sync_cosign, "mise": bump_mise,
-    "overpass": bump_overpass,
-    "rust": bump_rust, "nightly": bump_nightly,
+    "overpass": bump_overpass, "rust": bump_rust,
 }
 
 

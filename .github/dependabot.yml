@@ -89,6 +89,19 @@ updates:
       npm:
         patterns: ["*"]
 
+  # The fuzz targets' dated nightly (fuzz/rust-toolchain.toml, set nowhere else). The root
+  # toolchain is mise's too (mise.lock), so the Pins workflow bumps it and relocks.
+  - package-ecosystem: rust-toolchain
+    directory: /fuzz
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:20"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "rust"
+
   # Daily, with no cooldown: base images have no Dependabot security updates, so their digest
   # refreshes are how Debian security fixes reach develop. (Cooldown would also only apply to
   # the Docker Hub images; gcr.io publishes no dates.)
@@ -102,15 +115,19 @@ updates:
     commit-message:
       prefix: "docker"
     ignore:
-      # Digests only. The builder image's Rust version must match rust-toolchain.toml (and
-      # Bevy's MSRV), and the build-tools stage's mise is the CI mise
-      # (.github/actions/setup-mise): the Pins workflow (scripts/bump-pins.py) moves those tags
-      # with the files that repeat them, and mise run sync checks they agree. Debian and
+      # Digests only for the build-tools stage's mise, which is the CI mise
+      # (.github/actions/setup-mise): the Pins workflow (scripts/bump-pins.py) moves its tag with
+      # the files that repeat it, and mise run sync checks they agree. The rust builder image's
+      # tag moves freely (the build installs rust-toolchain.toml's toolchain); Debian and
       # distroless are pinned to a release name (trixie-slim, nonroot), which has no versions.
-      # A new base image with a versioned tag would need its own rule here.
-      - dependency-name: "*"
+      - dependency-name: "*jdx/mise"
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
     groups:
-      # Every image's digest refresh in one PR, which auto-merge takes once green.
+      # A new rust image tag on its own, so a minor bump that needs a person does not hold up
+      # the digest refreshes.
+      rust-image:
+        patterns: ["rust"]
+      # Every other image's digest refresh in one PR, which auto-merge takes once green.
       docker-digests:
         patterns: ["*"]
+        exclude-patterns: ["rust"]
