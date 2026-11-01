@@ -86,10 +86,10 @@ If you rename a job, update the rulesets in the same PR and apply them once it i
 Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 
 ```sh
-mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
+mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync, task definitions
 mise run build          # release wasm build, as the CI wasm job does
 mise run build:budget   # then its size against .config/wasm-size-budget.toml
-mise run test:browser   # headless-browser smoke test against a running server (mise run serve:release)
+mise run test:browser   # headless-browser smoke test against a running server (mise run serve --release)
 mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
 mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, cooldown, vet, zizmor, scan:repo, fuzz, typos, shear
 ```

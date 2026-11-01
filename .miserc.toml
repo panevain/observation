@@ -1,0 +1,4 @@
+# Read by mise before any config file: selects the dev environment, so mise.dev.toml loads on
+# top of mise.toml (https://mise.jdx.dev/configuration/environments.html). MISE_ENV or `-E`
+# replaces this; CI and the image build set MISE_ENV=ci, so they never load mise.dev.toml.
+env = ["dev"]

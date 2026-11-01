@@ -160,6 +160,7 @@ jobs:
       - uses: $/.github/actions/setup-mise
       - run: mise run tokens
       - run: mise run sync
+      - run: mise run tasks:validate
 
   hygiene:
     name: hygiene (typos, unused deps)

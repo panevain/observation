@@ -1,0 +1,75 @@
+# Local development: loaded on top of mise.toml in the dev environment, which .miserc.toml
+# selects by default (CI's MISE_ENV=ci replaces it).
+#
+#   mise run dev              # dev-build the client and server, then run the server with a
+#                             # region agent built from this checkout
+#   mise run dev --release    # the same with release builds
+#   mise run dev:regions      # the region agent alone
+#   mise run dev:clean        # remove the agent's container, image and imported regions
+#
+# The server listens on OBS_BIND (mise.local.toml; 0.0.0.0:8080 by default), the agent on
+# 127.0.0.1:8090 only. The agent runs in Docker because it needs Overpass and osmium, which the
+# Dockerfile's regions target builds and installs. Its regions persist in a Docker volume of
+# their own, apart from the Compose stack's.
+#
+# Settings go on the dev tasks, never in [env]: [env] here reaches every task, including `up`,
+# whose fnox would then pass the dev token to the production stack.
+
+[vars]
+# Image tag, container and volume name for the dev region agent.
+regions_image = "observation-regions:dev"
+regions_name = "observation-dev-regions"
+
+[tasks.dev]
+description = "Build the region agent image, client and server one after another, then run the server and the agent (Ctrl-C stops both)"
+usage = 'flag "--release" help="Release-build the client and the server"'
+# One build at a time: the Overpass compile, trunk and cargo together can exhaust memory. The
+# last step runs both tasks in parallel in a nested `mise run`, because a `{ tasks = [...] }`
+# step can't pass on --release.
+run = [
+  { task = "dev:regions:build" },
+  "trunk build --locked{% if usage.release %} --release{% endif %}",
+  "cargo build --locked -p observation-server{% if usage.release %} --release{% endif %}",
+  "exec {{mise_bin}} run --output prefix dev:server{% if usage.release %} --release{% endif %} ::: dev:regions:run",
+]
+
+[tasks."dev:server"]
+description = "Run the server against the dev region agent (part of `dev`)"
+hide = true
+usage = 'flag "--release" help="Run the release build"'
+# A throwaway token: the agent listens on loopback only. The admin token lets the UI manage
+# regions.
+env = { OBS_REGIONS_URL = "http://127.0.0.1:8090", OBS_REGIONS_TOKEN = "dev", OBS_ADMIN_TOKEN = "dev" }
+run = "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}"
+
+[tasks."dev:regions"]
+description = "Build the region agent image from this checkout and run it on 127.0.0.1:8090 (Ctrl-C stops it)"
+run = [{ task = "dev:regions:build" }, { task = "dev:regions:run" }]
+
+[tasks."dev:regions:build"]
+description = "Build the region agent image from this checkout (Dockerfile target regions; the first build compiles Overpass)"
+hide = true
+run = "docker build --target regions --tag {{vars.regions_image}} ."
+
+[tasks."dev:regions:run"]
+description = "Run the built region agent image in the foreground (part of `dev` and `dev:regions`)"
+hide = true
+env = { OBS_REGIONS_TOKEN = "dev" }
+# --init passes Ctrl-C on to the agent. A container left behind by a killed run would hold the
+# name, so it goes first.
+run = '''
+docker rm --force {{vars.regions_name}} >/dev/null 2>&1 || true
+exec docker run --rm --init --name {{vars.regions_name}} \
+  --publish 127.0.0.1:8090:8090 --volume {{vars.regions_name}}:/data \
+  --env OBS_REGIONS_TOKEN --env OBS_CONTACT \
+  {{vars.regions_image}}
+'''
+
+[tasks."dev:clean"]
+description = "Remove the dev region agent's container, image and volume (its imported regions)"
+confirm = { message = "Delete the dev region agent's imported regions?", default = "no" }
+run = '''
+docker rm --force {{vars.regions_name}} >/dev/null 2>&1 || true
+if docker volume inspect {{vars.regions_name}} >/dev/null 2>&1; then docker volume rm {{vars.regions_name}}; fi
+if docker image inspect {{vars.regions_image}} >/dev/null 2>&1; then docker image rm {{vars.regions_image}}; fi
+'''
