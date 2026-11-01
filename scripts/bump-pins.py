@@ -160,7 +160,7 @@ def bump_mise(f, out):
         return
     f.sub("Dockerfile", r"^FROM ghcr\.io/jdx/mise:\S+@sha256:[0-9a-f]{64} AS build-tools$", f"FROM {image}@{digest} AS build-tools")
     f.sub(SETUP_MISE, r"^( +version: )\S+$", rf"\g<1>{v}")
-    f.sub("mise.toml", r'^(min_version = \{ hard = )"[^"]+"', rf'\g<1>"{v}"')
+    f.sub("mise.toml", r'^(min_version = \{ hard = "[0-9.]+", soft = )"[^"]+"', rf'\g<1>"{v}"')
     out.append(("mise (CI)", cur, v))
 
 

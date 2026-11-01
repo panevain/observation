@@ -1,16 +1,20 @@
 # Local development: loaded on top of mise.toml in the dev environment, which .miserc.toml
 # selects by default (CI's MISE_ENV=ci replaces it).
 #
-#   mise run dev              # dev-build the client and server, then run the server with a
-#                             # region agent built from this checkout
-#   mise run dev --release    # the same with release builds
-#   mise run dev:regions      # the region agent alone
-#   mise run dev:clean        # remove the agent's container, image and imported regions
+#   mise run dev                  # dev-build the client and server, then run the server with a
+#                                 # region agent built from this checkout
+#   mise run dev --release        # the same with release builds
+#   mise run dev:regions:build    # rebuild the agent image after changing the agent (`dev`
+#                                 # builds it only when it is missing)
+#   mise run dev:regions          # rebuild and run the agent alone
+#   mise run dev:clean            # remove the agent's container, image and imported regions
 #
-# The server listens on OBS_BIND (mise.local.toml; 0.0.0.0:8080 by default), the agent on
-# 127.0.0.1:8090 only. The agent runs in Docker because it needs Overpass and osmium, which the
-# Dockerfile's regions target builds and installs. Its regions persist in a Docker volume of
-# their own, apart from the Compose stack's.
+# The server listens on 127.0.0.1:8080 and the agent on 127.0.0.1:8090: the dev tokens below are
+# public, and the admin token lets anyone who reaches the server import and delete regions. The
+# agent runs in Docker because it needs Overpass and osmium, which the Dockerfile's regions
+# target builds and installs. Its regions persist in a Docker volume of their own, apart from
+# the Compose stack's. Agent settings (OBS_REGIONS_MAX_DOWNLOAD_MB and the refresh days, as for
+# `up`), OBS_LOG_FORMAT and RUST_LOG pass through from the environment.
 #
 # Settings go on the dev tasks, never in [env]: [env] here reaches every task, including `up`,
 # whose fnox would then pass the dev token to the production stack.
@@ -19,56 +23,81 @@
 # Image tag, container and volume name for the dev region agent.
 regions_image = "observation-regions:dev"
 regions_name = "observation-dev-regions"
+# The agent token the dev server and agent share; also the default admin token.
+dev_token = "dev"
 
 [tasks.dev]
-description = "Build the region agent image, client and server one after another, then run the server and the agent (Ctrl-C stops both)"
+description = "Build the region agent image (if missing), client and server one after another, then run the server and the agent (Ctrl-C stops both)"
 usage = 'flag "--release" help="Release-build the client and the server"'
 # One build at a time: the Overpass compile, trunk and cargo together can exhaust memory. The
-# last step runs both tasks in parallel in a nested `mise run`, because a `{ tasks = [...] }`
-# step can't pass on --release.
+# last step runs the server and the agent in a nested `mise run` with two job slots of its own,
+# since both run until stopped: with `jobs = 1` the agent would never start.
 run = [
-  { task = "dev:regions:build" },
+  { task = "dev:regions:build", args = ["--if-missing"] },
   "trunk build --locked{% if usage.release %} --release{% endif %}",
   "cargo build --locked -p observation-server{% if usage.release %} --release{% endif %}",
-  "exec {{mise_bin}} run --output prefix dev:server{% if usage.release %} --release{% endif %} ::: dev:regions:run",
+  "exec {{mise_bin | quote}} run --jobs 2 --output prefix dev:server{% if usage.release %} --release{% endif %} ::: dev:regions:run",
 ]
 
 [tasks."dev:server"]
 description = "Run the server against the dev region agent (part of `dev`)"
 hide = true
 usage = 'flag "--release" help="Run the release build"'
-# A throwaway token: the agent listens on loopback only. The admin token lets the UI manage
-# regions.
-env = { OBS_REGIONS_URL = "http://127.0.0.1:8090", OBS_REGIONS_TOKEN = "dev", OBS_ADMIN_TOKEN = "dev" }
+# Loopback only, whatever OBS_BIND says (see the header). An OBS_ADMIN_TOKEN exported in the
+# shell replaces the dev one.
+env = { OBS_BIND = "127.0.0.1:8080", OBS_REGIONS_URL = "http://127.0.0.1:8090", OBS_REGIONS_TOKEN = "{{vars.dev_token}}", OBS_ADMIN_TOKEN = "{{ get_env(name='OBS_ADMIN_TOKEN', default=vars.dev_token) }}" }
 run = "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}"
 
 [tasks."dev:regions"]
-description = "Build the region agent image from this checkout and run it on 127.0.0.1:8090 (Ctrl-C stops it)"
+description = "Rebuild the region agent image from this checkout and run it on 127.0.0.1:8090 (Ctrl-C stops it)"
 run = [{ task = "dev:regions:build" }, { task = "dev:regions:run" }]
 
 [tasks."dev:regions:build"]
 description = "Build the region agent image from this checkout (Dockerfile target regions; the first build compiles Overpass)"
-hide = true
-run = "docker build --target regions --tag {{vars.regions_image}} ."
+usage = 'flag "--if-missing" help="Do nothing when the image already exists"'
+# Overpass first, on its own: in one build, BuildKit compiles it (make -j"$(nproc)") at the
+# same time as the agent's cargo build. --load puts the image in the local store with any
+# buildx driver.
+run = '''
+{% if usage.if_missing %}
+if docker image inspect {{vars.regions_image}} >/dev/null 2>&1; then
+  echo "{{vars.regions_image}} exists; \`mise run dev:regions:build\` rebuilds it."
+  exit 0
+fi
+{% endif %}
+docker build --target overpass-build --output type=cacheonly .
+docker build --load --target regions --tag {{vars.regions_image}} .
+'''
 
 [tasks."dev:regions:run"]
 description = "Run the built region agent image in the foreground (part of `dev` and `dev:regions`)"
 hide = true
-env = { OBS_REGIONS_TOKEN = "dev" }
-# --init passes Ctrl-C on to the agent. A container left behind by a killed run would hold the
-# name, so it goes first.
+env = { OBS_REGIONS_TOKEN = "{{vars.dev_token}}" }
+# --init passes Ctrl-C on to the agent. A running agent belongs to another dev session (the
+# name and port are machine-wide), so that is an error; a stopped one is left from a killed
+# run and goes. A bare --env passes a variable only when it is set.
 run = '''
-docker rm --force {{vars.regions_name}} >/dev/null 2>&1 || true
+if [ -n "$(docker ps --quiet --filter name=^{{vars.regions_name}}$)" ]; then
+  echo "The dev region agent is already running (container {{vars.regions_name}}, from another dev session?). Stop that session, or \`docker rm --force {{vars.regions_name}}\`." >&2
+  exit 1
+fi
+docker rm {{vars.regions_name}} >/dev/null 2>&1 || true
 exec docker run --rm --init --name {{vars.regions_name}} \
   --publish 127.0.0.1:8090:8090 --volume {{vars.regions_name}}:/data \
-  --env OBS_REGIONS_TOKEN --env OBS_CONTACT \
+  --env OBS_REGIONS_TOKEN --env OBS_CONTACT --env OBS_LOG_FORMAT --env RUST_LOG \
+  --env OBS_REGIONS_MAX_DOWNLOAD_MB --env OBS_REGIONS_DEFAULT_REFRESH_DAYS \
+  --env OBS_REGIONS_MIN_REFRESH_DAYS --env OBS_REGIONS_MAX_REFRESH_DAYS \
   {{vars.regions_image}}
 '''
 
 [tasks."dev:clean"]
 description = "Remove the dev region agent's container, image and volume (its imported regions)"
 confirm = { message = "Delete the dev region agent's imported regions?", default = "no" }
+# A shebang: mise appends extra arguments to the text of an inline script, which would break
+# the closing `fi`; a script file gets them as ignored arguments instead.
 run = '''
+#!/usr/bin/env bash
+set -euo pipefail
 docker rm --force {{vars.regions_name}} >/dev/null 2>&1 || true
 if docker volume inspect {{vars.regions_name}} >/dev/null 2>&1; then docker volume rm {{vars.regions_name}}; fi
 if docker image inspect {{vars.regions_image}} >/dev/null 2>&1; then docker image rm {{vars.regions_image}}; fi

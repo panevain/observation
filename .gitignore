@@ -8,6 +8,10 @@
 /.claude/worktrees/
 /mise.local.toml
 /mise.local.lock
+/mise.*.local.toml
+/mise.*.local.lock
+/.mise.*.local.toml
+/.miserc.local.toml
 /.mise.local.toml
 /.env
 /.env.local

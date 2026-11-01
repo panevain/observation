@@ -13,10 +13,11 @@
 # fnox.local.toml). The local development stack (`mise run dev`) is in mise.dev.toml, which
 # .miserc.toml loads by default.
 
-# The CI mise version (.github/actions/setup-mise, which the Pins workflow bumps along with this
-# line; mise run sync checks they agree). An older mise refuses to run: it would ignore
-# [task_config] shell and run the task scripts under sh.
-min_version = { hard = "2026.10.18" }
+# hard: the oldest mise that reads this config correctly (2026.7.15 added [task_config] shell;
+# an older one would ignore it and run the task scripts under sh). soft: the CI mise version
+# (.github/actions/setup-mise, which the Pins workflow bumps along with this value; mise run sync
+# checks they agree); an older mise warns.
+min_version = { hard = "2026.7.15", soft = "2026.10.18" }
 
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
@@ -32,8 +33,9 @@ minimum_release_age = "7d"
 use_versions_host_track = false
 
 [task_config]
-# Every inline task script here and in mise.ci.toml and mise.dev.toml runs under bash with
-# errexit, nounset and pipefail, so the scripts need no shebang or `set` line of their own.
+# Every inline task script in this directory's mise files (mise.ci.toml, mise.dev.toml and your
+# gitignored mise.local.toml too) runs under bash with errexit, nounset and pipefail, so the
+# scripts need no shebang or `set` line of their own. A task's own `shell` or shebang opts out.
 shell = "bash -o errexit -o nounset -o pipefail -c"
 
 [tool_alias]
@@ -95,7 +97,7 @@ run = "scripts/check-toolchain-sync.sh"
 description = "Refresh mise.lock and mise.ci.lock (checksums for every platform they list) after changing a tool in mise.toml or mise.ci.toml"
 # Under MISE_ENV=ci, `mise lock` writes both: each tool into the lockfile beside the file that
 # declares it.
-run = "MISE_ENV=ci {{mise_bin}} lock"
+run = "MISE_ENV=ci {{mise_bin | quote}} lock"
 
 [tasks.treemap]
 description = "Regenerate docs/images/wasm-bundle-treemap.svg (fat-LTO build, 15-20 minutes)"
@@ -107,7 +109,11 @@ run = "trunk build --release --locked"
 
 [tasks."build:sizes"]
 description = "Sizes of dist/*.wasm (raw, gzip -9 and, if brotli is installed, brotli -q 11) as a Markdown table"
+# A shebang: mise appends extra arguments to the text of an inline script, which would break
+# the closing `done`; a script file gets them as ignored arguments instead.
 run = '''
+#!/usr/bin/env bash
+set -euo pipefail
 mib() { awk -v n="$1" 'BEGIN { printf "%.2f MiB", n / 1048576 }'; }
 echo "| file | raw | gzip -9 | brotli -q 11 |"
 echo "| --- | ---: | ---: | ---: |"
@@ -227,9 +233,10 @@ confirm = { message = "Change the live rulesets on GitHub?", default = "no" }
 run = "scripts/rulesets.sh apply"
 
 [tasks."tasks:validate"]
-description = "Check the task definitions of mise.toml, mise.ci.toml and mise.dev.toml (references, usage specs, templates)"
-# Both environments, whichever this runs under: CI's MISE_ENV=ci alone would skip mise.dev.toml.
-run = "{{mise_bin}} -E ci,dev tasks validate"
+description = "Check the task definitions of the selected environments (references, usage specs, templates); CI checks ci and dev"
+# The current environment only (dev by default), so `check` never loads mise.ci.toml, which
+# paranoid trust would then refuse. CI runs this with MISE_ENV=ci,dev to cover all three files.
+run = "{{mise_bin | quote}} tasks validate"
 
 [tasks.check]
 description = "fmt, clippy, tests, design tokens, version sync and task definitions (the non-Docker CI checks; build is separate)"

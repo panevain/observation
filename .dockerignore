@@ -31,3 +31,7 @@ mise.*.local.lock
 .mise.local.toml
 .miserc.local.toml
 fnox.local.toml
+# mise's dev environment, only for `mise run dev`
+.miserc.toml
+mise.dev.toml
+**/__pycache__
