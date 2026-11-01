@@ -84,6 +84,10 @@
             "integration_id": 15368
           },
           {
+            "context": "cargo-cooldown",
+            "integration_id": 15368
+          },
+          {
             "context": "trivy (image + repo)",
             "integration_id": 15368
           },

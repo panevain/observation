@@ -25,7 +25,9 @@ updates:
       timezone: Etc/UTC
     open-pull-requests-limit: 5
     # Wait a week after a release before proposing it (supply-chain hygiene);
-    # does not delay Dependabot *security* updates.
+    # does not delay Dependabot *security* updates. This covers only the crate being bumped: the
+    # cargo-cooldown check (security.yml, .config/cargo-cooldown.toml) holds every crate version
+    # a PR adds to the lockfiles, indirect ones included, to the same 7 days.
     cooldown:
       default-days: 7
     commit-message:

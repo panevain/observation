@@ -89,6 +89,28 @@ jobs:
           tools: cargo-audit
       - run: mise run audit
 
+  # Every crate version a pull request adds to Cargo.lock or fuzz/Cargo.lock, used directly or
+  # pulled in by another crate, must be at least .config/cargo-cooldown.toml's `days` old:
+  # Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec vulnerabilities at
+  # the base are exempt (cargo-audit finds those). Skipped outside pull requests.
+  cargo-cooldown:
+    name: cargo-cooldown
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent, the base branch.
+          fetch-depth: 2
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit
+      - run: mise run cooldown --base HEAD^1
+
   trivy:
     name: trivy (image + repo)
     runs-on: ubuntu-24.04

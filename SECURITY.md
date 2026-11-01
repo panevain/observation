@@ -82,6 +82,11 @@ Every change is checked automatically (see `.github/workflows/`):
   workspace's `fuzz/Cargo.lock`, on every change and daily; yanked crates fail too.
   Accepted advisories need a reason in `deny.toml` and are mirrored in
   `.cargo/audit.toml` and `osv-scanner.toml`.
+- **Crate cooldown** (`.config/cargo-cooldown.toml`): every crate version a pull
+  request adds to either lockfile, including indirect dependencies, must have
+  been published at least 7 days earlier, as Dependabot's cooldown requires
+  only of the crate it bumps. Fixes for RustSec vulnerabilities are exempt;
+  other exemptions need a reason.
 - **Trivy**: scans the container image's
   operating system packages and the server binary's crates (the binaries are built
   with `cargo auditable`, which embeds their dependency list; the static client,

@@ -12,7 +12,7 @@
 
 Add user-visible changes under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
-Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge. Each run's summary lists every open Dependabot PR and why it was or was not set to auto-merge; run the workflow by hand with **dry run** to see that list without changing anything.
+Dependabot and the Pins workflow target `develop` (see `.github/dependabot.yml` and `.github/workflows/pins.yml`). Every crate version a pull request adds to `Cargo.lock` or `fuzz/Cargo.lock`, including the ones a bump pulls in, must have been on crates.io for 7 days (the **`cargo-cooldown`** check, `.config/cargo-cooldown.toml`; `mise -E ci run cooldown` runs it against `origin/develop`). Fixes for RustSec vulnerabilities are exempt; anything else that cannot wait needs an exemption there with a reason. Dependabot patch updates and base image digest refreshes merge themselves once their checks pass (**Dependabot auto-merge**, every 4 hours); minor and major updates need a review. To hold a Dependabot PR, add the **`hold`** label: it is not auto-merged, and auto-merge is switched off at the next run (within 4 hours) if it was already on. Remove the label to let it merge. Each run's summary lists every open Dependabot PR and why it was or was not set to auto-merge; run the workflow by hand with **dry run** to see that list without changing anything.
 
 ### Releasing
 
@@ -70,7 +70,7 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | --- | --- |
 | Branch policy | `branch policy` (into `main`, only same-repo `release/*` and `hotfix/*`) |
 | CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `wasm (trunk build)`, `docker (build + smoke test)` |
-| Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `trivy (image + repo)` |
+| Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
 If you rename a job, update the rulesets in the same PR and apply them once it is merged, or merges will block on a check that no longer exists.

@@ -101,6 +101,11 @@ run = [
   "cargo-audit audit --deny yanked --file fuzz/Cargo.lock",
 ]
 
+[tasks.cooldown]
+description = "Crate versions added to either lockfile since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
+usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
+run = 'python3 scripts/check-cargo-cooldown.py --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+
 [tasks.deny]
 description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `mise -E ci run deny advisories` runs one check"
 # deny.toml controls the feature graph; cargo-deny's own default elsewhere is --all-features,
