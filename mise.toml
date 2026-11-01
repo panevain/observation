@@ -117,7 +117,7 @@ description = "Design-token guard (no colour literals outside theme.rs)"
 run = "scripts/check-design-tokens.sh"
 
 [tasks.sync]
-description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), and the advisory ignore lists agree"
+description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, and the advisory ignore lists agree"
 run = "scripts/check-toolchain-sync.sh"
 
 [tasks.lock]

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fails when the pinned Rust, CI mise, cosign or a task tool's version differs where it is repeated,
-# when the Rust version is set anywhere else, or when the advisory ignore lists disagree.
+# when the Rust version is set anywhere else, when the docs repeat a pinned version, when a
+# workflow builds an image without .github/actions/build-image, or when the advisory ignore lists
+# disagree.
 # rust-toolchain.toml is the source of truth for Rust (mise.lock records it for mise),
 # .github/actions/setup-mise for the mise that the workflows, the Dockerfile and mise.toml's
 # min_version use, and
@@ -35,6 +37,13 @@ check "$mise" "$(first '^min_version = \{ hard = "[0-9.]+", soft = "[0-9.]+" \}'
 direct="$(grep -lE 'uses: *jdx/mise-action@' .github/workflows/*.y*ml .github/actions/*/action.y*ml 2>/dev/null |
   grep -vxF .github/actions/setup-mise/action.yml | paste -sd' ' - || true)"
 check "" "$direct" "jdx/mise-action used directly (use \$/.github/actions/setup-mise)"
+# Images are built through build-image, which holds the cache rules. The one other use is
+# release.yml's push step, which publishes what its build-image step built and tested.
+direct="$(grep -lE 'uses: *docker/build-push-action@' .github/workflows/*.y*ml .github/actions/*/action.y*ml 2>/dev/null |
+  grep -vxF -e .github/actions/build-image/action.yml -e .github/workflows/release.yml | paste -sd' ' - || true)"
+check "" "$direct" "docker/build-push-action used directly (use \$/.github/actions/build-image)"
+check 1 "$(grep -cE 'uses: *docker/build-push-action@' .github/workflows/release.yml || true)" \
+  "release.yml's direct docker/build-push-action uses (only its push step; build through \$/.github/actions/build-image)"
 # Task tools (`tools.NAME = "VERSION"`, or `tools = { NAME = "VERSION", ... }`, on a task in
 # mise.toml): every task that uses a tool pins the same version, and so does a [tools] pin of it
 # in mise.toml or mise.ci.toml (cosign, for the verify and up tasks, is CI's).
@@ -65,6 +74,19 @@ for name in $(cut -d' ' -f1 <<<"$task_pins" | sort -u); do
   done
   synced+="${synced:+, }$name $pins"
 done
+
+# The docs never repeat a pinned version, which would go stale with the next bump: no
+# "TOOL X.Y" for a tool pinned in [tools] of mise.toml or mise.ci.toml, a task tool, Rust, mise or
+# Overpass, and no `rust:X` image tag. They say where the pin is instead. CHANGELOG.md records
+# history and is exempt.
+names="$( { awk '/^\[/ { t = ($0 == "[tools]") } t && /^[A-Za-z0-9_-]+ *=/ { print $1 }' mise.toml mise.ci.toml
+  cut -d' ' -f1 <<<"$task_pins"; printf '%s\n' rust mise overpass; } | sort -u | paste -sd'|' -)"
+doc_pins="$(git grep -IniE "(^|[^A-Za-z0-9_-])(${names})( api)? v?[0-9]+\.[0-9]+|rust:[0-9]" -- '*.md' ':!CHANGELOG.md' || true)"
+if [[ -n "$doc_pins" ]]; then
+  echo "pinned versions repeated in the docs (name the file that pins them instead):" >&2
+  cut -c1-160 <<<"$doc_pins" | sed 's/^/  /' >&2
+  fail=1
+fi
 
 # Advisory ignores: the same IDs in all three files (sorted, one per line).
 # grep finds nothing when a list is empty, which is not a failure.
