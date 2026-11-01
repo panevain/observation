@@ -23,6 +23,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tiles/{z}/{x}/{y}", get(tiles::tile))
         .route("/api/regions", get(regions::status))
         .route("/api/regions/catalog", get(regions::catalog))
+        .route("/api/regions/catalog/sizes", post(regions::catalog_sizes))
         .route("/api/regions/{action}", post(regions::act))
         // Unknown API paths must not fall through to the SPA's index.html.
         .route("/api/{*rest}", axum::routing::any(api_not_found))

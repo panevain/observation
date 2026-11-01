@@ -925,6 +925,8 @@ struct MockAgent {
     bboxes: Mutex<Vec<String>>,
     auth: Mutex<Vec<String>>,
     actions: Mutex<Vec<(String, String)>>,
+    /// Bodies of the action requests.
+    bodies: Mutex<Vec<serde_json::Value>>,
 }
 
 impl MockAgent {
@@ -948,9 +950,14 @@ impl MockAgent {
             bbox: BBox::new(47.0, -123.0, 48.0, -122.0).ok(),
             data_timestamp: None,
             imported_unix: Some(imported_unix),
+            last_attempt_unix: Some(imported_unix),
+            auto_refresh: true,
+            refresh_days: None,
+            next_refresh_unix: None,
             disk_bytes: Some(1),
             job: None,
             last_error: None,
+            last_error_unix: None,
         }];
     }
 }
@@ -1009,6 +1016,7 @@ async fn agent_action(
             .into_response();
     }
     m.actions.lock().unwrap().push((action, id));
+    m.bodies.lock().unwrap().push(json(&body));
     let snap = {
         let mut s = m.snapshot.lock().unwrap();
         s.version += 1;
@@ -1029,6 +1037,19 @@ async fn spawn_agent() -> (Arc<MockAgent>, String) {
                 axum::Json(
                     serde_json::json!([{"id": "monaco", "name": "Monaco", "parent": "europe"}]),
                 )
+            }),
+        )
+        .route(
+            "/catalog/sizes",
+            post(|body: Bytes| async move {
+                let ids = json(&body)["ids"].clone();
+                let sizes: serde_json::Map<String, serde_json::Value> = ids
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| Some((id.as_str()?.to_owned(), 1234.into())))
+                    .collect();
+                axum::Json(sizes)
             }),
         )
         .with_state(Arc::clone(&mock));
@@ -1252,6 +1273,126 @@ async fn region_actions_need_the_admin_token() {
     let (status, _, body) = get_uri(&h.app, "/api/regions/catalog").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json(&body)[0]["id"], "monaco");
+}
+
+#[tokio::test]
+async fn catalog_sizes_are_forwarded_without_a_token() {
+    let (h, _, _) = region_harness(Some("admin-secret")).await;
+    let (status, headers, body) = send(
+        &h.app,
+        post_json(
+            "/api/regions/catalog/sizes",
+            None,
+            r#"{"ids":["monaco","us/california"]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        json(&body),
+        serde_json::json!({"monaco": 1234, "us/california": 1234})
+    );
+    let too_many = serde_json::json!({ "ids": vec!["a"; 41] }).to_string();
+    for bad in [
+        r#"{"ids":["../x"]}"#,
+        r#"{"id":"monaco"}"#,
+        too_many.as_str(),
+    ] {
+        let (status, _, _) = send(&h.app, post_json("/api/regions/catalog/sizes", None, bad)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn region_settings_are_forwarded_with_the_admin_token() {
+    let (h, _, agent) = region_harness(Some("admin-secret")).await;
+    wait_for_version(&h.app, 0).await;
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            None,
+            r#"{"id":"monaco","auto_refresh":false}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, body) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        json(&body)["error"]
+            .as_str()
+            .unwrap()
+            .contains("auto_refresh")
+    );
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco","auto_refresh":false}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco","refresh_days":30}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/settings",
+            Some("admin-secret"),
+            r#"{"id":"monaco","refresh_days":null}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "null clears the interval");
+    // Other actions forward the id alone.
+    let (status, _, _) = send(
+        &h.app,
+        post_json(
+            "/api/regions/delete",
+            Some("admin-secret"),
+            r#"{"id":"monaco","auto_refresh":true,"refresh_days":30}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        *agent.actions.lock().unwrap(),
+        vec![
+            ("settings".to_owned(), "monaco".to_owned()),
+            ("settings".to_owned(), "monaco".to_owned()),
+            ("settings".to_owned(), "monaco".to_owned()),
+            ("delete".to_owned(), "monaco".to_owned()),
+        ]
+    );
+    assert_eq!(
+        *agent.bodies.lock().unwrap(),
+        vec![
+            serde_json::json!({"id": "monaco", "auto_refresh": false}),
+            serde_json::json!({"id": "monaco", "refresh_days": 30}),
+            serde_json::json!({"id": "monaco", "refresh_days": null}),
+            serde_json::json!({"id": "monaco"}),
+        ]
+    );
 }
 
 #[tokio::test]

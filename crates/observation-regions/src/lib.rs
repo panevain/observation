@@ -10,7 +10,9 @@
 //! | `GET /healthz` | liveness (no token) |
 //! | `GET /regions?since=<version>` | [`RegionsSnapshot`]; waits up to 25 s for a newer one |
 //! | `GET /catalog` | importable extracts |
+//! | `POST /catalog/sizes` | [`SizesRequest`] -> `{"<id>": bytes or null}` |
 //! | `POST /regions/import`, `/cancel`, `/delete` | `{"id": "…"}` |
+//! | `POST /regions/settings` | `{"id": "…", "auto_refresh": true, "refresh_days": 30}` (either or both; `"refresh_days": null` returns to the default) |
 //! | `POST /interpreter?bbox=s,w,n,e` | Overpass query (form field `data`) against the region holding the box; 404 if none |
 
 pub mod catalog;
@@ -33,7 +35,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use observation_core::geo::BBox;
 use observation_core::regions::{
-    RegionAction, RegionsSnapshot, bearer_matches, is_valid_region_id,
+    RegionAction, RegionsSnapshot, SizesRequest, bearer_matches, is_valid_region_id,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -141,11 +143,14 @@ impl Agent {
         .user_agent(config.user_agent())
         .connect_timeout(Duration::from_secs(20))
         .build()?;
-        let registry = Arc::new(Registry::open(
-            &config.data_dir,
-            config.max_download_bytes,
-            config.refresh_days,
-        )?);
+        let registry = Arc::new(
+            Registry::open(
+                &config.data_dir,
+                config.max_download_bytes,
+                config.refresh_days,
+            )?
+            .with_refresh_range(config.min_refresh_days, config.max_refresh_days),
+        );
         Ok(Arc::new(Self {
             catalog: Catalog::new(
                 client.clone(),
@@ -246,9 +251,11 @@ pub fn app(agent: Arc<Agent>) -> Router {
     let api = Router::new()
         .route("/regions", get(regions))
         .route("/catalog", get(catalog_list))
+        .route("/catalog/sizes", post(catalog_sizes))
         .route("/regions/import", post(import_region))
         .route("/regions/cancel", post(cancel_region))
         .route("/regions/delete", post(delete_region))
+        .route("/regions/settings", post(region_settings))
         .route("/interpreter", post(interpreter))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&agent),
@@ -311,6 +318,24 @@ async fn catalog_list(State(agent): State<Arc<Agent>>) -> Result<Response, Agent
     Ok(Json(entries).into_response())
 }
 
+async fn catalog_sizes(
+    State(agent): State<Arc<Agent>>,
+    Json(req): Json<SizesRequest>,
+) -> Result<Response, AgentError> {
+    if !req.is_valid() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "expected {\"ids\": [...]} with at most 40 region ids",
+        ));
+    }
+    let sizes = agent
+        .catalog
+        .sizes(&req.ids)
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
+    Ok(Json(sizes).into_response())
+}
+
 fn action_id(a: &RegionAction) -> Result<&str, AgentError> {
     if is_valid_region_id(&a.id) {
         Ok(&a.id)
@@ -357,6 +382,37 @@ async fn delete_region(
     Json(a): Json<RegionAction>,
 ) -> Result<Json<RegionsSnapshot>, AgentError> {
     match agent.registry.delete(action_id(&a)?) {
+        Ok(()) => Ok(Json(agent.registry.snapshot())),
+        Err(ActionError::NotFound | ActionError::Busy) => {
+            Err(err(StatusCode::NOT_FOUND, "no such region"))
+        }
+    }
+}
+
+async fn region_settings(
+    State(agent): State<Arc<Agent>>,
+    Json(a): Json<RegionAction>,
+) -> Result<Json<RegionsSnapshot>, AgentError> {
+    let id = action_id(&a)?;
+    let range = agent.registry.refresh_range();
+    if !a.has_settings()
+        || a.refresh_days
+            .flatten()
+            .is_some_and(|d| !range.contains(&d))
+    {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "expected `auto_refresh` (true or false), `refresh_days` ({} to {}), or both",
+                range.start(),
+                range.end()
+            ),
+        ));
+    }
+    match agent
+        .registry
+        .change_settings(id, a.auto_refresh, a.refresh_days)
+    {
         Ok(()) => Ok(Json(agent.registry.snapshot())),
         Err(ActionError::NotFound | ActionError::Busy) => {
             Err(err(StatusCode::NOT_FOUND, "no such region"))
