@@ -86,10 +86,10 @@ If you rename a job, update the rulesets in the same PR and apply them once it i
 Run what CI runs ([mise](https://mise.jdx.dev) tasks, which CI also calls):
 
 ```sh
-mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync
+mise run check          # fmt, clippy (native + wasm), tests, design tokens, version and ignore-list sync, task definitions
 mise run build          # release wasm build, as the CI wasm job does
 mise run build:budget   # then its size against .config/wasm-size-budget.toml
-mise run test:browser   # headless-browser smoke test against a running server (mise run serve:release)
+mise run test:browser   # headless-browser smoke test against a running server (mise run serve --release)
 mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
 mise -E ci run deny     # cargo-deny as Security runs it; likewise audit, cooldown, vet, zizmor, scan:repo, fuzz, typos, shear
 ```
@@ -104,8 +104,9 @@ Every tool is pinned once, and mise installs it from a release asset that matche
 | --- | --- | --- |
 | `mise.toml`, `mise.lock` | trunk (Rust comes from `rust-toolchain.toml`), the shared tasks, and task tools (fnox for `up` and `down`, uv for `fonts`) | always |
 | `mise.ci.toml`, `mise.ci.lock` | the tools only CI and the image build use, CI's environment, and the tasks behind the security, fuzz and scan steps | with `MISE_ENV=ci` (every workflow sets it) or `mise -E ci` |
+| `mise.dev.toml` | the local development stack (`mise run dev`: server, client and a region agent built in Docker) | in the dev environment, which `.miserc.toml` selects unless `MISE_ENV` or `-E` picks another |
 | `mise.local.toml` | your own settings (`OBS_CONTACT` and so on; gitignored) | always |
 
-To add or change a tool, edit `mise.toml` or `mise.ci.toml` (for an unusual GitHub release, a `[tool_alias]` entry names its backend), then `mise run lock` to record its checksums in both lockfiles. A workflow job installs only what it needs (the `tools` input of `.github/actions/setup-mise`, the one place the workflows' mise version is pinned; `mise.toml`'s `min_version` warns when your local mise is older). The Pins workflow bumps every tool in `[tools]` with `mise upgrade --bump` once a release is a week old (`minimum_release_age` in `mise.toml`); task tools other than fnox stay where they are until someone bumps them. The Dockerfile's build-tools stage installs trunk, cargo-chef and cargo-auditable from the same lockfiles.
+To add or change a tool, edit `mise.toml` or `mise.ci.toml` (for an unusual GitHub release, a `[tool_alias]` entry names its backend), then `mise run lock` to record its checksums in both lockfiles. A workflow job installs only what it needs (the `tools` input of `.github/actions/setup-mise`, the one place the workflows' mise version is pinned; `mise.toml`'s `min_version` warns when your local mise is older, and refuses one older than 2026.7.15, which would run the task scripts under `sh`). The Pins workflow bumps every tool in `[tools]` with `mise upgrade --bump` once a release is a week old (`minimum_release_age` in `mise.toml`); task tools other than fnox stay where they are until someone bumps them. The Dockerfile's build-tools stage installs trunk, cargo-chef and cargo-auditable from the same lockfiles.
 
 Keep colours, spacing and other UI constants in `crates/observation-client/src/theme.rs` (the design-token check fails otherwise). See [docs/design.md](docs/design.md) for architecture and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

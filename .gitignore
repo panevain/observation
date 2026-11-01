@@ -8,6 +8,10 @@
 /.claude/worktrees/
 /mise.local.toml
 /mise.local.lock
+/mise.*.local.toml
+/mise.*.local.lock
+/.mise.*.local.toml
+/.miserc.local.toml
 /.mise.local.toml
 /.env
 /.env.local
@@ -15,3 +19,4 @@
 /.claude/settings.local.json
 /CLAUDE.local.md
 /lcov.info
+__pycache__/

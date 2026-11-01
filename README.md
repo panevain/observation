@@ -45,6 +45,7 @@ You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (w
 mise install                          # Rust (via rustup) and trunk (checksum-verified via mise.lock)
 cp mise.local.toml.example mise.local.toml   # then set OBS_CONTACT (gitignored)
 mise run serve                        # dev-build the client -> dist/, then run the server
+mise run dev                          # the same plus a region agent built from this checkout (Docker; mise.dev.toml)
 ```
 
 Without mise, run `rustup toolchain install` in the repository (`rust-toolchain.toml` is the single source for the Rust version), install trunk, then run the underlying commands directly:
