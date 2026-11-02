@@ -2,9 +2,9 @@ name: Pins
 
 # Weekly bump of the pins Dependabot can't move (scripts/bump-pins.py): the tools in mise.toml
 # and mise.ci.toml (`mise upgrade --bump`, with their lockfiles), fnox, the CI mise version,
-# Overpass in the Dockerfile and the Rust toolchain (Dependabot moves the fuzz nightly). Each release must be a
-# week old first, as with Dependabot's cooldown. Opens one PR into develop (or updates it),
-# from its own branch chore/pin-bumps.
+# Overpass in the Dockerfile and the Rust toolchain (Dependabot moves the fuzz nightly). Each
+# release must be a week old first, as with Dependabot's cooldown. Opens one PR into develop
+# (or updates it), from its own branch chore/pin-bumps.
 on:
   schedule:
     # Monday update window, after Dependabot's runs (05:00-05:15).

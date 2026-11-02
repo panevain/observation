@@ -59,7 +59,6 @@ WORKDIR /build
 # the wasm32-unknown-unknown target).
 COPY rust-toolchain.toml ./
 RUN rustup toolchain install --profile minimal --no-self-update \
-    && rustup target add wasm32-unknown-unknown \
     && rustc --version && cargo --version
 
 # cargo-auditable embeds the dependency list in the native binaries (a few KB, kept by

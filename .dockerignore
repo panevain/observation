@@ -29,6 +29,7 @@ mise.local.lock
 mise.*.local.toml
 mise.*.local.lock
 .mise.local.toml
+.mise.*.local.toml
 .miserc.local.toml
 fnox.local.toml
 # mise's dev environment, only for `mise run dev`

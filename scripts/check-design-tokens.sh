@@ -10,11 +10,6 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src_dir="${root}/crates/observation-client/src"
 theme_file="${src_dir}/theme.rs"
 
-if [ ! -d "${src_dir}" ]; then
-  echo "check-design-tokens: ${src_dir#"${root}"/} does not exist yet; nothing to check."
-  exit 0
-fi
-
 # One ERE alternation; grep -E is POSIX (no PCRE needed).
 patterns=(
   'Color32::from_rgb'

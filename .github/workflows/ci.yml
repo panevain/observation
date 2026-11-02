@@ -84,14 +84,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Bevy's native audio/input backends need these headers to compile the
-      # client's unit tests on Linux. The client has tests only once it has a
-      # library target (the same condition `mise run test` uses).
-      - name: Install system libraries (Bevy)
-        if: hashFiles('crates/observation-client/src/lib.rs') != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
       - uses: $/.github/actions/setup-mise
         with:
           tools: cargo-nextest
@@ -196,8 +188,8 @@ jobs:
           cache-key: wasm-release
           # trunk's wasm-bindgen and wasm-opt downloads (versions follow Cargo.lock and trunk).
           cache-directories: ~/.cache/trunk
-      # The size report (about a minute of gzip -9 and brotli -q 11) runs on pushes only, to
-      # keep it off the pull request critical path.
+      # The brotli sizes (about a minute of brotli -q 11) are reported on pushes only, to keep
+      # them off the pull request critical path.
       - name: Install brotli (for the size report)
         if: github.event_name == 'push'
         run: |
@@ -219,14 +211,14 @@ jobs:
           test -f dist/coverage-worker_loader.js || { echo "::error::dist/coverage-worker_loader.js missing"; exit 1; }
           # trunk's pre_build hook wrote web/tokens.css and index.html inlined it.
           grep -q -- '--obs-bg:' dist/index.html || { echo "::error::design-token CSS not inlined into dist/index.html"; exit 1; }
-      # Each module against its limit in .config/wasm-size-budget.toml (a few seconds of gzip).
+      # Each module against its limit in .config/wasm-size-budget.toml (a few seconds of gzip),
+      # with the brotli sizes on pushes; the table goes to the run's summary.
       - name: Wasm size budget
-        run: mise run build:budget
-      - name: Wasm size report
-        if: github.event_name == 'push'
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          { echo "### Wasm size report"; echo; mise run build:sizes; } | tee -a "${GITHUB_STEP_SUMMARY}"
+          if [ "${EVENT}" = push ]; then mise run build:budget --brotli; else mise run build:budget; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

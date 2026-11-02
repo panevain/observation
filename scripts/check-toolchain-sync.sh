@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Fails when the pinned Rust, CI mise, cosign or a task tool's version differs where it is repeated,
-# when the Rust version is set anywhere else, when the docs repeat a pinned version, when a
-# workflow builds an image without .github/actions/build-image, or when the advisory ignore lists
-# disagree.
+# Fails when the pinned Rust, CI mise, cosign or a task tool's version differs where it is
+# repeated, when the Rust version is set anywhere else, when the docs repeat a pinned version,
+# when a workflow builds an image without .github/actions/build-image, or when the advisory
+# ignore lists disagree.
 # rust-toolchain.toml is the source of truth for Rust (mise.lock records it for mise),
 # .github/actions/setup-mise for the mise that the workflows, the Dockerfile and mise.toml's
-# min_version use, and
-# deny.toml for advisory ignores (mirrored in .cargo/audit.toml and osv-scanner.toml). Every
-# other tool is pinned once, in mise.toml or mise.ci.toml. Needs only POSIX tools, grep -E and git.
+# min_version use, and deny.toml for advisory ignores (mirrored in .cargo/audit.toml and
+# osv-scanner.toml). Every other tool is pinned once, in mise.toml or mise.ci.toml. Needs only
+# POSIX tools, grep -E and git.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 

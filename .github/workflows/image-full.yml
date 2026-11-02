@@ -11,6 +11,7 @@ on:
       - .github/actions/build-image/**
       - Dockerfile
       - scripts/smoke-test-image.sh
+      - scripts/wait-healthz.sh
       - .dockerignore
       - rust-toolchain.toml
       - Trunk.toml

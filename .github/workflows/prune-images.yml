@@ -1,23 +1,13 @@
 name: Prune images
 
-# Keeps `devel`, `latest` and every X.Y.Z (or X.Y.Z-pre) tag of the container
-# images (observation and observation-regions), and deletes any other tagged
-# version (old edge, main, X.Y and sha-* tags).
+# Keeps `devel`, `latest` and every X.Y.Z (or X.Y.Z-pre) tag of the container images
+# (observation and observation-regions) and deletes any other tagged version; attestation tags
+# stay while their image exists, and untagged versions are never touched
+# (scripts/prune-images.sh). Superseded `devel` builds therefore stay as untagged versions.
 #
-# `sha256-<digest>` tags are the registry's fallback for the build attestation
-# of image <digest>. They are kept while the registry can still serve that
-# image (including as an untagged version) and deleted only when the registry
-# answers 404 for it, because nothing can pull or verify it any more. Any other
-# answer (error, no registry token) keeps the tag.
-#
-# Untagged versions are never touched: the SBOM and provenance attestations
-# are untagged children of a tagged image index, and deleting them breaks
-# `docker pull` and attestation verification. Superseded `devel` builds
-# therefore stay as untagged versions.
-#
-# Scheduled and workflow_run runs only delete when the repository variable
-# PRUNE_IMAGES is `true`; otherwise they log what they would delete. Run it
-# manually once and check the list before setting the variable.
+# Scheduled and workflow_run runs only delete when the repository variable PRUNE_IMAGES is
+# `true`; otherwise they log what they would delete. Run it manually once and check the list
+# before setting the variable.
 on:
   schedule:
     # Weekly health checks, Sundays, last (it also runs after every Release).
@@ -33,17 +23,12 @@ on:
         type: boolean
         default: true
 
-# Serialises prune runs; the job also refuses to run while a Release is in
-# progress.
+# Serialises prune runs; the script also refuses to run while a Release is in progress.
 concurrency:
   group: prune-images
   cancel-in-progress: false
 
 permissions: {}
-
-env:
-  KEEP_REGEX: '^(devel|latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
-  ATTESTATION_REGEX: '^sha256-([0-9a-f]{64})(\.[a-z]+)?$'
 
 jobs:
   prune:
@@ -56,82 +41,21 @@ jobs:
     timeout-minutes: 10
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     permissions:
+      contents: read # check out scripts/prune-images.sh
       packages: write # delete package versions
       actions: read # list in-progress Release runs
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Delete unwanted tagged versions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PACKAGE: ${{ matrix.package }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || (github.event_name != 'workflow_dispatch' && vars.PRUNE_IMAGES != 'true') }}
         run: |
           set -euo pipefail
-          busy=$(gh run list --repo "$REPO" --workflow release.yml --json status \
-            --jq '[.[] | select(.status != "completed")] | length')
-          if [ "$busy" != 0 ]; then
-            echo "A Release run is in progress; skipping."
-            exit 0
-          fi
-          case "$(gh api "users/$OWNER" --jq .type)" in
-            Organization) base="orgs/$OWNER" ;;
-            *) base="users/$OWNER" ;;
-          esac
-          url="$base/packages/container/$PACKAGE/versions"
-          # A package appears with its first push (observation-regions with the first release
-          # after it was added).
-          if ! gh api "$base/packages/container/$PACKAGE" --silent 2>/dev/null; then
-            echo "Package $PACKAGE does not exist yet; nothing to prune."
-            exit 0
-          fi
-
-          gh api --paginate "$url?per_page=100" --jq '.[]' | jq -s '.' >"$RUNNER_TEMP/versions.json"
-          # Anonymous-style pull token for the registry; empty on failure, in
-          # which case no attestation tag is ever treated as orphaned.
-          reg_token=$(curl -fsS -u "$OWNER:$GH_TOKEN" \
-            "https://ghcr.io/token?scope=repository:${OWNER,,}/$PACKAGE:pull" | jq -r '.token // empty' || true)
-
-          # True only when the registry says 404 for the image with this digest.
-          image_gone() {
-            [ -n "$reg_token" ] || return 1
-            local code
-            code=$(curl -s -o /dev/null -I -w '%{http_code}' \
-              -H "Authorization: Bearer $reg_token" \
-              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
-              "https://ghcr.io/v2/${OWNER,,}/$PACKAGE/manifests/sha256:$1" || true)
-            [ "$code" = 404 ]
-          }
-
-          # id <TAB> comma-separated tags, only for versions that have a tag
-          # and none of whose tags is on the keep list. An attestation tag is
-          # on the keep list unless the image it refers to is gone.
-          doomed=$(jq -r '.[] | select((.metadata.container.tags | length) > 0) | [.id, (.metadata.container.tags | join(","))] | @tsv' "$RUNNER_TEMP/versions.json" |
-            while IFS=$'\t' read -r id tags; do
-              keep=false
-              IFS=, read -ra arr <<<"$tags"
-              for t in "${arr[@]}"; do
-                if [[ "$t" =~ $KEEP_REGEX ]]; then
-                  keep=true
-                elif [[ "$t" =~ $ATTESTATION_REGEX ]]; then
-                  digest=${BASH_REMATCH[1]}
-                  if ! image_gone "$digest"; then keep=true; fi
-                fi
-              done
-              if [ "$keep" = false ]; then printf '%s\t%s\n' "$id" "$tags"; fi
-            done)
-
-          if [ -z "$doomed" ]; then
-            echo "Nothing to delete."
-            exit 0
-          fi
-          failed=0
-          while IFS=$'\t' read -r id tags; do
-            if [ "$DRY_RUN" = true ]; then
-              echo "Would delete version $id (tags: $tags)"
-            else
-              echo "Deleting version $id (tags: $tags)"
-              gh api -X DELETE "$url/$id" || { echo "::warning::could not delete version $id"; failed=1; }
-            fi
-          done <<<"$doomed"
-          exit "$failed"
+          args=()
+          if [ "${DRY_RUN}" = true ]; then args=(--dry-run); fi
+          scripts/prune-images.sh "${PACKAGE}" "${args[@]}"

@@ -14,12 +14,7 @@ mkdir -p "${OUT_DIR:-tests/browser/out}"
 
 docker run -d --name "${name}" -p 127.0.0.1::8080 "${image}" >/dev/null
 port="$(docker port "${name}" 8080/tcp | head -n1 | sed 's/.*://')"
-for i in $(seq 1 30); do
-  if curl -fsS --max-time 2 "http://127.0.0.1:${port}/healthz" >/dev/null; then break; fi
-  [ "$(docker inspect --format '{{.State.Running}}' "${name}")" = true ] || { echo "container exited early" >&2; exit 1; }
-  [ "${i}" -lt 30 ] || { echo "/healthz did not answer" >&2; exit 1; }
-  sleep 1
-done
+scripts/wait-healthz.sh "${name}" "${port}"
 
 (cd tests/browser && npm ci --ignore-scripts --no-audit --no-fund)
 OBS_URL="http://127.0.0.1:${port}" node tests/browser/smoke.cjs

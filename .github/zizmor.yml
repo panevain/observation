@@ -9,6 +9,7 @@ rules:
       - ci.yml
   dangerous-triggers:
     ignore:
-      # workflow_run fires only after our own Release workflow, checks out no PR code, and
-      # needs no secrets beyond GITHUB_TOKEN with packages: write.
+      # workflow_run fires only after our own Release workflow, checks out the default branch
+      # (no PR code, no persisted credentials), and needs no secrets beyond GITHUB_TOKEN with
+      # packages: write.
       - prune-images.yml

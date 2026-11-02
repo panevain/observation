@@ -17,22 +17,7 @@ case "${user}" in 65532:65532|65532|nonroot|nonroot:nonroot) ;; *) echo "image m
 docker run -d --name "${name}" -p 127.0.0.1::8080 "${image}"
 port="$(docker port "${name}" 8080/tcp | head -n1 | sed 's/.*://')"
 
-for i in $(seq 1 30); do
-  if curl -fsS --max-time 2 "http://127.0.0.1:${port}/healthz"; then
-    echo
-    echo "healthz OK after ${i} attempt(s)"
-    break
-  fi
-  if [ "$(docker inspect --format '{{.State.Running}}' "${name}")" != "true" ]; then
-    echo "container exited early" >&2
-    exit 1
-  fi
-  if [ "${i}" -eq 30 ]; then
-    echo "healthz did not become ready" >&2
-    exit 1
-  fi
-  sleep 1
-done
+"$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" "${port}"
 
 # The static bundle must have been copied into the image.
 docker cp "${name}:/app/dist/index.html" "${tmp}/index.html"
