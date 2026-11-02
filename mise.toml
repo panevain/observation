@@ -19,7 +19,7 @@
 # an older one would ignore it and run the task scripts under sh). soft: the CI mise version
 # (.github/actions/setup-mise, which the Pins workflow bumps along with this value; mise run sync
 # checks they agree); an older mise warns.
-min_version = { hard = "2026.7.15", soft = "2026.10.18" }
+min_version = { hard = "2026.7.15", soft = "2026.10.19" }
 
 [settings]
 # Take the Rust version from rust-toolchain.toml instead of repeating it here. mise.lock still
@@ -53,11 +53,11 @@ cargo-nextest = "github:nextest-rs/nextest"
 
 [tools]
 # mise.lock records the release checksums; the Dockerfile installs trunk from it.
-trunk = "0.21.14"
+trunk = "0.22.1"
 # The checks `check` runs besides cargo's own, which CI runs too (ci.yml's test and hygiene jobs;
 # cargo-deny in security.yml and release.yml's tag gate): tests, spelling, unused dependencies
 # and cargo-deny.
-cargo-nextest = { version = "0.9.148", version_prefix = "cargo-nextest-" }
+cargo-nextest = { version = "0.9.149", version_prefix = "cargo-nextest-" }
 typos = "1.51.1"
 cargo-shear = "1.14.0"
 cargo-deny = "0.20.2"
@@ -161,7 +161,7 @@ run = [
 description = "Check that a published image was signed and attested by Release on its release tag; prints it pinned by digest (scripts/verify-image.sh)"
 # A task tool (installed and locked for this task only), at CI's cosign version (mise.ci.toml;
 # `mise run sync` checks they agree, and the Pins workflow moves them together).
-tools.cosign = "3.1.3"
+tools.cosign = "3.1.4"
 usage = '''
 arg "<image>" help="ghcr.io/panevain/observation or ghcr.io/panevain/observation-regions, with :TAG or @sha256:DIGEST"
 arg "[ref]" help="The ref Release must have run on (default: refs/tags/vX.Y.Z for :X.Y.Z, any release tag for :latest)"
@@ -171,8 +171,8 @@ run = 'scripts/verify-image.sh "${usage_image}" ${usage_ref:+"${usage_ref}"}'
 [tasks.up]
 description = "Start the Docker Compose stack (app + region agent) from the released images, checked against their signatures, with the fnox secrets"
 # Task tools: installed and locked for this task only, so `mise install` and CI skip them.
-tools.fnox = "1.42.1"
-tools.cosign = "3.1.3"
+tools.fnox = "1.43.0"
+tools.cosign = "3.1.4"
 usage = 'flag "--build" help="Build both images from this checkout (tagged :local) instead of pulling OBS_VERSION"'
 run = '''
 if [ "${usage_build:-false}" = true ]; then
@@ -197,7 +197,7 @@ OBS_VERSION = "{{ get_env(name='OBS_VERSION', default='latest') }}"
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"
-tools.fnox = "1.42.1"
+tools.fnox = "1.43.0"
 # Under fnox too: compose.yaml refuses to load without OBS_REGIONS_TOKEN, even to stop.
 run = "fnox exec -- docker compose down"
 
