@@ -7,7 +7,8 @@
 # rust-toolchain.toml is the single source of truth for the Rust version, components and
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
 # [settings]; mise.lock records it, and the Pins workflow bumps both), and
-# scripts/check-toolchain-sync.sh checks nothing else repeats it. Without mise, install rustup and run cargo; it fetches the toolchain itself.
+# scripts/check-toolchain-sync.sh checks nothing else repeats it. Without mise, install rustup
+# and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start. Docker Compose settings default in
 # compose.yaml; its tokens are fnox secrets (fnox.toml; values in the gitignored
@@ -78,16 +79,11 @@ description = "Clippy on the wasm client"
 run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
 
 [tasks.test]
-description = "Unit tests with cargo-nextest, then doctests (core + server, then client if it has a lib target)"
-run = '''
-cargo nextest run --locked --workspace --exclude observation-client
-cargo test --locked --doc --workspace --exclude observation-client
-if [ -f crates/observation-client/src/lib.rs ]; then
-  cargo test --locked -p observation-client --lib
-else
-  echo "observation-client has no library target; skipping."
-fi
-'''
+description = "Unit and integration tests with cargo-nextest (the client's too, built natively), then doctests (the client has no library target)"
+run = [
+  "cargo nextest run --locked --workspace",
+  "cargo test --locked --doc --workspace --exclude observation-client",
+]
 
 [tasks.coverage]
 description = "Line coverage of core + server (needs cargo-llvm-cov, `mise -E ci install cargo-llvm-cov`, and the llvm-tools-preview component); writes lcov.info"
@@ -134,26 +130,9 @@ run = "scripts/wasm-size-report.sh"
 description = "Release-build the wasm client into dist/ (as CI does)"
 run = "trunk build --release --locked"
 
-[tasks."build:sizes"]
-description = "Sizes of dist/*.wasm (raw, gzip -9 and, if brotli is installed, brotli -q 11) as a Markdown table"
-# A shebang: mise appends extra arguments to the text of an inline script, which would break
-# the closing `done`; a script file gets them as ignored arguments instead.
-run = '''
-#!/usr/bin/env bash
-set -euo pipefail
-mib() { awk -v n="$1" 'BEGIN { printf "%.2f MiB", n / 1048576 }'; }
-echo "| file | raw | gzip -9 | brotli -q 11 |"
-echo "| --- | ---: | ---: | ---: |"
-for f in dist/*.wasm; do
-  br="n/a"
-  if command -v brotli >/dev/null 2>&1; then br="$(mib "$(brotli -q 11 -c "$f" | wc -c)")"; fi
-  printf '| `%s` | %s | %s | %s |\n' "$(basename "$f")" "$(mib "$(wc -c < "$f")")" \
-    "$(mib "$(gzip -9 -c "$f" | wc -c)")" "${br}"
-done
-'''
-
 [tasks."build:budget"]
-description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `mise run build`)"
+description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `mise run build`); arguments go to scripts/check-wasm-size.py (`--brotli` adds brotli -q 11 sizes, `--dist DIR`)"
+# No usage spec: mise appends the task's arguments to this one-line command.
 run = 'python3 scripts/check-wasm-size.py ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
 
 [tasks."test:browser"]
@@ -177,11 +156,6 @@ run = [
   "trunk build --locked{% if usage.release %} --release{% endif %}",
   "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}",
 ]
-
-# The old name for `serve --release`. An alias can't pass the flag, so this is a task.
-[tasks."serve:release"]
-hide = true
-run = [{ task = "serve", args = ["--release"] }]
 
 [tasks.verify]
 description = "Check that a published image was signed and attested by Release on its release tag; prints it pinned by digest (scripts/verify-image.sh)"

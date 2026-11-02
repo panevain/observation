@@ -20,6 +20,7 @@ node_modules
 Dockerfile
 tests/browser
 supply-chain
+scripts/prune-images.sh
 /lcov.info
 
 # Local settings and secrets (mise, docker compose)
@@ -29,6 +30,7 @@ mise.local.lock
 mise.*.local.toml
 mise.*.local.lock
 .mise.local.toml
+.mise.*.local.toml
 .miserc.local.toml
 fnox.local.toml
 # mise's dev environment, only for `mise run dev`

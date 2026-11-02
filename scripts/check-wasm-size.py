@@ -4,15 +4,18 @@
 Reads .config/wasm-size-budget.toml (raw and gzip -9 limits per module, keyed by the module's
 name without trunk's content hash: observation-client-<hash>_bg.wasm is `observation-client`)
 and checks every dist/*.wasm against it. A module with no budget fails too, so a new one gets
-a limit when it is added.
+a limit when it is added. --brotli adds each module's brotli -q 11 size to the table (it has no
+budget; about a minute for the client, and it needs the brotli CLI).
 
-  check-wasm-size.py [--dist DIR] [--summary FILE]
+  check-wasm-size.py [--dist DIR] [--summary FILE] [--brotli]
 """
 
 import argparse
 import gzip
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
 import tomllib
 
@@ -26,22 +29,30 @@ def mib(n):
     return f"{n / 1048576:.2f} MiB"
 
 
+def brotli_size(data):
+    return len(subprocess.run(["brotli", "-q", "11", "-c"], input=data, check=True, capture_output=True).stdout)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dist", default=str(ROOT / "dist"))
     ap.add_argument("--summary", help="append a Markdown report to FILE (e.g. $GITHUB_STEP_SUMMARY)")
+    ap.add_argument("--brotli", action="store_true", help="also report brotli -q 11 sizes (needs the brotli CLI)")
     a = ap.parse_args()
 
+    if a.brotli and shutil.which("brotli") is None:
+        raise SystemExit("--brotli needs the brotli CLI on PATH")
     budgets = tomllib.loads(BUDGET.read_text())
     modules = sorted(pathlib.Path(a.dist).glob("*.wasm"))
     if not modules:
         raise SystemExit(f"no .wasm files in {a.dist}; build first (mise run build)")
 
-    rows, failed = [], []
+    rows, failed, contents = [], [], []
     for path in modules:
         m = NAME.match(path.name)
         name = m.group("name") if m else path.stem
         data = path.read_bytes()
+        contents.append(data)
         sizes = {"raw": len(data), "gzip": len(gzip.compress(data, compresslevel=9))}
         budget = budgets.get(name)
         if budget is None:
@@ -52,11 +63,25 @@ def main():
         for k in over:
             failed.append(f"{name}: {k} {sizes[k]:,} B ({mib(sizes[k])}) is over its budget of {budget[k]:,} B ({mib(budget[k])})")
         rows.append((name, sizes, budget, "OVER" if over else "ok"))
+    if failed:
+        # The verdict first: the brotli sizes (about a minute) have no budget.
+        print("\n".join(failed), file=sys.stderr, flush=True)
+    if a.brotli:
+        for data, (_, sizes, _, _) in zip(contents, rows, strict=True):
+            sizes["brotli"] = brotli_size(data)
 
-    lines = ["### Wasm size budget", "", "| module | raw | budget | gzip -9 | budget | |", "| --- | ---: | ---: | ---: | ---: | --- |"]
+    head = "| module | raw | budget | gzip -9 | budget |"
+    rule = "| --- | ---: | ---: | ---: | ---: |"
+    if a.brotli:
+        head += " brotli -q 11 |"
+        rule += " ---: |"
+    lines = ["### Wasm size budget", "", head + " |", rule + " --- |"]
     for name, sizes, budget, verdict in rows:
         b = budget or {}
-        lines.append(f"| `{name}` | {mib(sizes['raw'])} | {mib(b['raw']) if b else '-'} | {mib(sizes['gzip'])} | {mib(b['gzip']) if b else '-'} | {verdict} |")
+        row = f"| `{name}` | {mib(sizes['raw'])} | {mib(b['raw']) if b else '-'} | {mib(sizes['gzip'])} | {mib(b['gzip']) if b else '-'} |"
+        if a.brotli:
+            row += f" {mib(sizes['brotli'])} |"
+        lines.append(f"{row} {verdict} |")
     if failed:
         lines += [""] + [f"- {f}" for f in failed]
         lines += ["", f"Shrink the module, or raise its limit in `{BUDGET.relative_to(ROOT)}` with the reason in the pull request."]

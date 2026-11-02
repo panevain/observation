@@ -4,7 +4,6 @@
 /cache
 *.swp
 .DS_Store
-/node_modules
 /.claude/worktrees/
 /mise.local.toml
 /mise.local.lock

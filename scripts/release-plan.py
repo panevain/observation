@@ -37,10 +37,11 @@ PATCH = {"Fixed", "Security"}
 # workspace is excluded from the root workspace and built only by the Fuzz workflow; .config holds
 # CI-only settings: nextest's profile, the crate cooldown and the wasm size budget; .typos.toml is
 # the spelling check's; tests/browser is the browser smoke test, whose npm lockfile Dependabot bumps;
-# supply-chain holds cargo-vet's audits and exemptions; .vscode is editor settings.)
+# supply-chain holds cargo-vet's audits and exemptions; .vscode is editor settings;
+# scripts/prune-images.sh is the Prune images workflow's.)
 NOT_SHIPPED = [":(exclude).github", ":(exclude)docs", ":(exclude)fuzz", ":(exclude).config",
                ":(exclude).typos.toml", ":(exclude)tests/browser", ":(exclude)supply-chain",
-               ":(exclude).vscode", ":(exclude,glob)*.md"]
+               ":(exclude).vscode", ":(exclude)scripts/prune-images.sh", ":(exclude,glob)*.md"]
 
 
 def git(repo, *args, check=True):

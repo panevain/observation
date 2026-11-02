@@ -22,20 +22,7 @@ for tool in osm3s_query update_database; do
 done
 
 docker run -d --name "${name}" -e OBS_REGIONS_TOKEN="${token}" -p 127.0.0.1::8090 "${image}"
-port="$(docker port "${name}" 8090/tcp | head -n1 | sed 's/.*://')"
-for i in $(seq 1 30); do
-  if curl -fsS --max-time 2 "http://127.0.0.1:${port}/healthz"; then
-    echo
-    echo "healthz OK after ${i} attempt(s)"
-    break
-  fi
-  if [ "$(docker inspect --format '{{.State.Running}}' "${name}")" != "true" ]; then
-    echo "container exited early" >&2
-    exit 1
-  fi
-  [ "${i}" -eq 30 ] && { echo "healthz did not become ready" >&2; exit 1; }
-  sleep 1
-done
+port="$("$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" 8090)"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/regions")"
 [ "${code}" = "401" ] || { echo "/regions without the token answered ${code}, want 401" >&2; exit 1; }

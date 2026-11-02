@@ -13,6 +13,7 @@
 *.woff binary
 *.woff2 binary
 *.wasm binary
+*.ttf binary
 fuzz/seeds/**/* binary
 
 # Lockfiles are generated: collapsed in GitHub diffs, but still diffable locally so that
@@ -20,7 +21,6 @@ fuzz/seeds/**/* binary
 Cargo.lock linguist-generated=true
 fuzz/Cargo.lock linguist-generated=true
 mise.lock linguist-generated=true
-
-# Build artifacts excluded from language stats and diffs.
-/dist/** linguist-generated=true
-/target/** linguist-generated=true
+mise.ci.lock linguist-generated=true
+supply-chain/imports.lock linguist-generated=true
+tests/browser/package-lock.json linguist-generated=true
