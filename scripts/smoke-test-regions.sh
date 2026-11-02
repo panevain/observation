@@ -22,8 +22,7 @@ for tool in osm3s_query update_database; do
 done
 
 docker run -d --name "${name}" -e OBS_REGIONS_TOKEN="${token}" -p 127.0.0.1::8090 "${image}"
-port="$(docker port "${name}" 8090/tcp | head -n1 | sed 's/.*://')"
-"$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" "${port}"
+port="$("$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" 8090)"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/regions")"
 [ "${code}" = "401" ] || { echo "/regions without the token answered ${code}, want 401" >&2; exit 1; }

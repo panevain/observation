@@ -15,9 +15,7 @@ case "${user}" in 65532:65532|65532|nonroot|nonroot:nonroot) ;; *) echo "image m
 
 # A random free host port on loopback, so concurrent runs and a local server do not clash.
 docker run -d --name "${name}" -p 127.0.0.1::8080 "${image}"
-port="$(docker port "${name}" 8080/tcp | head -n1 | sed 's/.*://')"
-
-"$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" "${port}"
+"$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" 8080 >/dev/null
 
 # The static bundle must have been copied into the image.
 docker cp "${name}:/app/dist/index.html" "${tmp}/index.html"

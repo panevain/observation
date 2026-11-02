@@ -58,7 +58,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - The Rust version is set only in `rust-toolchain.toml` (and recorded in `mise.lock`): `rust-version` is gone from the manifests, and the Docker builder's `rust` tag no longer has to match, so Dependabot moves that image tag on its own. Dependabot also bumps the fuzz nightly; the Pins workflow still bumps the root toolchain.
 - Scene files are version 2: camera positions are over the terrain, with `y = 0` at the ground at the area's centre. Version 1 files and autosaves still load, and their cameras are raised onto the terrain once the area arrives, keeping their height above the ground. The coverage worker's message version is 2.
 - mise 2026.7.15 or newer is required for every task, including `mise run up` and `down`: task scripts now run under bash with errexit, nounset and pipefail (`[task_config] shell`), which an older mise ignores. A mise older than CI's (2026.10.18) still only warns.
-- `mise run serve --release` replaces `mise run serve:release`; `mise run rulesets:apply` asks before changing the live rulesets.
+- `mise run serve --release` replaces `mise run serve:release`, which is removed; `mise run rulesets:apply` asks before changing the live rulesets.
 - `mise run build:budget --brotli` adds the brotli sizes to the size-budget table and replaces `mise run build:sizes`.
 
 - The map picker checks areas against the size limits the server publishes in `/api/config` (which now also has `min_bbox_side_m`) instead of the client's own 20-500 m, and map tiles are fetched from its `tile_url`. The client keeps its built-in values until the server answers, and for any value that is missing or not sensible.

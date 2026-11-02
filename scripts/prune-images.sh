@@ -16,9 +16,13 @@
 #   Does nothing while a Release run is in progress. --dry-run lists what would be deleted.
 set -euo pipefail
 
-package="${1:?usage: $0 PACKAGE [--dry-run]}"
-dry_run=false
-[[ "${2:-}" != --dry-run ]] || dry_run=true
+usage="usage: $0 PACKAGE [--dry-run]"
+package="${1:?${usage}}"
+case "$#:${2:-}" in
+  1:) dry_run=false ;;
+  2:--dry-run) dry_run=true ;;
+  *) echo "${usage}" >&2; exit 2 ;;
+esac
 : "${GH_TOKEN:?GH_TOKEN is required}" "${REPO:?REPO (OWNER/NAME) is required}"
 owner="${REPO%%/*}"
 

@@ -8,8 +8,8 @@
 # build uses (see web/index.html), changing only what is needed to keep symbol
 # names: strip = false and no debug info. Sizes are unaffected because code
 # generation is identical. The module is then post-processed like trunk does
-# (wasm-bindgen CLI matching Cargo.lock, then wasm-opt -Os with the feature
-# flags web/index.html gives trunk, plus --debuginfo to keep the name section)
+# (wasm-bindgen CLI matching Cargo.lock, then wasm-opt at the level and with the
+# feature flags web/index.html gives trunk, plus --debuginfo to keep the name section)
 # and attributed to crates by scripts/wasm-size-treemap.py.
 #
 # A fat-LTO build takes 15-20 minutes on four cores. --no-build reuses the
@@ -32,12 +32,6 @@ profile=wasm-release
 named="$target_dir/wasm32-unknown-unknown/$profile/observation-client.wasm"
 out_svg="docs/images/wasm-bundle-treemap.svg"
 
-if (( build )); then
-  CARGO_PROFILE_WASM_RELEASE_STRIP=false CARGO_PROFILE_WASM_RELEASE_DEBUG=false \
-    cargo build --locked -p observation-client --bin observation-client --target wasm32-unknown-unknown --profile "$profile"
-fi
-[[ -f "$named" ]] || { echo "missing $named (run without --no-build)" >&2; exit 1; }
-
 # Locate tools the way trunk does: PATH first, then trunk's download cache.
 cache_dirs=("${XDG_CACHE_HOME:-$HOME/.cache}/trunk" "$HOME/Library/Caches/dev.trunkrs.trunk")
 find_tool() { # name, glob-suffix
@@ -53,6 +47,24 @@ bindgen_ver="$(awk '/^name = "wasm-bindgen"$/ {getline; gsub(/[^0-9.]/, "", $0);
 bindgen="${WASM_BINDGEN:-$(find_tool wasm-bindgen "wasm-bindgen-$bindgen_ver/wasm-bindgen" || true)}"
 wasm_opt="${WASM_OPT:-$(find_tool wasm-opt "wasm-opt-version_*/bin/wasm-opt" || true)}"
 
+# What trunk passes to wasm-opt, from the client's link in web/index.html: the level
+# (data-wasm-opt) and the feature flags (data-wasm-opt-params). Read before the build, so a
+# change there fails in seconds rather than after it.
+link="$(tr '\n' ' ' < web/index.html | grep -o '<link[^>]*data-bin="observation-client"[^>]*>' || true)"
+attr() { sed -nE "s/.*[[:space:]]$1=\"([^\"]*)\".*/\\1/p" <<<"$link"; }
+opt_level="$(attr data-wasm-opt)"
+read -ra opt_params <<<"$(attr data-wasm-opt-params)"
+if [[ -n "$wasm_opt" && ( -z "$opt_level" || ${#opt_params[@]} -eq 0 ) ]]; then
+  echo "no data-wasm-opt and data-wasm-opt-params on observation-client's link in web/index.html" >&2
+  exit 1
+fi
+
+if (( build )); then
+  CARGO_PROFILE_WASM_RELEASE_STRIP=false CARGO_PROFILE_WASM_RELEASE_DEBUG=false \
+    cargo build --locked -p observation-client --bin observation-client --target wasm32-unknown-unknown --profile "$profile"
+fi
+[[ -f "$named" ]] || { echo "missing $named (run without --no-build)" >&2; exit 1; }
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 module="$named"
@@ -66,14 +78,10 @@ else
   echo "warning: wasm-bindgen $bindgen_ver not found; measuring the raw cargo output" >&2
 fi
 
-# The feature flags trunk passes to wasm-opt: data-wasm-opt-params on the client's link.
-read -ra opt_params <<<"$(sed -nE '/data-bin="observation-client"/ s/.*data-wasm-opt-params="([^"]*)".*/\1/p' web/index.html)"
-(( ${#opt_params[@]} )) || { echo "no data-wasm-opt-params for observation-client in web/index.html" >&2; exit 1; }
-
 if [[ -n "$wasm_opt" && "$stage" == "after wasm-bindgen" ]]; then
-  "$wasm_opt" -Os --debuginfo "${opt_params[@]}" "$module" -o "$work/opt.wasm"
+  "$wasm_opt" "-O${opt_level}" --debuginfo "${opt_params[@]}" "$module" -o "$work/opt.wasm"
   module="$work/opt.wasm"
-  stage="after wasm-bindgen and wasm-opt -Os"
+  stage="after wasm-bindgen and wasm-opt -O${opt_level}"
 else
   echo "warning: wasm-opt not found; sizes are before optimisation" >&2
 fi

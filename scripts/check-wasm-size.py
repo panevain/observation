@@ -29,9 +29,8 @@ def mib(n):
     return f"{n / 1048576:.2f} MiB"
 
 
-def brotli_size(path):
-    out = subprocess.run(["brotli", "-q", "11", "-c", str(path)], check=True, capture_output=True).stdout
-    return len(out)
+def brotli_size(data):
+    return len(subprocess.run(["brotli", "-q", "11", "-c"], input=data, check=True, capture_output=True).stdout)
 
 
 def main():
@@ -48,14 +47,13 @@ def main():
     if not modules:
         raise SystemExit(f"no .wasm files in {a.dist}; build first (mise run build)")
 
-    rows, failed = [], []
+    rows, failed, contents = [], [], []
     for path in modules:
         m = NAME.match(path.name)
         name = m.group("name") if m else path.stem
         data = path.read_bytes()
+        contents.append(data)
         sizes = {"raw": len(data), "gzip": len(gzip.compress(data, compresslevel=9))}
-        if a.brotli:
-            sizes["brotli"] = brotli_size(path)
         budget = budgets.get(name)
         if budget is None:
             failed.append(f"{path.name}: no budget for `{name}` in {BUDGET.relative_to(ROOT)}")
@@ -65,6 +63,12 @@ def main():
         for k in over:
             failed.append(f"{name}: {k} {sizes[k]:,} B ({mib(sizes[k])}) is over its budget of {budget[k]:,} B ({mib(budget[k])})")
         rows.append((name, sizes, budget, "OVER" if over else "ok"))
+    if failed:
+        # The verdict first: the brotli sizes (about a minute) have no budget.
+        print("\n".join(failed), file=sys.stderr, flush=True)
+    if a.brotli:
+        for data, (_, sizes, _, _) in zip(contents, rows, strict=True):
+            sizes["brotli"] = brotli_size(data)
 
     head = "| module | raw | budget | gzip -9 | budget |"
     rule = "| --- | ---: | ---: | ---: | ---: |"

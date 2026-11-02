@@ -131,9 +131,9 @@ description = "Release-build the wasm client into dist/ (as CI does)"
 run = "trunk build --release --locked"
 
 [tasks."build:budget"]
-description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `mise run build`); `--brotli` adds brotli -q 11 sizes"
-usage = 'flag "--brotli" help="Also report brotli -q 11 sizes (about a minute; needs the brotli CLI)"'
-run = 'python3 scripts/check-wasm-size.py{% if usage.brotli %} --brotli{% endif %} ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+description = "Check dist/*.wasm against .config/wasm-size-budget.toml (after `mise run build`); arguments go to scripts/check-wasm-size.py (`--brotli` adds brotli -q 11 sizes, `--dist DIR`)"
+# No usage spec: mise appends the task's arguments to this one-line command.
+run = 'python3 scripts/check-wasm-size.py ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
 
 [tasks."test:browser"]
 description = "Headless-browser smoke test of the client against a running server (OBS_URL, default http://127.0.0.1:8080; start one with `mise run serve --release`). Needs Node.js and Chrome (or CHROME_PATH)"

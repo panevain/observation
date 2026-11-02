@@ -13,8 +13,7 @@ trap 'docker logs "${name}" > "${OUT_DIR:-tests/browser/out}/server.log" 2>&1 ||
 mkdir -p "${OUT_DIR:-tests/browser/out}"
 
 docker run -d --name "${name}" -p 127.0.0.1::8080 "${image}" >/dev/null
-port="$(docker port "${name}" 8080/tcp | head -n1 | sed 's/.*://')"
-scripts/wait-healthz.sh "${name}" "${port}"
+port="$("$(dirname "${BASH_SOURCE[0]}")/wait-healthz.sh" "${name}" 8080)"
 
 (cd tests/browser && npm ci --ignore-scripts --no-audit --no-fund)
 OBS_URL="http://127.0.0.1:${port}" node tests/browser/smoke.cjs

@@ -9,6 +9,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src_dir="${root}/crates/observation-client/src"
 theme_file="${src_dir}/theme.rs"
+# find's failure inside the process substitution below would go unseen, and the check would pass
+# having checked nothing.
+[ -f "${theme_file}" ] || { echo "check-design-tokens: ${theme_file#"${root}"/} not found" >&2; exit 1; }
 
 # One ERE alternation; grep -E is POSIX (no PCRE needed).
 patterns=(
