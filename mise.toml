@@ -79,9 +79,9 @@ description = "Clippy on the wasm client"
 run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
 
 [tasks.test]
-description = "Unit tests with cargo-nextest, then doctests (the native workspace; the wasm client has no library target)"
+description = "Unit and integration tests with cargo-nextest (the client's too, built natively), then doctests (the client has no library target)"
 run = [
-  "cargo nextest run --locked --workspace --exclude observation-client",
+  "cargo nextest run --locked --workspace",
   "cargo test --locked --doc --workspace --exclude observation-client",
 ]
 

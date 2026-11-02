@@ -518,7 +518,7 @@ The README badges are images fetched by whoever views the README on GitHub (from
 - **Build checks**: the release `trunk build` (with the wasm size budget) and the Docker build with a smoke test.
 - **Browser smoke test** (`tests/browser/smoke.cjs`, CI's `browser (wasm smoke test)`): the release `dist/` in the app image, loaded in headless Chrome with WebGL2 on SwiftShader. It fails unless the client starts (removes its loading card), loads the demo street and starts the coverage worker without logging an error or panic; the screenshot and console log are kept as an artifact. Map tiles are answered by the test, so it sends nothing to OpenStreetMap. `mise run test:browser` runs it against a local server.
 
-The client has a few unit tests (`net`, `regions` and `ui::regions`), run by hand with `cargo test -p observation-client --bin observation-client`. The CI step that would run them only runs if the client has a library target, which it currently does not, so in CI client behaviour is covered by compilation, clippy and the core tests of the logic it uses.
+The client has a few unit tests (`coverage`, `net`, `regions`, `state` and `ui::regions`) in its binary. `mise run test` (CI's `test` job) builds the client natively to run them alongside the rest of the workspace; beyond them, client behaviour is covered by compilation, clippy, the browser smoke test and the core tests of the logic it uses.
 
 ## Known limitations and future work
 
