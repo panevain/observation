@@ -18,7 +18,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use observation_core::camera::{CameraModel, CameraPlacement, DoriLevel};
 use observation_core::coverage::{
-    CoverageCounts, CoverageParams, CoverageStats, RegionMask, Sight,
+    CoverageParams, CoverageStats, RegionMask, Sight, StaticLayers, Tally,
 };
 use observation_core::coverage_job::JobResult;
 use observation_core::frustum::ViewCone;
@@ -29,8 +29,8 @@ pub struct CoverageState {
     /// Each camera's cache key and sight lines.
     cams: HashMap<u32, (u64, Sight)>,
     /// One per [`CoverageParams::ladder`] level, under the current lighting.
-    tallies: Vec<Tally>,
-    /// Index into `tallies` of the selected detail level.
+    rungs: Vec<Rung>,
+    /// Index into `rungs` of the selected detail level.
     selected: usize,
     /// The figures at the selected detail level.
     pub stats: CoverageStats,
@@ -49,46 +49,56 @@ pub struct CoverageState {
 }
 
 /// The cells seen at one detail level, under the current lighting.
-struct Tally {
+struct Rung {
     level: DoriLevel,
-    counts: CoverageCounts,
+    tally: Tally,
     /// The range each camera's cells were counted out to, metres.
     counted: HashMap<u32, f32>,
     stats: CoverageStats,
-    /// The counts changed since `stats` were computed.
-    stale: bool,
+    /// The counts changed since `stats` were taken.
+    changed: bool,
 }
 
-impl Tally {
-    fn new(level: DoriLevel, counts: CoverageCounts) -> Self {
+/// What the counts are limited to: the loaded area's layers, and the region
+/// when the figures are limited to it.
+#[derive(Clone, Copy)]
+struct Scope<'a> {
+    layers: &'a StaticLayers,
+    region: Option<&'a RegionMask>,
+}
+
+impl Rung {
+    fn new(level: DoriLevel, scope: Scope) -> Self {
         Self {
             level,
-            counts,
+            tally: Tally::new(scope.layers, scope.region),
             counted: HashMap::default(),
             stats: CoverageStats::default(),
-            stale: true,
+            changed: true,
         }
     }
 
     /// Stops counting a camera's cells (`sight` must be the one they were
     /// counted from).
-    fn uncount(&mut self, id: u32, sight: &Sight) {
+    fn uncount(&mut self, scope: Scope, id: u32, sight: &Sight) {
         if let Some(r) = self.counted.remove(&id) {
-            self.counts.remove_within(sight, r);
-            self.stale = true;
+            self.tally
+                .remove_within(scope.layers, scope.region, sight, r);
+            self.changed = true;
         }
     }
 
     /// Counts a camera's cells out to `range`, replacing what it counted
     /// before from the same `sight`.
-    fn count(&mut self, id: u32, sight: &Sight, range: f32) {
+    fn count(&mut self, scope: Scope, id: u32, sight: &Sight, range: f32) {
         if self.counted.get(&id) == Some(&range) {
             return;
         }
-        self.uncount(id, sight);
-        self.counts.add_within(sight, range);
+        self.uncount(scope, id, sight);
+        self.tally
+            .add_within(scope.layers, scope.region, sight, range);
         self.counted.insert(id, range);
-        self.stale = true;
+        self.changed = true;
     }
 }
 
@@ -102,23 +112,23 @@ impl CoverageState {
         impl Iterator<Item = u32> + '_,
     )> {
         let (_, sight) = self.cams.get(&id)?;
-        let range = *self.tallies.get(self.selected)?.counted.get(&id)?;
+        let range = *self.rungs.get(self.selected)?.counted.get(&id)?;
         Some((sight.ground_within(range), sight.facade_within(range)))
     }
 
     /// The figures at each [`CoverageParams::ladder`] level under the current
     /// lighting, in ladder order.
     pub fn ladder(&self) -> impl Iterator<Item = (DoriLevel, &CoverageStats)> {
-        self.tallies.iter().map(|t| (t.level, &t.stats))
+        self.rungs.iter().map(|r| (r.level, &r.stats))
     }
 
     /// Stops counting a camera everywhere and forgets its sight lines.
-    fn forget(&mut self, id: u32) -> Option<Sight> {
-        let (_, sight) = self.cams.remove(&id)?;
-        for t in &mut self.tallies {
-            t.uncount(id, &sight);
+    fn forget(&mut self, scope: Scope, id: u32) {
+        if let Some((_, sight)) = self.cams.remove(&id) {
+            for r in &mut self.rungs {
+                r.uncount(scope, id, &sight);
+            }
         }
-        Some(sight)
     }
 }
 
@@ -208,25 +218,48 @@ fn update_coverage(
     }
     let layers = &area.layers;
     let results = backend.drain(layers);
-    if results.is_empty()
-        && !scene.is_changed()
-        && !models.is_changed()
-        && !state.tallies.is_empty()
+    if results.is_empty() && !scene.is_changed() && !models.is_changed() && !state.rungs.is_empty()
     {
         return;
     }
     let state = &mut *state;
     let params = scene.params;
 
-    // One tally per ladder level, keeping those already counted.
+    // The region first: every count is limited to it.
+    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
+    let mut region_changed = false;
+    if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
+        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
+        region_changed = true;
+    }
+    let on = usable.is_some_and(|r| r.enabled);
+    if on != state.region_on {
+        state.region_on = on;
+        region_changed = true;
+    }
+    // Out of the state while it is borrowed below; put back at the end.
+    let region = state.region.take();
+    let scope = Scope {
+        layers,
+        region: region.as_ref().filter(|_| on).map(|(_, m)| m),
+    };
+
+    // One rung per ladder level, keeping those already counted.
     let ladder = params.ladder();
-    let mut old = std::mem::take(&mut state.tallies);
-    state.tallies = ladder
+    let mut old = std::mem::take(&mut state.rungs);
+    state.rungs = ladder
         .iter()
         .map(
-            |&(level, _)| match old.iter().position(|t| t.level == level) {
-                Some(i) => old.swap_remove(i),
-                None => Tally::new(level, CoverageCounts::new(layers)),
+            |&(level, _)| match old.iter().position(|r| r.level == level) {
+                Some(i) => {
+                    let mut r = old.swap_remove(i);
+                    if region_changed {
+                        r.tally.limit_to(layers, scope.region);
+                        r.changed = true;
+                    }
+                    r
+                }
+                None => Rung::new(level, scope),
             },
         )
         .collect();
@@ -238,8 +271,9 @@ fn update_coverage(
     state.selected = selected;
 
     state.ranges.clear();
-    // Enabled cameras with a known model: their keys, the range to compute
-    // their sight lines out to, and their range at each ladder level.
+    // Enabled cameras with a known model: their keys, how far their sight
+    // lines must reach (and how far to compute them when they fall short),
+    // and their range at each ladder level.
     let mut current = Vec::new();
     let mut keys = HashMap::new();
     for c in scene.cameras.iter().filter(|c| c.enabled) {
@@ -253,7 +287,8 @@ fn update_coverage(
         state.ranges.insert(c.id, ranges[selected]);
         let k = key(c, m, params.subject_height_m);
         keys.insert(c.id, k);
-        current.push((c, m, k, params.sight_range_m(m), ranges));
+        let reach = (params.sight_range_m(m), params.sight_compute_range_m(m));
+        current.push((c, m, k, reach, ranges));
     }
     let gone: Vec<u32> = state
         .cams
@@ -262,24 +297,24 @@ fn update_coverage(
         .copied()
         .collect();
     for id in gone {
-        state.forget(id);
+        state.forget(scope, id);
     }
     for r in results {
-        apply(state, keys.get(&r.camera_id).copied(), r);
+        apply(state, scope, keys.get(&r.camera_id).copied(), r);
     }
-    for (c, m, k, reach, _) in &current {
+    for (c, m, k, (needed, compute_to), _) in &current {
         // One job per camera at a time: a camera dragged faster than its jobs
         // finish gets its latest pose computed when the previous job is back.
         let fresh = state
             .cams
             .get(&c.id)
-            .is_some_and(|(old, sight)| old == k && sight.covers(*reach));
+            .is_some_and(|(old, sight)| old == k && sight.covers(*needed));
         if fresh || backend.busy(c.id) {
             continue;
         }
-        let cone = ViewCone::new(c, m, *reach);
+        let cone = ViewCone::new(c, m, *compute_to);
         if let Some(r) = backend.submit(c.id, *k, cone, params.subject_height_m, layers) {
-            apply(state, Some(*k), r);
+            apply(state, scope, Some(*k), r);
         }
     }
     // Count each camera's cells at every level. While a camera's sight lines
@@ -288,32 +323,20 @@ fn update_coverage(
         let Some((_, sight)) = state.cams.get(&c.id) else {
             continue;
         };
-        for (t, &r) in state.tallies.iter_mut().zip(ranges) {
-            t.count(c.id, sight, r);
+        for (rung, &r) in state.rungs.iter_mut().zip(ranges) {
+            rung.count(scope, c.id, sight, r);
         }
     }
-
-    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
-    let mut region_changed = false;
-    if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
-        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
-        region_changed = true;
-    }
-    let on = usable.is_some_and(|r| r.enabled);
-    if on != state.region_on {
-        state.region_on = on;
-        region_changed = true;
-    }
-    let mask = state.region.as_ref().filter(|_| on).map(|(_, m)| m);
-    for (i, t) in state.tallies.iter_mut().enumerate() {
-        if t.stale || region_changed || state.painted_mode.is_none() {
-            t.stats = CoverageStats::compute_in(layers, &t.counts, mask);
+    for (i, r) in state.rungs.iter_mut().enumerate() {
+        if r.changed {
+            r.stats = r.tally.stats(layers);
+            r.changed = false;
             repaint |= i == selected;
-            t.stale = false;
         }
     }
-    if repaint || region_changed || state.painted_mode.is_none() {
-        state.stats = state.tallies[selected].stats;
+    state.region = region;
+    if repaint || state.painted_mode.is_none() {
+        state.stats = state.rungs[selected].stats;
         state.paint = true;
     }
 }
@@ -321,9 +344,9 @@ fn update_coverage(
 /// Keeps a camera's computed sight lines, given its current key (`None` once
 /// it is deleted, disabled or without a model). A result for an earlier pose
 /// still replaces older sight lines, so the overlay follows a dragged camera
-/// one job behind, but never up-to-date ones. The tallies count the new sight
+/// one job behind, but never up-to-date ones. The rungs count the new sight
 /// lines afterwards.
-fn apply(state: &mut CoverageState, current: Option<u64>, r: JobResult) {
+fn apply(state: &mut CoverageState, scope: Scope, current: Option<u64>, r: JobResult) {
     let Some(current) = current else {
         return;
     };
@@ -335,7 +358,7 @@ fn apply(state: &mut CoverageState, current: Option<u64>, r: JobResult) {
     {
         return;
     }
-    state.forget(r.camera_id);
+    state.forget(scope, r.camera_id);
     state.cams.insert(r.camera_id, (r.key, r.sight));
 }
 
@@ -385,7 +408,7 @@ fn paint_overlay(
     if !state.paint && !recolor && state.painted_mode == Some(mode) && !overlay.is_changed() {
         return;
     }
-    let Some(counts) = state.tallies.get(state.selected).map(|t| &t.counts) else {
+    let Some(counts) = state.rungs.get(state.selected).map(|r| &r.tally.counts) else {
         return;
     };
     let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match ui.overlay {
@@ -618,7 +641,7 @@ mod tests {
     use crate::state::{FACADE_CELL_M, GROUND_CELL_M, Models};
     use observation_core::bundle::{OsmRoad, build_bundle};
     use observation_core::camera::{CameraKind, Catalog, Lighting};
-    use observation_core::coverage::StaticLayers;
+    use observation_core::coverage::{CoverageCounts, Region};
     use observation_core::geo::{BBox, LatLon};
     use observation_core::scene::AreaRef;
     use observation_core::terrain::Terrain;
@@ -699,7 +722,12 @@ mod tests {
                 scene.params.subject_height_m,
             ));
         }
-        CoverageStats::compute(layers, &counts)
+        let mask = scene
+            .region
+            .as_ref()
+            .filter(|r| r.is_active())
+            .map(|r| RegionMask::new(layers, r));
+        CoverageStats::compute_in(layers, &counts, mask.as_ref())
     }
 
     fn set(app: &mut App, f: impl FnOnce(&mut CoverageParams)) {
@@ -757,11 +785,38 @@ mod tests {
         set(&mut app, |p| p.custom_ppm = 10.0);
         assert_eq!(submitted(&app), 4);
         assert_eq!(stats(&app), direct(&app));
+        // That computed down to 5 px/m, so lowering it on to 7 does not.
+        set(&mut app, |p| p.custom_ppm = 7.0);
+        assert_eq!(submitted(&app), 4);
+        assert_eq!(stats(&app), direct(&app));
 
         // The subject height moves the sample points: every camera again.
         set(&mut app, |p| p.subject_height_m = 1.6);
         assert_eq!(submitted(&app), 6);
         assert_eq!(stats(&app), direct(&app));
+
+        // Limiting the figures to a region, or lifting the limit, recounts
+        // every level without recomputing.
+        let whole = stats(&app);
+        app.world_mut().resource_mut::<Scene>().region = Some(Region {
+            points: vec![[-80.0, -50.0], [0.0, -50.0], [0.0, 50.0], [-80.0, 50.0]],
+            enabled: true,
+        });
+        app.update();
+        let west = stats(&app);
+        assert_eq!(west, direct(&app));
+        assert!(west.street_m2 < whole.street_m2 && west.street_seen_m2 > 0.0);
+        set(&mut app, |p| p.dori = DoriLevel::Identify);
+        assert_eq!(stats(&app), direct(&app));
+        app.world_mut()
+            .resource_mut::<Scene>()
+            .region
+            .as_mut()
+            .unwrap()
+            .enabled = false;
+        set(&mut app, |p| p.dori = DoriLevel::Custom);
+        assert_eq!(stats(&app), whole);
+        assert_eq!(submitted(&app), 6);
     }
 
     fn lines(inner: Rect, outer: Rect, spacing: f32) -> Vec<(Vec2, Vec2)> {

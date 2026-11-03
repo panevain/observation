@@ -185,6 +185,10 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
 /// Detect down to Identify (and Custom when selected), with the selected level
 /// highlighted. Clicking a level selects it.
 fn ladder(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    // Nothing counted yet (no area loaded).
+    if d.coverage.ladder().next().is_none() {
+        return;
+    }
     let p = d.scene.params;
     let light = match p.lighting {
         Lighting::Day => "by day",
