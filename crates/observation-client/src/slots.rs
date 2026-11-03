@@ -155,11 +155,10 @@ impl SlotIndex {
 
     /// `Scene N` for the lowest N no scene is called yet.
     fn next_default_name(&self) -> String {
-        (self.slots.len() + 1..)
-            .chain(1..)
+        (1..)
             .map(default_name)
             .find(|n| self.slots.iter().all(|s| &s.name != n))
-            .unwrap_or_else(|| default_name(self.slots.len() + 1))
+            .unwrap_or_default()
     }
 
     /// An id not in the list and whose key holds nothing, so a scene whose
