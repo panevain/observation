@@ -10,8 +10,9 @@
 # Pins (05:30) and the 06:00 auto-merge sweep.
 #
 # Patch and minor updates come in separate groups: Dependabot auto-merge
-# (dependabot-automerge.yml) merges patch updates and base image digest refreshes once their
-# checks pass, so a patch group never waits on a minor update that needs a person.
+# (dependabot-automerge.yml) merges patch updates, base image digest refreshes and the fuzz
+# nightly once their checks pass, so a patch group never waits on a minor update that needs a
+# person.
 version: 2
 updates:
   # Both Cargo workspaces: the root one and the fuzz targets (fuzz/, its own lockfile; see
@@ -89,7 +90,8 @@ updates:
       npm:
         patterns: ["*"]
 
-  # The fuzz targets' dated nightly (fuzz/rust-toolchain.toml, set nowhere else). The root
+  # The fuzz targets' dated nightly (fuzz/rust-toolchain.toml, set nowhere else). It builds
+  # only the fuzz runs, nothing that ships, so auto-merge takes it once the checks pass. The root
   # toolchain is mise's too (mise.lock), so the Pins workflow bumps it and relocks.
   - package-ecosystem: rust-toolchain
     directory: /fuzz
