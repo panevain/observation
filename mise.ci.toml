@@ -33,8 +33,8 @@ cargo-vet = "github:mozilla/cargo-vet"
 # Security checks (security.yml, release.yml, release-watch.yml, hotfix.yml). Trivy comes
 # from its release, not aquasecurity/trivy-action, whose tags were compromised in March 2026
 # (CVE-2026-33634).
-trivy = "0.76.0"
-cosign = "3.1.3"
+trivy = "0.76.1"
+cosign = "3.1.4"
 cargo-audit = { version = "0.22.2", version_prefix = "cargo-audit/v" }
 zizmor = "1.31.1"
 # Dependency audits (security.yml's cargo-vet job; supply-chain/).
