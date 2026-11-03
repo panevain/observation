@@ -125,6 +125,13 @@ impl Net {
 
 /// One HTTP request.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(
+        dead_code,
+        reason = "only the browser build's fetch reads more than the URL"
+    )
+)]
 struct HttpRequest {
     url: String,
     method: &'static str,
