@@ -615,11 +615,12 @@ fn hatch(inner: Rect, outer: Rect, spacing: f32, mut line: impl FnMut(Vec2, Vec2
 mod tests {
     use super::*;
 
-    use crate::state::{AreaRef, FACADE_CELL_M, GROUND_CELL_M, Models};
+    use crate::state::{FACADE_CELL_M, GROUND_CELL_M, Models};
     use observation_core::bundle::{OsmRoad, build_bundle};
     use observation_core::camera::{CameraKind, Catalog, Lighting};
     use observation_core::coverage::StaticLayers;
     use observation_core::geo::{BBox, LatLon};
+    use observation_core::scene::AreaRef;
     use observation_core::terrain::Terrain;
 
     /// An app running [`update_coverage`] on a straight street with two
@@ -661,10 +662,8 @@ mod tests {
             enabled: true,
             group: None,
         };
-        let scene = Scene {
-            cameras: vec![camera(1, -60.0, 90.0), camera(2, 60.0, 270.0)],
-            ..Scene::default()
-        };
+        let mut scene = Scene::default();
+        scene.cameras = vec![camera(1, -60.0, 90.0), camera(2, 60.0, 270.0)];
         let mut app = App::new();
         app.insert_resource(scene)
             .insert_resource(models)
