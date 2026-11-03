@@ -137,15 +137,16 @@ impl Plugin for InputPlugin {
                 )
                     .chain(),
             )
-            // Undo and import replace the custom models (and the inspector
-            // deletes them, after the frame's input): a click must never place
-            // a camera with a model that is gone.
+            // Undo, import and switching scenes replace the custom models
+            // (and the inspector deletes them, after the frame's input): a
+            // click must never place a camera with a model that is gone.
             .add_systems(
                 Update,
                 crate::state::forget_missing_place_model
                     .run_if(resource_changed::<Models>)
                     .after(crate::history::record)
                     .after(crate::persist::receive_imports)
+                    .after(crate::persist::handle_actions)
                     .before(pointer),
             );
     }

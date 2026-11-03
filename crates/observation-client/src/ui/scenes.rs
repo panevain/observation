@@ -5,7 +5,7 @@
 use super::widgets::{bar, danger, hint, primary, secondary, section};
 use crate::icons;
 use crate::persist::PersistAction;
-use crate::slots::{MAX_NAME_CHARS, STORAGE_BUDGET, Slots};
+use crate::slots::{MAX_NAME_CHARS, STORAGE_BUDGET, SlotError, Slots};
 use crate::theme::{Tokens, strong_family};
 use bevy::prelude::MessageWriter;
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
@@ -60,10 +60,22 @@ pub fn window(
                 t,
                 "Each scene is saved in this browser as you work. Export one to keep a copy elsewhere or to open it in another browser.",
             );
-            if busy {
+            if let Some(v) = slots.newer {
+                ui.add_space(t.space.sm);
+                ui.label(
+                    RichText::new(format!(
+                        "{} {}",
+                        icons::WARNING,
+                        SlotError::Newer(v).reason()
+                    ))
+                    .color(t.warning),
+                );
+            } else if busy {
                 ui.add_space(t.space.sm);
                 hint(ui, t, "Scenes can be switched once the area has loaded.");
             }
+            // A list in a newer format is left alone.
+            let busy = busy || slots.newer.is_some();
             section(ui, t, "Saved scenes");
             egui::ScrollArea::vertical()
                 .id_salt("scenes-list")
@@ -126,7 +138,8 @@ fn list(
     persist: &mut MessageWriter<PersistAction>,
 ) {
     let only_one = slots.index.slots.len() <= 1;
-    for slot in slots.index.slots.clone() {
+    for i in 0..slots.index.slots.len() {
+        let slot = slots.index.slots[i].clone();
         let open = slot.id == slots.index.active;
         ui.horizontal(|ui| {
             if let Some((id, text)) = &mut slots.renaming
@@ -202,7 +215,7 @@ fn list(
                     slots.confirm_delete = Some(slot.id);
                 }
                 if ui
-                    .add(secondary(t, icons::PENCIL_SIMPLE))
+                    .add_enabled(slots.newer.is_none(), secondary(t, icons::PENCIL_SIMPLE))
                     .on_hover_text("Rename")
                     .clicked()
                 {

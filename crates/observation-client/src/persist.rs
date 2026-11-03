@@ -2,9 +2,9 @@
 //! and JSON scene import/export.
 
 use crate::history::History;
-use crate::slots::{self, SlotIndex, Slots, Store, slot_key, stored_len};
+use crate::slots::{self, SlotError, SlotIndex, Slots, Store, slot_key, stored_len};
 use crate::state::{
-    AddressJump, LoadArea, Models, SaveFailure, SaveState, Scene, ToastAction, UiState,
+    AddressJump, LoadArea, Loading, Models, SaveFailure, SaveState, Scene, ToastAction, UiState,
 };
 use crate::theme::UiFont;
 use bevy::ecs::system::SystemParam;
@@ -30,9 +30,15 @@ pub struct Persist {
     /// The JSON last written to the open scene's slot.
     last_saved: String,
     timer: f32,
+    /// Nothing is written: the open slot holds a scene that could not be
+    /// read (and no other could be opened), or the list of scenes is in a
+    /// newer format. Opening or starting a scene ends it.
+    paused: bool,
     /// A picked file, or why it could not be read.
     import_tx: Sender<Result<Picked, String>>,
     import_rx: Receiver<Result<Picked, String>>,
+    /// Picked files waiting for an area load to finish.
+    pending: Vec<Picked>,
 }
 
 impl Default for Persist {
@@ -41,8 +47,10 @@ impl Default for Persist {
         Self {
             last_saved: String::new(),
             timer: 0.0,
+            paused: false,
             import_tx,
             import_rx,
+            pending: Vec::new(),
         }
     }
 }
@@ -97,6 +105,9 @@ impl Store for Browser {
     fn remove(&mut self, key: &str) {
         storage_remove(key);
     }
+    fn keys(&self) -> Vec<String> {
+        storage_keys()
+    }
 }
 
 /// The UI font saved in this browser, else the default.
@@ -133,74 +144,65 @@ fn save_address_jump(jump: Res<AddressJump>) {
 }
 
 /// Loads the scene open last, or the demo street on first run.
-fn restore(
-    mut scene: ResMut<Scene>,
-    mut models: ResMut<Models>,
-    mut load: MessageWriter<LoadArea>,
-    mut ui: ResMut<UiState>,
-    mut slots: ResMut<Slots>,
-) {
-    slots.index = SlotIndex::load(&Browser);
-    let stored = Slots::read(&Browser, slots.index.active);
+fn restore(mut d: Doc) {
+    d.slots.load(&Browser);
+    if let Some(v) = d.slots.newer {
+        d.p.paused = true;
+        d.ui.error_sticky(format!(
+            "{} Until then nothing is saved, and the demo street opens instead.",
+            SlotError::Newer(v).reason()
+        ));
+        d.load.write(LoadArea::demo());
+        return;
+    }
+    let stored = Slots::read(&Browser, d.slots.index.active);
     match stored.map(|s| SceneFile::from_json(&s)) {
         Some(Ok(file)) => {
             let area = file.area;
-            scene.load_file(file, &mut models);
-            load.write(LoadArea {
+            d.scene.load_file(file, &mut d.models);
+            d.load.write(LoadArea {
                 area,
                 keep_cameras: true,
             });
         }
         Some(Err(e)) => {
-            ui.error_sticky(format!(
-                "Your saved scene could not be restored: {e}. Starting with the demo street instead"
-            ));
-            load.write(LoadArea::demo());
+            // Left as it is, in case a newer app (or a fix by hand) can read
+            // it: the demo goes into a scene of its own.
+            let name = d.slots.index.active_name().to_owned();
+            match d.slots.create(&mut Browser, None, None) {
+                Ok(_) => d.ui.error_sticky(format!(
+                    "“{name}” could not be restored: {e}. It is kept as it was (delete it under Scenes if it is of no use), and the demo street opens as a new scene"
+                )),
+                Err(why) => {
+                    d.p.paused = true;
+                    d.ui.error_sticky(format!(
+                        "“{name}” could not be restored: {e}. The demo street opens instead, and is not saved, so the stored scene is kept ({})",
+                        why.reason()
+                    ));
+                }
+            }
+            d.load.write(LoadArea::demo());
         }
         None => {
             // A first visit; an empty scene of a returning user just gets the
             // demo.
-            ui.help_open = !SlotIndex::stored(&Browser);
-            load.write(LoadArea::demo());
+            d.ui.help_open = !SlotIndex::stored(&Browser);
+            d.load.write(LoadArea::demo());
         }
     }
 }
 
-fn autosave(
-    time: Res<Time>,
-    real: Res<Time<Real>>,
-    scene: Res<Scene>,
-    models: Res<Models>,
-    mut p: ResMut<Persist>,
-    mut ui: ResMut<UiState>,
-    mut slots: ResMut<Slots>,
-) {
-    p.timer += time.delta_secs();
-    if p.timer < AUTOSAVE_INTERVAL {
+fn autosave(time: Res<Time>, mut d: Doc) {
+    d.p.timer += time.delta_secs();
+    if d.p.timer < AUTOSAVE_INTERVAL {
         return;
     }
-    p.timer = 0.0;
-    let Some(file) = scene.to_file(&models) else {
-        return;
-    };
-    let json = file.to_json();
-    if json != p.last_saved {
-        let active = slots.index.active;
-        match storage_set(&slot_key(active), &json) {
-            Ok(()) => {
-                ui.save = SaveState::Saved(real.elapsed_secs_f64());
-                slots.sizes.insert(active, stored_len(&json));
-                p.last_saved = json;
-            }
-            Err(why) => {
-                // Leave `last_saved` alone so the next check tries again.
-                ui.save = SaveState::Failed(why);
-            }
-        }
-    }
+    d.p.timer = 0.0;
+    // A refusal is in the status bar; the next check tries again.
+    let _ = d.save_open_scene();
 }
 
-/// The document and the scene list, for switching between scenes.
+/// The document and the scene list, for saving and switching scenes.
 #[derive(SystemParam)]
 pub struct Doc<'w> {
     p: ResMut<'w, Persist>,
@@ -209,13 +211,18 @@ pub struct Doc<'w> {
     ui: ResMut<'w, UiState>,
     history: ResMut<'w, History>,
     slots: ResMut<'w, Slots>,
+    loading: Res<'w, Loading>,
     load: MessageWriter<'w, LoadArea>,
     real: Res<'w, Time<Real>>,
 }
 
 impl Doc<'_> {
-    /// Writes the open scene now if it changed since the last autosave.
+    /// Writes the open scene if it changed since it was last written, and
+    /// records the outcome for the status bar.
     fn save_open_scene(&mut self) -> Result<(), SaveFailure> {
+        if self.p.paused {
+            return Ok(());
+        }
         let Some(file) = self.scene.to_file(&self.models) else {
             return Ok(());
         };
@@ -225,13 +232,28 @@ impl Doc<'_> {
         }
         let active = self.slots.index.active;
         if let Err(why) = Browser.set(&slot_key(active), &json) {
+            // `last_saved` is left alone, so the next check tries again.
             self.ui.save = SaveState::Failed(why);
             return Err(why);
         }
         self.ui.save = SaveState::Saved(self.real.elapsed_secs_f64());
         self.slots.sizes.insert(active, stored_len(&json));
         self.p.last_saved = json;
+        if let Err(why) = self.slots.ensure_listed(&mut Browser) {
+            bevy::log::warn!("could not list the open scene again: {}", why.reason());
+        }
         Ok(())
+    }
+
+    /// Whether an area is loading, which holds back switching scenes (a
+    /// reply for the old scene would land in the new one); says so if it is.
+    fn busy(&mut self) -> bool {
+        let busy = self.loading.area.is_some();
+        if busy {
+            self.ui
+                .error("Wait for the area to finish loading, then try again");
+        }
+        busy
     }
 
     /// Saves the open scene before leaving it; if that fails, says so and
@@ -267,54 +289,61 @@ impl Doc<'_> {
             None => self.scene.clear_document(&mut self.models),
         }
         self.p.last_saved = stored;
+        self.p.paused = false;
         self.ui.save = SaveState::Saved(self.real.elapsed_secs_f64());
         self.ui.selected = None;
+        if self.ui.tool.needs_selection() {
+            self.ui.tool = crate::state::Tool::Select;
+        }
         self.ui.region_draft.clear();
         self.ui.data_change = None;
-        // The undo steps were the other scene's.
+        // The undo steps were the other scene's, and so was any area load to
+        // retry.
         self.history.reset();
         self.ui
             .toasts
-            .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+            .retain(|t| !matches!(t.action, Some(ToastAction::Undo | ToastAction::Retry(_))));
     }
 
-    /// Opens scene `id`, saving the open one first if `save_current`.
-    fn open(&mut self, id: u32, save_current: bool) -> bool {
-        let Some(name) = self.slots.index.get(id).map(|s| s.name.clone()) else {
-            return false;
-        };
+    /// Scene `id` as stored, checked before anything changes so an unreadable
+    /// scene is never written over: `None` (and an error shown) if it does not
+    /// parse; a file of `None` if the slot holds nothing yet.
+    fn read(&mut self, id: u32, name: &str) -> Option<(Option<SceneFile>, String)> {
         let stored = Slots::read(&Browser, id);
-        // Checked before anything changes, so an unreadable scene is never
-        // written over.
-        let file = match stored.as_deref().map(SceneFile::from_json) {
-            Some(Ok(file)) => Some(file),
+        match stored.as_deref().map(SceneFile::from_json) {
+            Some(Ok(file)) => Some((Some(file), stored.unwrap_or_default())),
             Some(Err(e)) => {
                 self.ui
                     .error_sticky(format!("“{name}” could not be opened: {e}"));
-                return false;
+                None
             }
-            None => None,
+            None => Some((None, String::new())),
+        }
+    }
+
+    /// Opens scene `id`, saving the open one first.
+    fn open(&mut self, id: u32) {
+        let Some(name) = self.slots.index.get(id).map(|s| s.name.clone()) else {
+            return;
         };
-        if save_current && !self.leave() {
-            return false;
+        let Some((file, stored)) = self.read(id, &name) else {
+            return;
+        };
+        if !self.leave() {
+            return;
         }
         match self.slots.open(&mut Browser, id) {
             Ok(true) => {
                 // An empty slot gets a blank scene, written at the next autosave.
-                self.show(file, stored.unwrap_or_default());
+                self.show(file, stored);
                 self.ui.info(format!("Opened “{name}”"));
-                true
             }
-            Ok(false) => {
-                self.ui
-                    .error(format!("“{name}” was deleted in another tab"));
-                false
-            }
-            Err(why) => {
-                self.ui
-                    .error(format!("Could not open “{name}”: {}", why.reason()));
-                false
-            }
+            Ok(false) => self
+                .ui
+                .error(format!("“{name}” was deleted in another tab")),
+            Err(why) => self
+                .ui
+                .error(format!("Could not open “{name}”: {}", why.reason())),
         }
     }
 
@@ -344,11 +373,12 @@ impl Doc<'_> {
                 .error("Nothing to copy yet; wait for an area to finish loading");
             return;
         };
-        let name = slots::clean_name(&format!("{} copy", self.slots.index.active_name()));
-        match self.slots.create(&mut Browser, name, Some(&json)) {
+        let name = slots::copy_name(self.slots.index.active_name());
+        match self.slots.create(&mut Browser, Some(name), Some(&json)) {
             Ok(_) => {
                 // Same document, so its undo steps still apply.
                 self.p.last_saved = json;
+                self.p.paused = false;
                 let name = self.slots.index.active_name().to_owned();
                 self.ui
                     .info(format!("Copied to “{name}”, which is now open"));
@@ -363,19 +393,39 @@ impl Doc<'_> {
         let Some(name) = self.slots.index.get(id).map(|s| s.name.clone()) else {
             return;
         };
-        if id == self.slots.index.active {
-            let Some(next) = self.slots.neighbour(id) else {
-                self.ui
-                    .error("This is the only scene; start a new one before deleting it");
-                return;
-            };
-            // Its unsaved changes go with it.
-            if !self.open(next, false) {
-                return;
+        if id != self.slots.index.active {
+            match self.slots.delete(&mut Browser, id) {
+                Ok(()) => self.ui.info(format!("Deleted “{name}”")),
+                Err(why) => self
+                    .ui
+                    .error(format!("Could not delete “{name}”: {}", why.reason())),
             }
+            return;
         }
-        match self.slots.delete(&mut Browser, id) {
-            Ok(()) => self.ui.info(format!("Deleted “{name}”")),
+        let Some(next) = self.slots.neighbour(id) else {
+            self.ui
+                .error("This is the only scene; start a new one before deleting it");
+            return;
+        };
+        let next_name = self
+            .slots
+            .index
+            .get(next)
+            .map_or_else(String::new, |s| s.name.clone());
+        let Some((file, stored)) = self.read(next, &next_name) else {
+            return;
+        };
+        // One write removes this scene and opens the next, so if it is
+        // refused this one is still open with its unsaved changes.
+        match self.slots.delete_open(&mut Browser, next) {
+            Ok(true) => {
+                self.show(file, stored);
+                self.ui
+                    .info(format!("Deleted “{name}”; “{next_name}” is open"));
+            }
+            Ok(false) => self
+                .ui
+                .error(format!("“{next_name}” was deleted in another tab")),
             Err(why) => self
                 .ui
                 .error(format!("Could not delete “{name}”: {}", why.reason())),
@@ -390,7 +440,7 @@ impl Doc<'_> {
     }
 }
 
-fn handle_actions(mut actions: MessageReader<PersistAction>, mut d: Doc) {
+pub fn handle_actions(mut actions: MessageReader<PersistAction>, mut d: Doc) {
     for a in actions.read() {
         match a {
             PersistAction::Export => match d.scene.to_file(&d.models) {
@@ -406,15 +456,17 @@ fn handle_actions(mut actions: MessageReader<PersistAction>, mut d: Doc) {
             },
             PersistAction::Import => pick_file(d.p.import_tx.clone()),
             PersistAction::RefreshScenes => d.slots.refresh(&Browser),
-            PersistAction::NewScene => d.new_scene(),
-            PersistAction::DuplicateScene => d.duplicate(),
-            PersistAction::OpenScene(id) => {
-                if *id != d.slots.index.active {
-                    d.open(*id, true);
-                }
-            }
             PersistAction::RenameScene(id, name) => d.rename(*id, name),
-            PersistAction::DeleteScene(id) => d.delete(*id),
+            PersistAction::NewScene if !d.busy() => d.new_scene(),
+            PersistAction::DuplicateScene if !d.busy() => d.duplicate(),
+            PersistAction::OpenScene(id) if *id != d.slots.index.active && !d.busy() => {
+                d.open(*id);
+            }
+            PersistAction::DeleteScene(id) if !d.busy() => d.delete(*id),
+            PersistAction::NewScene
+            | PersistAction::DuplicateScene
+            | PersistAction::OpenScene(_)
+            | PersistAction::DeleteScene(_) => {}
         }
     }
 }
@@ -441,16 +493,22 @@ fn export_name(scene: &str) -> String {
 }
 
 /// An imported file becomes a scene of its own, so the open one is kept.
+/// Files picked while an area loads wait for it (its reply would otherwise
+/// land in the imported scene).
 pub fn receive_imports(mut d: Doc) {
     let picked: Vec<_> = d.p.import_rx.try_iter().collect();
     for picked in picked {
-        let Picked { name, text } = match picked {
-            Ok(p) => p,
+        match picked {
+            Ok(p) => d.p.pending.push(p),
             Err(e) => {
-                d.ui.error_sticky(format!("Import failed: could not read the file: {e}"));
-                continue;
+                d.ui.error_sticky(format!("Import failed: could not read the file: {e}"))
             }
-        };
+        }
+    }
+    if d.p.pending.is_empty() || d.loading.area.is_some() {
+        return;
+    }
+    for Picked { name, text } in std::mem::take(&mut d.p.pending) {
         let file = match SceneFile::from_json(&text) {
             Ok(file) => file,
             Err(e) => {
@@ -461,7 +519,7 @@ pub fn receive_imports(mut d: Doc) {
         let n = file.cameras.len();
         let json = file.to_json();
         let scene_name = slots::name_from_file(&name);
-        let saved = d.save_open_scene().and_then(|()| {
+        let saved = d.save_open_scene().map_err(SlotError::from).and_then(|()| {
             d.slots
                 .create(&mut Browser, Some(scene_name.clone()), Some(&json))
         });
@@ -472,11 +530,7 @@ pub fn receive_imports(mut d: Doc) {
                     "Imported “{scene_name}” with {n} camera(s) as a new scene"
                 ));
             }
-            Err(SaveFailure::Full) => d.ui.error_sticky(format!(
-                "Import failed: {} Delete a scene to make room, or export the open one first",
-                SaveFailure::Full.reason()
-            )),
-            Err(_) => {
+            Err(SlotError::Storage(_)) if !storage_available() => {
                 // No storage at all, so no other scene to keep: the import
                 // replaces the document, which is not saved (the status bar
                 // says why), and can be undone.
@@ -488,6 +542,14 @@ pub fn receive_imports(mut d: Doc) {
                     keep_cameras: true,
                 });
                 d.ui.info(format!("Imported scene with {n} camera(s)"));
+            }
+            Err(why) => {
+                let room = if why.is_full() {
+                    " Delete a scene to make room, or export the open one first"
+                } else {
+                    ""
+                };
+                d.ui.error_sticky(format!("Import failed: {}{room}", why.reason()));
             }
         }
     }
@@ -514,6 +576,19 @@ mod web {
         if let Some(s) = storage() {
             let _ = s.remove_item(key);
         }
+    }
+
+    pub fn storage_keys() -> Vec<String> {
+        let Some(s) = storage() else {
+            return Vec::new();
+        };
+        let n = s.length().unwrap_or(0);
+        (0..n).filter_map(|i| s.key(i).ok().flatten()).collect()
+    }
+
+    /// Whether the page can use `localStorage` at all.
+    pub fn storage_available() -> bool {
+        storage().is_some()
     }
 
     /// Whether the value was stored, and if not why. Quota and privacy errors
@@ -623,10 +698,18 @@ mod web {
     pub fn storage_remove(key: &str) {
         STORE.with_borrow_mut(|s| s.remove(key));
     }
+    pub fn storage_keys() -> Vec<String> {
+        STORE.with_borrow(|s| s.keys().cloned().collect())
+    }
+    pub fn storage_available() -> bool {
+        true
+    }
     pub fn download(name: &str, text: &str) -> Result<(), String> {
         std::fs::write(name, text).map_err(|e| format!("could not write {name} ({e})"))
     }
     pub fn pick_file(_: Sender<Result<Picked, String>>) {}
 }
 
-use web::{download, pick_file, storage_get, storage_remove, storage_set};
+use web::{
+    download, pick_file, storage_available, storage_get, storage_keys, storage_remove, storage_set,
+};
