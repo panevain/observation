@@ -140,6 +140,7 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
         });
         bar(ui, t, s.street_fraction(), t.coverage_color(1));
+        ladder(ui, d, t);
         hint(
             ui,
             t,
@@ -177,6 +178,55 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     }
     if let Some(a) = &d.area {
         super::provenance::card_data_date(ui, t, &a.bundle);
+    }
+}
+
+/// The street seen at every detail level under the current lighting, from
+/// Detect down to Identify (and Custom when selected), with the selected level
+/// highlighted. Clicking a level selects it.
+fn ladder(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+    let p = d.scene.params;
+    let light = match p.lighting {
+        Lighting::Day => "by day",
+        Lighting::Night => "at night",
+    };
+    let mut pick = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        hint(ui, t, &format!("Street seen {light}: "));
+        for (i, (level, stats)) in d.coverage.ladder().enumerate() {
+            if i > 0 {
+                hint(ui, t, " · ");
+            }
+            let name = match level {
+                DoriLevel::Custom => format!("Custom {:.0} px/m", p.pixels_per_metre()),
+                l => l.label().to_owned(),
+            };
+            let text = format!("{name} {:.0}%", stats.street_fraction() * 100.0);
+            let selected = level == p.dori;
+            let mut rich = RichText::new(text).size(t.font.caption);
+            rich = if selected {
+                rich.family(strong_family()).color(t.accent)
+            } else {
+                rich.color(t.text_muted)
+            };
+            let tip = if selected {
+                format!("The figures above are at {name}")
+            } else {
+                format!("Show the figures and overlay at {name}")
+            };
+            if ui
+                .add(egui::Button::new(rich).frame(false))
+                .on_hover_text(tip)
+                .clicked()
+            {
+                pick = Some(level);
+            }
+        }
+    });
+    if let Some(level) = pick.filter(|l| *l != p.dori) {
+        d.scene.params.dori = level;
+        d.scene.touch();
     }
 }
 

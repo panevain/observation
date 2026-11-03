@@ -9,14 +9,14 @@
 
 use crate::building::Footprint;
 use crate::bundle::{AreaBundle, Road};
-use crate::coverage::{GroundGrid, StaticLayers, Visibility};
+use crate::coverage::{GroundGrid, Sight, StaticLayers};
 use crate::frustum::ViewCone;
 use crate::terrain::Terrain;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const JOB_VERSION: u8 = 2;
+pub const JOB_VERSION: u8 = 3;
 
 /// Client to worker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,7 +66,7 @@ impl LayerInputs {
     }
 }
 
-/// One camera's visibility to compute.
+/// One camera's sight lines to compute, out to the cone's range.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Job {
     /// The area load this job belongs to.
@@ -84,7 +84,7 @@ impl Job {
             generation: self.generation,
             camera_id: self.camera_id,
             key: self.key,
-            visibility: layers.visibility(&self.cone, self.subject_height_m),
+            sight: layers.sight(&self.cone, self.subject_height_m),
         }
     }
 }
@@ -95,7 +95,7 @@ pub struct JobResult {
     pub generation: u32,
     pub camera_id: u32,
     pub key: u64,
-    pub visibility: Visibility,
+    pub sight: Sight,
 }
 
 /// Worker to client.
@@ -196,9 +196,12 @@ mod tests {
             generation: 3,
             camera_id: 7,
             key: 42,
-            visibility: Visibility {
+            sight: Sight {
+                range: 31.5,
                 ground: vec![0, 5, 70_000],
+                ground_d2: vec![1.0, 4.25, 990.0],
                 facade: vec![2],
+                facade_d2: vec![12.5],
             },
         });
         let stale = JobResponse::Stale {
@@ -248,8 +251,12 @@ mod tests {
         let j = job();
         let r = j.run(&layers);
         assert_eq!((r.generation, r.camera_id, r.key), (3, 7, j.key));
-        assert_eq!(r.visibility, layers.visibility(&j.cone, 1.0));
-        assert!(!r.visibility.ground.is_empty() && !r.visibility.facade.is_empty());
+        assert_eq!(r.sight.range, j.cone.range);
+        assert_eq!(
+            r.sight.within(j.cone.range),
+            layers.visibility(&j.cone, 1.0)
+        );
+        assert!(!r.sight.ground.is_empty() && !r.sight.facade.is_empty());
     }
 
     #[test]
