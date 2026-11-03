@@ -1,0 +1,159 @@
+name: Deploy
+
+# Puts the newest stable release (a vX.Y.Z tag; pre-releases are never deployed on their own) on
+# the production host, a Linode running Docker Compose (docs/deploy.md), once Release has
+# published it. By hand it deploys any stable version, the newest one when left empty, so it is
+# also how to roll back.
+#
+# Automatic runs only deploy when the repository variable DEPLOY_PRODUCTION is `true`, so
+# releases go ahead as before until the host is set up.
+#
+# The host holds the settings and secrets (/etc/observation/observation.env). The deploy key
+# can only run scripts/deploy-host.sh there, which checks the images' signatures again before
+# it starts them.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    # (successful tag pushes only, see the plan job)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to deploy (X.Y.Z); empty for the newest stable release
+        type: string
+        default: ""
+
+# One deploy at a time, and never cancelled half-way through.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  # mise.ci.toml: cosign, pinned and checksum-verified through mise.ci.lock.
+  MISE_ENV: ci
+
+jobs:
+  # Picks the version without the production environment, so skipped runs (develop pushes,
+  # pre-releases, a tag older than the newest release) record no deployment.
+  plan:
+    name: pick version
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+      || (vars.DEPLOY_PRODUCTION == 'true'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # list the tags
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - name: Pick the version
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          # A tag push's head_branch is the tag. Untrusted input: passed via env and matched
+          # against the tag list below, never interpolated.
+          RELEASED: ${{ github.event.workflow_run.head_branch }}
+          WANTED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          stable='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          tags="$(gh api --paginate "repos/${REPO}/git/matching-refs/tags/v" --jq '.[].ref | ltrimstr("refs/tags/")' | { grep -E "${stable}" || true; } | sort -V)"
+          newest="$(tail -n 1 <<<"${tags}")"
+          [ -n "${newest}" ] || { echo "::error::no stable release tag (vX.Y.Z) to deploy"; exit 1; }
+          if [ "${EVENT}" = workflow_dispatch ]; then
+            tag="v${WANTED:-${newest#v}}"
+            [[ "${tag}" =~ ${stable} ]] || { echo "::error::not a stable version (X.Y.Z): ${WANTED}"; exit 1; }
+            grep -qxF "${tag}" <<<"${tags}" || { echo "::error::there is no tag ${tag}"; exit 1; }
+          else
+            if ! [[ "${RELEASED}" =~ ${stable} ]]; then
+              echo "Release ran for ${RELEASED}, not a stable release tag: nothing to deploy."
+              exit 0
+            fi
+            if [ "${RELEASED}" != "${newest}" ]; then
+              echo "::notice::${RELEASED} is not the newest stable release (${newest}): not deployed."
+              exit 0
+            fi
+            tag="${RELEASED}"
+          fi
+          echo "Deploying ${tag}."
+          echo "version=${tag#v}" >> "${GITHUB_OUTPUT}"
+
+  deploy:
+    name: deploy ${{ needs.plan.outputs.version }}
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Holds the deploy key and the host's address (docs/deploy.md); may only be used from develop,
+    # the branch workflow_run runs on.
+    environment:
+      name: production
+      url: ${{ vars.DEPLOY_URL }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cosign
+          cache: false
+
+      # The signature and the provenance attestation must both name release.yml on the tag.
+      # The host checks the signature of the same digests again; it has no gh for the attestation.
+      - name: Verify the images
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_ATTESTATION: required
+        run: |
+          set -euo pipefail
+          ref="refs/tags/v${VERSION}"
+          app="$(scripts/verify-image.sh "ghcr.io/panevain/observation:${VERSION}" "${ref}")"
+          regions="$(scripts/verify-image.sh "ghcr.io/panevain/observation-regions:${VERSION}" "${ref}")"
+          echo "app=${app#*@}" >> "${GITHUB_OUTPUT}"
+          echo "regions=${regions#*@}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Deploying v${VERSION}"
+            echo
+            echo "| Image | Pinned |"
+            echo "| --- | --- |"
+            echo "| app | \`${app}\` |"
+            echo "| region agent | \`${regions}\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Deploy on the host
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'observation-deploy' }}
+          APP_DIGEST: ${{ steps.verify.outputs.app }}
+          REGIONS_DIGEST: ${{ steps.verify.outputs.regions }}
+        run: |
+          set -euo pipefail
+          [ -n "${HOST}" ] && [ -n "${SSH_KEY}" ] && [ -n "${KNOWN_HOSTS}" ] ||
+            { echo "::error::set DEPLOY_HOST, DEPLOY_KNOWN_HOSTS and the secret DEPLOY_SSH_KEY in the production environment (docs/deploy.md)"; exit 1; }
+          dir="$(mktemp -d)"
+          trap 'rm -rf "${dir}"' EXIT
+          printf '%s\n' "${SSH_KEY}" > "${dir}/key"
+          printf '%s\n' "${KNOWN_HOSTS}" > "${dir}/known_hosts"
+          chmod 600 "${dir}/key"
+          # The host's key is pinned (DEPLOY_KNOWN_HOSTS); the deploy key's forced command reads
+          # these words and nothing else.
+          ssh -i "${dir}/key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o UserKnownHostsFile="${dir}/known_hosts" -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 \
+            "${DEPLOY_USER}@${HOST}" deploy "${VERSION}" "${APP_DIGEST}" "${REGIONS_DIGEST}"

@@ -42,7 +42,7 @@ Pull requests, pushes and tags made with a workflow's `GITHUB_TOKEN` do not star
    `gh secret set BOT_PRIVATE_KEY --env bot < key.pem` and `gh variable set BOT_CLIENT_ID --body <client ID>`.
 4. Put the App's numeric ID in `.github/rulesets/version-tags-create.json` (it may create `v*` tags) and apply the rulesets (below).
 
-The environments: `bot` holds the key and may only be used from `develop`, `main` and `v*` tags; `release` (branch `main`, a required reviewer) is the approval Release tag waits for on hotfixes. Workflows mint a token with only the permissions they need, after any build step or in a job that builds nothing.
+The environments: `bot` holds the key and may only be used from `develop`, `main` and `v*` tags; `release` (branch `main`, a required reviewer) is the approval Release tag waits for on hotfixes. `production` (branch `develop`) holds the deploy key and host for **Deploy**, which puts each new stable release on the Linode ([docs/deploy.md](docs/deploy.md)). Workflows mint a token with only the permissions they need, after any build step or in a job that builds nothing.
 
 ### Images
 

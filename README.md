@@ -37,6 +37,8 @@ mise run up                                  # the released images, signature-ch
 
 The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits default in [`compose.yaml`](compose.yaml) (override one from the environment, e.g. `OBS_PORT=9090 mise run up`). Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
 
+To run it on a Linode that every new release deploys itself to, see [docs/deploy.md](docs/deploy.md).
+
 ### From source
 
 You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) (the version pinned in [`mise.toml`](mise.toml)). [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:

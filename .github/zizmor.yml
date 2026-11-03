@@ -13,3 +13,8 @@ rules:
       # (no PR code, no persisted credentials), and needs no secrets beyond GITHUB_TOKEN with
       # packages: write.
       - prune-images.yml
+      # workflow_run fires after Release; the triggering run gives only its tag name, which is
+      # matched against the repository's own vX.Y.Z tags (only admins and the bot create them),
+      # so the most it can pick is a published release. No PR code is checked out, and the host
+      # checks the images' signatures against that tag again before it runs them.
+      - deploy.yml
