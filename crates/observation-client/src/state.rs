@@ -308,6 +308,10 @@ pub enum SaveState {
 
 /// Why the browser refused the autosave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(dead_code, reason = "only the browser build's storage writes fail")
+)]
 pub enum SaveFailure {
     /// The site's storage quota is used up (or is zero, as in some private modes).
     Full,
