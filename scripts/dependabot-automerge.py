@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Lists the open Dependabot pull requests that may merge themselves, and those on hold. Used
-by dependabot-automerge.yml, which enables or disables auto-merge on them as the bot app.
+"""Lists the open Dependabot pull requests that may merge themselves, and those on hold (the
+Pins PR too, whose auto-merge pins.yml sets). Used by dependabot-automerge.yml, which enables or
+disables auto-merge on them as the bot app.
 
   list --repo OWNER/NAME [--summary FILE] [--dry-run]
       Prints {"merge": [...], "hold": [...]} (JSON, each item {"number", "sha"}), and appends a
@@ -9,10 +10,13 @@ by dependabot-automerge.yml, which enables or disables auto-merge on them as the
       nothing).
       merge: each open, non-draft Dependabot PR into develop, without auto-merge yet and not
         labelled `hold`, whose commits are all Dependabot's and whose every updated dependency
-        (from the commit's `updated-dependencies` metadata) is a semver patch update, or a
+        (from the commit's `updated-dependencies` metadata) is a semver patch update, a
         Docker base image digest refresh (no update type: dependabot.yml lets only digests
-        through for the pinned images).
-      hold: each Dependabot PR labelled `hold` that has auto-merge on, to switch it off.
+        through for the pinned images), or the fuzz targets' dated nightly (no update type
+        either; it builds only the fuzz runs, nothing that ships).
+      hold: each Dependabot PR, or the Pins PR (branch chore/pin-bumps), labelled `hold` that
+        has auto-merge on, to switch it off. pins.yml enables the Pins PR's auto-merge only
+        when it opens or updates it, so a `hold` added later takes effect here.
       Reads PR metadata only; checks out nothing. Needs gh with pull-requests: read.
 """
 
@@ -24,6 +28,7 @@ import sys
 
 BOT = "dependabot[bot]"
 HOLD = "hold"
+PINS = "chore/pin-bumps"
 PATCH = "version-update:semver-patch"
 ENTRY = re.compile(r"^- dependency-name: (?P<name>.+)$")
 
@@ -68,12 +73,13 @@ def eligible(pr):
     commits = pr["commits"]
     if not commits or any([a["login"] for a in c["authors"]] != [BOT] for c in commits):
         return "has commits not by Dependabot"
-    docker = pr["headRefName"].startswith("dependabot/docker/")
+    # Updates with no update type that may still merge: base image digests, the fuzz nightly.
+    untyped = pr["headRefName"].startswith(("dependabot/docker/", "dependabot/rust_toolchain/fuzz/"))
     deps = [d for c in commits for d in dependencies(c["messageBody"])]
     if not deps:
         return "no updated-dependencies metadata"
     for name, kind in deps:
-        if kind != PATCH and not (kind is None and docker):
+        if kind != PATCH and not (kind is None and untyped):
             return f"{name} is {kind or 'not a patch update'}"
     return None
 
@@ -83,6 +89,7 @@ def cmd_list(a):
     # limit beyond about 20 pull requests.
     listed = gh("pr", "list", "--repo", a.repo, "--author", "app/dependabot", "--state", "open",
                 "--limit", "200", "--json", "number")
+    listed += gh("pr", "list", "--repo", a.repo, "--head", PINS, "--state", "open", "--json", "number")
     fields = "number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"
     prs = [gh("pr", "view", str(p["number"]), "--repo", a.repo, "--json", fields) for p in listed]
     out = {"merge": [], "hold": []}
@@ -93,6 +100,8 @@ def cmd_list(a):
         if HOLD in labels(pr) and pr["autoMergeRequest"]:
             verdict = f"labelled {HOLD}: {would}disable auto-merge"
             out["hold"].append(item)
+        elif pr["headRefName"] == PINS:
+            verdict = "left alone: the Pins PR, whose auto-merge pins.yml sets"
         elif (why := eligible(pr)) is None:
             verdict = f"{would}enable auto-merge"
             out["merge"].append(item)
@@ -102,7 +111,7 @@ def cmd_list(a):
         rows.append(f"| #{pr['number']} | {cell(pr['title'])} | {cell(verdict)} |")
     if a.summary:
         with open(a.summary, "a") as f:
-            f.write("### Open Dependabot pull requests" + (" (dry run: nothing changed)" if a.dry_run else "") + "\n\n")
+            f.write("### Open Dependabot and Pins pull requests" + (" (dry run: nothing changed)" if a.dry_run else "") + "\n\n")
             if rows:
                 f.write("| PR | Title | Auto-merge |\n| --- | --- | --- |\n" + "\n".join(rows) + "\n")
             else:

@@ -4,7 +4,10 @@ name: Pins
 # and mise.ci.toml (`mise upgrade --bump`, with their lockfiles), fnox, the CI mise version,
 # Overpass in the Dockerfile and the Rust toolchain (Dependabot moves the fuzz nightly). Each
 # release must be a week old first, as with Dependabot's cooldown. Opens one PR into develop
-# (or updates it), from its own branch chore/pin-bumps.
+# (or updates it), from its own branch chore/pin-bumps. When every bump is a patch update
+# (calendar versions such as mise's count as patches), the PR merges itself once its checks
+# pass, as Dependabot's patch updates do; otherwise it waits for a person. Label it `hold` to
+# keep it from merging itself.
 on:
   schedule:
     # Monday update window, after Dependabot's runs (05:00-05:15).
@@ -30,6 +33,7 @@ jobs:
       contents: read
     outputs:
       changed: ${{ steps.bump.outputs.changed }}
+      automerge: ${{ steps.bump.outputs.automerge }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,7 +51,7 @@ jobs:
           set -euo pipefail
           out="${RUNNER_TEMP}/pins"
           mkdir -p "${out}"
-          python3 scripts/bump-pins.py --summary "${out}/summary.md"
+          python3 scripts/bump-pins.py --summary "${out}/summary.md" --automerge "${out}/automerge"
           if git diff --quiet; then
             echo "Nothing to bump." >> "${GITHUB_STEP_SUMMARY}"
             echo "changed=false" >> "${GITHUB_OUTPUT}"
@@ -62,9 +66,16 @@ jobs:
             cat "${out}/summary.md"
             echo
             echo "mise.lock and mise.ci.lock hold the new checksums (and provenance, where published); Overpass is hashed from its tarball. A Rust bump can bring new clippy lints; trunk, cargo-chef, cargo-auditable and Overpass bumps are exercised by the docker and image (full build) checks."
+            echo
+            if [ "$(cat "${out}/automerge")" = true ]; then
+              echo "Every bump is a patch update, so this PR merges itself once its checks pass (label it \`hold\` to stop that)."
+            else
+              echo "Not every bump is a patch update, so this PR waits for a person to merge it."
+            fi
           } > "${out}/body.md"
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
           echo "changed=true" >> "${GITHUB_OUTPUT}"
+          echo "automerge=$(cat "${out}/automerge")" >> "${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.bump.outputs.changed == 'true'
         with:
@@ -105,6 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           BOT: ${{ steps.bot.outputs.app-slug }}
+          AUTOMERGE: ${{ needs.bump.outputs.automerge }}
         run: |
           set -euo pipefail
           branch="chore/pin-bumps"
@@ -117,4 +129,15 @@ jobs:
           if ! gh pr create --base develop --head "${branch}" --title "Bump pinned tools" \
             --body-file "${RUNNER_TEMP}/pins/body.md"; then
             gh pr edit "${branch}" --body-file "${RUNNER_TEMP}/pins/body.md"
+          fi
+          # Patch updates only merge themselves, and not when labelled hold. Auto-merge outlives
+          # the force-push above, so it is switched off again when this week's bumps need a person.
+          # --match-head-commit: only the commit pushed above is merged.
+          state="$(gh pr view "${branch}" --json autoMergeRequest,labels)"
+          if [ "${AUTOMERGE}" = true ] && ! jq -e '.labels | any(.name == "hold")' <<<"${state}" >/dev/null; then
+            gh pr merge "${branch}" --auto --squash --match-head-commit "$(git rev-parse HEAD)"
+            echo "Auto-merge enabled." >> "${GITHUB_STEP_SUMMARY}"
+          elif jq -e '.autoMergeRequest' <<<"${state}" >/dev/null; then
+            gh pr merge "${branch}" --disable-auto
+            echo "Auto-merge disabled: not every bump is a patch update, or the PR is labelled hold." >> "${GITHUB_STEP_SUMMARY}"
           fi

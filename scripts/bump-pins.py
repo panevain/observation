@@ -10,10 +10,12 @@ A release is taken once it is COOLDOWN_DAYS old (as Dependabot's cooldown does),
 stable one. Overpass publishes no checksums, so its tarball is hashed here; mise records the
 tools' checksums in mise.lock and mise.ci.lock.
 
-  bump-pins.py [--summary FILE] [--only NAME...]
+  bump-pins.py [--summary FILE] [--automerge FILE] [--only NAME...]
 
-Prints one line per bump and writes them as a Markdown list to FILE. Needs mise, gh
-(GH_TOKEN) and docker buildx (for image digests).
+Prints one line per bump and writes them as a Markdown list to FILE, marking those that are not
+patch updates. --automerge writes `true` to its FILE if there are bumps and every one is a patch
+update, else `false`: pins.yml then lets the PR merge itself, as Dependabot auto-merge does for
+Dependabot's patch updates. Needs mise, gh (GH_TOKEN) and docker buildx (for image digests).
 """
 
 import argparse
@@ -38,6 +40,16 @@ SETUP_MISE = ".github/actions/setup-mise/action.yml"
 
 def key(v):
     return tuple(int(x) for x in re.findall(r"\d+", v))
+
+
+def patch(old, new):
+    """Whether old -> new is a patch update: only the last number moves (0.21.14 -> 0.21.15,
+    Overpass 0.7.62.5 -> 0.7.62.6), or the tool has calendar versions (mise's 2026.10.18), whose
+    releases are all treated as patches."""
+    o, n = key(old), key(new)
+    if o and o[0] >= 1000:
+        return True
+    return len(o) == len(n) and o[:-1] == n[:-1]
 
 
 def date(s):
@@ -207,6 +219,7 @@ BUMPS = {
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--summary")
+    ap.add_argument("--automerge", help="write true or false: whether every bump is a patch update")
     ap.add_argument("--only", nargs="*", choices=sorted(BUMPS))
     ap.add_argument("--dry-run", action="store_true", help="print the bumps without writing files")
     ap.add_argument("--cooldown", type=int, default=COOLDOWN_DAYS, help="days a release must be out (default %(default)s)")
@@ -226,10 +239,14 @@ def main():
             fn(f, out)
     if not a.dry_run:
         f.save()
-    lines = [f"- {name}: {old} -> {new}" for name, old, new in out]
+    lines = [f"- {name}: {old} -> {new}" + ("" if patch(old, new) else " (not a patch update)")
+             for name, old, new in out]
     print("\n".join(lines) or "no bumps")
     if a.summary:
         pathlib.Path(a.summary).write_text("\n".join(lines) + ("\n" if lines else ""))
+    if a.automerge:
+        merge = bool(out) and all(patch(old, new) for _, old, new in out)
+        pathlib.Path(a.automerge).write_text("true\n" if merge else "false\n")
 
 
 if __name__ == "__main__":
