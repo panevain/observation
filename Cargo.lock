@@ -4720,6 +4720,7 @@ dependencies = [
  "js-sys",
  "observation-core",
  "observation-tokens",
+ "serde",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

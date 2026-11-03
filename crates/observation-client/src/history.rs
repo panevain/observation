@@ -34,6 +34,12 @@ pub struct History {
 }
 
 impl History {
+    /// Forgets every step: another scene was opened, and its edits are not
+    /// the ones recorded.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
