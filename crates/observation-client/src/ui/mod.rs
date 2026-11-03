@@ -6,6 +6,7 @@ pub mod map_picker;
 mod overlays;
 mod provenance;
 mod regions;
+mod scenes;
 mod toolbar;
 mod widgets;
 
@@ -13,6 +14,7 @@ use crate::coverage::CoverageState;
 use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
+use crate::slots::Slots;
 use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
@@ -96,6 +98,7 @@ fn draw_ui(
     window: Single<&Window, With<PrimaryWindow>>,
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
+    mut slots: ResMut<Slots>,
 ) -> Result {
     // Register tile textures with egui before borrowing the context.
     let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
@@ -132,7 +135,7 @@ fn draw_ui(
                 .inner_margin(egui::Margin::symmetric(t.space.md as i8, t.space.sm as i8)),
         )
         .show(&mut root, |ui| {
-            toolbar::top_bar(ui, &mut d, &mut load, &mut persist)
+            toolbar::top_bar(ui, &mut d, &mut load, &mut persist, &slots)
         })
         .response
         .rect
@@ -252,6 +255,19 @@ fn draw_ui(
     }
     if d.ui.regions_open {
         regions::window(&ctx, &t, &mut d.regions, &mut d.ui.regions_open);
+    }
+    if d.ui.scenes_open {
+        let busy = d.loading.area.is_some();
+        let has_area = d.scene.area.is_some();
+        scenes::window(
+            &ctx,
+            &t,
+            &mut slots,
+            busy,
+            has_area,
+            &mut d.ui.scenes_open,
+            &mut persist,
+        );
     }
     let local: Vec<(String, observation_core::geo::BBox)> = d
         .regions

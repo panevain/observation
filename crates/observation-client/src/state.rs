@@ -190,6 +190,8 @@ pub struct UiState {
     pub help_open: bool,
     /// The local map-data regions dialog.
     pub regions_open: bool,
+    /// The Scenes dialog (the autosave slots).
+    pub scenes_open: bool,
     pub custom_model_open: bool,
     /// Camera under the pointer in the camera list.
     pub hover_list: Option<u32>,
@@ -242,6 +244,7 @@ impl Default for UiState {
             map_open: false,
             help_open: false,
             regions_open: false,
+            scenes_open: false,
             custom_model_open: false,
             hover_list: None,
             hover_scene: None,
@@ -619,6 +622,27 @@ impl Scene {
         self.region = file.region;
         self.saved_provenance = file.provenance;
         models.custom = file.custom_models;
+        self.touch();
+    }
+
+    /// An empty scene on the current area (no cameras, region or custom
+    /// models, default settings), or `None` before an area has loaded.
+    pub fn blank_file(&self) -> Option<SceneFile> {
+        let mut file = SceneFile::new(self.area?, self.origin);
+        file.provenance = self.provenance.clone();
+        Some(file)
+    }
+
+    /// Empties the document, keeping the area it is on: what
+    /// [`Self::blank_file`] describes.
+    pub fn clear_document(&mut self, models: &mut Models) {
+        self.cameras.clear();
+        self.params = CoverageParams::default();
+        self.region = None;
+        self.on_flat_ground = false;
+        self.saved_provenance = None;
+        self.next_id = 1;
+        models.custom.clear();
         self.touch();
     }
 

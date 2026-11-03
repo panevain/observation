@@ -5,6 +5,7 @@ use super::widgets::{RailKind, hint, keycap, rail_button, secondary};
 use crate::history::HistoryOp;
 use crate::icons;
 use crate::persist::PersistAction;
+use crate::slots::Slots;
 use crate::state::{LoadArea, SaveState, Tool};
 use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
@@ -12,11 +13,15 @@ use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
 use observation_core::scene::AreaRef;
 use observation_core::terrain::{TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL};
 
+/// Characters of the open scene's name shown in the top bar.
+const SCENE_NAME_CHARS: usize = 18;
+
 pub fn top_bar(
     ui: &mut egui::Ui,
     d: &mut UiData,
     load: &mut MessageWriter<LoadArea>,
     persist: &mut MessageWriter<PersistAction>,
+    slots: &Slots,
 ) {
     let t = *d.tokens;
     ui.horizontal_centered(|ui| {
@@ -123,10 +128,26 @@ pub fn top_bar(
             }
             if ui
                 .add(secondary(&t, "Import"))
-                .on_hover_text("Open a scene JSON file")
+                .on_hover_text("Open a scene JSON file as a new scene")
                 .clicked()
             {
                 persist.write(PersistAction::Import);
+            }
+            let name = slots.index.active_name();
+            let label = format!(
+                "{} {}",
+                icons::FOLDERS,
+                super::scenes::short_name(name, SCENE_NAME_CHARS)
+            );
+            if ui
+                .add(secondary(&t, &label))
+                .on_hover_text(format!("Scenes saved in this browser (open: {name})"))
+                .clicked()
+            {
+                d.ui.scenes_open = !d.ui.scenes_open;
+                if d.ui.scenes_open {
+                    persist.write(PersistAction::RefreshScenes);
+                }
             }
         });
     });
