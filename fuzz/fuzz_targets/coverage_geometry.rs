@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use observation_core::building::Footprint;
 use observation_core::bundle::Road;
-use observation_core::coverage::{CoverageCounts, CoverageStats, GroundGrid, StaticLayers};
+use observation_core::coverage::{CoverageCounts, CoverageStats, GroundGrid, StaticLayers, Tally};
 use observation_core::frustum::ViewCone;
 use observation_core::glam::{Vec2, Vec3};
 use observation_core::terrain::Terrain;
@@ -87,4 +87,47 @@ fuzz_target!(|input: Input| {
     let _ = CoverageStats::compute(&layers, &counts);
     counts.remove(&vis);
     assert!(counts.ground.iter().all(|&c| c == 0));
+
+    // The sight lines behind it: one distance per cell, every one in range,
+    // and a shorter range sees a subset.
+    let sight = layers.sight(&cone, input.subject_height);
+    assert_eq!(sight.within(cone.range), vis);
+    assert_eq!(sight.ground.len(), sight.ground_d2.len());
+    assert_eq!(sight.facade.len(), sight.facade_d2.len());
+    if cone.range.is_finite() {
+        let r2 = cone.range * cone.range;
+        assert!(
+            sight
+                .ground_d2
+                .iter()
+                .chain(&sight.facade_d2)
+                .all(|d2| *d2 <= r2)
+        );
+    }
+    let near = sight.within(cone.range / 2.0);
+    assert!(
+        near.ground
+            .iter()
+            .all(|i| vis.ground.binary_search(i).is_ok())
+    );
+    assert!(
+        near.facade
+            .iter()
+            .all(|i| vis.facade.binary_search(i).is_ok())
+    );
+
+    // Counting them and taking them away again leaves nothing behind.
+    let mut tally = Tally::new(&layers, None);
+    tally.add_within(&layers, None, &sight, cone.range);
+    let _ = tally.stats(&layers);
+    tally.remove_within(&layers, None, &sight, cone.range);
+    assert!(
+        tally
+            .counts
+            .ground
+            .iter()
+            .chain(&tally.counts.facade)
+            .all(|&c| c == 0)
+    );
+    assert_eq!(tally.stats(&layers).open_ground_seen_m2, 0.0);
 });

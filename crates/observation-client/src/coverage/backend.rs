@@ -26,6 +26,9 @@ pub struct CoverageBackend {
     in_flight: HashMap<u32, Job>,
     #[cfg(target_arch = "wasm32")]
     worker: Option<web::WorkerLink>,
+    /// Jobs submitted so far.
+    #[cfg(test)]
+    pub submitted: usize,
 }
 
 impl Default for CoverageBackend {
@@ -35,6 +38,8 @@ impl Default for CoverageBackend {
             in_flight: HashMap::default(),
             #[cfg(target_arch = "wasm32")]
             worker: web::WorkerLink::spawn(),
+            #[cfg(test)]
+            submitted: 0,
         }
     }
 }
@@ -76,6 +81,10 @@ impl CoverageBackend {
             cone,
             subject_height_m,
         };
+        #[cfg(test)]
+        {
+            self.submitted += 1;
+        }
         #[cfg(target_arch = "wasm32")]
         if let Some(worker) = &mut self.worker {
             worker.send(&JobRequest::Compute(job));
