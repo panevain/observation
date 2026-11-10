@@ -124,7 +124,7 @@ RUN cargo auditable build --release --locked -p observation-regions \
 
 # Overpass API from the release tarball, sha256-verified. Releases:
 # https://dev.overpass-api.de/releases/
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS overpass-build
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS overpass-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG OVERPASS_VERSION=0.7.62.11
@@ -149,7 +149,7 @@ RUN set -eux; \
     cp bin/osm3s_query bin/update_database /out/bin/; \
     mkdir -p /out/data
 
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS regions
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS regions
 
 LABEL org.opencontainers.image.title="observation-regions" \
       org.opencontainers.image.description="Region agent for Observation: local Overpass databases built from Geofabrik extracts" \
@@ -187,7 +187,7 @@ ENTRYPOINT ["/usr/local/bin/observation-regions"]
 #   Distroless stops rebuilding a Debian release's images once the next one is out
 #   (cc-debian12 was frozen in August 2026), so move to the new suffix when that happens.
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime-base
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab AS runtime-base
 
 LABEL org.opencontainers.image.title="observation" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
