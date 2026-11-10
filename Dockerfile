@@ -10,7 +10,7 @@
 #   * The chef stage copies in only the binaries, so a change to the mise files
 #     that leaves them alone keeps every later layer cached.
 # ---------------------------------------------------------------------------
-FROM ghcr.io/jdx/mise:2026.10.19-debian@sha256:9b8995abd457c975a4f5150b423f6569ee5a01960662ffa4c06c859867e59a21 AS build-tools
+FROM ghcr.io/jdx/mise:2026.10.25-debian@sha256:00a8a9d05a300e5a15a89d6d3a87ea88ec4e78c4702b78d49aa1d3250af61427 AS build-tools
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
