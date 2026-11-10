@@ -1,4 +1,14 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.earcut]]
+who = "panevain"
+criteria = "safe-to-deploy"
+delta = "0.4.11 -> 0.4.12"
+notes = "Pure-Rust rewrite of the hole-bridging index plus a small-input fast path. No unsafe, I/O, network, process or build-script code added; dev-dependency bump only in Cargo.toml."
+
+[[audits.ron]]
+who = "panevain"
+criteria = "safe-to-deploy"
+delta = "0.12.2 -> 0.12.3"
+notes = "Parser/serializer fixes and a new from_value. Drops once_cell for a small AtomicPtr lazy cell (the only new unsafe) and replaces an unsafe Vec<u8> trim with safe String::truncate/drain. No filesystem, network or process access added to the library."
