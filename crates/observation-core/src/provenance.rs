@@ -373,7 +373,8 @@ fn split(t: u64) -> ((i64, u32, u32), u64) {
     (civil_from_days(days), t % 86_400)
 }
 
-/// `2026-10-31T19:43:02Z`: the inverse of [`parse_utc`].
+/// `2026-10-31T19:43:02Z`. [`parse_utc`] reads it back for every time up to
+/// the end of 9999; later years have more than four digits, which it refuses.
 pub fn format_utc(t: u64) -> String {
     let ((y, m, d), s) = split(t);
     format!(
