@@ -3,9 +3,11 @@
 //! - [`ports`]: the outside world (git, HTTP, cargo-audit, brotli, the clock) as traits, with
 //!   adapters that run the real programs. `main.rs` is the only place that builds the adapters;
 //!   tests use the in-memory fakes instead.
+//! - [`cmd`]: the commands, the only layer that reads and writes files.
 //! - [`core`]: pure helpers over parsed inputs (versions, times, Markdown tables, GitHub Actions
 //!   annotations). Nothing in it reads or writes files or runs a program.
 
+pub mod cmd;
 pub mod core;
 #[cfg(test)]
 pub mod fakes;

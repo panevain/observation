@@ -137,7 +137,9 @@ jobs:
   tokens:
     name: design tokens
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # A cold run installs the toolchain and builds xtask (about two minutes); with the cache,
+    # seconds.
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -145,6 +147,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: $/.github/actions/setup-mise
+      # The token check is an xtask command; only xtask's own workspace is built and cached.
+      - uses: $/.github/actions/setup-rust
+        with:
+          cache-key: xtask
+          cache-workspaces: xtask -> target
       - run: mise run tokens
       - run: mise run sync
       - run: mise run tasks:validate

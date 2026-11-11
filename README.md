@@ -80,7 +80,8 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate (`tokens.css` is generated) |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |
-| `scripts/` | `check-design-tokens.sh` (colour-literal guard run in CI); `wasm-size-report.sh` and `wasm-size-treemap.py` (regenerate the bundle-size treemap) |
+| `scripts/` | `wasm-size-report.sh` and `wasm-size-treemap.py` (regenerate the bundle-size treemap) |
+| `xtask/` | Repository tooling, run as `cargo xtask <command>` (its own workspace), such as the design-token check CI runs |
 | `.github/` | CI, security, CodeQL, Scorecard and release workflows; Dependabot config |
 
 ## Documentation
