@@ -3,7 +3,7 @@
 //! Requests run on the browser's event loop (`fetch`, `EventSource`) and report
 //! back through a channel that a system drains every frame.
 
-use crate::platform::{HttpRequest, spawn_event_source, spawn_fetch};
+use crate::platform::{Clock, HttpRequest, Platform, unix_secs};
 use crate::regions::{CatalogState, RegionRequest, Regions};
 use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, UiState};
 use bevy::asset::RenderAssetUsages;
@@ -92,12 +92,19 @@ type Reply = (Request, Result<Vec<u8>, String>);
 pub struct Net {
     tx: Sender<Reply>,
     rx: Receiver<Reply>,
+    /// The ports requests go through, and the clock and session storage the
+    /// replies need.
+    platform: Platform,
 }
 
-impl Default for Net {
-    fn default() -> Self {
+impl FromWorld for Net {
+    fn from_world(world: &mut World) -> Self {
         let (tx, rx) = unbounded();
-        Self { tx, rx }
+        Self {
+            tx,
+            rx,
+            platform: Platform::of(world).clone(),
+        }
     }
 }
 
@@ -108,19 +115,26 @@ impl Net {
 
     fn send(&self, http: HttpRequest, req: Request) {
         let tx = self.tx.clone();
-        spawn_fetch(http, move |res| {
-            // The receiver lives as long as the app; a send error means shutdown.
-            let _ = tx.send((req, res));
-        });
+        self.platform.http.fetch(
+            http,
+            Box::new(move |res| {
+                // The receiver lives as long as the app; a send error means shutdown.
+                let _ = tx.send((req, res));
+            }),
+        );
     }
 
     /// Follows `/api/regions/events`; every status (and every drop of the
     /// stream, which the browser reconnects) arrives as a `RegionsStatus` reply.
     fn follow_regions(&self) {
         let tx = self.tx.clone();
-        spawn_event_source("/api/regions/events", "regions", move |res| {
-            let _ = tx.send((Request::RegionsStatus, res));
-        });
+        self.platform.http.subscribe(
+            "/api/regions/events",
+            "regions",
+            Box::new(move |res| {
+                let _ = tx.send((Request::RegionsStatus, res));
+            }),
+        );
     }
 }
 
@@ -167,10 +181,10 @@ const TILE_RETRY_SECS: u64 = 30;
 
 impl Tiles {
     /// Returns the tile if loaded; queues it otherwise.
-    pub fn get(&mut self, t: TileId) -> Option<Handle<Image>> {
+    pub fn get(&mut self, t: TileId, clock: &dyn Clock) -> Option<Handle<Image>> {
         let retry = match self.tiles.get(&t) {
             None => true,
-            Some(TileState::Failed(at)) => crate::regions::now_unix() >= at + TILE_RETRY_SECS,
+            Some(TileState::Failed(at)) => unix_secs(clock) >= at + TILE_RETRY_SECS,
             Some(_) => false,
         };
         if retry {
@@ -338,7 +352,7 @@ fn drain_replies(
                     .unwrap_or(false);
                 if has_regions && !regions.enabled {
                     regions.enabled = true;
-                    regions.restore_token();
+                    regions.restore_token(&*net.platform.session);
                     net.follow_regions();
                 }
             }
@@ -363,7 +377,7 @@ fn drain_replies(
             }
             Request::RegionsSizes(asked) => {
                 let answer = res.ok().and_then(|b| serde_json::from_slice(&b).ok());
-                regions.take_sizes(&asked, answer, crate::regions::now_unix());
+                regions.take_sizes(&asked, answer, unix_secs(&*net.platform.clock));
             }
             Request::RegionAction(action, id) => {
                 if regions.busy.as_deref() == Some(id.as_str()) {
@@ -375,7 +389,7 @@ fn drain_replies(
                     Ok(status) => {
                         regions.update(status, &mut ui);
                         if action == ActionKind::Import {
-                            regions.store_token();
+                            regions.store_token(&*net.platform.session);
                         }
                     }
                     Err(e) => ui.error(format!("Could not {} {id}: {e}", action.verb())),
@@ -414,7 +428,7 @@ fn drain_replies(
                         )
                         .map_err(|e| e.to_string())
                     })
-                    .map_or(TileState::Failed(crate::regions::now_unix()), |img| {
+                    .map_or(TileState::Failed(unix_secs(&*net.platform.clock)), |img| {
                         TileState::Ready(images.add(img))
                     });
                 tiles.tiles.insert(t, state);
@@ -423,7 +437,7 @@ fn drain_replies(
     }
     if tiles.tiles.len() > MAX_TILES {
         // Drop failed entries due for a retry; loaded tiles stay cached.
-        let now = crate::regions::now_unix();
+        let now = unix_secs(&*net.platform.clock);
         tiles.tiles.retain(|_, s| match s {
             TileState::Failed(at) => now < *at + TILE_RETRY_SECS,
             TileState::Ready(_) | TileState::Pending => true,

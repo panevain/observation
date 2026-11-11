@@ -13,6 +13,7 @@ use crate::coverage::CoverageState;
 use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
+use crate::platform::Platform;
 use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
@@ -27,8 +28,9 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
+        let changes = SchemeChanges::watch(&*Platform::of(app.world()).scheme);
         app.init_resource::<MapPicker>()
-            .insert_resource(SchemeChanges::watch())
+            .insert_resource(changes)
             // Before every `Tokens` reader, so the panels and the scene switch
             // in the same frame.
             .add_systems(PreUpdate, follow_scheme)
@@ -96,9 +98,11 @@ fn draw_ui(
     window: Single<&Window, With<PrimaryWindow>>,
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
+    platform: Res<Platform>,
 ) -> Result {
+    let clock = &*platform.clock;
     // Register tile textures with egui before borrowing the context.
-    let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
+    let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, clock, |h| {
         contexts.add_image(EguiTextureHandle::Weak(h.id()))
     });
     let ctx = contexts.ctx_mut()?.clone();
@@ -251,7 +255,7 @@ fn draw_ui(
         overlays::help(&ctx, &t, &mut d.ui);
     }
     if d.ui.regions_open {
-        regions::window(&ctx, &t, &mut d.regions, &mut d.ui.regions_open);
+        regions::window(&ctx, &t, &mut d.regions, &mut d.ui.regions_open, clock);
     }
     let local: Vec<(String, observation_core::geo::BBox)> = d
         .regions

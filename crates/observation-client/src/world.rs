@@ -3,6 +3,7 @@
 use crate::coverage::CoverageState;
 use crate::input::OrbitCamera;
 use crate::net::Tiles;
+use crate::platform::Platform;
 use crate::state::{
     Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState, grid_bounds,
 };
@@ -505,9 +506,10 @@ fn apply_ground_tiles(
     mut tiles: ResMut<Tiles>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
+    platform: Res<Platform>,
 ) {
     for (e, tile) in &q {
-        if let Some(img) = tiles.get(tile.0) {
+        if let Some(img) = tiles.get(tile.0, &*platform.clock) {
             commands.entity(e).insert((
                 TileTextured,
                 MeshMaterial3d(materials.add(StandardMaterial {

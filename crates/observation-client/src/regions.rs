@@ -8,7 +8,7 @@ use observation_core::regions::{
     ActionKind, CatalogEntry, RegionAction, RegionView, RegionsStatus,
 };
 
-use crate::platform::{session_get, session_set};
+use crate::platform::KeyValueStore;
 use crate::state::UiState;
 
 /// `sessionStorage` key of the admin token (kept for the browser session only).
@@ -88,15 +88,20 @@ impl Regions {
     }
 
     /// Loads the token remembered for this session.
-    pub fn restore_token(&mut self) {
-        if let Some(t) = session_get(TOKEN_KEY) {
+    pub fn restore_token(&mut self, session: &dyn KeyValueStore) {
+        if let Some(t) = session.get(TOKEN_KEY) {
             self.token = t;
         }
     }
 
-    /// Remembers the token for this session (best effort).
-    pub fn store_token(&self) {
-        session_set(TOKEN_KEY, &self.token);
+    /// Remembers the token for this session (best effort: a refused write
+    /// only means it is asked for again); an empty token is forgotten.
+    pub fn store_token(&self, session: &dyn KeyValueStore) {
+        if self.token.is_empty() {
+            session.remove(TOKEN_KEY);
+        } else {
+            let _ = session.set(TOKEN_KEY, &self.token);
+        }
     }
 
     /// Asks for the sizes of those of `ids` that are not known, not asked for
@@ -175,8 +180,6 @@ impl Regions {
         self.status = Some(status);
     }
 }
-
-pub use crate::platform::now_unix;
 
 #[cfg(test)]
 mod tests {

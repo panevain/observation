@@ -1,5 +1,6 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
+use crate::platform::{KeyValueStore, Platform};
 use crate::state::{AddressJump, LoadArea, Models, SaveState, Scene, UiState};
 use crate::theme::UiFont;
 use bevy::prelude::*;
@@ -11,6 +12,11 @@ const STORAGE_KEY: &str = "observation.scene.v1";
 const FONT_KEY: &str = "observation.font";
 /// Whether an Address tool click scrolls the camera list (`on` or `off`).
 const ADDRESS_JUMP_KEY: &str = "observation.address-jump";
+/// File name of an exported scene.
+const EXPORT_NAME: &str = "observation-scene.json";
+/// What an exported scene is, and what the import dialog offers.
+const SCENE_MIME: &str = "application/json";
+const SCENE_ACCEPT: &str = ".json,application/json";
 /// Seconds between autosave checks.
 const AUTOSAVE_INTERVAL: f32 = 1.5;
 
@@ -63,33 +69,34 @@ impl Plugin for PersistPlugin {
 }
 
 /// The UI font saved in this browser, else the default.
-pub fn load_font() -> UiFont {
-    storage_get(FONT_KEY)
+pub fn load_font(store: &dyn KeyValueStore) -> UiFont {
+    store
+        .get(FONT_KEY)
         .and_then(|k| UiFont::from_key(&k))
         .unwrap_or_default()
 }
 
-fn save_font(font: Res<UiFont>) {
+fn save_font(font: Res<UiFont>, platform: Res<Platform>) {
     // Not worth a warning: the font just reverts on the next visit.
     if !font.is_added()
-        && let Err(why) = storage_set(FONT_KEY, font.key())
+        && let Err(why) = platform.local.set(FONT_KEY, font.key())
     {
         bevy::log::warn!("could not store the font choice: {why:?}");
     }
 }
 
 /// The Address tool's jump setting saved in this browser, else on.
-pub fn load_address_jump() -> AddressJump {
-    match storage_get(ADDRESS_JUMP_KEY).as_deref() {
+pub fn load_address_jump(store: &dyn KeyValueStore) -> AddressJump {
+    match store.get(ADDRESS_JUMP_KEY).as_deref() {
         Some("off") => AddressJump(false),
         _ => AddressJump::default(),
     }
 }
 
-fn save_address_jump(jump: Res<AddressJump>) {
+fn save_address_jump(jump: Res<AddressJump>, platform: Res<Platform>) {
     let value = if jump.0 { "on" } else { "off" };
     if !jump.is_added()
-        && let Err(why) = storage_set(ADDRESS_JUMP_KEY, value)
+        && let Err(why) = platform.local.set(ADDRESS_JUMP_KEY, value)
     {
         bevy::log::warn!("could not store the address jump setting: {why:?}");
     }
@@ -101,8 +108,13 @@ fn restore(
     mut models: ResMut<Models>,
     mut load: MessageWriter<LoadArea>,
     mut ui: ResMut<UiState>,
+    platform: Res<Platform>,
 ) {
-    match storage_get(STORAGE_KEY).map(|s| SceneFile::from_json(&s)) {
+    match platform
+        .local
+        .get(STORAGE_KEY)
+        .map(|s| SceneFile::from_json(&s))
+    {
         Some(Ok(file)) => {
             let area = file.area;
             scene.load_file(file, &mut models);
@@ -131,6 +143,7 @@ fn autosave(
     models: Res<Models>,
     mut p: ResMut<Persist>,
     mut ui: ResMut<UiState>,
+    platform: Res<Platform>,
 ) {
     p.timer += time.delta_secs();
     if p.timer < AUTOSAVE_INTERVAL {
@@ -142,7 +155,7 @@ fn autosave(
     };
     let json = file.to_json();
     if json != p.last_saved {
-        match storage_set(STORAGE_KEY, &json) {
+        match platform.local.set(STORAGE_KEY, &json) {
             Ok(()) => {
                 ui.save = SaveState::Saved(real.elapsed_secs_f64());
                 p.last_saved = json;
@@ -161,18 +174,32 @@ fn handle_actions(
     scene: Res<Scene>,
     models: Res<Models>,
     mut ui: ResMut<UiState>,
+    platform: Res<Platform>,
 ) {
     for a in actions.read() {
         match a {
             PersistAction::Export => match scene.to_file(&models) {
                 Some(file) => {
-                    if let Err(e) = download("observation-scene.json", &file.to_json()) {
+                    if let Err(e) =
+                        platform
+                            .files
+                            .download(EXPORT_NAME, SCENE_MIME, &file.to_json())
+                    {
                         ui.error(format!("Could not export the scene: {e}"));
                     }
                 }
                 None => ui.error("Nothing to export yet; wait for an area to finish loading"),
             },
-            PersistAction::Import => pick_file(p.import_tx.clone()),
+            PersistAction::Import => {
+                let tx = p.import_tx.clone();
+                platform.files.pick_text(
+                    SCENE_ACCEPT,
+                    Box::new(move |picked| {
+                        // The receiver lives as long as the app; a send error means shutdown.
+                        let _ = tx.send(picked);
+                    }),
+                );
+            }
         }
     }
 }
@@ -208,5 +235,3 @@ pub fn receive_imports(
         }
     }
 }
-
-use crate::platform::{download, pick_file, storage_get, storage_set};

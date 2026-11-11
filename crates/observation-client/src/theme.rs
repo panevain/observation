@@ -14,7 +14,7 @@ use bevy_egui::egui::{
 use crossbeam_channel::{Receiver, unbounded};
 use observation_core::camera::CameraKind;
 
-use crate::platform::{prefers_dark, watch_scheme};
+use crate::platform::ColorScheme;
 
 use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors};
 pub use observation_tokens::{Layout, Radius, Space, TypeScale};
@@ -226,8 +226,8 @@ impl Tokens {
     }
 
     /// Picks light/dark from the browser's `prefers-color-scheme`.
-    pub fn from_environment() -> Self {
-        Self::for_scheme(prefers_dark())
+    pub fn from_environment(scheme: &dyn ColorScheme) -> Self {
+        Self::for_scheme(scheme.prefers_dark())
     }
 
     fn for_scheme(dark: bool) -> Self {
@@ -489,9 +489,12 @@ pub struct SchemeChanges(Receiver<bool>);
 impl SchemeChanges {
     /// Starts listening to the browser. Call once: each call adds a listener
     /// that lives as long as the page.
-    pub fn watch() -> Self {
+    pub fn watch(scheme: &dyn ColorScheme) -> Self {
         let (tx, rx) = unbounded();
-        watch_scheme(tx);
+        scheme.watch(Box::new(move |dark| {
+            // The receiver lives as long as the app; a send error means shutdown.
+            let _ = tx.send(dark);
+        }));
         Self(rx)
     }
 }

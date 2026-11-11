@@ -2,11 +2,114 @@
 //! `localStorage` and `sessionStorage`, file download and upload, the colour
 //! scheme media query and the page's loading screen.
 
-use super::{HttpRequest, SaveFailure};
+use std::sync::Arc;
+
+use super::{
+    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, Platform, SaveFailure,
+};
 use bevy::log::warn;
-use crossbeam_channel::Sender;
+use observation_client_model::platform::Reply;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
+
+pub fn platform() -> Platform {
+    Platform {
+        http: Arc::new(Fetch),
+        local: Arc::new(LocalStorage),
+        session: Arc::new(SessionStorage),
+        files: Arc::new(BrowserFiles),
+        clock: Arc::new(DateNow),
+        scheme: Arc::new(MediaQuery),
+    }
+}
+
+// Every port is a unit struct: each call looks up `window()` and what it
+// needs afresh, and JS objects live only inside the closures handed to the
+// browser. So the ports hold nothing that is tied to the main thread.
+
+/// `fetch` and `EventSource`.
+struct Fetch;
+
+impl Http for Fetch {
+    fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>) {
+        spawn_fetch(req, done);
+    }
+
+    fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>) {
+        spawn_event_source(url, event, on);
+    }
+}
+
+/// `localStorage`.
+struct LocalStorage;
+
+impl KeyValueStore for LocalStorage {
+    fn get(&self, key: &str) -> Option<String> {
+        storage_get(key)
+    }
+
+    fn set(&self, key: &str, value: &str) -> Result<(), SaveFailure> {
+        storage_set(key, value)
+    }
+
+    fn remove(&self, key: &str) {
+        if let Some(s) = storage() {
+            let _ = s.remove_item(key);
+        }
+    }
+}
+
+/// `sessionStorage`.
+struct SessionStorage;
+
+impl KeyValueStore for SessionStorage {
+    fn get(&self, key: &str) -> Option<String> {
+        session_get(key)
+    }
+
+    fn set(&self, key: &str, value: &str) -> Result<(), SaveFailure> {
+        session_set(key, value)
+    }
+
+    fn remove(&self, key: &str) {
+        session_remove(key);
+    }
+}
+
+/// Downloads through a link to a `Blob`, and opens files with `<input type="file">`.
+struct BrowserFiles;
+
+impl FileDialogs for BrowserFiles {
+    fn download(&self, name: &str, mime: &str, text: &str) -> Result<(), String> {
+        download(name, mime, text)
+    }
+
+    fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>) {
+        pick_file(accept, done);
+    }
+}
+
+/// `Date.now()`.
+struct DateNow;
+
+impl Clock for DateNow {
+    fn unix_ms(&self) -> f64 {
+        js_sys::Date::now()
+    }
+}
+
+/// The `prefers-color-scheme` media query.
+struct MediaQuery;
+
+impl ColorScheme for MediaQuery {
+    fn prefers_dark(&self) -> bool {
+        prefers_dark()
+    }
+
+    fn watch(&self, on: Box<dyn Fn(bool) + Send>) {
+        watch_scheme(on);
+    }
+}
 
 // The loading screen.
 
@@ -55,7 +158,7 @@ pub fn js_cause(e: &wasm_bindgen::JsValue) -> String {
     }
 }
 
-pub fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
@@ -123,7 +226,7 @@ pub fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) 
 /// retries a dropped stream by itself, but gives up for good after an error
 /// answer (a 503 from the stream cap, a 502 from a proxy during a restart);
 /// then a new one is opened after [`REOPEN_AFTER_MS`]. Lives as long as the page.
-pub fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
+fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
     open_event_source(url.to_owned(), event.to_owned(), std::rc::Rc::new(on));
 }
 
@@ -181,13 +284,13 @@ fn storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
-pub fn storage_get(key: &str) -> Option<String> {
+fn storage_get(key: &str) -> Option<String> {
     storage()?.get_item(key).ok().flatten()
 }
 
 /// Whether the value was stored, and if not why. Quota and privacy errors
 /// are non-fatal: the status bar says so and the user can still export.
-pub fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
+fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
     let window = web_sys::window().ok_or(SaveFailure::Unavailable)?;
     // Reading `localStorage` itself throws when site data is blocked.
     let storage = match window.local_storage() {
@@ -206,13 +309,13 @@ pub fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
     })
 }
 
-pub fn download(name: &str, text: &str) -> Result<(), String> {
+fn download(name: &str, mime: &str, text: &str) -> Result<(), String> {
     let doc = web_sys::window()
         .and_then(|w| w.document())
         .ok_or("the browser gave the app no page to download from")?;
     let parts = js_sys::Array::of1(&JsValue::from_str(text));
     let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type("application/json");
+    opts.set_type(mime);
     let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts)
         .map_err(|e| format!("could not prepare the file ({})", js_cause(&e)))?;
     let url = web_sys::Url::create_object_url_with_blob(&blob)
@@ -228,9 +331,9 @@ pub fn download(name: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn pick_file(tx: Sender<Result<String, String>>) {
+fn pick_file(accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>) {
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
-        let _ = tx.send(Err(
+        done(Err(
             "the browser gave the app no page to ask from".to_owned()
         ));
         return;
@@ -241,7 +344,7 @@ pub fn pick_file(tx: Sender<Result<String, String>>) {
     {
         Ok(input) => input,
         Err(e) => {
-            let _ = tx.send(Err(format!(
+            done(Err(format!(
                 "could not open the file picker ({})",
                 js_cause(&e)
             )));
@@ -249,7 +352,7 @@ pub fn pick_file(tx: Sender<Result<String, String>>) {
         }
     };
     input.set_type("file");
-    input.set_accept(".json,application/json");
+    input.set_accept(accept);
     let el = input.clone();
     let on_change = Closure::once_into_js(move || {
         let Some(file) = el.files().and_then(|f| f.get(0)) else {
@@ -260,35 +363,31 @@ pub fn pick_file(tx: Sender<Result<String, String>>) {
                 Ok(v) => v.as_string().ok_or_else(|| "it is not text".to_owned()),
                 Err(e) => Err(js_cause(&e)),
             };
-            let _ = tx.send(read);
+            done(read);
         });
     });
     input.set_onchange(Some(on_change.unchecked_ref()));
     input.click();
 }
 
-// The clock and `sessionStorage`.
-
-/// Seconds since the Unix epoch by this computer's clock.
-pub fn now_unix() -> u64 {
-    (js_sys::Date::now() / 1000.0) as u64
-}
+// `sessionStorage`.
 
 fn session_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.session_storage().ok().flatten()
 }
 
-pub fn session_get(key: &str) -> Option<String> {
+fn session_get(key: &str) -> Option<String> {
     session_storage()?.get_item(key).ok().flatten()
 }
 
-pub fn session_set(key: &str, value: &str) {
+fn session_set(key: &str, value: &str) -> Result<(), SaveFailure> {
+    let s = session_storage().ok_or(SaveFailure::Unavailable)?;
+    s.set_item(key, value).map_err(|_| SaveFailure::Blocked)
+}
+
+fn session_remove(key: &str) {
     if let Some(s) = session_storage() {
-        let _ = if value.is_empty() {
-            s.remove_item(key)
-        } else {
-            s.set_item(key, value)
-        };
+        let _ = s.remove_item(key);
     }
 }
 
@@ -298,12 +397,12 @@ fn dark_query() -> Option<web_sys::MediaQueryList> {
     web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
 }
 
-pub fn prefers_dark() -> bool {
+fn prefers_dark() -> bool {
     dark_query().is_some_and(|m| m.matches())
 }
 
-/// Sends the new setting whenever the media query's `change` event fires.
-pub fn watch_scheme(tx: Sender<bool>) {
+/// Calls `on` with the new setting whenever the media query's `change` event fires.
+fn watch_scheme(on: Box<dyn Fn(bool) + Send>) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
 
@@ -311,8 +410,7 @@ pub fn watch_scheme(tx: Sender<bool>) {
     let on_change = {
         let query = query.clone();
         Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-            // The receiver lives as long as the app; a send error means shutdown.
-            let _ = tx.send(query.matches());
+            on(query.matches());
         })
     };
     if let Err(e) =

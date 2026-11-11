@@ -1,9 +1,19 @@
-//! Everything that differs between the browser and the native build: the
-//! browser glue (`web_sys`, `js_sys`, `wasm_bindgen`) in `web.rs` and its
-//! native stand-ins in `native.rs`, with the same free functions on both.
-//! Apart from the coverage backend's worker link (`coverage/backend.rs`), which
-//! moves with the coverage changes, this is the only module of the library
-//! that tests `target_arch`.
+//! Everything that differs between the browser and the native build, behind
+//! the ports of [`observation_client_model::platform`]: the browser glue
+//! (`web_sys`, `js_sys`, `wasm_bindgen`) in `web.rs` and its native stand-ins
+//! in `native.rs`, each implementing the same traits.
+//!
+//! [`PlatformPlugin`] inserts them as the one [`Platform`] resource, before
+//! any other plugin is built. Apart from the coverage backend's worker link
+//! (`coverage/backend.rs`), which moves with the coverage changes, this is
+//! the only module of the library that tests `target_arch`.
+
+use std::sync::Arc;
+
+use bevy::prelude::*;
+pub use observation_client_model::platform::{
+    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, SaveFailure, unix_secs,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -11,64 +21,54 @@ mod native;
 mod web;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::*;
+use native as imp;
 #[cfg(target_arch = "wasm32")]
-pub use web::*;
+use web as imp;
 
-/// One HTTP request.
-#[derive(Debug, Clone)]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    allow(
-        dead_code,
-        reason = "only the browser build's fetch reads more than the URL"
-    )
-)]
-pub struct HttpRequest {
-    pub url: String,
-    pub method: &'static str,
-    /// JSON body.
-    pub body: Option<String>,
-    pub bearer: Option<String>,
+/// The loading screen is part of the page, not a port: this Startup system
+/// removes it.
+pub use imp::hide_loader;
+/// For the coverage backend's worker link, until it is a port too.
+#[cfg(target_arch = "wasm32")]
+pub use web::js_cause;
+
+/// The page the app runs in, one port per concern. Read-only: systems call
+/// through `Res<Platform>`, and resources clone the ports they keep.
+#[derive(Resource, Clone)]
+pub struct Platform {
+    pub http: Arc<dyn Http>,
+    /// Survives reloads (`localStorage`).
+    pub local: Arc<dyn KeyValueStore>,
+    /// Lives as long as the browser tab (`sessionStorage`).
+    pub session: Arc<dyn KeyValueStore>,
+    pub files: Arc<dyn FileDialogs>,
+    pub clock: Arc<dyn Clock>,
+    pub scheme: Arc<dyn ColorScheme>,
 }
 
-impl HttpRequest {
-    pub fn get(url: String) -> Self {
-        Self {
-            url,
-            method: "GET",
-            body: None,
-            bearer: None,
-        }
+impl Platform {
+    /// This build's ports: the browser's, or the native stand-ins.
+    pub fn current() -> Self {
+        imp::platform()
+    }
+
+    /// The ports, which [`PlatformPlugin`] inserts before every other plugin
+    /// is built.
+    pub fn of(world: &World) -> &Self {
+        world
+            .get_resource::<Self>()
+            .expect("PlatformPlugin is added before the plugins that use the Platform")
     }
 }
 
-/// Why the browser refused the autosave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    allow(dead_code, reason = "only the browser build's storage writes fail")
-)]
-pub enum SaveFailure {
-    /// The site's storage quota is used up (or is zero, as in some private modes).
-    Full,
-    /// The browser denies this page access to storage (site data or cookies blocked).
-    Blocked,
-    /// The browser offers no storage to this page at all.
-    Unavailable,
-}
+/// Inserts this build's [`Platform`], unless one is there already (a test's
+/// fakes).
+pub struct PlatformPlugin;
 
-impl SaveFailure {
-    /// What went wrong, for the status bar's tooltip.
-    pub fn reason(self) -> &'static str {
-        match self {
-            Self::Full => "This browser's storage for the site is full.",
-            Self::Blocked => {
-                "This browser blocks the site from storing data (check its site data or cookie settings)."
-            }
-            Self::Unavailable => {
-                "This browser offers no storage to the site (it may be in private mode)."
-            }
+impl Plugin for PlatformPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.world().contains_resource::<Platform>() {
+            app.insert_resource(Platform::current());
         }
     }
 }
