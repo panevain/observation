@@ -119,8 +119,11 @@ Every change is checked automatically (see `.github/workflows/`):
   security updates), and a weekly workflow for the pins Dependabot does not
   cover. All GitHub Actions are pinned to full commit SHAs, and the tools the
   checks run (cargo-audit, cargo-deny, Trivy, zizmor, cosign and the rest) are
-  pinned in `mise.toml` or `mise.ci.toml`. Every install checks each release
-  asset against the SHA-256 recorded in `mise.lock` or `mise.ci.lock`; the
+  pinned in `mise.toml` or `mise.ci.toml`. A tool installed from the network is
+  checked against the release asset's SHA-256 recorded in `mise.lock` or
+  `mise.ci.lock` (cargo-fuzz, built from crates.io with `cargo install
+  --locked`, has no checksum there); a tool restored from CI's cache of
+  develop's installs is not checked again (the release jobs use no cache). The
   publisher's attestations or signatures, where they exist, are verified when
   that lock entry is written (`mise run lock`).
 - **Release provenance**: both images pushed to GHCR (`observation` and

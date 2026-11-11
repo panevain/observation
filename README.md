@@ -37,7 +37,7 @@ mise run up                                  # the released images, signature-ch
 
 The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits default in [`compose.yaml`](compose.yaml) (override one from the environment, e.g. `OBS_PORT=9090 mise run up`). Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
 
-On a host that only runs the stack, `echo 'env = []' > .miserc.local.toml` (gitignored) keeps mise from loading `mise.dev.toml`, the development tasks, as `.miserc.toml` would; the host needs a mise at least as new as the `hard` value of `min_version` in `mise.toml`.
+On a host that only runs the stack, `echo 'env = []' > .miserc.local.toml` (gitignored) keeps mise from loading `mise.dev.toml`, the development tasks, as `.miserc.toml` would; the host needs a mise at least as new as the `soft` value of `min_version` in `mise.toml` (the CI version; older releases ignore `.miserc.local.toml`).
 
 ### From source
 
