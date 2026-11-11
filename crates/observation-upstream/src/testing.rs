@@ -1,7 +1,10 @@
 //! Test doubles for [`HttpClient`]: [`FakeHttp`] answers from a script,
 //! [`RouterHttp`] hands requests to an in-process tower service (such as an
-//! axum `Router`). Both apply the request's `max_bytes` and `timeout` the way
-//! [`GuardedHttp`](crate::GuardedHttp) does.
+//! axum `Router`). Both apply the request's caps and timeout the way
+//! [`GuardedHttp`](crate::GuardedHttp) does, including a client-level
+//! timeout (`with_timeout`, as [`GuardedHttpBuilder::timeout`](crate::GuardedHttpBuilder::timeout))
+//! that a request's own timeout replaces. Neither follows redirects: script
+//! the final reply.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -62,7 +65,8 @@ impl FakeReply {
         }
     }
 
-    /// An answer that never comes: the request waits for its timeout.
+    /// An answer that never comes: the request waits for its timeout (a
+    /// request with no timeout at all panics rather than hang the test).
     pub fn hang() -> Self {
         Self::status(StatusCode::OK).delay(Duration::MAX)
     }
@@ -79,9 +83,14 @@ impl FakeReply {
         self
     }
 
-    pub fn header(mut self, name: HeaderName, value: &'static str) -> Self {
+    /// Adds a header value; repeated calls with one name add repeated headers.
+    ///
+    /// # Panics
+    /// If `value` cannot be a header value.
+    pub fn header(mut self, name: HeaderName, value: impl AsRef<str>) -> Self {
         if let Ok(r) = &mut self.outcome {
-            r.headers.insert(name, HeaderValue::from_static(value));
+            let value = HeaderValue::from_str(value.as_ref()).expect("a valid header value");
+            r.headers.append(name, value);
         }
         self
     }
@@ -93,11 +102,12 @@ pub type FakeHandler = dyn Fn(&HttpRequest) -> FakeReply + Send + Sync;
 /// An [`HttpClient`] that records every request and answers it from, in
 /// order of preference: the replies queued for its method and URL
 /// ([`FakeHttp::on`]), the replies queued for any request
-/// ([`FakeHttp::push`]), then its handler ([`FakeHttp::from_fn`]). With none
-/// of those it fails with [`TransportErrorKind::Other`]. Requests that race
-/// (single-flight, parallel tile fetches) should be answered by key or by
-/// handler, since their order is not fixed. Clones share the script and the
-/// record.
+/// ([`FakeHttp::push`]), then its handler ([`FakeHttp::from_fn`]). A request
+/// none of those answers panics, naming it, so a missing script never passes
+/// for an upstream failure; [`FakeHttp::assert_drained`] checks the other way.
+/// Requests that race (single-flight, parallel tile fetches) should be
+/// answered by key or by handler, since their order is not fixed. Clones share
+/// the script and the record.
 #[derive(Clone, Default)]
 pub struct FakeHttp(Arc<Mutex<FakeState>>);
 
@@ -107,16 +117,22 @@ struct FakeState {
     queued: VecDeque<FakeReply>,
     handler: Option<Arc<FakeHandler>>,
     requests: Vec<HttpRequest>,
+    /// The client-level timeout.
+    timeout: Option<Duration>,
 }
 
 impl fmt::Debug for FakeHttp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let state = self.state();
         f.debug_struct("FakeHttp")
-            .field("keyed", &state.keyed)
-            .field("queued", &state.queued)
+            .field(
+                "keyed",
+                &state.keyed.values().map(VecDeque::len).sum::<usize>(),
+            )
+            .field("queued", &state.queued.len())
             .field("handler", &state.handler.is_some())
-            .field("requests", &state.requests)
+            .field("requests", &state.requests.len())
+            .field("timeout", &state.timeout)
             .finish()
     }
 }
@@ -140,6 +156,29 @@ impl FakeHttp {
             fake.push(r);
         }
         fake
+    }
+
+    /// A timeout for requests that set none, like a client built with
+    /// [`GuardedHttpBuilder::timeout`](crate::GuardedHttpBuilder::timeout).
+    pub fn with_timeout(self, timeout: Duration) -> Self {
+        self.state().timeout = Some(timeout);
+        self
+    }
+
+    /// Panics if scripted replies were left unused, naming them.
+    pub fn assert_drained(&self) {
+        let state = self.state();
+        let keyed: Vec<String> = state
+            .keyed
+            .iter()
+            .filter(|(_, q)| !q.is_empty())
+            .map(|((m, u), q)| format!("{m} {} ({})", crate::redact(u), q.len()))
+            .collect();
+        assert!(
+            keyed.is_empty() && state.queued.is_empty(),
+            "FakeHttp: unused replies: keyed {keyed:?}, queued {}",
+            state.queued.len()
+        );
     }
 
     /// Queues `reply` for the next request that has no keyed reply.
@@ -184,21 +223,28 @@ impl FakeHttp {
 
     async fn answer(&self, req: HttpRequest) -> Result<HttpResponse, TransportError> {
         let Some(reply) = self.reply_for(&req) else {
-            return Err(TransportError::new(
-                TransportErrorKind::Other,
-                "FakeHttp: no reply scripted for this request",
-            ));
+            panic!(
+                "FakeHttp: unexpected request {} {}",
+                req.method,
+                crate::redact(&req.url)
+            );
         };
+        let timeout = req.timeout.or(self.state().timeout);
         let wait = async {
             if reply.delay == Duration::MAX {
                 std::future::pending::<()>().await;
             }
             tokio::time::sleep(reply.delay).await;
         };
-        match req.timeout {
+        match timeout {
             Some(t) => tokio::time::timeout(t, wait)
                 .await
                 .map_err(|_| timed_out())?,
+            None if reply.delay == Duration::MAX => panic!(
+                "FakeHttp: {} {} would wait forever: it has no timeout",
+                req.method,
+                crate::redact(&req.url)
+            ),
             None => wait.await,
         }
         match reply.outcome {
@@ -230,11 +276,15 @@ fn timed_out() -> TransportError {
 }
 
 /// An [`HttpClient`] that serves requests from an in-process tower service,
-/// such as an axum `Router`, without a socket. The URL's scheme and host are
-/// dropped; its path and query become the request URI.
+/// such as an axum `Router`, without a socket. The URL's path and query become
+/// the request URI and its host (and port, unless the default) the `Host`
+/// header; unlike reqwest, it adds no `User-Agent`, `Accept` or
+/// `Content-Length` of its own.
 #[derive(Clone)]
 pub struct RouterHttp<S> {
     service: S,
+    /// The client-level timeout.
+    timeout: Option<Duration>,
 }
 
 impl<S> fmt::Debug for RouterHttp<S> {
@@ -245,7 +295,17 @@ impl<S> fmt::Debug for RouterHttp<S> {
 
 impl<S> RouterHttp<S> {
     pub fn new(service: S) -> Self {
-        Self { service }
+        Self {
+            service,
+            timeout: None,
+        }
+    }
+
+    /// A timeout for requests that set none, like a client built with
+    /// [`GuardedHttpBuilder::timeout`](crate::GuardedHttpBuilder::timeout).
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
     }
 }
 
@@ -276,8 +336,12 @@ where
             .body(Full::new(body.unwrap_or_default()))
             .map_err(|e| other(&e))?;
         *request.headers_mut() = headers;
-        if let Some(host) = url.host_str()
-            && let Ok(v) = HeaderValue::from_str(host)
+        let host = url.host_str().map(|h| match url.port() {
+            Some(port) => format!("{h}:{port}"),
+            None => h.to_owned(),
+        });
+        if let Some(host) = host
+            && let Ok(v) = HeaderValue::from_str(&host)
         {
             request.headers_mut().insert(http::header::HOST, v);
         }
@@ -289,12 +353,16 @@ where
             let resp = service.call(request).await.map_err(|e| other(&e))?;
             let (parts, body) = resp.into_parts();
             let cap = req.cap_for(parts.status);
-            let declared = parts
-                .headers
-                .get(http::header::CONTENT_LENGTH)
-                .and_then(|v| v.to_str().ok()?.parse::<u64>().ok())
-                .or(http_body::Body::size_hint(&body).exact());
-            let body = if declared.is_some_and(|n| n > cap as u64) {
+            // The body's own size, as reqwest sees it (a HEAD reply's
+            // `Content-Length` header describes a body that is not there).
+            let declared = http_body::Body::size_hint(&body).exact();
+            let body = if req.skips_body(parts.status) {
+                if declared == Some(0) {
+                    Body::Complete(Bytes::new())
+                } else {
+                    Body::TooLarge
+                }
+            } else if declared.is_some_and(|n| n > cap as u64) {
                 Body::TooLarge
             } else {
                 match Limited::new(body, cap).collect().await {
@@ -311,7 +379,7 @@ where
                 body,
             })
         };
-        match req.timeout {
+        match req.timeout.or(self.timeout) {
             Some(t) => tokio::time::timeout(t, exchange)
                 .await
                 .map_err(|_| timed_out())?,
@@ -368,13 +436,10 @@ mod tests {
             .send(HttpRequest::get("http://o.example/i", 100))
             .await;
         assert_eq!(c.unwrap_err().kind, TransportErrorKind::Connect);
-        let d = client
-            .send(HttpRequest::get("http://o.example/i", 100))
-            .await;
-        assert_eq!(d.unwrap_err().kind, TransportErrorKind::Other);
+        fake.assert_drained();
 
         let sent = fake.requests();
-        assert_eq!(sent.len(), 4);
+        assert_eq!(sent.len(), 3);
         assert_eq!(
             sent[0].body,
             crate::RequestBody::Form(vec![("data".into(), "q".into())])
@@ -493,7 +558,7 @@ mod tests {
         assert_eq!(resp.status, StatusCode::OK);
         assert_eq!(
             resp.bytes().unwrap(),
-            "POST /interpreter?bbox=1,2,3,4 agent.internal application/x-www-form-urlencoded data=x+y"
+            "POST /interpreter?bbox=1,2,3,4 agent.internal:9 application/x-www-form-urlencoded data=x+y"
         );
         let capped = client
             .send(HttpRequest::get("http://a.internal/?pad=2000", 1024))
@@ -531,5 +596,210 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ok.bytes().unwrap(), "late");
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "unexpected request GET https://t.example/x")]
+    async fn an_unscripted_request_panics_naming_it_without_credentials() {
+        let fake = FakeHttp::new();
+        let _ = fake
+            .send(HttpRequest::get("https://u:secret@t.example/x", 1))
+            .await;
+    }
+
+    #[test]
+    #[should_panic(expected = "unused replies")]
+    fn leftover_replies_fail_assert_drained() {
+        let fake = FakeHttp::new();
+        fake.on(Method::GET, "http://t.example/a", FakeReply::ok("a"));
+        fake.assert_drained();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn keyed_replies_answer_racing_requests_in_any_order() {
+        let fake = FakeHttp::new();
+        for n in 0..8 {
+            let url = format!("http://t.example/{n}");
+            // Later URLs answer sooner, so they finish in reverse order.
+            let delay = Duration::from_millis(100 * (8 - n));
+            fake.on(Method::GET, &url, FakeReply::ok(n.to_string()).delay(delay));
+        }
+        let sends = (0..8).rev().map(|n| {
+            let fake = &fake;
+            async move {
+                let r = fake
+                    .send(HttpRequest::get(format!("http://t.example/{n}"), 10))
+                    .await
+                    .unwrap();
+                (n, r.bytes().cloned().unwrap())
+            }
+        });
+        for (n, body) in futures_util::future::join_all(sends).await {
+            assert_eq!(body, n.to_string());
+        }
+        fake.assert_drained();
+    }
+
+    #[tokio::test]
+    async fn fake_headers_take_dynamic_and_repeated_values() {
+        let max_age = 3600;
+        let fake = FakeHttp::replying([FakeReply::ok("x")
+            .header(http::header::CACHE_CONTROL, format!("max-age={max_age}"))
+            .header(http::header::VARY, "a")
+            .header(http::header::VARY, "b")]);
+        let r = fake
+            .send(HttpRequest::get("http://t.example/", 10))
+            .await
+            .unwrap();
+        assert_eq!(r.headers[http::header::CACHE_CONTROL], "max-age=3600");
+        let vary: Vec<_> = r.headers.get_all(http::header::VARY).iter().collect();
+        assert_eq!(vary, ["a", "b"]);
+    }
+
+    /// The client-level timeout applies when a request sets none, and a
+    /// request's own timeout replaces it (longer or shorter), as in reqwest.
+    #[tokio::test(start_paused = true)]
+    async fn fake_client_timeout_applies_unless_the_request_sets_one() {
+        let fake = FakeHttp::new().with_timeout(Duration::from_secs(20));
+        let url = "http://t.example/tile";
+        fake.push(FakeReply::ok("late").delay(Duration::from_secs(25)));
+        let started = tokio::time::Instant::now();
+        let err = fake.send(HttpRequest::get(url, 10)).await.unwrap_err();
+        assert_eq!(err.kind, TransportErrorKind::Timeout);
+        assert_eq!(started.elapsed(), Duration::from_secs(20));
+        fake.push(FakeReply::ok("late").delay(Duration::from_secs(25)));
+        let longer = HttpRequest::get(url, 10).timeout(Duration::from_secs(30));
+        assert_eq!(fake.send(longer).await.unwrap().bytes().unwrap(), "late");
+        fake.push(FakeReply::ok("soon").delay(Duration::from_secs(5)));
+        let shorter = HttpRequest::get(url, 10).timeout(Duration::from_secs(1));
+        assert_eq!(
+            fake.send(shorter).await.unwrap_err().kind,
+            TransportErrorKind::Timeout
+        );
+        fake.push(FakeReply::hang());
+        assert_eq!(
+            fake.send(HttpRequest::get(url, 10)).await.unwrap_err().kind,
+            TransportErrorKind::Timeout
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[should_panic(expected = "would wait forever")]
+    async fn a_hang_without_any_timeout_panics() {
+        let fake = FakeHttp::replying([FakeReply::hang()]);
+        let _ = fake.send(HttpRequest::get("http://t.example/", 10)).await;
+    }
+
+    #[tokio::test]
+    async fn fake_error_cap_of_zero_keeps_only_empty_error_bodies() {
+        let fake = FakeHttp::replying([
+            FakeReply::status(StatusCode::BAD_GATEWAY).body("oops"),
+            FakeReply::status(StatusCode::NOT_MODIFIED),
+        ]);
+        let get = || HttpRequest::get("http://t.example/", 10).error_max_bytes(0);
+        assert_eq!(fake.send(get()).await.unwrap().body, Body::TooLarge);
+        assert_eq!(
+            fake.send(get()).await.unwrap().body,
+            Body::Complete(Bytes::new())
+        );
+    }
+
+    type Frames = Box<
+        dyn futures_util::Stream<Item = Result<http_body::Frame<Bytes>, std::io::Error>>
+            + Send
+            + Unpin,
+    >;
+
+    /// A service answering every request with a streamed body of no known size.
+    fn streaming(
+        make: fn() -> Frames,
+    ) -> impl tower::Service<
+        http::Request<Full<Bytes>>,
+        Response = http::Response<http_body_util::StreamBody<Frames>>,
+        Error = Infallible,
+        Future = impl Send,
+    > + Clone
+    + Send
+    + Sync {
+        tower::service_fn(move |_req: http::Request<Full<Bytes>>| async move {
+            Ok::<_, Infallible>(http::Response::new(http_body_util::StreamBody::new(make())))
+        })
+    }
+
+    fn frame(len: usize) -> Result<http_body::Frame<Bytes>, std::io::Error> {
+        Ok(http_body::Frame::data(Bytes::from(vec![b'.'; len])))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn router_caps_streamed_bodies_and_reports_their_errors() {
+        use futures_util::StreamExt;
+        let get = || HttpRequest::get("http://a.internal/", 1024).timeout(Duration::from_secs(5));
+        let fits = RouterHttp::new(streaming(|| {
+            Box::new(futures_util::stream::iter([frame(512), frame(512)]))
+        }));
+        assert_eq!(
+            fits.send(get()).await.unwrap().bytes().map(Bytes::len),
+            Some(1024)
+        );
+        let over = RouterHttp::new(streaming(|| {
+            Box::new(futures_util::stream::iter([frame(512), frame(513)]))
+        }));
+        assert_eq!(over.send(get()).await.unwrap().body, Body::TooLarge);
+        let endless = RouterHttp::new(streaming(|| {
+            Box::new(futures_util::stream::repeat_with(|| frame(100)))
+        }));
+        assert_eq!(endless.send(get()).await.unwrap().body, Body::TooLarge);
+        let broken = RouterHttp::new(streaming(|| {
+            Box::new(futures_util::stream::iter([
+                frame(10),
+                Err(std::io::Error::other("reset")),
+            ]))
+        }));
+        assert_eq!(
+            broken.send(get()).await.unwrap_err().kind,
+            TransportErrorKind::Body
+        );
+        // A long poll or event stream that stops sending: the timeout ends it,
+        // the request's own or else the client's.
+        let stalled = RouterHttp::new(streaming(|| {
+            Box::new(futures_util::stream::iter([frame(10)]).chain(futures_util::stream::pending()))
+        }));
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            stalled.send(get()).await.unwrap_err().kind,
+            TransportErrorKind::Timeout
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
+        let stalled = stalled.with_timeout(Duration::from_secs(20));
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            stalled
+                .send(HttpRequest::get("http://a.internal/", 1024))
+                .await
+                .unwrap_err()
+                .kind,
+            TransportErrorKind::Timeout
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(20));
+    }
+
+    /// A HEAD answer's `Content-Length` describes a body that is not sent:
+    /// the response is complete and empty, as from `GuardedHttp`.
+    #[tokio::test]
+    async fn router_head_answers_are_empty_and_complete() {
+        let svc = tower::service_fn(|_req: http::Request<Full<Bytes>>| async {
+            let mut resp = http::Response::new(Full::new(Bytes::new()));
+            resp.headers_mut().insert(
+                http::header::CONTENT_LENGTH,
+                HeaderValue::from_static("123456789"),
+            );
+            Ok::<_, Infallible>(resp)
+        });
+        let resp = RouterHttp::new(svc)
+            .send(HttpRequest::head("http://a.internal/x.osm.pbf"))
+            .await
+            .unwrap();
+        assert_eq!(resp.body, Body::Complete(Bytes::new()));
+        assert_eq!(resp.content_length(), Some(123_456_789));
     }
 }
