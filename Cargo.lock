@@ -4727,6 +4727,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-client-model"
+version = "0.1.0"
+
+[[package]]
 name = "observation-core"
 version = "0.1.0"
 dependencies = [
@@ -4755,6 +4759,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "observation-regions-api"
+version = "0.1.0"
 
 [[package]]
 name = "observation-server"

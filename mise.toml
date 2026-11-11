@@ -66,40 +66,70 @@ cargo-deny = "0.20.2"
 # trunk would otherwise query the crates.io API for a newer release on every build.
 TRUNK_SKIP_VERSION_CHECK = "true"
 
+# The package sets the tasks below build, named once so that adding or splitting a crate edits
+# only this block. The Dockerfile and the workflows' path filters name packages too.
+[vars]
+# What native-only tasks (clippy, doctests) leave out of `--workspace`: the wasm client, which
+# links Bevy and web-sys.
+native_excludes = "--exclude observation-client"
+# What is linted for wasm32: the client and the engine-free model it builds on.
+wasm_packages = "-p observation-client -p observation-client-model"
+# The two native binaries: the server (`serve`, `dev`) and the region agent. The Dockerfile
+# builds both and repeats these names.
+server_package = "observation-server"
+regions_package = "observation-regions"
+# What line coverage leaves out of `--workspace`.
+coverage_excludes = "--exclude observation-client"
+# The tooling workspace (xtask/, its own Cargo.lock), which fmt, clippy-native and test cover
+# too; nextest takes the root workspace's .config/nextest.toml for it.
+xtask_manifest = "--manifest-path xtask/Cargo.toml"
+
 [tasks.fmt]
-description = "cargo fmt --check"
-run = "cargo fmt --all --check"
+description = "cargo fmt --check (both workspaces: the root one and xtask/)"
+run = [
+  "cargo fmt --all --check",
+  "cargo fmt {{vars.xtask_manifest}} --all --check",
+]
 
 [tasks.clippy-native]
-description = "Clippy on the native workspace"
-run = "cargo clippy --locked --workspace --exclude observation-client --all-targets -- -D warnings"
+description = "Clippy on the native workspace and xtask/"
+run = [
+  "cargo clippy --locked --workspace {{vars.native_excludes}} --all-targets -- -D warnings",
+  "cargo clippy --locked {{vars.xtask_manifest}} --all-targets -- -D warnings",
+]
 
 [tasks.clippy-wasm]
-description = "Clippy on the wasm client"
-run = "cargo clippy --locked -p observation-client --target wasm32-unknown-unknown --all-targets -- -D warnings"
+description = "Clippy on the wasm client and the client model"
+run = "cargo clippy --locked {{vars.wasm_packages}} --target wasm32-unknown-unknown --all-targets -- -D warnings"
 
 [tasks.test]
-description = "Unit and integration tests with cargo-nextest (the client's too, built natively), then doctests (the client has no library target)"
+description = "Unit and integration tests with cargo-nextest (the client's too, built natively, and xtask/'s), then doctests (the client has no library target)"
+# OBS_BLESS=1 rewrites golden files instead of comparing them (CONTRIBUTING.md), so a run with it
+# set would pass whatever the output; this task, which CI runs, refuses it.
 run = [
+  '[ -z "${OBS_BLESS:-}" ] || { echo "OBS_BLESS is set: tests would rewrite their golden files instead of checking them. Unset it (bless with cargo nextest directly)." >&2; exit 1; }',
   "cargo nextest run --locked --workspace",
-  "cargo test --locked --doc --workspace --exclude observation-client",
+  "cargo nextest run --locked {{vars.xtask_manifest}} --config-file .config/nextest.toml",
+  "cargo test --locked --doc --workspace {{vars.native_excludes}}",
 ]
 
 [tasks.coverage]
 description = "Line coverage of core + server (needs cargo-llvm-cov, `mise -E ci install cargo-llvm-cov`, and the llvm-tools-preview component); writes lcov.info"
-run = "cargo llvm-cov --locked --workspace --exclude observation-client --lcov --output-path lcov.info"
+run = "cargo llvm-cov --locked --workspace {{vars.coverage_excludes}} --lcov --output-path lcov.info"
 
 [tasks.typos]
 description = "Spelling in code, docs and config (typos; correct words it does not know go in .typos.toml)"
 run = "typos"
 
 [tasks.shear]
-description = "Dependencies that no code uses, in both workspaces (cargo-shear); one used only for its features goes in [package.metadata.cargo-shear] ignored"
-# Both from the repository root: the fuzz workspace's `cargo metadata` then runs on the root
-# toolchain, so no nightly is needed. --locked: fuzz/Cargo.lock must already match its manifests.
+description = "Dependencies that no code uses, in all three workspaces (cargo-shear); one used only for its features goes in [package.metadata.cargo-shear] ignored"
+# All from the repository root: the fuzz workspace's `cargo metadata` then runs on the root
+# toolchain, so no nightly is needed. --locked: fuzz/Cargo.lock and xtask/Cargo.lock must
+# already match their manifests.
 run = [
   "cargo shear --locked --deny-warnings",
   "cargo shear --locked --deny-warnings fuzz",
+  "cargo shear --locked --deny-warnings xtask",
 ]
 
 [tasks.deny]
@@ -154,7 +184,7 @@ usage = 'flag "--release" help="Release-build the client and the server, as CI d
 # can't resolve to a task.
 run = [
   "trunk build --locked{% if usage.release %} --release{% endif %}",
-  "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}",
+  "cargo run --locked -p {{vars.server_package}}{% if usage.release %} --release{% endif %}",
 ]
 
 [tasks.verify]

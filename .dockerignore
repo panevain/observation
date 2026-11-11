@@ -20,6 +20,7 @@ node_modules
 Dockerfile
 tests/browser
 supply-chain
+xtask
 scripts/prune-images.sh
 /lcov.info
 
