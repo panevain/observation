@@ -2,18 +2,22 @@
 //! ranges, ported as is from `scripts/check-cargo-cooldown.py` (`version_key`, `matches`).
 //!
 //! This is deliberately not full semver: a pre-release sorts before its release, and two
-//! pre-releases compare as plain strings, as the script did. Digits are ASCII only.
+//! pre-releases compare as plain strings, as the script did. Digits are ASCII only, and
+//! numbers are `u64` (Python's are unbounded). Whitespace is Python's: Unicode whitespace plus
+//! the separators U+001C to U+001F.
 
 use std::sync::LazyLock;
 
 use regex::Regex;
 
+// Constant patterns, compiled by every test that reaches them: the panics cannot happen.
 static VERSION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?(?:-([0-9A-Za-z.-]+))?(?:\+\S*)?$")
         .unwrap_or_else(|e| panic!("VERSION regex: {e}"))
 });
 static REQUIREMENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(>=|<=|>|<|=|\^|~)?\s*(.+)$").unwrap_or_else(|e| panic!("REQUIREMENT regex: {e}"))
+    Regex::new(r"^(>=|<=|>|<|=|\^|~)?[\s\x1C-\x1F]*(.+)$")
+        .unwrap_or_else(|e| panic!("REQUIREMENT regex: {e}"))
 });
 
 /// A version that [`matches`] or [`version_key`] could not read.
@@ -23,6 +27,22 @@ pub enum VersionError {
     NotARequirement(String),
 }
 
+impl std::fmt::Display for VersionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAVersion(v) => write!(f, "not a version: {v:?}"),
+            Self::NotARequirement(r) => write!(f, "not a requirement: {r:?}"),
+        }
+    }
+}
+
+impl std::error::Error for VersionError {}
+
+/// Python's `str.strip()`: Unicode whitespace and U+001C to U+001F.
+fn strip(s: &str) -> &str {
+    s.trim_matches(|c: char| c.is_whitespace() || ('\x1C'..='\x1F').contains(&c))
+}
+
 /// Sort key of a full version: major, minor, patch (missing parts are 0), then 0 for a
 /// pre-release and 1 for a release, then the pre-release text.
 pub type Key = (u64, u64, u64, u8, String);
@@ -30,7 +50,7 @@ pub type Key = (u64, u64, u64, u8, String);
 /// The sort key of `v` (surrounding whitespace ignored).
 pub fn version_key(v: &str) -> Result<Key, VersionError> {
     let not_a_version = || VersionError::NotAVersion(v.to_owned());
-    let caps = VERSION.captures(v.trim()).ok_or_else(not_a_version)?;
+    let caps = VERSION.captures(strip(v)).ok_or_else(not_a_version)?;
     let part = |i| {
         caps.get(i)
             .map_or(Ok(0), |m| m.as_str().parse::<u64>())
@@ -53,7 +73,7 @@ pub fn version_key(v: &str) -> Result<Key, VersionError> {
 pub fn matches(version: &str, req: &str) -> Result<bool, VersionError> {
     let v = version_key(version)?;
     let not_a_requirement = || VersionError::NotARequirement(req.to_owned());
-    for comp in req.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+    for comp in req.split(',').map(strip).filter(|c| !c.is_empty()) {
         let caps = REQUIREMENT.captures(comp).ok_or_else(not_a_requirement)?;
         let op = caps.get(1).map_or("^", |m| m.as_str());
         let rest = caps.get(2).map_or("", |m| m.as_str());
@@ -107,6 +127,7 @@ mod tests {
         assert!(k("1.0.0") < k("1.0.1-alpha"));
         // Plain string order, not semver's numeric identifiers.
         assert!(k("1.0.0-rc.10") < k("1.0.0-rc.9"));
+        assert_eq!(k("\u{1c}1.0.0\u{1f}"), (1, 0, 0, 1, String::new()));
         assert_eq!(
             version_key("v1"),
             Err(VersionError::NotAVersion("v1".into()))
@@ -134,6 +155,8 @@ mod tests {
             ("1.0.0-rc.1", "< 1.0.0", true),
             ("5.0.0", "", true),
             ("5.0.0", " , ", true),
+            ("1.0.0", ">\u{1c}1", false),
+            ("1.0.0", "\u{1c}>=1", true),
         ];
         for (v, req, want) in table {
             assert_eq!(matches(v, req), Ok(want), "{v} against {req:?}");

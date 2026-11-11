@@ -8,7 +8,9 @@ pub enum Align {
 }
 
 /// A Markdown table: `| a | b |` lines under a `| --- | ---: |` rule. Cells are written as
-/// given (escaping is the caller's), and an empty cell is a single space (`| |`).
+/// given (escaping is the caller's), each as ` cell |`, so an empty one is `|  |`, as the
+/// scripts' f-strings write it. The one exception is an empty header cell, written `| |` as
+/// check-wasm-size.py wrote its verdict column's.
 #[derive(Debug, Clone, Default)]
 pub struct Table {
     header: Vec<String>,
@@ -26,7 +28,9 @@ impl Table {
     }
 
     pub fn row<S: Into<String>>(&mut self, cells: impl IntoIterator<Item = S>) -> &mut Self {
-        self.rows.push(cells.into_iter().map(Into::into).collect());
+        let row: Vec<String> = cells.into_iter().map(Into::into).collect();
+        debug_assert_eq!(row.len(), self.header.len(), "row width: {row:?}");
+        self.rows.push(row);
         self
     }
 
@@ -40,17 +44,18 @@ impl Table {
             Align::Left => "---",
             Align::Right => "---:",
         });
-        let mut out = vec![line(&self.header), line(rule)];
-        out.extend(self.rows.iter().map(line));
+        let mut out = vec![line(&self.header, true), line(rule, false)];
+        out.extend(self.rows.iter().map(|r| line(r, false)));
         out
     }
 }
 
-fn line<S: AsRef<str>>(cells: impl IntoIterator<Item = S>) -> String {
+/// `| a | b |`; with `collapse_empty`, an empty cell is `| |` rather than `|  |`.
+fn line<S: AsRef<str>>(cells: impl IntoIterator<Item = S>, collapse_empty: bool) -> String {
     let mut s = String::from("|");
     for c in cells {
         let c = c.as_ref();
-        if !c.is_empty() {
+        if !(collapse_empty && c.is_empty()) {
             s.push(' ');
             s.push_str(c);
         }
@@ -85,12 +90,14 @@ mod tests {
         ]);
         assert!(t.is_empty());
         t.row(["`observation-client`", "9.87 MiB", "ok"]);
+        t.row(["`worker`", "", "ok"]);
         assert_eq!(
             t.lines(),
             [
                 "| module | raw | |",
                 "| --- | ---: | --- |",
                 "| `observation-client` | 9.87 MiB | ok |",
+                "| `worker` |  | ok |",
             ]
         );
     }

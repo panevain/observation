@@ -8,12 +8,24 @@ const MICROS_PER_DAY: i64 = 86_400_000_000;
 /// A proleptic Gregorian calendar date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Date {
-    pub year: i32,
-    pub month: u32,
-    pub day: u32,
+    year: i32,
+    month: u32,
+    day: u32,
 }
 
 impl Date {
+    pub fn year(self) -> i32 {
+        self.year
+    }
+
+    pub fn month(self) -> u32 {
+        self.month
+    }
+
+    pub fn day(self) -> u32 {
+        self.day
+    }
+
     /// The date, if it exists.
     pub fn new(year: i32, month: u32, day: u32) -> Option<Self> {
         let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
@@ -100,9 +112,13 @@ impl Timestamp {
         }
     }
 
-    /// `YYYY-MM-DD`, optionally followed by `T` (or a space), `HH:MM`, optional `:SS` and
-    /// fraction, and `Z` or `±HH:MM` (or `±HHMM`). Without an offset the time is UTC, as the
-    /// scripts treated a naive `--now`.
+    /// `YYYY-MM-DD` (year 0001 or later), optionally followed by `T` (or a space), `HH:MM`,
+    /// optional `:SS` and fraction (`.` or `,`, digits beyond six dropped), and `Z` or `±HH:MM`
+    /// (or `±HHMM`). Without an offset the time is UTC, as the scripts treated a naive `--now`.
+    ///
+    /// This is a subset of what Python's `datetime.fromisoformat` accepts: the forms crates.io's
+    /// `pubtime` and `created_at` use, and a hand-written `--now`. It rejects the rest
+    /// (`20261111`, `2026-W46-3`, `T12`, `T1200`, a `t` separator, `+03`, `+03:00:30`).
     pub fn parse(s: &str) -> Option<Self> {
         let b = s.as_bytes();
         let num = |range: std::ops::Range<usize>| -> Option<u32> {
@@ -114,7 +130,8 @@ impl Timestamp {
         if b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
             return None;
         }
-        let date = Date::new(i32::try_from(num(0..4)?).ok()?, num(5..7)?, num(8..10)?)?;
+        let year = i32::try_from(num(0..4)?).ok().filter(|&y| y >= 1)?;
+        let date = Date::new(year, num(5..7)?, num(8..10)?)?;
         let (mut secs, mut micros, mut i) = (0_i64, 0_i64, 10);
         if matches!(b.get(10), Some(b'T' | b' ')) {
             let (h, m) = (num(11..13)?, num(14..16)?);
@@ -150,11 +167,16 @@ impl Timestamp {
                     b'-' => -1,
                     _ => return None,
                 };
-                let hm = rest[1..].replacen(':', "", 1);
-                if hm.len() != 4 || !hm.bytes().all(|c| c.is_ascii_digit()) {
+                // Exactly HH:MM or HHMM.
+                let digits = match rest.as_bytes()[1..] {
+                    [a, b, b':', c, d] | [a, b, c, d] => [a, b, c, d],
+                    _ => return None,
+                };
+                if !digits.iter().all(u8::is_ascii_digit) {
                     return None;
                 }
-                let (h, m) = (hm[..2].parse::<i32>().ok()?, hm[2..].parse::<i32>().ok()?);
+                let n = |i: usize| i32::from(digits[i] - b'0');
+                let (h, m) = (n(0) * 10 + n(1), n(2) * 10 + n(3));
                 if h > 23 || m > 59 {
                     return None;
                 }
@@ -244,6 +266,9 @@ mod tests {
             "2026-11-11Q",
             "2026-11-11T10:00:00.Z",
             "2026-11-11T10:00+5",
+            "2026-11-11T10:00+0:300",
+            "2026-11-11T10:00+030:0",
+            "0000-01-01",
         ] {
             assert_eq!(Timestamp::parse(bad), None, "{bad}");
         }
