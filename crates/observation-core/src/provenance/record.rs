@@ -1,78 +1,14 @@
-//! Where coverage figures come from, and what they leave out.
-//!
-//! Anyone who quotes a figure needs to know when the map data was taken and
-//! what the figure does not count, and to be able to tell later whether the
-//! same scene would still give the same figure. This module holds:
-//!
-//! - [`Provenance`], the optional block a saved scene records: the OSM data
-//!   date, when the server built the area, a fingerprint of the area's map
-//!   features, and the app and catalogue versions.
-//! - [`CAVEATS_SUMMARY`] and [`CAVEATS`], the one versioned statement of what
-//!   the figures leave out ([`CAVEATS_VERSION`]). The app shows it under the
-//!   figures, and anything that prints figures (such as an evidence sheet)
-//!   must print the same text, so it changes in one place.
-//! - The serde helpers that write times as ISO-8601 UTC strings. Parsing and
-//!   formatting them ([`parse_utc`], [`format_utc`] and the rest) live in
-//!   `util::time` and are re-exported here.
+//! The provenance block a saved scene records.
 
+use super::CAVEATS_VERSION;
 use crate::bundle::AreaBundle;
-pub use crate::util::hash::fingerprint_hex;
-pub use crate::util::time::{format_date, format_utc, format_utc_minute, parse_utc};
+use crate::util::hash::fingerprint_hex;
+use crate::util::time::{format_date, format_utc, format_utc_minute, parse_utc};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// The app and engine version (this crate's, which the whole workspace
 /// shares).
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Bumped whenever [`CAVEATS_SUMMARY`], [`CAVEATS`] or [`CAVEATS_BOUND`]
-/// change, so a saved scene says which statement its figures were shown with
-/// (a test pins a hash of the text, so a change without a bump fails it).
-pub const CAVEATS_VERSION: u32 = 1;
-
-/// The one line shown under the figures.
-pub const CAVEATS_SUMMARY: &str = "Up to: trees, hedges, fences and vehicles are not counted. \
-     'Street' includes driveways and footpaths.";
-
-/// Everything the figures leave out or approximate, one point each (the full
-/// list behind [`CAVEATS_SUMMARY`]).
-pub const CAVEATS: [&str; 7] = [
-    "Not modelled: trees, hedges, fences and walls, vehicles, poles, street furniture, \
-     awnings, bridges and tunnels. Cameras see straight through them, so the figures \
-     can only overstate what is visible past them.",
-    "Buildings come from OpenStreetMap. One missing from the map lets cameras see \
-     through the gap; one demolished but still mapped blocks a view that is open.",
-    "Building heights are inferred where they are not tagged, and roofs are flat, so \
-     views over and onto buildings can be wrong in either direction.",
-    "Terrain is approximate: ground heights come from a public elevation model sampled \
-     every 5 m, so small banks, retaining walls and cuttings are smoothed out.",
-    "'Street' includes driveways and footpaths: every mapped road, service road and \
-     footpath counts, as a band of estimated width.",
-    "Detail levels are pixel-density targets from the published resolution, not a test \
-     of what a camera records. Range is capped at 100 m, and floodlights and street \
-     lights are ignored at night.",
-    "Only the loaded area is analysed, at one subject height: views beyond its edge are \
-     cut off.",
-];
-
-/// How to read the figures given [`CAVEATS`]: why "up to", and why that is
-/// still not a strict upper bound.
-pub const CAVEATS_BOUND: &str = "Leaving these out can only overstate what a camera sees, \
-     so read the figures as \"up to\". Inferred heights and missing or out-of-date \
-     buildings err in both directions, though, so they are not a strict upper bound.";
-
-/// The full statement: the points of [`CAVEATS`] as a bulleted list, then
-/// [`CAVEATS_BOUND`].
-pub fn caveats_text() -> String {
-    let mut out = String::from("What the figures leave out:\n");
-    for c in CAVEATS {
-        out.push_str("• ");
-        out.push_str(c);
-        out.push('\n');
-    }
-    out.push('\n');
-    out.push_str(CAVEATS_BOUND);
-    out
-}
 
 /// Longest version or fingerprint string kept from a file.
 const MAX_LABEL_CHARS: usize = 64;
@@ -282,7 +218,6 @@ pub(crate) fn lenient_provenance<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::hash::Fnv64;
 
     fn saved(fingerprint: &str, date: &str) -> Provenance {
         Provenance {
@@ -388,39 +323,5 @@ mod tests {
             p.sanitise();
             assert_eq!(p.osm_fingerprint, None, "{bad:?}");
         }
-    }
-
-    #[test]
-    fn caveats_are_complete() {
-        let text = caveats_text();
-        for word in [
-            "trees",
-            "hedges",
-            "fences",
-            "vehicles",
-            "driveways",
-            "footpaths",
-        ] {
-            assert!(CAVEATS_SUMMARY.contains(word), "summary lacks {word}");
-            assert!(text.contains(word), "list lacks {word}");
-        }
-        assert!(text.contains("not a strict upper bound"));
-        assert_eq!(text.matches('•').count(), CAVEATS.len());
-    }
-
-    #[test]
-    fn caveats_version_follows_the_text() {
-        // Saved scenes record CAVEATS_VERSION as the statement their figures
-        // were shown with. If this fails, the caveats changed: bump
-        // CAVEATS_VERSION and pin the new hash here.
-        let mut h = Fnv64::default();
-        h.str(CAVEATS_SUMMARY).str(CAVEATS_BOUND);
-        for c in CAVEATS {
-            h.str(c);
-        }
-        assert_eq!(
-            (CAVEATS_VERSION, fingerprint_hex(h.finish())),
-            (1, "46ff2a019c5ab692".to_owned())
-        );
     }
 }
