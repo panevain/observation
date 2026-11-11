@@ -1,0 +1,69 @@
+use axum::Router;
+use axum::body::{Body, Bytes};
+use axum::http::{HeaderMap, Request, StatusCode};
+use observation_server::config::Config;
+use observation_server::{AppState, app};
+use tower::ServiceExt;
+
+pub(crate) const BBOX: &str = include_str!("../../fixtures/demo-bbox.txt");
+
+pub(crate) struct Harness {
+    pub(crate) app: Router,
+    pub(crate) cache: tempfile::TempDir,
+    _static: tempfile::TempDir,
+}
+
+pub(crate) fn harness_with(
+    overpass_url: &str,
+    tile_url: &str,
+    static_dir: tempfile::TempDir,
+    tweak: impl FnOnce(&mut Config),
+) -> Harness {
+    let cache = tempfile::tempdir().unwrap();
+    let mut config = Config::for_tests(cache.path(), static_dir.path(), overpass_url, tile_url);
+    tweak(&mut config);
+    let app = app(AppState::new(config).unwrap());
+    Harness {
+        app,
+        cache,
+        _static: static_dir,
+    }
+}
+
+pub(crate) fn harness(overpass_url: &str, tile_url: &str) -> Harness {
+    harness_with(overpass_url, tile_url, tempfile::tempdir().unwrap(), |_| {})
+}
+
+/// A harness whose upstreams are unreachable (for routes that never call them).
+pub(crate) fn offline() -> Harness {
+    harness(
+        "http://127.0.0.1:9/overpass",
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+    )
+}
+
+pub(crate) async fn send(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Bytes) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    (
+        parts.status,
+        parts.headers,
+        axum::body::to_bytes(body, usize::MAX).await.unwrap(),
+    )
+}
+
+pub(crate) async fn get_uri(app: &Router, uri: &str) -> (StatusCode, HeaderMap, Bytes) {
+    send(
+        app,
+        Request::builder().uri(uri).body(Body::empty()).unwrap(),
+    )
+    .await
+}
+
+pub(crate) fn json(body: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(body).unwrap()
+}
+
+pub(crate) fn area_uri() -> String {
+    format!("/api/area?bbox={}", BBOX.trim())
+}
