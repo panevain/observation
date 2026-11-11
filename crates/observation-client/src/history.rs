@@ -182,10 +182,7 @@ pub fn record(
     if target.area != current.area
         && let Some(area) = target.area
     {
-        load.write(LoadArea {
-            area,
-            keep_cameras: true,
-        });
+        load.write(LoadArea::new(area, true));
     }
     to.push(current);
     scene.restore(&target, &mut models);

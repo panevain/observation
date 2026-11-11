@@ -118,10 +118,7 @@ fn restore(
         Some(Ok(file)) => {
             let area = file.area;
             scene.load_file(file, &mut models);
-            load.write(LoadArea {
-                area,
-                keep_cameras: true,
-            });
+            load.write(LoadArea::new(area, true));
         }
         Some(Err(e)) => {
             ui.error_sticky(format!(
@@ -225,10 +222,7 @@ pub fn receive_imports(
                 let n = file.cameras.len();
                 scene.load_file(file, &mut models);
                 ui.selected = None;
-                load.write(LoadArea {
-                    area,
-                    keep_cameras: true,
-                });
+                load.write(LoadArea::new(area, true));
                 ui.info(format!("Imported scene with {n} camera(s)"));
             }
             Err(e) => ui.error_sticky(format!("Import failed: {e}")),

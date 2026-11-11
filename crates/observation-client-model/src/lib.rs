@@ -4,6 +4,7 @@
 //! `web-sys`, so they build for the native target and are tested with plain
 //! `cargo test`. `observation-client` renders this model and feeds it input.
 
+pub mod document;
 pub mod platform;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

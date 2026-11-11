@@ -4730,6 +4730,9 @@ dependencies = [
 [[package]]
 name = "observation-client-model"
 version = "0.1.0"
+dependencies = [
+ "observation-core",
+]
 
 [[package]]
 name = "observation-core"
