@@ -14,14 +14,17 @@
 //!
 //! [`HttpClient`] is the port services send upstream requests through, with
 //! the size cap part of every request; [`GuardedHttp`], built only from
-//! [`client_builder`], is its production implementation. [`read_capped`]
-//! and [`BoundedQueue`] are the other shared pieces of talking to an
-//! upstream: a size cap on what it sends back and a bound on who waits for it.
+//! [`client_builder`], is its production implementation, and the `testing`
+//! feature adds fakes. [`read_capped`] and [`BoundedQueue`] are the other
+//! shared pieces of talking to an upstream: a size cap on what it sends back
+//! and a bound on who waits for it.
 
 mod body;
 mod guarded;
 mod http;
 mod queue;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use crate::http::{
     Body, DEFAULT_ERROR_MAX_BYTES, HttpClient, HttpRequest, HttpResponse, RequestBody,

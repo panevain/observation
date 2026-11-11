@@ -4800,9 +4800,12 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "http",
+ "http-body",
+ "http-body-util",
  "reqwest",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
 ]
 
