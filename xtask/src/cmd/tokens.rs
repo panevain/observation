@@ -1,6 +1,11 @@
 //! `cargo xtask tokens`: the design-token check (`.config/design-tokens.toml`). Every colour the
 //! client uses must come from the theme file; any other `.rs` file under the scanned roots with
 //! a colour literal fails.
+//!
+//! Two differences from the script it replaced (scripts/check-design-tokens.sh): a file with a
+//! NUL byte is scanned line by line (grep reported only "Binary file ... matches"), and a scan
+//! root that is a symbolic link to a directory is followed (the script's `find` scanned nothing
+//! there). Symbolic links inside a root are still skipped, as `find -type f` skipped them.
 
 use std::fs;
 use std::path::Path;
@@ -87,6 +92,11 @@ pub fn scan(sources: &[Source], theme: &str, regex: &Regex) -> Outcome {
 /// (byte order). Symbolic links are neither followed nor read. Fails when the theme file or a
 /// root is missing.
 pub fn sources(repo: &Path, config: &Config) -> Result<Vec<Source>> {
+    if config.roots.is_empty() {
+        return Err(Error::new(format!(
+            "design tokens: {CONFIG} lists no roots, so nothing would be checked"
+        )));
+    }
     if !repo.join(&config.theme).is_file() {
         return Err(Error::new(format!(
             "design tokens: {} not found",
@@ -131,8 +141,9 @@ fn walk(repo: &Path, dir: &str, out: &mut Vec<String>) -> Result<()> {
 
 /// Runs the check on the repository at `repo`.
 pub fn run(repo: &Path) -> Result<Outcome> {
-    let text =
-        fs::read_to_string(repo.join(CONFIG)).map_err(|e| Error::new(format!("{CONFIG}: {e}")))?;
+    let path = repo.join(CONFIG);
+    let text = fs::read_to_string(&path)
+        .map_err(|e| Error::new(format!("design tokens: {}: {e}", path.display())))?;
     let config = Config::parse(&text)?;
     let regex = config.regex()?;
     Ok(scan(&sources(repo, &config)?, &config.theme, &regex))
@@ -215,5 +226,23 @@ mod tests {
         let clean = ok(check(tree));
         assert!(!clean.failed());
         assert_eq!(clean.stderr, "");
+        let no_roots = Config {
+            roots: Vec::new(),
+            theme: "t".into(),
+            patterns: Vec::new(),
+        };
+        assert_eq!(
+            sources(tree, &no_roots).map(|s| s.len()),
+            Err(Error::new(
+                "design tokens: .config/design-tokens.toml lists no roots, so nothing would be checked"
+            ))
+        );
+        let missing_config = run(&tree.join("nowhere")).map(|o| o.stdout);
+        assert!(
+            missing_config
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("nowhere/.config/design-tokens.toml")),
+            "{missing_config:?}"
+        );
     }
 }

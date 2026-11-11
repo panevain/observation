@@ -96,6 +96,8 @@ mise -E ci run vet      # cargo-vet as Security runs it; likewise audit, cooldow
 
 Tests that compare output with a committed golden file (under a crate's `tests/golden/`, or `xtask/tests/fixtures/`) rewrite that file instead when `OBS_BLESS=1` is set: run `OBS_BLESS=1 cargo nextest run -p <crate>` (for xtask, `OBS_BLESS=1 cargo nextest run --manifest-path xtask/Cargo.toml`), then review the diff and commit it with the change that caused it. `mise run test`, which CI runs, fails while `OBS_BLESS` is set, so CI always compares. Fakes and fixture builders that other crates' tests use sit behind a cargo feature named `testing`, gated `#[cfg(any(test, feature = "testing"))]`, and only `[dev-dependencies]` (and the fuzz targets) enable it, so nothing that ships compiles them.
 
+Some checks are commands of the repository's own tooling, `cargo xtask <command>` (`xtask/`, a workspace of its own, behind an alias in `.cargo/config.toml`). Run it from the repository root, or use `mise run <task>`: the alias names `xtask/Cargo.toml` relative to the current directory. See `cargo xtask --help` for the commands.
+
 Without mise, the equivalent commands are in the `[tasks]` of [`mise.toml`](mise.toml) and [`mise.ci.toml`](mise.ci.toml); plain `rustup` is enough for the Rust toolchain because `rust-toolchain.toml` is the only place the version is set (`mise.lock` records it for mise; `mise run sync` checks the two agree and that nothing else repeats it). Tests run under `cargo nextest`, and `mise run coverage` needs `cargo-llvm-cov` (in `mise.ci.toml`). The Docker job has no mise task; to build the image from an existing `dist/` run `docker build --target runtime-prebuilt --build-context client-dist=dist .`.
 
 ### Tools (mise)

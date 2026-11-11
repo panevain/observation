@@ -11,6 +11,7 @@ theme = "crates/observation-client/src/theme.rs"
 # Rust regex syntax (https://docs.rs/regex), each matched against one line at a time.
 patterns = [
     'Color32::from_rgb',
+    # Already covered by the one above (from_rgb is its prefix); kept as the script had it.
     'Color32::from_rgba',
     'Color32::from_gray',
     'Color::srgb\(',

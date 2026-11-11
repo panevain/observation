@@ -137,9 +137,9 @@ jobs:
   tokens:
     name: design tokens
     runs-on: ubuntu-24.04
-    # A cold run installs the toolchain and builds xtask (about two minutes); with the cache,
+    # A cold run installs the toolchain and builds xtask (under a minute); with the cache,
     # seconds.
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
