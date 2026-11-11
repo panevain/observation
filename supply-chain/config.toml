@@ -445,7 +445,7 @@ criteria = "safe-to-deploy"
 [[exemptions.rand_xorshift]]
 version = "0.5.0"
 criteria = "safe-to-run"
-notes = "Pulled in by proptest (a dev-dependency only; never in a shipped binary). Exempted at safe-to-run with proptest rather than certified."
+notes = "The RNG proptest uses, pulled in by it alone (a dev-dependency only; never in a shipped binary). Not audited here; the 0.4.0 to 0.5.0 diff is 118 lines. Exempted at safe-to-run with proptest rather than certified."
 
 [[exemptions.rand_xoshiro]]
 version = "0.7.0"

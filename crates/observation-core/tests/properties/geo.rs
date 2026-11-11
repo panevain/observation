@@ -1,46 +1,12 @@
-//! Projection, bounding boxes, tiles and UTC timestamps.
+//! Projection, bounding boxes and tiles.
 
 use crate::config;
+use crate::strategies::{bbox, lat, lon};
 use observation_core::geo::{BBox, LatLon, Projection};
-use observation_core::provenance::{format_utc, parse_utc};
 use observation_core::tiles::{
     MAX_ZOOM, TileId, lat_to_y, lon_to_x, tiles_covering, x_to_lon, y_to_lat,
 };
 use proptest::prelude::*;
-
-/// A latitude the API accepts.
-fn lat() -> impl Strategy<Value = f64> {
-    -85.0..=85.0f64
-}
-
-fn lon() -> impl Strategy<Value = f64> {
-    -180.0..=180.0f64
-}
-
-/// A box of 20 to 500 m a side (at its centre latitude) inside the accepted
-/// coordinate range.
-fn bbox() -> impl Strategy<Value = BBox> {
-    (
-        -84.9..=84.9f64,
-        -179.9..=179.9f64,
-        20.0..=500.0f64,
-        20.0..=500.0f64,
-    )
-        .prop_map(|(lat, lon, w, h)| {
-            let tall = BBox::around(LatLon::new(lat, lon), h);
-            let wide = BBox::around(LatLon::new(lat, lon), w);
-            BBox {
-                south: tall.south,
-                west: wide.west,
-                north: tall.north,
-                east: wide.east,
-            }
-        })
-}
-
-/// The last second of 9999-12-31, the latest time [`format_utc`] writes in
-/// the form [`parse_utc`] reads.
-const LAST_UTC: u64 = 253_402_300_799;
 
 proptest! {
     #![proptest_config(config(256))]
@@ -130,17 +96,4 @@ proptest! {
             );
         }
     }
-
-    #[test]
-    fn prop_utc_round_trips_up_to_9999(t in 0..=LAST_UTC) {
-        let s = format_utc(t);
-        prop_assert_eq!(s.len(), 20);
-        prop_assert_eq!(parse_utc(&s), Some(t), "{}", s);
-    }
-}
-
-#[test]
-fn prop_utc_bound_is_where_four_digit_years_end() {
-    assert_eq!(format_utc(LAST_UTC), "9999-12-31T23:59:59Z");
-    assert_eq!(parse_utc(&format_utc(LAST_UTC + 1)), None);
 }

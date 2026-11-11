@@ -1,37 +1,10 @@
 //! The terrain height field.
 
 use crate::config;
+use crate::strategies::{point, terrain};
 use glam::{Vec2, Vec3};
 use observation_core::terrain::Terrain;
 use proptest::prelude::*;
-
-/// A valid grid of up to 12 × 12 samples, anywhere near the origin.
-fn terrain() -> impl Strategy<Value = Terrain> {
-    (
-        1..=12u32,
-        1..=12u32,
-        1.0..=50.0f32,
-        -100.0..=0.0f32,
-        -100.0..=0.0f32,
-    )
-        .prop_flat_map(|(cols, rows, cell_m, x, z)| {
-            prop::collection::vec(-3000..=3000i16, (cols * rows) as usize).prop_map(
-                move |heights_dm| Terrain {
-                    min: [x, z],
-                    cell_m,
-                    cols,
-                    rows,
-                    heights_dm,
-                    datum_m: 50.0,
-                    attribution: String::new(),
-                },
-            )
-        })
-}
-
-fn point() -> impl Strategy<Value = Vec2> {
-    (-300.0..=300.0f32, -300.0..=300.0f32).prop_map(|(x, z)| Vec2::new(x, z))
-}
 
 proptest! {
     #![proptest_config(config(128))]
@@ -54,6 +27,33 @@ proptest! {
             prop_assert!(low <= t.height_at(Vec2::from_array(*p)) + 1e-4, "{low}");
         }
         prop_assert!(low >= t.bottom() - 1e-3);
+    }
+
+    #[test]
+    fn prop_lowest_ground_is_no_higher_than_any_sample_inside(
+        t in terrain(),
+        // A rectangle around one sample, often holding only that one, and
+        // half the time in the grid's first row or column.
+        at in (0..12u32, 0..12u32, any::<bool>()),
+        size in (0.1..=1.6f32, 0.1..=1.6f32, 0.1..=1.6f32, 0.1..=1.6f32),
+    ) {
+        let (col, row) = if at.2 { (at.0 % t.cols, 0) } else { (0, at.1 % t.rows) };
+        let centre = Vec2::from_array(t.min) + Vec2::new(col as f32, row as f32) * t.cell_m;
+        let lo = centre - Vec2::new(size.0, size.1) * t.cell_m;
+        let hi = centre + Vec2::new(size.2, size.3) * t.cell_m;
+        let ring = [[lo.x, lo.y], [hi.x, lo.y], [hi.x, hi.y], [lo.x, hi.y]];
+        let low = t.min_under(&ring);
+        for r in 0..t.rows {
+            for c in 0..t.cols {
+                let p = Vec2::from_array(t.min) + Vec2::new(c as f32, r as f32) * t.cell_m;
+                // Strictly inside, clear of float noise at the edges.
+                let margin = 1e-3 * t.cell_m;
+                if p.cmpgt(lo + margin).all() && p.cmplt(hi - margin).all() {
+                    let sample = f32::from(t.heights_dm[(r * t.cols + c) as usize]) * 0.1;
+                    prop_assert!(low <= sample, "{low} above the sample at ({c}, {r}): {sample}");
+                }
+            }
+        }
     }
 
     #[test]

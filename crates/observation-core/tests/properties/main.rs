@@ -10,7 +10,9 @@
 //! in a debug build.
 
 mod geo;
+mod strategies;
 mod terrain;
+mod time;
 
 use proptest::test_runner::{Config, RngSeed};
 
