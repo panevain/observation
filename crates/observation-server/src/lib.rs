@@ -26,7 +26,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Bytes;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
-use observation_upstream::{Redirects, client_builder};
+use observation_upstream::{GuardedHttp, Redirects, client_builder};
 use thiserror::Error;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -90,7 +90,8 @@ impl AppState {
         config.validate()?;
         // No redirects: an upstream must not be able to send us elsewhere.
         let upstream = || client_builder(config.allow_private_upstreams, Redirects::None);
-        let overpass_client = upstream()
+        // Every attempt sets its own timeout (at most this one), as before.
+        let overpass_client = GuardedHttp::builder(config.allow_private_upstreams, Redirects::None)
             .user_agent(&user_agent)
             .timeout(config.overpass_timeout)
             .build()?;
@@ -115,7 +116,7 @@ impl AppState {
             let cache = Arc::clone(&cache);
             runtime.spawn(async move { cache.trim().await });
         }
-        let overpass = Arc::new(OverpassClient::new(overpass_client, &config));
+        let overpass = Arc::new(OverpassClient::new(Arc::new(overpass_client), &config));
         let regions = match &config.regions_url {
             Some(url) => {
                 // No overall timeout: snapshot requests long-poll (each request sets its own).

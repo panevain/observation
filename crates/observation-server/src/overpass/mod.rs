@@ -7,12 +7,14 @@
 //! answers 429 or 504 then rests for a cool-down; while every interpreter rests,
 //! new fetches fail fast with a 503.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use axum::http::{StatusCode, header};
 use observation_core::geo::BBox;
-use observation_upstream::{BoundedQueue, QueueError};
-use reqwest::StatusCode;
+use observation_upstream::{
+    Body, BoundedQueue, HttpClient, HttpRequest, QueueError, TransportError, TransportErrorKind,
+};
 use tokio::time::Instant;
 
 use crate::config::Config;
@@ -41,12 +43,14 @@ enum Transient {
 }
 
 impl Transient {
-    fn of(e: &reqwest::Error) -> Self {
-        // A connect timeout means the host was never reached, not that it was slow.
-        if e.is_timeout() && !e.is_connect() {
-            Self::TimedOut
-        } else {
-            Self::Failed
+    fn of(e: &TransportError) -> Self {
+        match e.kind {
+            TransportErrorKind::Timeout => Self::TimedOut,
+            // A connect timeout means the host was never reached, not that it was slow.
+            TransportErrorKind::ConnectTimeout
+            | TransportErrorKind::Connect
+            | TransportErrorKind::Body
+            | TransportErrorKind::Other => Self::Failed,
         }
     }
 }
@@ -62,7 +66,7 @@ enum AttemptError {
 /// Rate-limited Overpass client.
 #[derive(Debug)]
 pub struct OverpassClient {
-    client: reqwest::Client,
+    client: Arc<dyn HttpClient>,
     /// Interpreters tried in order; transient failures move on to the next one.
     urls: Vec<String>,
     /// One request in flight; the waiters are bounded so distinct boxes can't build a backlog.
@@ -83,7 +87,7 @@ const MAX_WAITING: usize = 3;
 
 impl OverpassClient {
     /// `client` must already carry the project `User-Agent`.
-    pub fn new(client: reqwest::Client, config: &Config) -> Self {
+    pub fn new(client: Arc<dyn HttpClient>, config: &Config) -> Self {
         let mut urls = config.overpass_urls.clone();
         if urls.is_empty() {
             urls.push(crate::config::DEFAULT_OVERPASS_URL.to_owned());
@@ -194,26 +198,27 @@ impl OverpassClient {
         query: &str,
         timeout: Duration,
     ) -> Result<OsmData, AttemptError> {
-        let resp = self
-            .client
-            .post(&self.urls[endpoint])
+        // An error status's body is never read.
+        let req = HttpRequest::post(&self.urls[endpoint], MAX_RESPONSE_BYTES)
             .timeout(timeout)
-            .form(&[("data", query)])
-            .send()
-            .await
-            .map_err(|e| {
-                let t = Transient::of(&e);
-                tracing::warn!(endpoint, error = %e.without_url(), "overpass request failed");
-                AttemptError::Retry(t)
-            })?;
-        let status = resp.status();
+            .error_max_bytes(0)
+            .form([("data", query)]);
+        let resp = self.client.send(req).await.map_err(|e| {
+            if e.kind == TransportErrorKind::Body {
+                tracing::warn!(endpoint, error = %e, "overpass body failed");
+            } else {
+                tracing::warn!(endpoint, error = %e, "overpass request failed");
+            }
+            AttemptError::Retry(Transient::of(&e))
+        })?;
+        let status = resp.status;
         if !status.is_success() {
             if status.is_redirection() {
                 // Redirects are not followed (see `observation_upstream`); say where to.
                 tracing::warn!(
                     endpoint,
                     %status,
-                    location = ?resp.headers().get(reqwest::header::LOCATION),
+                    location = ?resp.headers.get(header::LOCATION),
                     "overpass redirected; point OBS_OVERPASS_URL at the final URL"
                 );
                 return Err(AttemptError::Retry(Transient::Failed));
@@ -232,24 +237,16 @@ impl OverpassClient {
                 ))),
             });
         }
-        let body = crate::read_capped(resp, MAX_RESPONSE_BYTES)
-            .await
-            .map_err(|e| {
-                let t = Transient::of(&e);
-                tracing::warn!(endpoint, error = %e.without_url(), "overpass body failed");
-                AttemptError::Retry(t)
-            })?
-            .ok_or_else(|| {
-                tracing::warn!(
-                    endpoint,
-                    max = MAX_RESPONSE_BYTES,
-                    "overpass body too large"
-                );
-                AttemptError::Fatal(ApiError::Upstream(
-                    "this area has more map data than the server accepts; draw a smaller area"
-                        .into(),
-                ))
-            })?;
+        let Body::Complete(body) = resp.body else {
+            tracing::warn!(
+                endpoint,
+                max = MAX_RESPONSE_BYTES,
+                "overpass body too large"
+            );
+            return Err(AttemptError::Fatal(ApiError::Upstream(
+                "this area has more map data than the server accepts; draw a smaller area".into(),
+            )));
+        };
         parse_response(&body).map_err(|e| {
             tracing::warn!(endpoint, error = %e, "overpass response unusable");
             match e {
@@ -304,14 +301,19 @@ impl OverpassClient {
 }
 
 #[cfg(test)]
+mod client_tests;
+
+#[cfg(test)]
 mod tests {
+    use observation_upstream::testing::FakeHttp;
+
     use super::*;
 
     #[test]
     fn an_empty_interpreter_list_falls_back_to_the_default() {
         let mut config = Config::for_tests("cache", "dist", "http://127.0.0.1:9/", "http://t/");
         config.overpass_urls.clear();
-        let client = OverpassClient::new(reqwest::Client::new(), &config);
+        let client = OverpassClient::new(Arc::new(FakeHttp::new()), &config);
         assert_eq!(
             client.urls,
             vec![crate::config::DEFAULT_OVERPASS_URL.to_owned()]
@@ -323,7 +325,7 @@ mod tests {
     async fn cooldowns_run_on_tokio_time() {
         let mut config = Config::for_tests("cache", "dist", "http://127.0.0.1:9/", "http://t/");
         config.overpass_cooldown = Duration::from_secs(30);
-        let client = OverpassClient::new(reqwest::Client::new(), &config);
+        let client = OverpassClient::new(Arc::new(FakeHttp::new()), &config);
         let retry_after = |c: &OverpassClient| match c.check_cooldown() {
             Ok(()) => None,
             Err(ApiError::RateLimited { retry_after_secs }) => Some(retry_after_secs),
