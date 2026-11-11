@@ -2,6 +2,9 @@
 
 use bytes::Bytes;
 
+/// Most bytes reserved up front from a declared `Content-Length`.
+const PREALLOCATE_MAX: usize = 64 * 1024;
+
 /// Reads an upstream response body, giving up as soon as it grows past `max`
 /// bytes. `Ok(None)` means it was too large; a `Content-Length` is not
 /// required (chunked bodies are capped while streaming, not after buffering).
@@ -13,8 +16,10 @@ pub async fn read_capped(
     if declared.is_some_and(|n| n > max as u64) {
         return Ok(None);
     }
-    // At most `max` here, so the cast cannot truncate.
-    let mut body = Vec::with_capacity(declared.map_or(0, |n| n as usize));
+    // Reserve what is declared, up to a modest amount: `max` may be far larger
+    // than any real body, and the buffer grows as data actually arrives.
+    let reserve = declared.map_or(0, |n| n.min(PREALLOCATE_MAX as u64) as usize);
+    let mut body = Vec::with_capacity(reserve);
     while let Some(chunk) = resp.chunk().await? {
         if body.len() + chunk.len() > max {
             return Ok(None);
