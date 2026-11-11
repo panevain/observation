@@ -16,8 +16,10 @@ pub mod example;
 pub mod frustum;
 pub mod geo;
 pub mod occlusion;
+pub(crate) mod osm;
 pub mod provenance;
 pub mod regions;
+pub(crate) mod road;
 pub mod scene;
 pub mod terrain;
 #[cfg(any(test, feature = "testing"))]
