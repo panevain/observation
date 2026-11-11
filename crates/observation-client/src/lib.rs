@@ -25,8 +25,10 @@ use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 use observation_core::camera::Catalog;
 
-// Curated camera catalog: every `.ron` file under `assets/catalog/`, discovered by build.rs.
-include!(concat!(env!("OUT_DIR"), "/catalog_files.rs"));
+/// Curated camera catalog: every `.ron` file under `assets/catalog/`, discovered by build.rs.
+mod catalog {
+    include!(concat!(env!("OUT_DIR"), "/catalog_files.rs"));
+}
 
 /// The app's plugins, in the order they are built: the shared resources
 /// first, then one plugin per area of the app.
@@ -56,7 +58,7 @@ struct ResourcesPlugin;
 
 impl Plugin for ResourcesPlugin {
     fn build(&self, app: &mut App) {
-        let catalog = match Catalog::from_ron_parts(CATALOG_FILES) {
+        let catalog = match Catalog::from_ron_parts(catalog::CATALOG_FILES) {
             Ok(c) => c,
             Err(e) => {
                 // The catalog is validated in CI; fall back to an empty list rather than crash.
