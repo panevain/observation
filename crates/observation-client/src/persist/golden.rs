@@ -13,17 +13,20 @@
 //! OBS_BLESS=1 cargo nextest run -p observation-client golden
 //! ```
 //!
-//! and review the diff. `autosave_v1_flat.json` is an input written the way
-//! builds before terrain saved scenes, and is never rewritten.
+//! and review the diff. `autosave_v1_flat.json` is a minimal hand-written
+//! input in the shape builds before terrain saved (version 1, a legacy
+//! `color_index`, no `roll_deg`, a gap in the ids), not a byte copy of a file
+//! an old build wrote; it is never rewritten.
 
 use super::{ADDRESS_JUMP_KEY, FONT_KEY, PersistAction, PersistPlugin, STORAGE_KEY};
+use crate::platform::SaveFailure;
 use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
-use crate::state::{LoadArea, Models, Scene, Snapshot, ToastKind, UiState};
+use crate::state::{LoadArea, Models, SaveState, Scene, Snapshot, ToastKind, UiState};
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use observation_client_model::testing::{
-    FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore,
+    FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore, StoreOp,
 };
 use observation_core::camera::{CameraKind, CameraModel, CameraPlacement, Catalog};
 use observation_core::coverage::Region;
@@ -328,11 +331,29 @@ impl Harness {
 
     /// Runs frames until the autosave interval has passed.
     fn run_past_autosave(&mut self) {
-        for _ in 0..8 {
+        self.frames(8);
+    }
+
+    /// Runs `n` frames of 250 ms.
+    fn frames(&mut self, n: usize) {
+        for _ in 0..n {
             self.app.update();
         }
     }
+
+    fn save_state(&self) -> SaveState {
+        self.app.world().resource::<UiState>().save
+    }
 }
+
+/// The autosave written as `json`.
+fn autosaved(json: &str) -> StoreOp {
+    StoreOp::Set(STORAGE_KEY.to_owned(), json.to_owned())
+}
+
+/// Frames of 250 ms in one autosave interval (1.5 s): the check runs on the
+/// sixth frame after the last one.
+const INTERVAL_FRAMES: usize = 6;
 
 #[test]
 fn restoring_the_autosave_loads_its_area_with_its_cameras() {
@@ -407,7 +428,11 @@ fn an_unreadable_autosave_falls_back_to_the_demo_street_and_says_why() {
         );
         assert!(text.contains(why), "{text}");
         assert!(!h.app.world().resource::<UiState>().help_open);
-        // The unreadable text is left alone until something replaces it.
+        // The unreadable text is left alone until something replaces it,
+        // also once autosave intervals have passed.
+        h.store.take_ops();
+        h.frames(2 * INTERVAL_FRAMES);
+        assert_eq!(h.store.ops(), []);
         assert_eq!(h.store.get(STORAGE_KEY).as_deref(), Some(stored));
     }
 }
@@ -473,6 +498,7 @@ fn a_failed_import_keeps_the_document_and_says_why() {
     let golden = golden_autosave();
     let mut h = harness(Some(&golden));
     h.loads();
+    let mut expected = Vec::new();
     for (picked, toast) in [
         (
             Err("it is not text".to_owned()),
@@ -488,12 +514,9 @@ fn a_failed_import_keeps_the_document_and_says_why() {
         assert!(h.files.pick(picked));
         h.app.update();
         assert_eq!(h.loads(), []);
-        assert!(
-            h.toasts()
-                .contains(&(ToastKind::Error, toast.to_owned(), true)),
-            "{:?}",
-            h.toasts()
-        );
+        // Each failure adds its own sticky toast.
+        expected.push((ToastKind::Error, toast.to_owned(), true));
+        assert_eq!(h.toasts(), expected);
         assert_eq!(h.saved_json().as_deref(), Some(golden.as_str()));
     }
 }
@@ -515,4 +538,173 @@ fn preferences_are_saved_only_once_changed() {
     h.app.update();
     assert_eq!(h.store.get(FONT_KEY).as_deref(), Some("iosevka"));
     assert_eq!(h.store.get(ADDRESS_JUMP_KEY).as_deref(), Some("off"));
+}
+
+// ----- when autosave writes --------------------------------------------------
+
+#[test]
+fn autosave_writes_once_per_change_at_the_interval() {
+    let golden = golden_autosave();
+    let mut h = harness(Some(&golden));
+    assert_eq!(
+        h.store.take_ops(),
+        [autosaved(&golden)],
+        "the fixture itself"
+    );
+    assert_eq!(h.save_state(), SaveState::Pending);
+
+    // The restored text is written back once, at the end of the interval.
+    h.frames(INTERVAL_FRAMES - 1);
+    assert_eq!(h.store.ops(), [], "not before the interval");
+    h.frames(1);
+    assert_eq!(h.store.take_ops(), [autosaved(&golden)]);
+    assert!(matches!(h.save_state(), SaveState::Saved(_)));
+
+    // Nothing changed: nothing written, interval after interval.
+    h.frames(3 * INTERVAL_FRAMES);
+    assert_eq!(h.store.ops(), []);
+
+    // One change, one write of the new document.
+    h.app.world_mut().resource_mut::<Scene>().remove_camera(2);
+    let changed = h.saved_json().expect("an area is set");
+    assert_ne!(changed, golden);
+    h.frames(INTERVAL_FRAMES);
+    assert_eq!(h.store.take_ops(), [autosaved(&changed)]);
+    h.frames(2 * INTERVAL_FRAMES);
+    assert_eq!(h.store.ops(), []);
+}
+
+#[test]
+fn a_refused_autosave_is_retried_until_it_is_stored() {
+    let golden = golden_autosave();
+    let mut h = harness(Some(&golden));
+    h.store.take_ops();
+    h.store.refuse_writes(Some(SaveFailure::Full));
+    h.frames(INTERVAL_FRAMES);
+    let refused = StoreOp::Refused(STORAGE_KEY.to_owned(), golden.clone());
+    assert_eq!(h.store.take_ops(), std::slice::from_ref(&refused));
+    assert_eq!(h.save_state(), SaveState::Failed(SaveFailure::Full));
+    // The status bar's tooltip for it.
+    assert_eq!(
+        SaveFailure::Full.reason(),
+        "This browser's storage for the site is full."
+    );
+    assert_eq!(
+        h.toasts(),
+        [],
+        "a refused autosave shows in the status bar only"
+    );
+
+    // Still refused: tried again at every interval.
+    h.frames(INTERVAL_FRAMES);
+    assert_eq!(h.store.take_ops(), [refused]);
+
+    // Accepted again: stored once, then left alone.
+    h.store.refuse_writes(None);
+    h.frames(INTERVAL_FRAMES);
+    assert_eq!(h.store.take_ops(), [autosaved(&golden)]);
+    let SaveState::Saved(at) = h.save_state() else {
+        panic!("saved, got {:?}", h.save_state());
+    };
+    let now = h.app.world().resource::<Time<Real>>().elapsed_secs_f64();
+    assert_eq!(at, now, "stamped with the wall-clock time of the write");
+    h.frames(INTERVAL_FRAMES);
+    assert_eq!(h.store.ops(), []);
+}
+
+#[test]
+fn a_first_visit_and_an_import_write_exactly_what_they_should() {
+    let golden = golden_autosave();
+    let mut h = harness(None);
+    h.loads();
+    h.frames(2 * INTERVAL_FRAMES);
+    assert_eq!(h.store.ops(), [], "nothing to save before an area");
+
+    h.app.world_mut().resource_mut::<UiState>().selected = Some(2);
+    h.app.world_mut().write_message(PersistAction::Import);
+    h.app.update();
+    assert!(h.files.pick(Ok(golden.clone())));
+    h.app.update();
+    assert_eq!(
+        h.app.world().resource::<UiState>().selected,
+        None,
+        "an import clears the selection"
+    );
+    h.frames(2 * INTERVAL_FRAMES);
+    assert_eq!(h.store.take_ops(), [autosaved(&golden)]);
+}
+
+#[test]
+fn a_failed_export_says_why() {
+    let golden = golden_autosave();
+    let mut h = harness(Some(&golden));
+    h.files.refuse_downloads(Some("disk full"));
+    h.app.world_mut().write_message(PersistAction::Export);
+    h.app.update();
+    assert_eq!(h.files.downloads(), []);
+    assert_eq!(
+        h.toasts(),
+        [(
+            ToastKind::Error,
+            "Could not export the scene: disk full".to_owned(),
+            false
+        )]
+    );
+}
+
+// ----- the document's own rules that loading and undo rely on ----------------
+
+#[test]
+fn ids_and_provenance_survive_loading_and_undo() {
+    // The next id after a file with a gap in its ids follows the highest.
+    let mut models = Models::new(Catalog::default());
+    let mut scene = Scene::default();
+    let v1 = || SceneFile::from_json(&read("autosave_v1_flat.json")).expect("the v1 file loads");
+    scene.load_file(v1(), &mut models);
+    assert_eq!(scene.add_camera(camera("generic-bullet", [0.0; 3], 0.0)), 4);
+
+    // Undo past an import never hands out an id the restored cameras use.
+    let (mut scene, mut models) = fixture_scene();
+    scene.add_camera(camera("generic-bullet", [0.0; 3], 0.0));
+    scene.add_camera(camera("generic-bullet", [0.0; 3], 0.0));
+    let before_import = scene.snapshot(&models);
+    scene.load_file(v1(), &mut models);
+    scene.restore(&before_import, &mut models);
+    assert_eq!(scene.add_camera(camera("generic-bullet", [0.0; 3], 0.0)), 6);
+
+    // Undo into another area forgets both provenances and the flat-ground
+    // state, which belonged to the area being left.
+    let (scene_a, models_a) = fixture_scene();
+    let in_area = scene_a.snapshot(&models_a);
+    let mut scene = Scene::default();
+    let mut models = Models::new(Catalog::default());
+    let mut flat = v1();
+    flat.provenance = scene_a.provenance.clone();
+    scene.load_file(flat, &mut models);
+    assert!(scene.on_flat_ground);
+    assert!(scene.provenance.is_some() && scene.saved_provenance.is_some());
+    scene.restore(&in_area, &mut models);
+    assert_eq!(scene.provenance, None);
+    assert_eq!(scene.saved_provenance, None);
+    assert!(!scene.on_flat_ground);
+
+    // A file over the area already loaded keeps the provenance on screen,
+    // and the load that follows consumes the file's saved provenance.
+    let (mut scene, mut models) = fixture_scene();
+    let on_screen = scene.provenance.clone();
+    let mut file = scene.to_file(&models).expect("an area is set");
+    let mut older = on_screen.clone().expect("the fixture has one");
+    older.osm_fingerprint = Some("00000000000000bb".to_owned());
+    file.provenance = Some(older.clone());
+    scene.load_file(file, &mut models);
+    assert_eq!(scene.provenance, on_screen);
+    assert_eq!(scene.saved_provenance, Some(older));
+    let now = on_screen.expect("the fixture has one");
+    assert!(
+        scene.area_loaded(now.clone(), true).is_some(),
+        "the data changed"
+    );
+    assert_eq!(scene.saved_provenance, None);
+    assert_eq!(scene.provenance, Some(now.clone()));
+    assert_eq!(scene.area_loaded(now, true), None, "reported once");
 }
