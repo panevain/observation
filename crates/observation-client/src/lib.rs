@@ -15,6 +15,7 @@ mod icons;
 mod input;
 mod net;
 mod persist;
+mod platform;
 mod regions;
 mod state;
 mod theme;
@@ -81,17 +82,6 @@ struct LoaderPlugin;
 
 impl Plugin for LoaderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, hide_loader);
-    }
-}
-
-/// Removes the HTML loading screen once the app is running.
-fn hide_loader() {
-    #[cfg(target_arch = "wasm32")]
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("loader"))
-    {
-        el.remove();
+        app.add_systems(Startup, platform::hide_loader);
     }
 }

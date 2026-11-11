@@ -142,7 +142,7 @@ impl CoverageBackend {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use crate::net::js_cause;
+    use crate::platform::js_cause;
     use bevy::prelude::*;
     use crossbeam_channel::{Receiver, unbounded};
     use observation_core::coverage_job::{JobRequest, JobResponse};

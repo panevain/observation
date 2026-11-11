@@ -1,0 +1,327 @@
+//! The browser build's side of [`crate::platform`]: `fetch`, `EventSource`,
+//! `localStorage` and `sessionStorage`, file download and upload, the colour
+//! scheme media query and the page's loading screen.
+
+use super::{HttpRequest, SaveFailure};
+use bevy::log::warn;
+use crossbeam_channel::Sender;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
+
+// The loading screen.
+
+/// Removes the HTML loading screen once the app is running.
+pub fn hide_loader() {
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("loader"))
+    {
+        el.remove();
+    }
+}
+
+// Networking.
+
+/// What a failed HTTP reply means to the user: the server's own `error` text
+/// when it sent one, else a description of the status (proxies and the request
+/// timeout answer without one).
+fn http_failure(status: u16, body: &str) -> String {
+    let from_server = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
+        .filter(|m| !m.is_empty());
+    from_server.unwrap_or_else(|| match status {
+        404 => "the server does not have this (HTTP 404); the app may be out of date, so reload the page".to_owned(),
+        429 => "too many requests to the server (HTTP 429); wait a minute and try again".to_owned(),
+        408 | 504 => format!("the server took too long to answer (HTTP {status}); try again shortly"),
+        502 | 503 => format!("the server is unavailable right now (HTTP {status}); try again shortly"),
+        500..=599 => format!("the server had a problem (HTTP {status}); try again shortly"),
+        _ => format!("the server refused the request (HTTP {status})"),
+    })
+}
+
+/// The message of a JavaScript exception (`TypeError: Failed to fetch`, a
+/// `DOMException`, ...), or a placeholder when it carries none.
+pub fn js_cause(e: &wasm_bindgen::JsValue) -> String {
+    use wasm_bindgen::JsCast;
+    let msg = match e.dyn_ref::<js_sys::Error>() {
+        Some(err) => String::from(err.message()),
+        None => e.as_string().unwrap_or_default(),
+    };
+    if msg.is_empty() {
+        "no details from the browser".to_owned()
+    } else {
+        msg
+    }
+}
+
+pub fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = async {
+            let window = web_sys::window()
+                .ok_or("the browser gave the app no window to make requests from")?;
+            let init = web_sys::RequestInit::new();
+            init.set_method(req.method);
+            let headers = web_sys::Headers::new()
+                .map_err(|e| format!("could not build the request: {}", js_cause(&e)))?;
+            if let Some(body) = &req.body {
+                let _ = headers.set("content-type", "application/json");
+                init.set_body(&wasm_bindgen::JsValue::from_str(body));
+            }
+            if let Some(token) = req.bearer.as_deref().filter(|t| !t.is_empty()) {
+                let _ = headers.set("authorization", &format!("Bearer {token}"));
+            }
+            init.set_headers(&headers);
+            // A rejected fetch means no HTTP reply at all: offline, DNS, a dead
+            // server, or a blocked connection.
+            let resp: web_sys::Response =
+                JsFuture::from(window.fetch_with_str_and_init(&req.url, &init))
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "the server did not answer (you may be offline, or it may be down): {}",
+                            js_cause(&e)
+                        )
+                    })?
+                    .dyn_into()
+                    .map_err(|_| {
+                        "the browser returned something other than a response".to_owned()
+                    })?;
+            if !resp.ok() {
+                let body = match resp.text() {
+                    Ok(text) => JsFuture::from(text)
+                        .await
+                        .ok()
+                        .and_then(|v| v.as_string())
+                        .unwrap_or_default(),
+                    Err(_) => String::new(),
+                };
+                return Err(http_failure(resp.status(), &body));
+            }
+            let read_err = |e: wasm_bindgen::JsValue| {
+                format!(
+                    "the connection dropped while the reply was downloading: {}",
+                    js_cause(&e)
+                )
+            };
+            let buf = JsFuture::from(resp.array_buffer().map_err(read_err)?)
+                .await
+                .map_err(read_err)?;
+            Ok(js_sys::Uint8Array::new(&buf).to_vec())
+        }
+        .await
+        .map_err(|e: String| e);
+        done(result);
+    });
+}
+
+/// Opens an `EventSource` and calls `on` with the data of every `event`
+/// message, and with an error whenever the connection drops. The browser
+/// retries a dropped stream by itself, but gives up for good after an error
+/// answer (a 503 from the stream cap, a 502 from a proxy during a restart);
+/// then a new one is opened after [`REOPEN_AFTER_MS`]. Lives as long as the page.
+pub fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
+    open_event_source(url.to_owned(), event.to_owned(), std::rc::Rc::new(on));
+}
+
+/// Wait before replacing an `EventSource` the browser closed.
+const REOPEN_AFTER_MS: i32 = 5_000;
+
+fn open_event_source(url: String, event: String, on: std::rc::Rc<dyn Fn(Result<Vec<u8>, String>)>) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let source = match web_sys::EventSource::new(&url) {
+        Ok(s) => s,
+        Err(e) => {
+            on(Err(js_cause(&e)));
+            return;
+        }
+    };
+    let on_message = {
+        let on = std::rc::Rc::clone(&on);
+        Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            if let Some(data) = e.data().as_string() {
+                on(Ok(data.into_bytes()));
+            }
+        })
+    };
+    let on_error = {
+        let source = source.clone();
+        let (url, event) = (url.clone(), event.clone());
+        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            on(Err("the live connection dropped".to_owned()));
+            if source.ready_state() != web_sys::EventSource::CLOSED {
+                return; // the browser is reconnecting
+            }
+            let (url, event, on) = (url.clone(), event.clone(), std::rc::Rc::clone(&on));
+            let reopen = Closure::once_into_js(move || open_event_source(url, event, on));
+            if let Some(window) = web_sys::window() {
+                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    reopen.unchecked_ref(),
+                    REOPEN_AFTER_MS,
+                );
+            }
+        })
+    };
+    let _ = source.add_event_listener_with_callback(&event, on_message.as_ref().unchecked_ref());
+    source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+    // The handlers live as long as their source: for the page, or until it is
+    // closed and replaced, which is rare enough not to matter.
+    on_message.forget();
+    on_error.forget();
+}
+
+// `localStorage` and files.
+
+fn storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+pub fn storage_get(key: &str) -> Option<String> {
+    storage()?.get_item(key).ok().flatten()
+}
+
+/// Whether the value was stored, and if not why. Quota and privacy errors
+/// are non-fatal: the status bar says so and the user can still export.
+pub fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
+    let window = web_sys::window().ok_or(SaveFailure::Unavailable)?;
+    // Reading `localStorage` itself throws when site data is blocked.
+    let storage = match window.local_storage() {
+        Ok(Some(s)) => s,
+        Ok(None) => return Err(SaveFailure::Unavailable),
+        Err(_) => return Err(SaveFailure::Blocked),
+    };
+    storage.set_item(key, value).map_err(|e| {
+        let name = js_sys::Reflect::get(&e, &"name".into())
+            .ok()
+            .and_then(|n| n.as_string());
+        match name.as_deref() {
+            Some("QuotaExceededError" | "NS_ERROR_DOM_QUOTA_REACHED") => SaveFailure::Full,
+            _ => SaveFailure::Blocked,
+        }
+    })
+}
+
+pub fn download(name: &str, text: &str) -> Result<(), String> {
+    let doc = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or("the browser gave the app no page to download from")?;
+    let parts = js_sys::Array::of1(&JsValue::from_str(text));
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type("application/json");
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts)
+        .map_err(|e| format!("could not prepare the file ({})", js_cause(&e)))?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|e| format!("could not prepare the download ({})", js_cause(&e)))?;
+    let a = doc
+        .create_element("a")
+        .map(|e| e.unchecked_into::<web_sys::HtmlAnchorElement>())
+        .map_err(|e| format!("could not start the download ({})", js_cause(&e)))?;
+    a.set_href(&url);
+    a.set_download(name);
+    a.click();
+    let _ = web_sys::Url::revoke_object_url(&url);
+    Ok(())
+}
+
+pub fn pick_file(tx: Sender<Result<String, String>>) {
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        let _ = tx.send(Err(
+            "the browser gave the app no page to ask from".to_owned()
+        ));
+        return;
+    };
+    let input = match doc
+        .create_element("input")
+        .map(|e| e.unchecked_into::<web_sys::HtmlInputElement>())
+    {
+        Ok(input) => input,
+        Err(e) => {
+            let _ = tx.send(Err(format!(
+                "could not open the file picker ({})",
+                js_cause(&e)
+            )));
+            return;
+        }
+    };
+    input.set_type("file");
+    input.set_accept(".json,application/json");
+    let el = input.clone();
+    let on_change = Closure::once_into_js(move || {
+        let Some(file) = el.files().and_then(|f| f.get(0)) else {
+            return;
+        };
+        wasm_bindgen_futures::spawn_local(async move {
+            let read = match wasm_bindgen_futures::JsFuture::from(file.text()).await {
+                Ok(v) => v.as_string().ok_or_else(|| "it is not text".to_owned()),
+                Err(e) => Err(js_cause(&e)),
+            };
+            let _ = tx.send(read);
+        });
+    });
+    input.set_onchange(Some(on_change.unchecked_ref()));
+    input.click();
+}
+
+// The clock and `sessionStorage`.
+
+/// Seconds since the Unix epoch by this computer's clock.
+pub fn now_unix() -> u64 {
+    (js_sys::Date::now() / 1000.0) as u64
+}
+
+fn session_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.session_storage().ok().flatten()
+}
+
+pub fn session_get(key: &str) -> Option<String> {
+    session_storage()?.get_item(key).ok().flatten()
+}
+
+pub fn session_set(key: &str, value: &str) {
+    if let Some(s) = session_storage() {
+        let _ = if value.is_empty() {
+            s.remove_item(key)
+        } else {
+            s.set_item(key, value)
+        };
+    }
+}
+
+// The colour scheme.
+
+fn dark_query() -> Option<web_sys::MediaQueryList> {
+    web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
+}
+
+pub fn prefers_dark() -> bool {
+    dark_query().is_some_and(|m| m.matches())
+}
+
+/// Sends the new setting whenever the media query's `change` event fires.
+pub fn watch_scheme(tx: Sender<bool>) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let Some(query) = dark_query() else { return };
+    let on_change = {
+        let query = query.clone();
+        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            // The receiver lives as long as the app; a send error means shutdown.
+            let _ = tx.send(query.matches());
+        })
+    };
+    if let Err(e) =
+        query.add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+    {
+        warn!("cannot follow the system theme: {}", js_cause(&e));
+        return;
+    }
+    // The handler (and the query it holds, which must stay alive to keep
+    // firing) lives as long as the page.
+    on_change.forget();
+}

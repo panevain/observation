@@ -11,6 +11,8 @@ use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::{AreaRef, SceneFile};
 use observation_core::terrain::{FLAT, Terrain};
 
+use crate::platform::SaveFailure;
+
 /// Ground raster resolution, metres.
 pub const GROUND_CELL_M: f32 = 0.5;
 /// Façade patch size, metres.
@@ -304,36 +306,6 @@ pub enum SaveState {
     Saved(f64),
     /// The browser refused the write.
     Failed(SaveFailure),
-}
-
-/// Why the browser refused the autosave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    allow(dead_code, reason = "only the browser build's storage writes fail")
-)]
-pub enum SaveFailure {
-    /// The site's storage quota is used up (or is zero, as in some private modes).
-    Full,
-    /// The browser denies this page access to storage (site data or cookies blocked).
-    Blocked,
-    /// The browser offers no storage to this page at all.
-    Unavailable,
-}
-
-impl SaveFailure {
-    /// What went wrong, for the status bar's tooltip.
-    pub fn reason(self) -> &'static str {
-        match self {
-            Self::Full => "This browser's storage for the site is full.",
-            Self::Blocked => {
-                "This browser blocks the site from storing data (check its site data or cookie settings)."
-            }
-            Self::Unavailable => {
-                "This browser offers no storage to the site (it may be in private mode)."
-            }
-        }
-    }
 }
 
 impl UiState {

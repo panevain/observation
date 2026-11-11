@@ -8,6 +8,7 @@ use observation_core::regions::{
     ActionKind, CatalogEntry, RegionAction, RegionView, RegionsStatus,
 };
 
+use crate::platform::{session_get, session_set};
 use crate::state::UiState;
 
 /// `sessionStorage` key of the admin token (kept for the browser session only).
@@ -175,48 +176,7 @@ impl Regions {
     }
 }
 
-/// Seconds since the Unix epoch by this computer's clock.
-pub fn now_unix() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        (js_sys::Date::now() / 1000.0) as u64
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn session_storage() -> Option<web_sys::Storage> {
-    web_sys::window()?.session_storage().ok().flatten()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn session_get(key: &str) -> Option<String> {
-    session_storage()?.get_item(key).ok().flatten()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn session_set(key: &str, value: &str) {
-    if let Some(s) = session_storage() {
-        let _ = if value.is_empty() {
-            s.remove_item(key)
-        } else {
-            s.set_item(key, value)
-        };
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn session_get(_: &str) -> Option<String> {
-    None
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn session_set(_: &str, _: &str) {}
+pub use crate::platform::now_unix;
 
 #[cfg(test)]
 mod tests {
