@@ -38,8 +38,15 @@ fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
 }
 
+/// Whether to rewrite the golden files (`OBS_BLESS=1`). Refused under CI,
+/// which must compare against the committed files rather than rewrite them.
 fn blessing() -> bool {
-    std::env::var_os("OBS_BLESS").is_some_and(|v| v == "1")
+    let bless = std::env::var_os("OBS_BLESS").is_some_and(|v| v == "1");
+    assert!(
+        !bless || std::env::var_os("CI").is_none(),
+        "OBS_BLESS is for local use: CI must compare against the committed golden files"
+    );
+    bless
 }
 
 /// Reads a committed fixture (an input, never rewritten).
@@ -87,7 +94,8 @@ fn describe(expected: &[u8], actual: &[u8]) -> String {
         .unwrap_or(expected.len().min(actual.len()));
     match (std::str::from_utf8(expected), std::str::from_utf8(actual)) {
         (Ok(e), Ok(a)) => {
-            let line = e[..at].matches('\n').count();
+            // Counted on bytes: `at` may fall inside a multi-byte character.
+            let line = expected[..at].iter().filter(|&&b| b == b'\n').count();
             let pick = |s: &str| s.lines().nth(line).unwrap_or("<end of file>").to_owned();
             format!(
                 "output (line {}: {:?}, expected {:?})",
@@ -436,6 +444,27 @@ fn golden_scene_v2_provenance() {
 fn golden_scene_legacy_color_index() {
     let s = scene_round_trip("legacy_color_index");
     assert!(s.cameras.iter().all(|c| c.color.is_none()));
+}
+
+#[test]
+fn golden_scene_v2_sanitise() {
+    let s = scene_round_trip("v2_sanitise");
+    let group = s.cameras[0].group.as_deref().unwrap_or_default();
+    assert_eq!(group.chars().count(), 80, "an overlong group is cut short");
+    let p = s.provenance.expect("a provenance with bad values is kept");
+    assert_eq!((p.osm_data_unix, p.bundle_built_unix), (None, None));
+    assert_eq!(
+        p.osm_fingerprint, None,
+        "a fingerprint that is not hex is dropped"
+    );
+    assert_eq!(p.catalog_version.chars().count(), 64);
+}
+
+#[test]
+fn golden_scene_v2_provenance_malformed() {
+    let s = scene_round_trip("v2_provenance_malformed");
+    assert_eq!(s.provenance, None, "a malformed block is dropped whole");
+    assert_eq!(s.cameras.len(), 1, "and the cameras survive");
 }
 
 // ----- camera catalogue ------------------------------------------------------
