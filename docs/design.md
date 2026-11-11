@@ -332,7 +332,7 @@ The shipped module is about 26.1 MB raw and 7.8 MB gzip. Bevy is half of it (abo
 
 The figure is measured on the `wasm-release` profile after `wasm-bindgen` and `wasm-opt -Os`, with symbol names kept (`strip = false`, `--debuginfo`) and then excluded from the sizes; the result is within 0.03% of the module `trunk build` ships. Prepare release regenerates it on every release branch, so each release ships its own chart (the Treemap workflow does the same on `develop` by hand). To regenerate it by hand after a dependency or feature change, run `mise run treemap` or `scripts/wasm-size-report.sh` (a fat-LTO build, 15 to 20 minutes on four cores; `--no-build` reuses the last build). It needs only `cargo`, `python3`, and the `wasm-bindgen` and `wasm-opt` binaries that trunk caches, prints a top-15 table, and rewrites `docs/images/wasm-bundle-treemap.svg` through `scripts/wasm-size-treemap.py`, which is stdlib-only and also accepts `twiggy top --format csv` output.
 
-**Size budget.** Every release build in CI checks each module against `.config/wasm-size-budget.toml` (raw and gzip level 9, a few percent above the current sizes; `scripts/check-wasm-size.py`, `mise run build:budget`), so an unplanned jump fails the wasm job. A change that grows the bundle on purpose raises the limit in the same pull request and says why.
+**Size budget.** Every release build in CI checks each module against `.config/wasm-size-budget.toml` (raw and gzip level 9, a few percent above the current sizes; `cargo xtask wasm-budget`, `mise run build:budget`), so an unplanned jump fails the wasm job. A change that grows the bundle on purpose raises the limit in the same pull request and says why.
 
 ## Coverage algorithm
 

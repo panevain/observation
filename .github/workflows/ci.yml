@@ -226,6 +226,21 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${EVENT}" = push ]; then mise run build:budget --brotli; else mise run build:budget; fi
+      # TEMPORARY, for the wasm-budget port: each module's exact gzip -9 size from Python's zlib
+      # (what the deleted script measured) and from xtask, so that each limit can be moved by
+      # the measured difference. Removed before the port merges.
+      - name: gzip sizes, zlib and xtask (temporary)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### gzip -9 sizes: Python zlib, then xtask (temporary)"
+            echo
+            echo '```'
+            python3 -c 'import gzip, pathlib; [print(p.name, len(p.read_bytes()), len(gzip.compress(p.read_bytes(), compresslevel=9))) for p in sorted(pathlib.Path("dist").glob("*.wasm"))]'
+            { cargo xtask wasm-budget 2>&1 >/dev/null || true; } | grep -F headroom: || true
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

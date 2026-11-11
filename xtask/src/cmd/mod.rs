@@ -3,3 +3,4 @@
 
 pub mod sync;
 pub mod tokens;
+pub mod wasm_budget;

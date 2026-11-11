@@ -10,7 +10,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use xtask::cmd;
-use xtask::ports::process::GitCli;
+use xtask::ports::Brotli;
+use xtask::ports::process::{BrotliCli, GitCli};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -33,6 +34,19 @@ enum Command {
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
+    /// Fail when a WebAssembly module in dist/ is over its size budget
+    /// (.config/wasm-size-budget.toml).
+    WasmBudget {
+        /// The directory holding the modules (default: dist/ in the repository).
+        #[arg(long, value_name = "DIR")]
+        dist: Option<PathBuf>,
+        /// Append the Markdown report to FILE (e.g. $GITHUB_STEP_SUMMARY).
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+        /// Also report brotli -q 11 sizes (needs the brotli CLI).
+        #[arg(long)]
+        brotli: bool,
+    },
     /// Print xtask's version.
     #[command(hide = true)]
     Version,
@@ -61,6 +75,35 @@ fn main() -> ExitCode {
             emit(&out.stdout, out.stderr.as_bytes());
             out.failed()
         }),
+        Command::WasmBudget {
+            dist,
+            summary,
+            brotli,
+        } => {
+            // The default as the script printed it: an absolute path.
+            let dist = dist.unwrap_or_else(|| {
+                std::fs::canonicalize(&repo)
+                    .unwrap_or_else(|_| repo.clone())
+                    .join("dist")
+            });
+            let brotli_cli = BrotliCli::default();
+            let brotli = brotli.then_some(&brotli_cli as &dyn Brotli);
+            cmd::wasm_budget::run(&repo, &dist, brotli).and_then(|out| {
+                // The verdict first, on stderr, as the script printed it.
+                emit(b"", out.stderr.as_bytes());
+                emit(out.stdout.as_bytes(), b"");
+                if let Some(path) = summary {
+                    let mut file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                        .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))?;
+                    file.write_all(out.report.as_bytes())
+                        .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))?;
+                }
+                Ok(out.failed)
+            })
+        }
         Command::Version => {
             emit(
                 format!("xtask {}\n", env!("CARGO_PKG_VERSION")).as_bytes(),
