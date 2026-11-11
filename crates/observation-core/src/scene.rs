@@ -257,7 +257,7 @@ mod tests {
         let mut s = SceneFile::from_json(&old).unwrap();
         assert!(s.on_flat_ground());
         assert!(!scene().on_flat_ground());
-        let terrain = crate::terrain::tests::slope();
+        let terrain = crate::testing::slope();
         lift_onto_terrain(&mut s.cameras, &terrain);
         // 1.2 m above the ground at x = 1, which is 0.1 m up the slope.
         assert!((s.cameras[0].position[1] - 1.3).abs() < 0.01);
