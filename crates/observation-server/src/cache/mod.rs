@@ -17,6 +17,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -26,6 +27,7 @@ use observation_core::tiles::TileId;
 use serde::{Deserialize, Serialize};
 
 use self::store::Store;
+use crate::clock::{Clock, SystemClock};
 
 mod scan;
 mod store;
@@ -71,6 +73,7 @@ pub struct Cache {
     tiles: Store,
     dem: Store,
     tmp_counter: AtomicU64,
+    clock: Arc<dyn Clock>,
 }
 
 impl Cache {
@@ -78,13 +81,27 @@ impl Cache {
     /// `tiles/` and `dem/` once to initialise the size estimates, so call it outside of
     /// request handling.
     pub fn open(root: impl Into<PathBuf>, bundle_ttl: Duration, caps: CacheCaps) -> Self {
+        Self::open_with_clock(root, bundle_ttl, caps, Arc::new(SystemClock))
+    }
+
+    /// [`Self::open`] with `clock` as "now" for freshness, touches and stale
+    /// temp files.
+    pub fn open_with_clock(
+        root: impl Into<PathBuf>,
+        bundle_ttl: Duration,
+        caps: CacheCaps,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let root = root.into();
+        let store =
+            |dir: &str, kind, cap| Store::open(root.join(dir), kind, cap, Arc::clone(&clock));
         Self {
-            bundles: Store::open(root.join("bundles"), Kind::Bundles, caps.bundle_bytes),
-            tiles: Store::open(root.join("tiles"), Kind::Tiles, caps.tile_bytes),
-            dem: Store::open(root.join("dem"), Kind::Tiles, caps.dem_bytes),
+            bundles: store("bundles", Kind::Bundles, caps.bundle_bytes),
+            tiles: store("tiles", Kind::Tiles, caps.tile_bytes),
+            dem: store("dem", Kind::Tiles, caps.dem_bytes),
             bundle_ttl,
             tmp_counter: AtomicU64::new(0),
+            clock,
         }
     }
 
@@ -145,7 +162,7 @@ impl Cache {
             return None;
         }
         let modified = meta.modified().ok();
-        let age = modified.and_then(|m| SystemTime::now().duration_since(m).ok());
+        let age = modified.and_then(|m| self.clock.now().duration_since(m).ok());
         // An mtime in the future (clock skew) counts as fresh.
         let fresh = age.is_none_or(|a| a < self.bundle_ttl)
             && valid_after.is_none_or(|v| modified.is_none_or(|m| m >= v));
@@ -154,7 +171,7 @@ impl Cache {
 
     /// Stores a bundle atomically. When that would take the bundle cache over
     /// its size cap, the least recently written bundles are evicted first (see
-    /// [`Store::make_room`]). Returns `Ok(false)` (and logs why) when the
+    /// `Store::make_room`). Returns `Ok(false)` (and logs why) when the
     /// bundle is larger than the cap or eviction cannot make enough room, and
     /// nothing was written.
     pub async fn put_bundle(&self, key: &str, bytes: &[u8]) -> io::Result<bool> {
@@ -209,7 +226,7 @@ impl Cache {
 
     /// Stores a tile. When that would take the tile cache over its size cap, the
     /// least recently written or revalidated tiles are evicted first (see
-    /// [`Store::make_room`]). Returns `Ok(false)` (and logs why) when the tile
+    /// `Store::make_room`). Returns `Ok(false)` (and logs why) when the tile
     /// is larger than the cap or eviction cannot make enough room, and nothing
     /// was written.
     pub async fn put_tile(&self, id: TileId, bytes: &[u8], meta: &TileMeta) -> io::Result<bool> {
@@ -263,11 +280,12 @@ impl Cache {
         let previous = file_len(&json).await;
         self.write_atomic(&json, &encoded).await?;
         self.store(set).resize(previous, encoded.len() as u64);
+        let now = self.clock.now();
         let touch = move || {
             std::fs::OpenOptions::new()
                 .write(true)
                 .open(png)?
-                .set_modified(SystemTime::now())
+                .set_modified(now)
         };
         // Best effort: the tile may have been evicted meanwhile.
         let _ = tokio::task::spawn_blocking(touch).await;
@@ -434,6 +452,62 @@ mod tests {
         assert_eq!(cache.get_tile(id).await.unwrap().meta, meta);
     }
 
+    /// Freshness is the file's age at the clock's "now": fresh below the TTL,
+    /// stale from exactly the TTL on, and fresh while the mtime is ahead.
+    #[tokio::test]
+    async fn bundle_freshness_at_the_ttl_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(crate::clock::ManualClock::at_unix(1_700_000_000));
+        let ttl = Duration::from_secs(3600);
+        let cache = Cache::open_with_clock(dir.path(), ttl, roomy(), clock.clone());
+        assert!(cache.put_bundle("1.0", &bundle_bytes()).await.unwrap());
+        let written = clock.now();
+        set_mtime(&dir.path().join("bundles/1.0.obsb"), written);
+        let fresh_at = |offset: i64| {
+            let at = if offset >= 0 {
+                written + Duration::from_secs(offset as u64)
+            } else {
+                written - Duration::from_secs(offset.unsigned_abs())
+            };
+            clock.set(at);
+            let cache = &cache;
+            async move { cache.get_bundle("1.0", None).await.unwrap().1 }
+        };
+        assert!(fresh_at(0).await);
+        assert!(fresh_at(3599).await);
+        assert!(!fresh_at(3600).await, "exactly the TTL is stale");
+        assert!(!fresh_at(3601).await);
+        assert!(
+            fresh_at(-60).await,
+            "an mtime in the future counts as fresh"
+        );
+        // Reading never touches the file.
+        assert_eq!(
+            std::fs::metadata(dir.path().join("bundles/1.0.obsb"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            written
+        );
+    }
+
+    #[tokio::test]
+    async fn revalidation_touches_the_tile_at_the_clocks_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(crate::clock::ManualClock::at_unix(1_700_000_000));
+        let cache = Cache::open_with_clock(dir.path(), Duration::ZERO, roomy(), clock.clone());
+        let id = TileId::new(3, 2, 1).unwrap();
+        let meta = TileMeta::default();
+        assert!(cache.put_tile(id, b"png", &meta).await.unwrap());
+        clock.advance(Duration::from_secs(86_400));
+        cache.update_tile_meta(id, &meta).await.unwrap();
+        let png = dir.path().join("tiles/3/2/1.png");
+        assert_eq!(
+            std::fs::metadata(png).unwrap().modified().unwrap(),
+            clock.now()
+        );
+    }
+
     #[tokio::test]
     async fn rejects_non_bundle_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -480,7 +554,7 @@ mod tests {
 
     /// Size of the bundle cache on disk, by the module's own scan.
     fn bundle_disk_bytes(root: &Path) -> u64 {
-        scan(&root.join("bundles"), Kind::Bundles).total
+        scan(&root.join("bundles"), Kind::Bundles, SystemTime::now()).total
     }
 
     /// Writes bundles `0` to `<n-1>` of `len` bytes with the mtime of bundle `i`
@@ -634,7 +708,7 @@ mod tests {
 
     /// Size of the tile cache on disk, by the module's own scan.
     fn disk_bytes(root: &Path) -> u64 {
-        scan(&root.join("tiles"), Kind::Tiles).total
+        scan(&root.join("tiles"), Kind::Tiles, SystemTime::now()).total
     }
 
     /// Bytes one tile with a `len`-byte image and default metadata takes.

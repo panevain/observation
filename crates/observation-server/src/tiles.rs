@@ -9,7 +9,7 @@
 //! client, since the bundle builds that need them already are.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -17,6 +17,7 @@ use observation_core::tiles::TileId;
 use tokio::sync::Semaphore;
 
 use crate::cache::{Cache, TileMeta, TileSet};
+use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::ratelimit::{ClientKey, RateLimiter};
@@ -41,12 +42,19 @@ pub struct TileProxy {
     min_ttl: Duration,
     /// Per-client limit on upstream fetches (map tiles only).
     limiter: Option<RateLimiter>,
+    /// "Now" for expiry.
+    clock: Arc<dyn Clock>,
 }
 
 impl TileProxy {
     /// The map tile proxy. `client` must already carry the project
     /// `User-Agent` and a timeout.
-    pub fn new(client: reqwest::Client, config: &Config, cache: Arc<Cache>) -> Self {
+    pub fn new(
+        client: reqwest::Client,
+        config: &Config,
+        cache: Arc<Cache>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             client,
             template: config.tile_url.clone(),
@@ -56,6 +64,7 @@ impl TileProxy {
             permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
             min_ttl: config.tile_min_ttl,
             limiter: Some(RateLimiter::new("tiles", config.tile_rate)),
+            clock,
         }
     }
 
@@ -67,6 +76,7 @@ impl TileProxy {
         usable: fn(&[u8]) -> bool,
         config: &Config,
         cache: Arc<Cache>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             client,
@@ -77,6 +87,7 @@ impl TileProxy {
             permits: Semaphore::new(MAX_CONCURRENT_FETCHES),
             min_ttl: config.dem_min_ttl,
             limiter: None,
+            clock,
         }
     }
 
@@ -108,7 +119,7 @@ impl TileProxy {
     ) -> Result<Tile, ApiError> {
         let cached = self.cache.get_tile_in(self.set, id).await;
         if let Some(c) = &cached
-            && c.meta.expires_unix > unix_now()
+            && c.meta.expires_unix > unix_secs(self.clock.now())
         {
             self.count("hit");
             return Ok(Tile::fresh(c.bytes.clone()));
@@ -211,7 +222,7 @@ impl TileProxy {
             etag: header_str(headers, header::ETAG).or_else(|| old.and_then(|m| m.etag.clone())),
             last_modified: header_str(headers, header::LAST_MODIFIED)
                 .or_else(|| old.and_then(|m| m.last_modified.clone())),
-            expires_unix: expiry_unix(headers, self.min_ttl),
+            expires_unix: expiry_unix(headers, self.min_ttl, self.clock.now()),
         };
         match status {
             StatusCode::OK => {
@@ -297,9 +308,9 @@ enum Upstream {
 }
 
 /// Expiry (unix seconds) from `Cache-Control: max-age` or `Expires`, floored at
-/// `min_ttl` from now.
-fn expiry_unix(headers: &HeaderMap, min_ttl: Duration) -> u64 {
-    let now = unix_now();
+/// `min_ttl` from `now`.
+fn expiry_unix(headers: &HeaderMap, min_ttl: Duration, now: SystemTime) -> u64 {
+    let now_unix = unix_secs(now);
     let upstream_ttl = headers
         .get(header::CACHE_CONTROL)
         .and_then(|v| v.to_str().ok())
@@ -307,14 +318,11 @@ fn expiry_unix(headers: &HeaderMap, min_ttl: Duration) -> u64 {
         .or_else(|| {
             let expires = headers.get(header::EXPIRES)?.to_str().ok()?;
             let at = httpdate::parse_http_date(expires).ok()?;
-            Some(
-                at.duration_since(SystemTime::now())
-                    .map_or(0, |d| d.as_secs()),
-            )
+            Some(at.duration_since(now).map_or(0, |d| d.as_secs()))
         })
         .unwrap_or(0);
     // `max-age` is upstream input and parses up to `u64::MAX`.
-    now.saturating_add(upstream_ttl.max(min_ttl.as_secs()))
+    now_unix.saturating_add(upstream_ttl.max(min_ttl.as_secs()))
 }
 
 /// Extracts `max-age=N` (seconds) from a `Cache-Control` value.
@@ -326,12 +334,6 @@ fn max_age(value: &str) -> Option<u64> {
             .then(|| v.trim().trim_matches('"').parse().ok())
             .flatten()
     })
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]
@@ -358,14 +360,15 @@ mod tests {
     #[test]
     fn expiry_respects_minimum() {
         let week = Duration::from_secs(7 * 86_400);
+        let now = SystemTime::now();
         let mut h = HeaderMap::new();
         h.insert(
             header::CACHE_CONTROL,
             HeaderValue::from_static("max-age=60"),
         );
-        let e = expiry_unix(&h, week);
+        let e = expiry_unix(&h, week, now);
         assert!(
-            e >= unix_now() + week.as_secs() - 2,
+            e >= unix_secs(now) + week.as_secs() - 2,
             "short upstream TTLs are raised to 7 days"
         );
 
@@ -374,7 +377,7 @@ mod tests {
             HeaderValue::from_static("max-age=2592000"),
         );
         assert!(
-            expiry_unix(&h, week) >= unix_now() + 2_592_000 - 2,
+            expiry_unix(&h, week, now) >= unix_secs(now) + 2_592_000 - 2,
             "longer upstream TTLs are kept"
         );
 
@@ -383,14 +386,98 @@ mod tests {
             header::EXPIRES,
             HeaderValue::from_static("Fri, 01 Jan 2100 00:00:00 GMT"),
         );
-        assert!(expiry_unix(&h, week) > unix_now() + 365 * 86_400);
-        assert!(expiry_unix(&HeaderMap::new(), Duration::ZERO) <= unix_now() + 1);
+        assert!(expiry_unix(&h, week, now) > unix_secs(now) + 365 * 86_400);
+        assert!(expiry_unix(&HeaderMap::new(), Duration::ZERO, now) <= unix_secs(now) + 1);
 
         let mut h = HeaderMap::new();
         h.insert(
             header::CACHE_CONTROL,
             HeaderValue::from_static("max-age=18446744073709551615"),
         );
-        assert_eq!(expiry_unix(&h, week), u64::MAX, "huge max-age saturates");
+        assert_eq!(
+            expiry_unix(&h, week, now),
+            u64::MAX,
+            "huge max-age saturates"
+        );
+    }
+
+    #[test]
+    fn expiry_is_exact_for_a_given_now() {
+        let now = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let week = Duration::from_secs(7 * 86_400);
+        let with = |name, value: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert(name, HeaderValue::from_static(value));
+            h
+        };
+        let cc = |v| with(header::CACHE_CONTROL, v);
+        assert_eq!(expiry_unix(&cc("max-age=60"), week, now), 1_700_604_800);
+        assert_eq!(expiry_unix(&cc("max-age=604801"), week, now), 1_700_604_801);
+        assert_eq!(
+            expiry_unix(&HeaderMap::new(), Duration::ZERO, now),
+            1_700_000_000
+        );
+        // 1_700_000_000 is Tue, 14 Nov 2023 22:13:20 GMT.
+        let expires = |v| with(header::EXPIRES, v);
+        assert_eq!(
+            expiry_unix(
+                &expires("Tue, 14 Nov 2023 22:13:30 GMT"),
+                Duration::ZERO,
+                now
+            ),
+            1_700_000_010
+        );
+        assert_eq!(
+            expiry_unix(
+                &expires("Tue, 14 Nov 2023 22:13:10 GMT"),
+                Duration::ZERO,
+                now
+            ),
+            1_700_000_000,
+            "an Expires in the past counts as no time"
+        );
+    }
+
+    /// A cached tile is served while `expires_unix` is after "now" and goes
+    /// upstream from exactly then (here unreachable, so the copy is served stale).
+    #[tokio::test]
+    async fn cached_tiles_expire_at_expires_unix() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(crate::clock::ManualClock::at_unix(1_700_000_000));
+        let caps = crate::cache::CacheCaps {
+            bundle_bytes: 1 << 20,
+            tile_bytes: 1 << 20,
+            dem_bytes: 1 << 20,
+        };
+        let cache = Arc::new(Cache::open_with_clock(
+            dir.path(),
+            Duration::ZERO,
+            caps,
+            clock.clone(),
+        ));
+        let id = TileId::new(3, 2, 1).unwrap();
+        let meta = TileMeta {
+            expires_unix: 1_700_000_100,
+            ..TileMeta::default()
+        };
+        cache.put_tile(id, PNG_MAGIC, &meta).await.unwrap();
+        let config = Config::for_tests(
+            dir.path(),
+            dir.path(),
+            "http://127.0.0.1:9/",
+            "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        );
+        let proxy = TileProxy::new(reqwest::Client::new(), &config, cache, clock.clone());
+        let stale_at = |unix: u64| {
+            clock.set(std::time::UNIX_EPOCH + Duration::from_secs(unix));
+            let proxy = &proxy;
+            async move { proxy.get(id, None, None).await.unwrap().stale }
+        };
+        assert!(!stale_at(1_700_000_099).await);
+        assert!(
+            stale_at(1_700_000_100).await,
+            "expired at exactly expires_unix"
+        );
+        assert!(stale_at(1_700_000_101).await);
     }
 }

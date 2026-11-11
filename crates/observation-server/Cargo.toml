@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Test doubles (a manual clock) for tests of code that builds on this crate.
+testing = []
+
 [dependencies]
 observation-core.workspace = true
 observation-upstream.workspace = true
@@ -28,6 +32,7 @@ httpdate = "1.0"
 png = "0.18"
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tower = { workspace = true, features = ["util"] }
 tempfile = "3"
 

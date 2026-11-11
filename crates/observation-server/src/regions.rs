@@ -2,7 +2,7 @@
 //! imported region, region management for the UI, and a live copy of the
 //! agent's [`RegionsSnapshot`] kept up to date by long-polling.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use observation_core::geo::BBox;
@@ -13,6 +13,7 @@ use observation_core::regions::{
 };
 use reqwest::StatusCode;
 use tokio::sync::watch;
+use tokio::time::Instant;
 
 use crate::error::ApiError;
 use crate::overpass::{OsmData, build_query, parse_response};

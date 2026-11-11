@@ -8,11 +8,12 @@
 //! new fetches fail fast with a 503.
 
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use observation_core::geo::BBox;
 use observation_upstream::{BoundedQueue, QueueError};
 use reqwest::StatusCode;
+use tokio::time::Instant;
 
 use crate::config::Config;
 use crate::error::ApiError;
@@ -316,5 +317,35 @@ mod tests {
             vec![crate::config::DEFAULT_OVERPASS_URL.to_owned()]
         );
         assert_eq!(client.cooldown_until.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cooldowns_run_on_tokio_time() {
+        let mut config = Config::for_tests("cache", "dist", "http://127.0.0.1:9/", "http://t/");
+        config.overpass_cooldown = Duration::from_secs(30);
+        let client = OverpassClient::new(reqwest::Client::new(), &config);
+        let retry_after = |c: &OverpassClient| match c.check_cooldown() {
+            Ok(()) => None,
+            Err(ApiError::RateLimited { retry_after_secs }) => Some(retry_after_secs),
+            Err(e) => panic!("{e:?}"),
+        };
+        assert_eq!(retry_after(&client), None);
+        client.start_cooldown(0);
+        assert_eq!(retry_after(&client), Some(30));
+        tokio::time::advance(Duration::from_millis(29_500)).await;
+        assert_eq!(retry_after(&client), Some(1), "rounded up, never 0");
+        tokio::time::advance(Duration::from_millis(500)).await;
+        assert_eq!(retry_after(&client), None);
+        // While every interpreter rests, a fetch fails at once without a request.
+        client.start_cooldown(0);
+        let started = Instant::now();
+        let bbox = BBox::new(47.0, -122.0, 47.001, -121.999).unwrap();
+        assert!(matches!(
+            client.fetch(&bbox).await,
+            Err(ApiError::RateLimited {
+                retry_after_secs: 30
+            })
+        ));
+        assert_eq!(started.elapsed(), Duration::ZERO);
     }
 }

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use axum::body::Bytes;
 use futures_util::FutureExt;
@@ -14,6 +14,7 @@ use observation_core::geo::BBox;
 use tracing::Instrument;
 
 use crate::cache::Cache;
+use crate::clock::{Clock, unix_secs};
 use crate::elevation::Elevation;
 use crate::error::ApiError;
 use crate::overpass::{OsmData, OverpassClient};
@@ -41,6 +42,8 @@ pub struct BundleService {
     in_flight: Mutex<HashMap<String, Flight>>,
     /// Per-client limit on new builds.
     limiter: RateLimiter,
+    /// Stamps `generated_unix`.
+    clock: Arc<dyn Clock>,
 }
 
 impl BundleService {
@@ -51,6 +54,7 @@ impl BundleService {
         elevation: Arc<Elevation>,
         attribution: String,
         limiter: RateLimiter,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             cache,
@@ -60,13 +64,14 @@ impl BundleService {
             attribution,
             in_flight: Mutex::new(HashMap::new()),
             limiter,
+            clock,
         }
     }
 
     /// Returns the encoded bundle for `bbox`, which should already be snapped.
     /// Only a request that starts a new build is charged to `client`, and the
     /// token is given back unless the build asks public Overpass (see
-    /// [`Self::produce`]). Cache hits and requests joining a build in progress
+    /// `produce`). Cache hits and requests joining a build in progress
     /// are free, and a client over its limit gets an expired copy if there is one.
     pub async fn get(self: &Arc<Self>, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
@@ -141,7 +146,7 @@ impl BundleService {
             return Ok(bytes);
         }
         // One budget for both sources: Overpass gets what the local try left.
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         // Elevation first: it is usually cached, and if it fails the map data
         // would be thrown away, so Overpass is not asked for nothing.
         let fetched = match self.elevation.terrain(&bbox).await {
@@ -173,9 +178,7 @@ impl BundleService {
                 return Err(e);
             }
         };
-        let generated = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let generated = unix_secs(self.clock.now());
         let bundle = build_bundle(
             bbox,
             &data.buildings,

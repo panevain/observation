@@ -10,11 +10,12 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
+use tokio::time::Instant;
 
 use crate::AppState;
 use crate::error::ApiError;
@@ -394,6 +395,29 @@ mod tests {
         per_minute: 60,
         burst: 3,
     };
+
+    #[tokio::test(start_paused = true)]
+    async fn check_refills_on_tokio_time() {
+        let l = RateLimiter::new(
+            "test",
+            Rate {
+                per_minute: 60,
+                burst: 1,
+            },
+        );
+        let a = key("192.0.2.1");
+        assert!(l.check(a).is_ok());
+        assert!(matches!(
+            l.check(a),
+            Err(ApiError::TooManyRequests {
+                retry_after_secs: 1
+            })
+        ));
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(l.check(a).is_err());
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(l.check(a).is_ok());
+    }
 
     #[test]
     fn buckets_allow_a_burst_then_refill() {

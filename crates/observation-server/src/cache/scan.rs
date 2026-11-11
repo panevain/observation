@@ -34,28 +34,26 @@ pub(super) struct Scan {
 /// renames its temp file as soon as it is written).
 pub(super) const STALE_TEMP_AGE: Duration = Duration::from_secs(3600);
 
-/// Notes `path` in `scan` if it is a stale temp file.
-fn note_temp(path: &Path, m: &std::fs::Metadata, scan: &mut Scan) {
+/// Notes `path` in `scan` if it is a stale temp file at `now`.
+fn note_temp(path: &Path, m: &std::fs::Metadata, scan: &mut Scan, now: SystemTime) {
     let is_temp = path
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.starts_with(".tmp-"));
-    let age = m
-        .modified()
-        .ok()
-        .and_then(|t| SystemTime::now().duration_since(t).ok());
+    let age = m.modified().ok().and_then(|t| now.duration_since(t).ok());
     if is_temp && age.is_some_and(|a| a > STALE_TEMP_AGE) {
         scan.stale_temps.push(path.to_path_buf());
     }
 }
 
 /// Walks `dir` (nothing is found if it does not exist): `bundles/` is flat,
-/// `tiles/` is walked recursively. Symlinks are skipped.
-pub(super) fn scan(dir: &Path, kind: Kind) -> Scan {
+/// `tiles/` is walked recursively. Symlinks are skipped. Temp files are
+/// stale by their age at `now`.
+pub(super) fn scan(dir: &Path, kind: Kind, now: SystemTime) -> Scan {
     let mut scan = Scan::default();
     match kind {
-        Kind::Bundles => scan_bundles(dir, &mut scan),
-        Kind::Tiles => scan_tiles(dir, &mut scan),
+        Kind::Bundles => scan_bundles(dir, &mut scan, now),
+        Kind::Tiles => scan_tiles(dir, &mut scan, now),
     }
     let entries: u64 = scan.entries.iter().map(|e| e.len + e.sidecar_len).sum();
     scan.total = entries + scan.orphans.iter().map(|o| o.1).sum::<u64>();
@@ -72,7 +70,7 @@ fn entry(path: PathBuf, m: &std::fs::Metadata, sidecar_len: u64) -> Entry {
 }
 
 /// `bundles/` holds only `<key>.obsb` and temp files; nothing below it is read.
-fn scan_bundles(dir: &Path, scan: &mut Scan) {
+fn scan_bundles(dir: &Path, scan: &mut Scan, now: SystemTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -87,12 +85,12 @@ fn scan_bundles(dir: &Path, scan: &mut Scan) {
         if path.extension().and_then(|x| x.to_str()) == Some("obsb") {
             scan.entries.push(entry(path, &m, 0));
         } else {
-            note_temp(&path, &m, scan);
+            note_temp(&path, &m, scan, now);
         }
     }
 }
 
-fn scan_tiles(dir: &Path, scan: &mut Scan) {
+fn scan_tiles(dir: &Path, scan: &mut Scan, now: SystemTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -104,14 +102,14 @@ fn scan_tiles(dir: &Path, scan: &mut Scan) {
             continue;
         };
         if m.is_dir() {
-            scan_tiles(&path, scan);
+            scan_tiles(&path, scan, now);
         } else if m.is_file() {
             match path.extension().and_then(|x| x.to_str()) {
                 Some("png") => pngs.push((path, m)),
                 Some("json") => {
                     sidecars.insert(path.with_extension("png"), (path, m.len()));
                 }
-                _ => note_temp(&path, &m, scan),
+                _ => note_temp(&path, &m, scan, now),
             }
         }
     }
@@ -132,12 +130,18 @@ pub(super) struct Evicted {
     pub(super) temps: u64,
 }
 
-/// Scans `dir`, deletes stale temp files and sidecars without a main file,
+/// Scans `dir` at `now`, deletes stale temp files and sidecars without a main file,
 /// then the oldest entries until at most `target` bytes are left. Never
 /// deletes `keep` (a main file that is being written) or its sidecar, nor an
 /// entry whose main file was rewritten after the scan.
-pub(super) fn evict_oldest(dir: &Path, kind: Kind, keep: &Path, target: u64) -> Evicted {
-    let scan = scan(dir, kind);
+pub(super) fn evict_oldest(
+    dir: &Path,
+    kind: Kind,
+    keep: &Path,
+    target: u64,
+    now: SystemTime,
+) -> Evicted {
+    let scan = scan(dir, kind, now);
     let mut total = scan.total;
     let temps = scan.stale_temps.iter().filter(|t| remove_file(t)).count() as u64;
     let keep_sidecar = kind.sidecar(keep);

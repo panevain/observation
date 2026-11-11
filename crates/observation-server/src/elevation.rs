@@ -9,6 +9,7 @@ use observation_core::terrain::{DEM_TILE_PX, DemTile, Terrain, dem_tiles_for, te
 use observation_core::tiles::TileId;
 
 use crate::cache::Cache;
+use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::tiles::TileProxy;
@@ -23,12 +24,17 @@ pub struct Elevation {
 
 impl Elevation {
     /// `client` must already carry the project `User-Agent` and a timeout.
-    pub fn new(client: reqwest::Client, config: &Config, cache: Arc<Cache>) -> Self {
+    pub fn new(
+        client: reqwest::Client,
+        config: &Config,
+        cache: Arc<Cache>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             proxy: config
                 .dem_url
                 .clone()
-                .map(|t| TileProxy::elevation(client, t, is_terrarium, config, cache)),
+                .map(|t| TileProxy::elevation(client, t, is_terrarium, config, cache, clock)),
             attribution: config.dem_attribution.clone(),
         }
     }

@@ -8,6 +8,7 @@
 
 pub mod bundles;
 pub mod cache;
+pub mod clock;
 pub mod config;
 pub mod demo;
 pub mod elevation;
@@ -20,7 +21,7 @@ pub mod routes;
 pub mod tiles;
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
@@ -36,6 +37,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::bundles::BundleService;
 use crate::cache::{Cache, CacheCaps};
+use crate::clock::{Clock, SystemClock, unix_secs};
 use crate::config::Config;
 use crate::elevation::Elevation;
 use crate::overpass::OverpassClient;
@@ -97,7 +99,8 @@ impl AppState {
             .timeout(Duration::from_secs(20))
             .build()?;
 
-        let cache = Arc::new(Cache::open(
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let cache = Arc::new(Cache::open_with_clock(
             &config.cache_dir,
             config.bundle_ttl,
             CacheCaps {
@@ -105,6 +108,7 @@ impl AppState {
                 tile_bytes: config.tile_cache_cap_bytes,
                 dem_bytes: config.dem_cache_cap_bytes,
             },
+            Arc::clone(&clock),
         ));
         // Off the request path: a cache from before a cap can be far over it.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
@@ -137,6 +141,7 @@ impl AppState {
             tile_client.clone(),
             &config,
             Arc::clone(&cache),
+            Arc::clone(&clock),
         ));
         let bundles = Arc::new(BundleService::new(
             Arc::clone(&cache),
@@ -145,12 +150,11 @@ impl AppState {
             elevation,
             config.attribution.clone(),
             RateLimiter::new("area", config.area_rate),
+            Arc::clone(&clock),
         ));
-        let tiles = TileProxy::new(tile_client, &config, cache);
+        let now = unix_secs(clock.now());
+        let tiles = TileProxy::new(tile_client, &config, cache, clock);
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
         let demo = match demo::build_demo(&config.attribution, &config.dem_attribution, now) {
             Ok(b) => Some(b),
             Err(e) => {

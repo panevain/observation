@@ -1,12 +1,14 @@
 //! [`Store`]: one size-capped directory of the cache and its eviction.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::Mutex;
 
 use super::scan::{evict_oldest, scan};
 use super::{Kind, file_len};
+use crate::clock::Clock;
 
 /// One size-capped directory of the cache, with an estimate of its size.
 #[derive(Debug)]
@@ -20,17 +22,20 @@ pub(super) struct Store {
     bytes: AtomicU64,
     /// Held while entries are being evicted, so that only one write does it at a time.
     evicting: Mutex<()>,
+    /// Decides which temp files are stale.
+    clock: Arc<dyn Clock>,
 }
 
 impl Store {
-    pub(super) fn open(dir: PathBuf, kind: Kind, cap: u64) -> Self {
-        let bytes = AtomicU64::new(scan(&dir, kind).total);
+    pub(super) fn open(dir: PathBuf, kind: Kind, cap: u64, clock: Arc<dyn Clock>) -> Self {
+        let bytes = AtomicU64::new(scan(&dir, kind, clock.now()).total);
         Self {
             dir,
             kind,
             cap,
             bytes,
             evicting: Mutex::new(()),
+            clock,
         }
     }
 
@@ -123,18 +128,17 @@ impl Store {
     /// Runs [`evict_oldest`] off the runtime with the evict lock held by the
     /// caller, and resets the size estimate from its walk. False if it failed.
     async fn run_eviction(&self, keep: PathBuf, target: u64) -> bool {
-        let (dir, kind) = (self.dir.clone(), self.kind);
-        let evicted = match tokio::task::spawn_blocking(move || {
-            evict_oldest(&dir, kind, &keep, target)
-        })
-        .await
-        {
-            Ok(evicted) => evicted,
-            Err(e) => {
-                tracing::warn!(cache = kind.name(), error = %e, "could not evict");
-                return false;
-            }
-        };
+        let (dir, kind, now) = (self.dir.clone(), self.kind, self.clock.now());
+        let evicted =
+            match tokio::task::spawn_blocking(move || evict_oldest(&dir, kind, &keep, target, now))
+                .await
+            {
+                Ok(evicted) => evicted,
+                Err(e) => {
+                    tracing::warn!(cache = kind.name(), error = %e, "could not evict");
+                    return false;
+                }
+            };
         // The walk is the truth; writes racing with it make this slightly off
         // until the next eviction.
         self.bytes.store(evicted.total, Ordering::Relaxed);
