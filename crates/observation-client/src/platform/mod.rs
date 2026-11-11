@@ -1,7 +1,9 @@
 //! Everything that differs between the browser and the native build: the
 //! browser glue (`web_sys`, `js_sys`, `wasm_bindgen`) in `web.rs` and its
 //! native stand-ins in `native.rs`, with the same free functions on both.
-//! This is the only module of the library that tests `target_arch`.
+//! Apart from the coverage backend's worker link (`coverage/backend.rs`), which
+//! moves with the coverage changes, this is the only module of the library
+//! that tests `target_arch`.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
