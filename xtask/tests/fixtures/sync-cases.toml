@@ -87,3 +87,23 @@ edit = [
     { file = "README.md", replace = "trunk 0.22\n" },
     { file = ".cargo/audit.toml", find = ', "GHSA-abcd-efgh-ijkl"', replace = "" },
 ]
+
+# Each glob lists whole paths in the shell's order: crates/app-cli/ before crates/app/, and
+# .github/actions/setup-mise-cache/ before .github/actions/setup-mise/ ('-' before '/').
+[[case]]
+name = "rust-version in prefix-named crates"
+edit = [
+    { file = "crates/app/Cargo.toml", replace = "rust-version.workspace = true\n" },
+    { file = "crates/app-cli/Cargo.toml", replace = "rust-version.workspace = true\n" },
+]
+
+[[case]]
+name = "build-push-action in prefix-named actions"
+edit = [
+    { file = ".github/actions/setup-mise/action.yml", replace = "    - uses: docker/build-push-action@1234\n" },
+    { file = ".github/actions/setup-mise-cache/action.yml", replace = "    - uses: docker/build-push-action@1234\n" },
+]
+
+[[case]]
+name = "docs line ending in CR"
+edit = [{ file = "README.md", replace = "Base image rust:1.99.1\r\n" }]

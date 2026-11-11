@@ -96,7 +96,8 @@ impl fmt::Display for Finding {
                     f,
                     "pinned versions repeated in the docs (name the file that pins them instead):"
                 )?;
-                lines.lines().try_for_each(|l| writeln!(f, "  {l}"))
+                // Line by line at LF only: a CR stays, as the script's `sed` kept it.
+                lines.split('\n').try_for_each(|l| writeln!(f, "  {l}"))
             }
             Self::DocSearch(why) => {
                 writeln!(f, "could not search the docs for pinned versions ({why})")
@@ -545,19 +546,26 @@ fn files(repo: &Path, paths: Vec<String>) -> Result<Vec<(String, String)>> {
 /// Reads the repository at `repo` and runs the check; `git` searches its docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
     let mut manifests = vec!["Cargo.toml".to_owned()];
-    manifests.extend(
-        glob(repo, "crates", |_| true)?
-            .into_iter()
-            .map(|d| format!("{d}/Cargo.toml")),
-    );
+    // Each glob expands to whole paths sorted as the shell sorts them, so
+    // crates/observation-client-model/Cargo.toml comes before crates/observation-client/...
+    // ('-' sorts before '/').
+    let mut crates: Vec<String> = glob(repo, "crates", |_| true)?
+        .into_iter()
+        .map(|d| format!("{d}/Cargo.toml"))
+        .collect();
+    crates.sort();
+    manifests.extend(crates);
     manifests.extend(["fuzz/Cargo.toml".to_owned(), "xtask/Cargo.toml".to_owned()]);
     let mut workflows = glob(repo, ".github/workflows", |n| WORKFLOW_NAME.is_match(n))?;
+    let mut actions = Vec::new();
     for dir in glob(repo, ".github/actions", |_| true)?
         .into_iter()
         .filter(|d| repo.join(d).is_dir())
     {
-        workflows.extend(glob(repo, &dir, |n| ACTION_NAME.is_match(n))?);
+        actions.extend(glob(repo, &dir, |n| ACTION_NAME.is_match(n))?);
     }
+    actions.sort();
+    workflows.extend(actions);
     let mut s = Snapshot {
         rust_toolchain: read(repo, "rust-toolchain.toml")?,
         setup_mise: read(repo, ".github/actions/setup-mise/action.yml")?,
@@ -727,6 +735,11 @@ mod tests {
     #[test]
     fn the_repository_is_in_sync() {
         let repo = manifest_dir().join("..");
+        // The docs rule needs a git checkout (a worktree's .git is a file).
+        if !repo.join(".git").exists() {
+            eprintln!("skipped: {} is not a git checkout", repo.display());
+            return;
+        }
         let out = ok(run(&repo, &GitCli::new(&repo)));
         assert_eq!((out.stderr.as_str(), out.failed), ("", false));
     }

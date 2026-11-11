@@ -38,6 +38,15 @@ enum Command {
     Version,
 }
 
+/// Writes a command's output. A closed stdout or stderr (`| head`) leaves nothing to report
+/// to, so a failed write is dropped rather than a panic, as `print!` would.
+fn emit(stdout: &[u8], stderr: &[u8]) {
+    let _ = std::io::stdout()
+        .write_all(stdout)
+        .and_then(|()| std::io::stdout().flush());
+    let _ = std::io::stderr().write_all(stderr);
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let repo = cli
@@ -45,18 +54,18 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
     let result = match cli.command {
         Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
-            print!("{}", out.stdout);
-            eprint!("{}", out.stderr);
+            emit(out.stdout.as_bytes(), out.stderr.as_bytes());
             out.failed
         }),
         Command::Tokens => cmd::tokens::run(&repo).map(|out| {
-            // A closed stdout or stderr leaves nothing to report to.
-            let _ = std::io::stdout().write_all(&out.stdout);
-            eprint!("{}", out.stderr);
+            emit(&out.stdout, out.stderr.as_bytes());
             out.failed()
         }),
         Command::Version => {
-            println!("xtask {}", env!("CARGO_PKG_VERSION"));
+            emit(
+                format!("xtask {}\n", env!("CARGO_PKG_VERSION")).as_bytes(),
+                b"",
+            );
             Ok(false)
         }
     };
@@ -64,7 +73,7 @@ fn main() -> ExitCode {
         Ok(false) => ExitCode::SUCCESS,
         Ok(true) => ExitCode::FAILURE,
         Err(e) => {
-            eprintln!("{e}");
+            emit(b"", format!("{e}\n").as_bytes());
             ExitCode::FAILURE
         }
     }

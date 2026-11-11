@@ -57,7 +57,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MISE_GITHUB_TOKEN: ${{ github.token }}
-          XTASK: ${{ steps.xtask.outputs.bin }}
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/pins"
@@ -69,7 +68,6 @@ jobs:
             exit 0
           fi
           mise run lock
-          "${XTASK}" sync --repo .
           git diff --binary > "${out}/pins.patch"
           {
             echo "Pins that Dependabot does not cover, bumped by the Pins workflow (scripts/bump-pins.py):"
@@ -87,6 +85,13 @@ jobs:
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
           echo "changed=true" >> "${GITHUB_OUTPUT}"
           echo "automerge=$(cat "${out}/automerge")" >> "${GITHUB_OUTPUT}"
+      # The bumped pins agree wherever they are repeated (mise run sync). Its own step, with no
+      # token in its environment; a failure fails the job before the patch is uploaded.
+      - name: Versions agree
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          XTASK: ${{ steps.xtask.outputs.bin }}
+        run: '"${XTASK}" sync --repo .'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.bump.outputs.changed == 'true'
         with:
