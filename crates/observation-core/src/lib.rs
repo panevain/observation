@@ -23,5 +23,6 @@ pub mod terrain;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tiles;
+pub(crate) mod util;
 
 pub use glam;

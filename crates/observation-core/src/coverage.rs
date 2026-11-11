@@ -5,12 +5,14 @@
 //! the ground with [`Terrain::segment_blocked`]. The same results drive the
 //! on-screen overlay and the statistics, so the two always agree.
 
-use crate::building::{Footprint, clean_ring, signed_area2};
+use crate::building::Footprint;
 use crate::bundle::AreaBundle;
 use crate::camera::{CameraModel, DoriLevel, Lighting, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM};
 use crate::frustum::ViewCone;
-use crate::occlusion::{Occluders, point_in_ring};
+use crate::occlusion::Occluders;
 use crate::terrain::Terrain;
+pub use crate::util::planar::closest_on_segment;
+use crate::util::planar::{clean_ring, dist_to_segment, point_in_ring, signed_area2};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -104,12 +106,8 @@ pub struct Region {
     /// Corners in world `[x, z]`, metres, in drawing order (not repeated at the end).
     pub points: Vec<[f32; 2]>,
     /// Whether the figures are currently limited to the region.
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Why a drawn outline cannot be used as a [`Region`].
@@ -559,21 +557,6 @@ impl StaticLayers {
         }
         s
     }
-}
-
-fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
-    p.distance(closest_on_segment(p, a, b))
-}
-
-/// The point of segment `a`–`b` closest to `p`.
-pub fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
-    let ab = b - a;
-    let t = if ab.length_squared() < 1e-12 {
-        0.0
-    } else {
-        ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-    };
-    a + ab * t
 }
 
 /// Cells seen by one camera (sorted, unique indices).

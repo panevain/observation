@@ -1,5 +1,6 @@
 //! Building height inference from OSM tags and footprint extrusion.
 
+pub use crate::util::planar::{clean_ring, signed_area2};
 use serde::{Deserialize, Serialize};
 
 /// Assumed storey height, metres.
@@ -129,39 +130,6 @@ pub fn infer_heights<'a>(tag: impl Fn(&str) -> Option<&'a str>) -> (f32, f32) {
         .unwrap_or_else(|| default_height_for(tag("building").unwrap_or("yes")));
     let height = height.clamp(1.0, 300.0);
     (min.min(height - 0.5).max(0.0), height)
-}
-
-/// Removes a closing duplicate point and consecutive duplicates.
-pub fn clean_ring(ring: &[[f32; 2]]) -> Vec<[f32; 2]> {
-    let mut out: Vec<[f32; 2]> = Vec::with_capacity(ring.len());
-    for &p in ring {
-        if out
-            .last()
-            .is_none_or(|q| (q[0] - p[0]).abs() > 1e-4 || (q[1] - p[1]).abs() > 1e-4)
-        {
-            out.push(p);
-        }
-    }
-    while out.len() > 1 {
-        let (f, l) = (out[0], out[out.len() - 1]);
-        if (f[0] - l[0]).abs() <= 1e-4 && (f[1] - l[1]).abs() <= 1e-4 {
-            out.pop();
-        } else {
-            break;
-        }
-    }
-    out
-}
-
-/// Twice the signed area of a ring in the `[x, z]` plane.
-pub fn signed_area2(ring: &[[f32; 2]]) -> f32 {
-    let n = ring.len();
-    (0..n)
-        .map(|i| {
-            let (a, b) = (ring[i], ring[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum()
 }
 
 /// Appends walls and a flat roof (plus underside for raised parts) to `mesh`.

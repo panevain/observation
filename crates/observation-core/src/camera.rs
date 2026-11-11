@@ -1,5 +1,6 @@
 //! Camera models (catalog entries), placements and effective range.
 
+pub use crate::util::url::is_https_url;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -173,27 +174,6 @@ impl CameraModel {
     }
 }
 
-/// Longest `source` URL accepted.
-const MAX_SOURCE_LEN: usize = 2048;
-
-/// An absolute `https://` URL with a non-empty host, no user info (so
-/// `https://trusted.example@evil.example` cannot pose as another site) and no
-/// whitespace or control characters.
-pub fn is_https_url(s: &str) -> bool {
-    if s.len() > MAX_SOURCE_LEN || s.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return false;
-    }
-    let Some((scheme, rest)) = s.split_at_checked(8) else {
-        return false;
-    };
-    // Browsers end the authority at `/`, `\`, `?` or `#`.
-    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or_default();
-    scheme.eq_ignore_ascii_case("https://")
-        && !authority.is_empty()
-        && !authority.starts_with(':')
-        && !authority.contains('@')
-}
-
 /// Allowed range for a user-chosen pixel density, px/m.
 pub const MIN_CUSTOM_PPM: f32 = 1.0;
 pub const MAX_CUSTOM_PPM: f32 = 2000.0;
@@ -274,7 +254,7 @@ pub struct CameraPlacement {
     /// from before this field carried a `color_index`, which is ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[u8; 3]>,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub enabled: bool,
     /// Group the camera is listed under, set by hand. `None` groups it by the
     /// address OpenStreetMap gives for its position.
@@ -284,10 +264,6 @@ pub struct CameraPlacement {
 
 /// Longest group name kept.
 pub const MAX_GROUP_CHARS: usize = 80;
-
-fn default_true() -> bool {
-    true
-}
 
 impl CameraPlacement {
     pub fn eye(&self) -> Vec3 {
@@ -392,13 +368,13 @@ impl Catalog {
     /// does (and with nothing to bump by hand), but not with comments or
     /// file layout.
     pub fn fingerprint(&self) -> String {
-        let mut h = crate::provenance::Fnv64::default();
+        let mut h = crate::util::hash::Fnv64::default();
         h.u64(self.models.len() as u64);
         for m in &self.models {
             // Plain data: serialising cannot fail.
             h.bytes(&serde_json::to_vec(m).unwrap_or_default());
         }
-        crate::provenance::fingerprint_hex(h.finish())
+        crate::util::hash::fingerprint_hex(h.finish())
     }
 }
 

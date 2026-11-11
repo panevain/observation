@@ -13,8 +13,8 @@ use crate::address::{
 };
 use crate::building::{Footprint, MeshData, extrude};
 use crate::geo::{BBox, LatLon, Projection};
-use crate::provenance::Fnv64;
 use crate::terrain::Terrain;
+use crate::util::hash::Fnv64;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -320,11 +320,11 @@ pub fn build_bundle(
         let start = mesh.indices.len() as u32;
         if extrude(&footprint, &mut mesh) {
             let footprint = Footprint {
-                outer: crate::building::clean_ring(&footprint.outer),
+                outer: crate::util::planar::clean_ring(&footprint.outer),
                 holes: footprint
                     .holes
                     .iter()
-                    .map(|h| crate::building::clean_ring(h))
+                    .map(|h| crate::util::planar::clean_ring(h))
                     .collect(),
                 ..footprint
             };

@@ -7,8 +7,8 @@
 //! every height is 0.
 
 use crate::geo::{BBox, LatLon, Projection};
-use crate::occlusion::point_in_ring;
 use crate::tiles::{TileId, lat_to_y, lon_to_x, tiles_covering};
+use crate::util::planar::point_in_ring;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 

@@ -1,12 +1,12 @@
 //! Example cameras for a freshly loaded area: a handful of plausible
 //! installations on house fronts, each facing the nearest street.
 
-use crate::building::{clean_ring, signed_area2};
 use crate::bundle::{AreaBundle, FOOT_WAYS};
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
-use crate::coverage::closest_on_segment;
 use crate::occlusion::Occluders;
 use crate::terrain::Terrain;
+use crate::util::planar::closest_on_segment;
+use crate::util::planar::{clean_ring, signed_area2};
 use glam::{Vec2, Vec3};
 
 /// Cameras sit this far in front of the wall they are mounted on, metres.

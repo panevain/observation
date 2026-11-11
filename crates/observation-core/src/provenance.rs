@@ -11,10 +11,13 @@
 //!   the figures leave out ([`CAVEATS_VERSION`]). The app shows it under the
 //!   figures, and anything that prints figures (such as an evidence sheet)
 //!   must print the same text, so it changes in one place.
-//! - UTC timestamp parsing and formatting for Overpass's
-//!   `timestamp_osm_base` (`2026-10-31T19:43:02Z`), with no date library.
+//! - The serde helpers that write times as ISO-8601 UTC strings. Parsing and
+//!   formatting them ([`parse_utc`], [`format_utc`] and the rest) live in
+//!   `util::time` and are re-exported here.
 
 use crate::bundle::AreaBundle;
+pub use crate::util::hash::fingerprint_hex;
+pub use crate::util::time::{format_date, format_utc, format_utc_minute, parse_utc};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// The app and engine version (this crate's, which the whole workspace
@@ -235,172 +238,6 @@ impl DataChange {
     }
 }
 
-/// A fingerprint as 16 lower-case hex digits.
-pub fn fingerprint_hex(f: u64) -> String {
-    format!("{f:016x}")
-}
-
-// ----- fingerprints ----------------------------------------------------------
-
-/// 64-bit FNV-1a: small, stable across platforms, Rust versions and runs
-/// (unlike `std`'s `DefaultHasher`), which is what a fingerprint saved in a
-/// file needs. Not collision-resistant against an adversary, and need not be.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Fnv64(u64);
-
-impl Default for Fnv64 {
-    fn default() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
-    }
-}
-
-impl Fnv64 {
-    pub(crate) fn bytes(&mut self, b: &[u8]) -> &mut Self {
-        for &x in b {
-            self.0 ^= u64::from(x);
-            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        self
-    }
-
-    pub(crate) fn u64(&mut self, v: u64) -> &mut Self {
-        self.bytes(&v.to_le_bytes())
-    }
-
-    pub(crate) fn i64(&mut self, v: i64) -> &mut Self {
-        self.bytes(&v.to_le_bytes())
-    }
-
-    pub(crate) fn f64(&mut self, v: f64) -> &mut Self {
-        self.u64(v.to_bits())
-    }
-
-    pub(crate) fn f32(&mut self, v: f32) -> &mut Self {
-        self.bytes(&v.to_bits().to_le_bytes())
-    }
-
-    /// Length-prefixed, so `("ab", "c")` and `("a", "bc")` differ.
-    pub(crate) fn str(&mut self, s: &str) -> &mut Self {
-        self.u64(s.len() as u64).bytes(s.as_bytes())
-    }
-
-    pub(crate) fn opt_str(&mut self, s: Option<&str>) -> &mut Self {
-        match s {
-            Some(s) => self.bytes(&[1]).str(s),
-            None => self.bytes(&[0]),
-        }
-    }
-
-    pub(crate) fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-// ----- UTC timestamps --------------------------------------------------------
-
-/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's
-/// `days_from_civil`).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (i64::from(m) + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// The date of a day count since 1970-01-01 (Hinnant's `civil_from_days`).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
-}
-
-fn days_in_month(y: i64, m: u32) -> u32 {
-    match m {
-        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
-
-/// Parses an ISO-8601 UTC timestamp as Overpass writes it,
-/// `YYYY-MM-DDTHH:MM:SSZ`, into Unix seconds. `None` for anything else,
-/// including an empty string (what Overpass reports for a database with no
-/// data date) and dates before 1970 or after 9999.
-pub fn parse_utc(s: &str) -> Option<u64> {
-    let b = s.as_bytes();
-    if b.len() != 20
-        || b[4] != b'-'
-        || b[7] != b'-'
-        || b[10] != b'T'
-        || b[13] != b':'
-        || b[16] != b':'
-        || b[19] != b'Z'
-    {
-        return None;
-    }
-    let num = |r: std::ops::Range<usize>| -> Option<u32> {
-        let part = s.get(r)?;
-        part.bytes()
-            .all(|c| c.is_ascii_digit())
-            .then(|| part.parse().ok())
-            .flatten()
-    };
-    let (y, mo, d) = (i64::from(num(0..4)?), num(5..7)?, num(8..10)?);
-    let (h, mi, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    if y < 1970 || !(1..=12).contains(&mo) || d == 0 || d > days_in_month(y, mo) {
-        return None;
-    }
-    if h > 23 || mi > 59 || sec > 60 {
-        return None;
-    }
-    let days = u64::try_from(days_from_civil(y, mo, d)).ok()?;
-    // A leap second (`:60`) runs into the next minute, as Unix time does.
-    Some(days * 86_400 + u64::from(h * 3600 + mi * 60 + sec))
-}
-
-fn split(t: u64) -> ((i64, u32, u32), u64) {
-    let days = i64::try_from(t / 86_400).unwrap_or(i64::MAX / 2);
-    (civil_from_days(days), t % 86_400)
-}
-
-/// `2026-10-31T19:43:02Z`. [`parse_utc`] reads it back for every time up to
-/// the end of 9999; later years have more than four digits, which it refuses.
-pub fn format_utc(t: u64) -> String {
-    let ((y, m, d), s) = split(t);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        s / 3600,
-        s / 60 % 60,
-        s % 60
-    )
-}
-
-/// `2026-10-31`.
-pub fn format_date(t: u64) -> String {
-    let ((y, m, d), _) = split(t);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// `2026-10-31 19:43 UTC`.
-pub fn format_utc_minute(t: u64) -> String {
-    let ((y, m, d), s) = split(t);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02} UTC",
-        s / 3600,
-        s / 60 % 60
-    )
-}
-
 /// Serde for `Option<u64>` Unix seconds as an ISO-8601 UTC string. Reading
 /// is lenient: anything that is not such a string (a number, a typo, `null`)
 /// reads as `None` rather than failing the whole file.
@@ -445,71 +282,7 @@ pub(crate) fn lenient_provenance<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn timestamps_round_trip() {
-        assert_eq!(parse_utc("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(parse_utc("2026-10-31T19:43:02Z"), Some(1_793_475_782));
-        assert_eq!(format_utc(1_793_475_782), "2026-10-31T19:43:02Z");
-        assert_eq!(format_date(1_793_475_782), "2026-10-31");
-        assert_eq!(format_utc_minute(1_793_475_782), "2026-10-31 19:43 UTC");
-        // Leap days, month and year ends.
-        for s in [
-            "2000-02-29T12:00:00Z",
-            "2024-02-29T23:59:59Z",
-            "2026-12-31T23:59:59Z",
-            "2027-01-01T00:00:00Z",
-            "2100-03-01T00:00:00Z",
-            "9999-12-31T23:59:59Z",
-        ] {
-            let t = parse_utc(s).unwrap();
-            assert_eq!(format_utc(t), s);
-        }
-        // Every day for 30 years round-trips through the civil conversions.
-        for day in 0..(30 * 366) {
-            let t = day * 86_400 + 3723;
-            assert_eq!(parse_utc(&format_utc(t)), Some(t));
-        }
-    }
-
-    #[test]
-    fn rejects_bad_timestamps() {
-        for s in [
-            "",
-            "2026-10-31",
-            "2026-10-31T19:43:02",
-            "2026-10-31T19:43:02+01:00",
-            "2026-10-31 19:43:02Z",
-            "2026-13-01T00:00:00Z",
-            "2026-02-29T00:00:00Z",
-            "2100-02-29T00:00:00Z",
-            "2026-04-31T00:00:00Z",
-            "2026-10-00T00:00:00Z",
-            "2026-10-31T24:00:00Z",
-            "2026-10-31T23:60:00Z",
-            "1969-12-31T23:59:59Z",
-            "+026-10-31T19:43:02Z",
-            "2026-1a-31T19:43:02Z",
-            "２026-10-31T19:43:0Z",
-        ] {
-            assert_eq!(parse_utc(s), None, "{s:?}");
-        }
-    }
-
-    #[test]
-    fn fnv_is_stable() {
-        // The published FNV-1a 64 test vectors.
-        assert_eq!(Fnv64::default().finish(), 0xcbf2_9ce4_8422_2325);
-        assert_eq!(Fnv64::default().bytes(b"a").finish(), 0xaf63_dc4c_8601_ec8c);
-        assert_eq!(
-            Fnv64::default().bytes(b"foobar").finish(),
-            0x8594_4171_f739_67e8
-        );
-        let a = Fnv64::default().str("ab").str("c").finish();
-        let b = Fnv64::default().str("a").str("bc").finish();
-        assert_ne!(a, b);
-        assert_eq!(fingerprint_hex(0xab), "00000000000000ab");
-    }
+    use crate::util::hash::Fnv64;
 
     fn saved(fingerprint: &str, date: &str) -> Provenance {
         Provenance {

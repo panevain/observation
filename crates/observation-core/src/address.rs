@@ -1,7 +1,9 @@
 //! Street addresses from OSM `addr:*` tags, and which address a camera is at.
 
 use crate::building::Footprint;
-use crate::occlusion::point_in_ring;
+pub(crate) use crate::util::planar::dist;
+pub use crate::util::planar::ring_bounds;
+use crate::util::planar::{distance_to_segment, point_in_ring};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -166,25 +168,9 @@ pub fn address_at<'a>(
     best.map(|(_, a)| a)
 }
 
-pub(crate) fn dist(a: [f32; 2], b: [f32; 2]) -> f32 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
-}
-
 /// Cheap reject: `p` is more than `margin` outside the ring's bounding box.
 pub(crate) fn near_bounds(p: [f32; 2], ring: &[[f32; 2]], margin: f32) -> bool {
     within_bounds(p, ring_bounds(ring), margin)
-}
-
-/// The ring's bounding box, `(min, max)`.
-pub fn ring_bounds(ring: &[[f32; 2]]) -> ([f32; 2], [f32; 2]) {
-    let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
-    for q in ring {
-        for i in 0..2 {
-            lo[i] = lo[i].min(q[i]);
-            hi[i] = hi[i].max(q[i]);
-        }
-    }
-    (lo, hi)
 }
 
 /// `p` lies in the box `(lo, hi)` grown by `margin`.
@@ -235,17 +221,6 @@ pub fn building_of(
 fn ring_edges(ring: &[[f32; 2]]) -> impl Iterator<Item = ([f32; 2], [f32; 2])> + '_ {
     let n = ring.len();
     (0..n).map(move |i| (ring[i], ring[(i + 1) % n]))
-}
-
-fn distance_to_segment(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
-    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
-    let len2 = dx * dx + dz * dz;
-    let t = if len2 > 0.0 {
-        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / len2).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    dist(p, [a[0] + t * dx, a[1] + t * dz])
 }
 
 #[cfg(test)]
