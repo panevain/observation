@@ -629,6 +629,31 @@ mod tests {
         assert!(q.trim_end().ends_with("out geom qt;"));
     }
 
+    /// The exact query text: interpreters and the region agent receive it,
+    /// and changing it changes what every area contains.
+    #[test]
+    fn query_text_is_stable() {
+        let q = build_query(&BBox {
+            south: 47.7075,
+            west: -122.208,
+            north: 47.7098,
+            east: -122.204,
+        });
+        let expected = [
+            "[out:json][timeout:25];",
+            "(",
+            "  way[\"building\"](47.7075000,-122.2080000,47.7098000,-122.2040000);",
+            "  relation[\"building\"][\"type\"=\"multipolygon\"](47.7075000,-122.2080000,47.7098000,-122.2040000);",
+            "  way[\"highway\"](47.7075000,-122.2080000,47.7098000,-122.2040000);",
+            "  node[\"addr:housenumber\"](47.7075000,-122.2080000,47.7098000,-122.2040000);",
+            "  node[\"addr:housename\"](47.7075000,-122.2080000,47.7098000,-122.2040000);",
+            ");",
+            "out geom qt;",
+            "",
+        ];
+        assert_eq!(q, expected.join("\n"));
+    }
+
     #[test]
     fn stitches_split_reversed_and_drops_open() {
         let a = pts(&[(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)]);
@@ -770,6 +795,35 @@ mod tests {
         );
         let addressed = d.buildings.iter().filter(|b| b.address.is_some()).count();
         assert!(addressed > 50, "{addressed} addressed buildings");
+        // Exact counts and a spot check, so a change to parsing shows here.
+        let summary = (
+            d.buildings.len(),
+            d.buildings.iter().map(|b| b.holes.len()).sum::<usize>(),
+            addressed,
+            d.roads.len(),
+            d.addresses.len(),
+        );
+        assert_eq!(summary, (108, 0, 61, 37, 205));
+        let first = &d.buildings[0];
+        assert_eq!(
+            (
+                first.osm_id,
+                first.outer.len(),
+                first.height_m,
+                first.min_height_m
+            ),
+            (324_632_903, 13, 6.0, 0.0)
+        );
+        let road = &d.roads[0];
+        assert_eq!(
+            (
+                road.osm_id,
+                road.highway.as_str(),
+                road.width_m,
+                road.points.len()
+            ),
+            (6_359_964, "residential", 6.0, 9)
+        );
         // Recorded with the fixture (see fixtures/README.md).
         assert_eq!(
             d.osm_base_unix

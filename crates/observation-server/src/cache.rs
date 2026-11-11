@@ -710,6 +710,57 @@ mod tests {
         assert!(!fresh, "zero TTL bundles are stale but still readable");
     }
 
+    /// The on-disk layout and sidecar format, which caches written by
+    /// earlier versions must keep matching.
+    #[tokio::test]
+    async fn layout_and_sidecar_format_are_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(dir.path(), Duration::from_secs(3600), roomy());
+        let key = observation_core::geo::BBox {
+            south: 47.7075,
+            west: -122.208,
+            north: 47.7098,
+            east: -122.204,
+        }
+        .cache_key();
+        assert!(cache.put_bundle(&key, &bundle_bytes()).await.unwrap());
+        assert_eq!(
+            std::fs::read(
+                dir.path()
+                    .join("bundles/47.70750_-122.20800_47.70980_-122.20400.obsb")
+            )
+            .unwrap(),
+            bundle_bytes()
+        );
+
+        let meta = TileMeta {
+            etag: Some("\"abc\"".into()),
+            last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".into()),
+            expires_unix: 1_700_000_000,
+        };
+        let sidecar = r#"{"etag":"\"abc\"","last_modified":"Wed, 21 Oct 2015 07:28:00 GMT","expires_unix":1700000000}"#;
+        let id = TileId::new(12, 654, 1583).unwrap();
+        assert!(cache.put_tile(id, b"png", &meta).await.unwrap());
+        let read = |rel: &str| std::fs::read_to_string(dir.path().join(rel)).unwrap();
+        assert_eq!(read("tiles/12/654/1583.png"), "png");
+        assert_eq!(read("tiles/12/654/1583.json"), sidecar);
+        assert!(
+            cache
+                .put_tile_in(TileSet::Dem, id, b"dem", &TileMeta::default())
+                .await
+                .unwrap()
+        );
+        assert_eq!(read("dem/12/654/1583.png"), "dem");
+        assert_eq!(
+            read("dem/12/654/1583.json"),
+            r#"{"etag":null,"last_modified":null,"expires_unix":0}"#
+        );
+
+        // A sidecar as earlier versions wrote it reads back.
+        std::fs::write(dir.path().join("tiles/12/654/1583.json"), sidecar).unwrap();
+        assert_eq!(cache.get_tile(id).await.unwrap().meta, meta);
+    }
+
     #[tokio::test]
     async fn rejects_non_bundle_files() {
         let dir = tempfile::tempdir().unwrap();
