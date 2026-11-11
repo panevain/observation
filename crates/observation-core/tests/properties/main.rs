@@ -10,6 +10,7 @@
 //! in a debug build.
 
 mod coverage;
+mod formats;
 mod geo;
 mod strategies;
 mod terrain;
