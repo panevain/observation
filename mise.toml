@@ -136,12 +136,16 @@ description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `
 # which is wrong for Bevy's feature set.
 run = "cargo-deny --locked check"
 
+# Tasks that run an xtask command pass every argument, `--help` included, to xtask's own
+# parser (raw_args), and keep a one-line `run`, which is where mise appends them.
 [tasks.tokens]
 description = "Design-token guard (no colour literals outside theme.rs; .config/design-tokens.toml)"
+raw_args = true
 run = "cargo xtask tokens"
 
 [tasks.sync]
 description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, and the advisory ignore lists agree"
+raw_args = true
 run = "cargo xtask sync"
 
 [tasks.lock]

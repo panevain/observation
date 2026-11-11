@@ -90,9 +90,11 @@ mise run check          # fmt, clippy (native + wasm), tests, typos, unused deps
 mise run build          # release wasm build, as the CI wasm job does
 mise run build:budget   # then its size against .config/wasm-size-budget.toml
 mise run test:browser   # headless-browser smoke test against a running server (mise run serve --release)
-mise -E ci install      # once (and after tool bumps): the tools CI uses, from mise.ci.toml
+mise -E ci install cargo-vet   # a CI-only tool (mise.ci.toml) you need; likewise cargo-audit, zizmor, trivy
 mise -E ci run vet      # cargo-vet as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz
 ```
+
+The first `mise install` (or `mise run`) trusts the repository's mise files, so read them first; `mise trust` trusts them without installing anything. Until then an activated shell skips them without asking, and an editor extension, which has no terminal to ask in, fails. Tools other than `cargo` (trunk, cargo-nextest, typos and the rest) run through `mise exec -- <command>`, or directly in a shell with `mise activate`. Install CI-only tools one at a time, as above: a bare `mise -E ci install` installs all of them, builds cargo-fuzz from source, and on a platform `mise.ci.lock` has no entry for, adds that platform to the lockfile. After editing `mise.ci.toml`, run `mise -E ci,dev run tasks:validate` as CI does (`mise run check` validates only the dev environment). The environment names are not private to this repository: selecting `dev` also loads a `~/.config/mise/config.dev.toml` of your own, and a `MISE_ENV` exported for another project replaces `dev` here.
 
 Tests that compare output with a committed golden file (under a crate's `tests/golden/`, or `xtask/tests/fixtures/`) rewrite that file instead when `OBS_BLESS=1` is set: run `OBS_BLESS=1 cargo nextest run -p <crate>` (for xtask, `OBS_BLESS=1 cargo nextest run --manifest-path xtask/Cargo.toml`), then review the diff and commit it with the change that caused it. `mise run test`, which CI runs, fails while `OBS_BLESS` is set, so CI always compares. Fakes and fixture builders that other crates' tests use sit behind a cargo feature named `testing`, gated `#[cfg(any(test, feature = "testing"))]`, and only `[dev-dependencies]` (and the fuzz targets) enable it, so nothing that ships compiles them.
 

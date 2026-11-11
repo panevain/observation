@@ -30,7 +30,10 @@ runs:
       with:
         version: 2026.10.25
         install: ${{ inputs.tools != '' }}
-        install_args: ${{ inputs.tools }}
+        # Only the locked release assets (mise.lock, mise.ci.lock). The action would add
+        # --locked itself on seeing a lockfile; written out, the strict install does not depend
+        # on that detection. The cache key ignores arguments starting with `-`.
+        install_args: --locked ${{ inputs.tools }}
         cache: ${{ inputs.cache }}
         # Caches are written only by develop (the default branch). Pull requests and the other
         # branches restore develop's caches; writes from anywhere else would only use up the
