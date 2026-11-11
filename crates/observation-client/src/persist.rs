@@ -235,3 +235,6 @@ pub fn receive_imports(
         }
     }
 }
+
+#[cfg(test)]
+mod golden;
