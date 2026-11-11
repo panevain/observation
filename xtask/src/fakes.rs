@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::time::Timestamp;
-use crate::ports::{Brotli, Cargo, Clock, Git, Http, Response};
+use crate::ports::{AuditOutput, Brotli, Cargo, Clock, Git, Http, Response};
 use crate::{Error, Result};
 
 /// The calls a fake received, in order, written like the command they stand for.
@@ -33,8 +33,8 @@ pub struct FakeGit {
     pub commits: Vec<String>,
     /// (rev, path) -> text; a missing entry panics, a `None` is "git cannot show it".
     pub files: HashMap<(String, String), Option<String>>,
-    /// The arguments joined by spaces -> output.
-    pub greps: HashMap<String, Option<String>>,
+    /// Flags, then the pattern, then the pathspecs -> output (`None`: nothing matched).
+    pub greps: HashMap<Vec<String>, Option<String>>,
     pub calls: Calls,
 }
 
@@ -55,12 +55,22 @@ impl Git for FakeGit {
             .unwrap_or_else(|| unexpected(&call)))
     }
 
-    fn grep(&self, args: &[&str]) -> Result<Option<String>> {
-        let call = format!("git grep {}", args.join(" "));
+    fn grep(&self, flags: &[&str], pattern: &str, pathspecs: &[&str]) -> Result<Option<String>> {
+        let key: Vec<String> = flags
+            .iter()
+            .chain([&pattern])
+            .chain(pathspecs)
+            .map(|s| (*s).to_owned())
+            .collect();
+        let call = format!(
+            "git grep {} -e {pattern} -- {}",
+            flags.join(" "),
+            pathspecs.join(" ")
+        );
         self.calls.record(call.clone());
         Ok(self
             .greps
-            .get(&args.join(" "))
+            .get(&key)
             .cloned()
             .unwrap_or_else(|| unexpected(&call)))
     }
@@ -108,13 +118,13 @@ impl Http for FakeHttp {
 pub struct FakeCargo {
     /// Whether cargo-audit is installed; without it `audit_json` answers `None`.
     pub audit_installed: bool,
-    /// Lockfile text -> cargo-audit's JSON for it.
-    pub audits: HashMap<String, String>,
+    /// Lockfile text -> what cargo-audit prints for it.
+    pub audits: HashMap<String, AuditOutput>,
     pub calls: Calls,
 }
 
 impl Cargo for FakeCargo {
-    fn audit_json(&self, lockfile: &Path) -> Result<Option<String>> {
+    fn audit_json(&self, lockfile: &Path) -> Result<Option<AuditOutput>> {
         self.calls.record(format!(
             "cargo-audit audit --json --file {}",
             lockfile.display()

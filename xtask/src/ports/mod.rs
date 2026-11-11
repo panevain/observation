@@ -15,8 +15,9 @@ pub trait Git {
     fn is_commit(&self, rev: &str) -> Result<bool>;
     /// The text of `path` at `rev`, or `None` if git cannot show it (no such file or revision).
     fn show(&self, rev: &str, path: &str) -> Result<Option<String>>;
-    /// `git grep` with these arguments: its output, or `None` when nothing matched.
-    fn grep(&self, args: &[&str]) -> Result<Option<String>>;
+    /// `git grep FLAGS -e PATTERN -- PATHSPECS`: its output, or `None` when nothing matched.
+    /// `flags` are options; the pattern and pathspecs are never read as one.
+    fn grep(&self, flags: &[&str], pattern: &str, pathspecs: &[&str]) -> Result<Option<String>>;
 }
 
 /// An HTTP response; any status, so that callers decide what a 404 means.
@@ -31,11 +32,19 @@ pub trait Http {
     fn get(&self, url: &str) -> Result<Response>;
 }
 
+/// What cargo-audit printed, whatever its exit status (non-zero when it finds something).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditOutput {
+    /// The JSON report, or nothing when cargo-audit could not run.
+    pub stdout: String,
+    pub stderr: String,
+}
+
 /// cargo's companion tools.
 pub trait Cargo {
     /// `cargo-audit audit --json` on a lockfile, run beside it (so no repository's
-    /// `.cargo/audit.toml` applies): its JSON report, or `None` when cargo-audit is not installed.
-    fn audit_json(&self, lockfile: &Path) -> Result<Option<String>>;
+    /// `.cargo/audit.toml` applies), or `None` when cargo-audit is not installed.
+    fn audit_json(&self, lockfile: &Path) -> Result<Option<AuditOutput>>;
 }
 
 /// The brotli command-line compressor.
