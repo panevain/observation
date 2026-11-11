@@ -9,6 +9,7 @@
 //! Case counts are kept small enough that the whole suite takes a few seconds
 //! in a debug build.
 
+mod coverage;
 mod geo;
 mod strategies;
 mod terrain;
