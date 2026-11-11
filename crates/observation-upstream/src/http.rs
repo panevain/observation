@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
-use http::header::{CONTENT_TYPE, HeaderName, HeaderValue};
+use http::header::{
+    AUTHORIZATION, CONTENT_TYPE, COOKIE, HeaderName, HeaderValue, InvalidHeaderValue,
+    PROXY_AUTHORIZATION,
+};
 use http::{HeaderMap, Method, StatusCode};
 
 /// Sends one request to an upstream.
@@ -21,8 +24,9 @@ pub trait HttpClient: Send + Sync + fmt::Debug {
     fn send(&self, req: HttpRequest) -> BoxFuture<'_, Result<HttpResponse, TransportError>>;
 }
 
-/// One outbound request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One outbound request. Its `Debug` output shows the URL without
+/// credentials and hides sensitive header values.
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpRequest {
     pub method: Method,
     pub url: String,
@@ -34,8 +38,23 @@ pub struct HttpRequest {
     /// Largest body accepted with a 2xx status; a longer one is [`Body::TooLarge`].
     pub max_bytes: usize,
     /// Largest body accepted with any other status, so that an error reply
-    /// is not read up to a large success cap.
+    /// is not read up to a large success cap. 0 means such a body is never
+    /// read: it is [`Body::TooLarge`] unless it is declared empty.
     pub error_max_bytes: usize,
+}
+
+impl fmt::Debug for HttpRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpRequest")
+            .field("method", &self.method)
+            .field("url", &crate::redact(&self.url))
+            .field("headers", &self.headers)
+            .field("body", &self.body)
+            .field("timeout", &self.timeout)
+            .field("max_bytes", &self.max_bytes)
+            .field("error_max_bytes", &self.error_max_bytes)
+            .finish()
+    }
 }
 
 /// The default [`HttpRequest::error_max_bytes`].
@@ -83,6 +102,11 @@ impl HttpRequest {
         }
     }
 
+    /// Whether a response with `status` must not have its body read at all.
+    pub fn skips_body(&self, status: StatusCode) -> bool {
+        !status.is_success() && self.error_max_bytes == 0
+    }
+
     /// The cap that applies to a response with `status`.
     pub fn cap_for(&self, status: StatusCode) -> usize {
         if status.is_success() {
@@ -104,20 +128,23 @@ impl HttpRequest {
         Self::new(Method::HEAD, url, 0)
     }
 
-    pub fn header(mut self, name: HeaderName, value: HeaderValue) -> Self {
+    /// Sets `name`. Credential headers (`Authorization`, `Proxy-Authorization`,
+    /// `Cookie`) are marked sensitive, as [`Self::bearer`] does.
+    pub fn header(mut self, name: HeaderName, mut value: HeaderValue) -> Self {
+        if [AUTHORIZATION, PROXY_AUTHORIZATION, COOKIE].contains(&name) {
+            value.set_sensitive(true);
+        }
         self.headers.insert(name, value);
         self
     }
 
     /// `Authorization: Bearer <token>`, marked sensitive so that `Debug`
     /// output (of this request, or of a fake's record) does not show it.
-    /// A token that is not a valid header value is left out.
-    pub fn bearer(mut self, token: &str) -> Self {
-        if let Ok(mut v) = HeaderValue::from_str(&format!("Bearer {token}")) {
-            v.set_sensitive(true);
-            self.headers.insert(http::header::AUTHORIZATION, v);
-        }
-        self
+    /// Fails, rather than sending the request without it, if the token
+    /// cannot be a header value.
+    pub fn bearer(self, token: &str) -> Result<Self, InvalidHeaderValue> {
+        let value = HeaderValue::from_str(&format!("Bearer {token}"))?;
+        Ok(self.header(AUTHORIZATION, value))
     }
 
     pub fn error_max_bytes(mut self, max: usize) -> Self {
@@ -262,10 +289,32 @@ mod tests {
     }
 
     #[test]
-    fn bearer_tokens_stay_out_of_debug_output() {
-        let req = HttpRequest::get("http://a.example/", 10).bearer("s3cret");
-        assert_eq!(req.headers[http::header::AUTHORIZATION], "Bearer s3cret");
-        assert!(!format!("{req:?}").contains("s3cret"));
+    fn credentials_stay_out_of_debug_output() {
+        let req = HttpRequest::get("https://user:pw@a.example/x", 10)
+            .bearer("s3cret")
+            .unwrap();
+        assert_eq!(req.headers[AUTHORIZATION], "Bearer s3cret");
+        let shown = format!("{req:?}");
+        assert!(!shown.contains("s3cret"), "{shown}");
+        assert!(!shown.contains("pw"), "{shown}");
+        assert!(shown.contains("https://a.example/x"), "{shown}");
+        for name in [AUTHORIZATION, PROXY_AUTHORIZATION, COOKIE] {
+            let req = HttpRequest::get("http://a.example/", 1)
+                .header(name, HeaderValue::from_static("hidden-value"));
+            assert!(!format!("{req:?}").contains("hidden-value"));
+        }
+        let req = HttpRequest::get("http://a.example/", 1)
+            .header(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+        assert!(format!("{req:?}").contains("text/plain"));
+    }
+
+    #[test]
+    fn an_invalid_bearer_token_is_an_error_not_a_missing_header() {
+        assert!(
+            HttpRequest::get("http://a.example/", 1)
+                .bearer("bad\ntoken")
+                .is_err()
+        );
     }
 
     #[test]
@@ -279,6 +328,11 @@ mod tests {
             HttpRequest::get("http://a.example/", 1).error_max_bytes,
             DEFAULT_ERROR_MAX_BYTES
         );
+        let req = HttpRequest::get("http://a.example/", 10).error_max_bytes(0);
+        assert!(req.skips_body(StatusCode::BAD_GATEWAY));
+        assert!(req.skips_body(StatusCode::NOT_MODIFIED));
+        assert!(!req.skips_body(StatusCode::OK));
+        assert!(!HttpRequest::get("http://a.example/", 0).skips_body(StatusCode::BAD_GATEWAY));
     }
 
     #[test]

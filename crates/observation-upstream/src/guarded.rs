@@ -47,13 +47,21 @@ impl GuardedHttp {
         let resp = builder.send().await.map_err(transport_error)?;
         let status = resp.status();
         let headers = resp.headers().clone();
-        // Read here, under the request's own deadline, as reqwest's timeout covers the body.
-        let body = match read_capped(resp, req.cap_for(status))
-            .await
-            .map_err(transport_error)?
-        {
-            Some(bytes) => Body::Complete(bytes),
-            None => Body::TooLarge,
+        let body = if req.skips_body(status) {
+            // Dropped unread.
+            match resp.content_length() {
+                Some(0) => Body::Complete(Default::default()),
+                _ => Body::TooLarge,
+            }
+        } else {
+            // Read here, under the request's own deadline, as reqwest's timeout covers the body.
+            match read_capped(resp, req.cap_for(status))
+                .await
+                .map_err(transport_error)?
+            {
+                Some(bytes) => Body::Complete(bytes),
+                None => Body::TooLarge,
+            }
         };
         Ok(HttpResponse {
             status,

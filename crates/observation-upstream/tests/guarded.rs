@@ -137,6 +137,7 @@ async fn the_user_agent_headers_and_body_reach_the_wire() {
         .send(
             HttpRequest::post(format!("http://127.0.0.1:{port}/api"), 100)
                 .bearer("t0ken")
+                .unwrap()
                 .form([("data", "a b")]),
         )
         .await
@@ -188,6 +189,45 @@ async fn error_replies_are_capped_by_the_error_cap() {
 }
 
 #[tokio::test]
+async fn an_error_cap_of_zero_never_reads_the_body() {
+    // The body never comes: reading it would hit the timeout instead.
+    let port =
+        serve_stalled("HTTP/1.1 502 Bad Gateway\r\nTransfer-Encoding: chunked\r\n\r\n").await;
+    let started = Instant::now();
+    let resp = lax()
+        .send(
+            HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100)
+                .error_max_bytes(0)
+                .timeout(Duration::from_secs(20)),
+        )
+        .await
+        .unwrap();
+    assert_eq!((resp.status.as_u16(), resp.body), (502, Body::TooLarge));
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // A declared-empty error body is complete; a 2xx body is read as usual.
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 304 Not Modified\r\nETag: \"t\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    let resp = lax()
+        .send(HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100).error_max_bytes(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        (resp.status.as_u16(), resp.body),
+        (304, Body::Complete(Default::default()))
+    );
+    assert_eq!(resp.headers["etag"], "\"t\"");
+    let (port, _) =
+        serve_fixed("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
+    let resp = lax()
+        .send(HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100).error_max_bytes(0))
+        .await
+        .unwrap();
+    assert_eq!(resp.bytes().unwrap(), "ok");
+}
+
+#[tokio::test]
 async fn a_declared_oversize_body_is_refused_without_reading() {
     // The body never comes: reading it would hit the timeout instead.
     let port = serve_stalled("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n").await;
@@ -232,18 +272,17 @@ async fn a_slow_answer_times_out_under_the_client_timeout() {
 
 #[tokio::test]
 async fn refused_connections_are_connect_errors() {
-    // Bound, then closed: nothing listens on the port.
-    let port = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // Bound but not listening, and held for the whole test, so no other
+    // socket can take the port meanwhile: connecting is refused.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
     let err = lax()
         .send(HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100))
         .await
         .unwrap_err();
     assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
+    drop(socket);
 }
 
 #[tokio::test]
