@@ -154,9 +154,31 @@ pub struct MemoryStore {
     values: Mutex<HashMap<String, String>>,
     refuse: Mutex<Option<SaveFailure>>,
     blocked_reads: Mutex<bool>,
+    log: Mutex<Vec<StoreOp>>,
+}
+
+/// One write to a [`MemoryStore`], as [`MemoryStore::ops`] lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreOp {
+    /// A stored key and value.
+    Set(String, String),
+    /// A write refused (see [`MemoryStore::refuse_writes`]): key and value.
+    Refused(String, String),
+    /// A removed key (whether or not it was there).
+    Remove(String),
 }
 
 impl MemoryStore {
+    /// Every write since the store was made or last drained, oldest first.
+    pub fn ops(&self) -> Vec<StoreOp> {
+        lock(&self.log).clone()
+    }
+
+    /// Like [`Self::ops`], and starts a new log.
+    pub fn take_ops(&self) -> Vec<StoreOp> {
+        std::mem::take(&mut *lock(&self.log))
+    }
+
     /// From now on every `get` finds nothing (or finds what is stored again
     /// with `false`).
     pub fn block_reads(&self, blocked: bool) {
@@ -183,14 +205,19 @@ impl KeyValueStore for MemoryStore {
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), SaveFailure> {
-        if let Some(why) = *lock(&self.refuse) {
+        let refused = *lock(&self.refuse);
+        let (key, value) = (key.to_owned(), value.to_owned());
+        if let Some(why) = refused {
+            lock(&self.log).push(StoreOp::Refused(key, value));
             return Err(why);
         }
-        lock(&self.values).insert(key.to_owned(), value.to_owned());
+        lock(&self.log).push(StoreOp::Set(key.clone(), value.clone()));
+        lock(&self.values).insert(key, value);
         Ok(())
     }
 
     fn remove(&self, key: &str) {
+        lock(&self.log).push(StoreOp::Remove(key.to_owned()));
         lock(&self.values).remove(key);
     }
 }
@@ -204,6 +231,8 @@ pub struct FakeFiles {
     downloads: Mutex<Vec<(String, String, String)>>,
     /// Open pickers: accept list and callback.
     pickers: Mutex<Vec<(String, Picked)>>,
+    /// Why every download fails, when set.
+    refuse: Mutex<Option<String>>,
 }
 
 impl std::fmt::Debug for FakeFiles {
@@ -215,6 +244,12 @@ impl std::fmt::Debug for FakeFiles {
 }
 
 impl FakeFiles {
+    /// From now on every download fails with `why` (or succeeds again with
+    /// `None`); a refused download is not recorded.
+    pub fn refuse_downloads(&self, why: Option<&str>) {
+        *lock(&self.refuse) = why.map(str::to_owned);
+    }
+
     /// Name, MIME type and text of every download so far.
     pub fn downloads(&self) -> Vec<(String, String, String)> {
         lock(&self.downloads).clone()
@@ -241,6 +276,9 @@ impl FakeFiles {
 
 impl FileDialogs for FakeFiles {
     fn download(&self, name: &str, mime: &str, text: &str) -> Result<(), String> {
+        if let Some(why) = lock(&self.refuse).clone() {
+            return Err(why);
+        }
         lock(&self.downloads).push((name.to_owned(), mime.to_owned(), text.to_owned()));
         Ok(())
     }
@@ -529,6 +567,18 @@ mod tests {
         assert_eq!(store.get("k"), None, "blocked storage reads nothing");
         store.block_reads(false);
         assert_eq!(store.get("k").as_deref(), Some("v"));
+        let set = |k: &str, v: &str| StoreOp::Set(k.to_owned(), v.to_owned());
+        assert_eq!(
+            store.take_ops(),
+            [
+                set("k", "v"),
+                StoreOp::Refused("k".to_owned(), "w".to_owned()),
+                StoreOp::Remove("k".to_owned()),
+                StoreOp::Remove("k".to_owned()),
+                set("k", "v"),
+            ]
+        );
+        assert_eq!(store.ops(), [], "taking the log starts a new one");
     }
 
     #[test]
@@ -546,6 +596,17 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         files.pick_text(".json", Box::new(move |r| tx.send(r).unwrap_or_default()));
         assert_eq!(files.open_pickers(), [".json"]);
+        files.refuse_downloads(Some("disk full"));
+        assert_eq!(
+            files.download("b.json", "application/json", "{}"),
+            Err("disk full".to_owned())
+        );
+        files.refuse_downloads(None);
+        assert_eq!(
+            files.downloads().len(),
+            1,
+            "a refused download is not recorded"
+        );
         assert!(files.pick(Ok("text".to_owned())));
         assert!(!files.pick(Ok("again".to_owned())));
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), [Ok("text".to_owned())]);
