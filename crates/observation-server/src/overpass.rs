@@ -814,6 +814,37 @@ mod tests {
             ),
             (324_632_903, 13, 6.0, 0.0)
         );
+        // Content of the other elements: ring and road points, heights,
+        // road widths and addresses.
+        let untagged = infer_heights(|_| None);
+        let content = (
+            d.buildings.iter().map(|b| b.outer.len()).sum::<usize>(),
+            d.roads.iter().map(|r| r.points.len()).sum::<usize>(),
+            d.buildings
+                .iter()
+                .filter(|b| (b.min_height_m, b.height_m) != untagged)
+                .count(),
+            (d.roads.iter().map(|r| f64::from(r.width_m)).sum::<f64>() * 10.0).round() as i64,
+        );
+        assert_eq!(content, (1198, 223, 0, 1530));
+        let address = |number: &str, street: &str, unit: Option<&str>| Address {
+            housenumber: Some(number.into()),
+            street: Some(street.into()),
+            housename: None,
+            unit: unit.map(Into::into),
+        };
+        assert_eq!(
+            d.addresses[0],
+            OsmAddressPoint {
+                address: address("11930", "100th Avenue Northeast", Some("B")),
+                point: LatLon::new(47.7075056, -122.2076749),
+            }
+        );
+        let addressed = d.buildings.iter().find_map(|b| b.address.as_ref());
+        assert_eq!(
+            addressed,
+            Some(&address("10011", "Northeast 120th Street", None))
+        );
         let road = &d.roads[0];
         assert_eq!(
             (
