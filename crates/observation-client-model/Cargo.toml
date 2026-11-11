@@ -9,3 +9,8 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Fakes of the platform traits (`testing` module), for other crates' tests.
+# Enable it only from `[dev-dependencies]`.
+testing = []

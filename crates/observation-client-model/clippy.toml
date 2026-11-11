@@ -1,0 +1,12 @@
+# A crate's clippy.toml replaces the workspace's, so these first three repeat
+# the root clippy.toml.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+too-many-arguments-threshold = 12
+
+# These panic on wasm32-unknown-unknown, where the client runs; take the time
+# from the `Clock` port (or Bevy's `Time`) instead.
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32-unknown-unknown; use the Clock port" },
+    { path = "std::time::Instant::now", reason = "panics on wasm32-unknown-unknown; use the Clock port or Bevy's Time" },
+]
