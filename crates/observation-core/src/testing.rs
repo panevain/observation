@@ -4,6 +4,10 @@
 //! which other crates enable from their `[dev-dependencies]` (never from
 //! `[dependencies]`). Every builder is deterministic: the same call gives
 //! the same value on every platform, so golden files can be built from them.
+//!
+//! World builders ([`box_footprint`], [`slope`]) take metres in the world
+//! frame (`x` east, `z` south, `y` up); the `sample_*` and `rich_*` builders
+//! start from OSM latitudes and longitudes.
 
 use crate::address::Address;
 use crate::building::Footprint;
@@ -33,7 +37,7 @@ pub fn slope() -> Terrain {
         |p| Some(100.0 + p.x / 10.0),
         "test",
     )
-    .unwrap_or_default()
+    .expect("slope(): sampling a plane over ±200 m gives valid terrain")
 }
 
 /// A small bundle on flat ground: one 6.5 m house about 7 m square at the
