@@ -36,6 +36,8 @@ impl Drop for WaitGuard<'_> {
 }
 
 impl BoundedQueue {
+    /// `concurrency` permits; at most `max_waiting` callers may wait for one
+    /// (0 refuses everyone, see [`BoundedQueue::enter`]).
     pub fn new(concurrency: usize, max_waiting: usize) -> Self {
         Self {
             permits: Semaphore::new(concurrency),
