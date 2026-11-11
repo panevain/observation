@@ -9,4 +9,5 @@ too-many-arguments-threshold = 12
 disallowed-methods = [
     { path = "std::time::SystemTime::now", reason = "panics on wasm32-unknown-unknown; use the Clock port" },
     { path = "std::time::Instant::now", reason = "panics on wasm32-unknown-unknown; use the Clock port or Bevy's Time" },
+    { path = "std::thread::sleep", reason = "panics on wasm32-unknown-unknown and would stall the frame" },
 ]

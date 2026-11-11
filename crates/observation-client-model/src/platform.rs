@@ -55,8 +55,11 @@ pub trait Http: Send + Sync + 'static {
     /// reply or a description of the failure.
     fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>);
     /// Follows a server-sent event stream: `on` is called with the data of
-    /// every `event` message, and with an error whenever the stream drops.
-    /// The stream is reopened as needed and lives as long as the page.
+    /// every `event` message, and with an error whenever the stream drops;
+    /// a stream that drops is reopened and lives as long as the page. If the
+    /// stream cannot be opened at all (always in the native build), `on` is
+    /// called once with an error, possibly before this returns, and never
+    /// again.
     fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>);
 }
 
@@ -103,7 +106,9 @@ pub trait FileDialogs: Send + Sync + 'static {
     fn download(&self, name: &str, mime: &str, text: &str) -> Result<(), String>;
     /// Lets the user pick a file of the `accept` types (an `<input accept>`
     /// list); `done` is called with its text or why it could not be read.
-    /// Not called at all when the user cancels.
+    /// A picker that cannot be shown calls `done` with an error before this
+    /// returns. `done` is never called when the user cancels, nor in the
+    /// native build, which has no picker.
     fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>);
 }
 
@@ -123,6 +128,7 @@ pub trait ColorScheme: Send + Sync + 'static {
     /// Whether the system asks for a dark scheme now.
     fn prefers_dark(&self) -> bool;
     /// Calls `on` with the new setting whenever it changes, for as long as
-    /// the page lives.
+    /// the page lives. It may never be called: the native build has no
+    /// setting to follow, and a browser may not report changes.
     fn watch(&self, on: Box<dyn Fn(bool) + Send>);
 }

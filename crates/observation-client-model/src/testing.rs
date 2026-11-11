@@ -35,8 +35,22 @@ impl std::fmt::Debug for FakeHttp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FakeHttp")
             .field("sent", &*lock(&self.sent))
+            .field("pending", &self.pending())
             .finish_non_exhaustive()
     }
+}
+
+/// Runs `call` on each listener taken out of `slot`, without holding its lock,
+/// so a listener may register another; then puts them back ahead of any
+/// registered meanwhile.
+fn call_unlocked<T>(slot: &Mutex<Vec<T>>, mut call: impl FnMut(&T)) {
+    let taken = std::mem::take(&mut *lock(slot));
+    for item in &taken {
+        call(item);
+    }
+    let mut now = lock(slot);
+    let added = std::mem::replace(&mut *now, taken);
+    now.extend(added);
 }
 
 impl FakeHttp {
@@ -54,6 +68,11 @@ impl FakeHttp {
         lock(&self.sent).clone()
     }
 
+    /// The requests not answered yet, oldest first.
+    pub fn pending(&self) -> Vec<HttpRequest> {
+        lock(&self.pending).iter().map(|(r, _)| r.clone()).collect()
+    }
+
     /// The URLs of the requests not answered yet, oldest first.
     pub fn pending_urls(&self) -> Vec<String> {
         lock(&self.pending)
@@ -64,28 +83,44 @@ impl FakeHttp {
 
     /// Answers the oldest pending request for `url`; false if there is none.
     pub fn respond(&self, url: &str, reply: Reply) -> bool {
+        self.respond_where(|r| r.url == url, reply)
+    }
+
+    /// Answers the oldest pending `method` request for `url`; false if there is none.
+    pub fn respond_to(&self, method: &str, url: &str, reply: Reply) -> bool {
+        self.respond_where(|r| r.method == method && r.url == url, reply)
+    }
+
+    /// Answers the pending request at `index` (oldest first, as in
+    /// [`Self::pending`]); false if there is none.
+    pub fn respond_at(&self, index: usize, reply: Reply) -> bool {
         let done = {
             let mut pending = lock(&self.pending);
-            let Some(i) = pending.iter().position(|(r, _)| r.url == url) else {
+            if index >= pending.len() {
                 return false;
-            };
-            pending.remove(i).1
+            }
+            pending.remove(index).1
         };
         // Called without the lock held, so the callback may send again.
         done(reply);
         true
     }
 
+    fn respond_where(&self, matches: impl Fn(&HttpRequest) -> bool, reply: Reply) -> bool {
+        let index = lock(&self.pending).iter().position(|(r, _)| matches(r));
+        index.is_some_and(|i| self.respond_at(i, reply))
+    }
+
     /// Delivers `reply` to every subscriber of `url`; returns how many there
-    /// were. The listeners run while the fake is locked, so they must not
-    /// subscribe again.
+    /// were. A subscriber may subscribe again or fetch from inside.
     pub fn emit(&self, url: &str, reply: &Reply) -> usize {
-        let streams = lock(&self.streams);
         let mut n = 0;
-        for (_, _, on) in streams.iter().filter(|(u, _, _)| u == url) {
-            on(reply.clone());
-            n += 1;
-        }
+        call_unlocked(&self.streams, |(u, _, on)| {
+            if u == url {
+                on(reply.clone());
+                n += 1;
+            }
+        });
         n
     }
 
@@ -112,14 +147,22 @@ impl Http for FakeHttp {
     }
 }
 
-/// A key-value store in memory, which can be told to refuse writes.
+/// A key-value store in memory, which can be told to refuse writes or to
+/// read nothing (as blocked browser storage does).
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     values: Mutex<HashMap<String, String>>,
     refuse: Mutex<Option<SaveFailure>>,
+    blocked_reads: Mutex<bool>,
 }
 
 impl MemoryStore {
+    /// From now on every `get` finds nothing (or finds what is stored again
+    /// with `false`).
+    pub fn block_reads(&self, blocked: bool) {
+        *lock(&self.blocked_reads) = blocked;
+    }
+
     /// From now on every `set` fails with `why` (or succeeds again with `None`).
     pub fn refuse_writes(&self, why: Option<SaveFailure>) {
         *lock(&self.refuse) = why;
@@ -133,6 +176,9 @@ impl MemoryStore {
 
 impl KeyValueStore for MemoryStore {
     fn get(&self, key: &str) -> Option<String> {
+        if *lock(&self.blocked_reads) {
+            return None;
+        }
         lock(&self.values).get(key).cloned()
     }
 
@@ -256,9 +302,7 @@ impl FakeColorScheme {
     /// Changes the setting and tells every watcher, as the browser does.
     pub fn set_dark(&self, dark: bool) {
         *lock(&self.dark) = dark;
-        for on in lock(&self.watchers).iter() {
-            on(dark);
-        }
+        call_unlocked(&self.watchers, |on| on(dark));
     }
 }
 
@@ -276,7 +320,106 @@ impl ColorScheme for FakeColorScheme {
 mod tests {
     use super::*;
     use crate::platform::unix_secs;
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
+
+    /// A reply handler that asks for the next request, as the tile queue
+    /// does: each reply to `/n` fetches `/n+1`, up to `/3`.
+    fn fetch_chain(http: &Arc<FakeHttp>, n: u32, log: mpsc::Sender<(u32, Reply)>) {
+        let next = Arc::clone(http);
+        http.fetch(
+            HttpRequest::get(format!("/{n}")),
+            Box::new(move |r| {
+                log.send((n, r)).unwrap_or_default();
+                if n < 3 {
+                    fetch_chain(&next, n + 1, log);
+                }
+            }),
+        );
+    }
+
+    #[test]
+    fn a_deferred_reply_handler_may_fetch_again() {
+        let http = Arc::new(FakeHttp::default());
+        let (tx, rx) = mpsc::channel();
+        fetch_chain(&http, 1, tx);
+        for n in 1..=3 {
+            assert_eq!(http.pending_urls(), [format!("/{n}")]);
+            assert!(http.respond(&format!("/{n}"), Ok(vec![n as u8])));
+        }
+        assert!(http.pending_urls().is_empty());
+        let got: Vec<u32> = rx.try_iter().map(|(n, _)| n).collect();
+        assert_eq!(got, [1, 2, 3]);
+    }
+
+    #[test]
+    fn an_immediate_reply_handler_may_fetch_again() {
+        let http = Arc::new(FakeHttp::answering(Err("offline".to_owned())));
+        let (tx, rx) = mpsc::channel();
+        fetch_chain(&http, 1, tx);
+        let got: Vec<(u32, Reply)> = rx.try_iter().collect();
+        assert_eq!(
+            got,
+            (1..=3)
+                .map(|n| (n, Err("offline".to_owned())))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(http.sent().len(), 3);
+        assert!(http.pending().is_empty());
+    }
+
+    #[test]
+    fn requests_are_answered_by_method_and_url_or_position() {
+        let http = FakeHttp::default();
+        let (tx, rx) = mpsc::channel();
+        let mut post = HttpRequest::get("/r".to_owned());
+        post.method = "POST";
+        for req in [
+            HttpRequest::get("/r".to_owned()),
+            post,
+            HttpRequest::get("/s".to_owned()),
+        ] {
+            let tx = tx.clone();
+            let label = format!("{} {}", req.method, req.url);
+            http.fetch(req, Box::new(move |_| tx.send(label).unwrap_or_default()));
+        }
+        assert!(!http.respond_to("PUT", "/r", Ok(Vec::new())));
+        assert!(http.respond_to("POST", "/r", Ok(Vec::new())));
+        assert!(http.respond_at(1, Ok(Vec::new())));
+        assert!(!http.respond_at(1, Ok(Vec::new())));
+        assert_eq!(http.pending_urls(), ["/r"]);
+        assert_eq!(http.pending()[0].method, "GET");
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), ["POST /r", "GET /s"]);
+    }
+
+    #[test]
+    fn a_stream_listener_may_subscribe_again() {
+        let http = Arc::new(FakeHttp::default());
+        let again = Arc::clone(&http);
+        http.subscribe(
+            "/events",
+            "e",
+            Box::new(move |_| again.subscribe("/events", "e", Box::new(|_| {}))),
+        );
+        assert_eq!(http.emit("/events", &Ok(Vec::new())), 1);
+        assert_eq!(http.subscriptions().len(), 2);
+        assert_eq!(http.emit("/events", &Ok(Vec::new())), 2);
+        assert_eq!(http.subscriptions().len(), 3);
+    }
+
+    #[test]
+    fn a_scheme_watcher_may_watch_again() {
+        let scheme = Arc::new(FakeColorScheme::new(true));
+        let again = Arc::clone(&scheme);
+        let (tx, rx) = mpsc::channel();
+        scheme.watch(Box::new(move |d| {
+            let tx = tx.clone();
+            again.watch(Box::new(move |d2| tx.send(d2).unwrap_or_default()));
+            let _ = d;
+        }));
+        scheme.set_dark(false);
+        scheme.set_dark(true);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), [true]);
+    }
 
     #[test]
     fn http_answers_requests_in_order_through_the_callback() {
@@ -319,9 +462,18 @@ mod tests {
     fn requests_print_without_the_token() {
         let mut req = HttpRequest::get("/api/regions".to_owned());
         req.bearer = Some("secret-token".to_owned());
-        let shown = format!("{req:?}");
-        assert!(!shown.contains("secret-token"), "{shown}");
-        assert!(shown.contains("<redacted>"), "{shown}");
+        let http = FakeHttp::default();
+        http.fetch(req.clone(), Box::new(|_| {}));
+        for shown in [
+            format!("{req:?}"),
+            format!("{req:#?}"),
+            format!("{:?}", vec![req.clone()]),
+            format!("{http:?}"),
+            format!("{http:#?}"),
+        ] {
+            assert!(!shown.contains("secret-token"), "{shown}");
+            assert!(shown.contains("<redacted>"), "{shown}");
+        }
     }
 
     #[test]
@@ -372,6 +524,11 @@ mod tests {
         assert_eq!(store.get("k"), None);
         store.remove("k");
         assert!(store.snapshot().is_empty());
+        assert_eq!(store.set("k", "v"), Ok(()));
+        store.block_reads(true);
+        assert_eq!(store.get("k"), None, "blocked storage reads nothing");
+        store.block_reads(false);
+        assert_eq!(store.get("k").as_deref(), Some("v"));
     }
 
     #[test]
