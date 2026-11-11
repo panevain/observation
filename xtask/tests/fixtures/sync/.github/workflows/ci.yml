@@ -1,0 +1,6 @@
+name: CI
+jobs:
+  test:
+    steps:
+      - uses: $/.github/actions/setup-mise
+      - uses: $/.github/actions/build-image

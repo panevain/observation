@@ -1,0 +1,7 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0001"
+ignoreUntil = 2026-12-01
+
+[[IgnoredVulns]]
+id = "GHSA-abcd-efgh-ijkl"
+ignoreUntil = 2026-12-01

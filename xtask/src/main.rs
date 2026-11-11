@@ -10,6 +10,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use xtask::cmd;
+use xtask::ports::process::GitCli;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -27,6 +28,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Fail when a pinned version differs where it is repeated, is repeated where it must not
+    /// be, or the advisory ignore lists disagree.
+    Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
     /// Print xtask's version.
@@ -40,6 +44,11 @@ fn main() -> ExitCode {
         .repo
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
     let result = match cli.command {
+        Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
+            print!("{}", out.stdout);
+            eprint!("{}", out.stderr);
+            out.failed
+        }),
         Command::Tokens => cmd::tokens::run(&repo).map(|out| {
             // A closed stdout or stderr leaves nothing to report to.
             let _ = std::io::stdout().write_all(&out.stdout);

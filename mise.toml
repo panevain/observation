@@ -7,7 +7,7 @@
 # rust-toolchain.toml is the single source of truth for the Rust version, components and
 # targets: rustup reads it directly, mise reads it through idiomatic version files (see
 # [settings]; mise.lock records it, and the Pins workflow bumps both), and
-# scripts/check-toolchain-sync.sh checks nothing else repeats it. Without mise, install rustup
+# `mise run sync` (cargo xtask sync) checks nothing else repeats it. Without mise, install rustup
 # and run cargo; it fetches the toolchain itself.
 # Machine-specific settings (OBS_CONTACT, OBS_BIND) go in mise.local.toml, which is
 # gitignored; copy mise.local.toml.example to start. Docker Compose settings default in
@@ -142,7 +142,7 @@ run = "cargo xtask tokens"
 
 [tasks.sync]
 description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, and the advisory ignore lists agree"
-run = "scripts/check-toolchain-sync.sh"
+run = "cargo xtask sync"
 
 [tasks.lock]
 description = "Refresh mise.lock and mise.ci.lock (checksums for every platform they list) after changing a tool in mise.toml or mise.ci.toml"

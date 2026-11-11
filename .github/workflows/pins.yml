@@ -42,11 +42,22 @@ jobs:
       - uses: $/.github/actions/setup-mise
         with:
           cache: false
+      # The sync check after the bump is an xtask command. xtask is built first, with the
+      # toolchain pinned before the bump (which may move it), and uncached like the rest of
+      # this job.
+      - uses: $/.github/actions/setup-rust
+      - name: Build xtask
+        id: xtask
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask"
+          echo "bin=${RUNNER_TEMP}/xtask/debug/xtask" >> "${GITHUB_OUTPUT}"
       - name: Bump
         id: bump
         env:
           GH_TOKEN: ${{ github.token }}
           MISE_GITHUB_TOKEN: ${{ github.token }}
+          XTASK: ${{ steps.xtask.outputs.bin }}
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/pins"
@@ -58,7 +69,7 @@ jobs:
             exit 0
           fi
           mise run lock
-          mise run sync
+          "${XTASK}" sync --repo .
           git diff --binary > "${out}/pins.patch"
           {
             echo "Pins that Dependabot does not cover, bumped by the Pins workflow (scripts/bump-pins.py):"

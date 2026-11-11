@@ -1,0 +1,3 @@
+[package]
+name = "lib"
+edition = "2024"
