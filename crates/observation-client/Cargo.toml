@@ -7,8 +7,13 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# The main app (`src/main.rs`) is discovered automatically; the coverage worker
-# is named here so its trunk output is `coverage-worker*.js`.
+# The app lives in the library (`src/lib.rs`, `ClientPlugins`), which the main
+# binary (`src/main.rs`) runs; both are discovered automatically. The library has
+# no doctests. The coverage worker is named here so its trunk output is
+# `coverage-worker*.js`; it uses `observation-core` only, never this library.
+[lib]
+doctest = false
+
 [[bin]]
 name = "coverage-worker"
 path = "src/bin/coverage_worker.rs"
