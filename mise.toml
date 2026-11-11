@@ -267,5 +267,15 @@ description = "Check the task definitions of the selected environments (referenc
 run = "{{mise_bin | quote}} tasks validate"
 
 [tasks.check]
-description = "fmt, clippy, tests, spelling, unused dependencies, cargo-deny, design tokens, version sync and task definitions (the CI checks that need no Docker or CI-only tool; build is separate)"
-depends = ["fmt", "clippy-native", "clippy-wasm", "test", "typos", "shear", "deny", "tokens", "sync", "tasks:validate"]
+description = "fmt, clippy, tests, spelling, unused dependencies, cargo-deny, design tokens, version sync and task definitions (the CI checks that need no Docker or CI-only tool; build is separate); the quick ones first, and it stops at the first failure"
+# Steps in order, not `depends` (which would start every check at once): the checks that take
+# seconds run first, together, so they fail first; the cargo builds, which share target/ and
+# would only queue for its lock, run one at a time; each step starts once the one before
+# has passed.
+run = [
+  { tasks = ["fmt", "typos", "tokens", "sync", "tasks:validate"] },
+  { task = "clippy-native" },
+  { task = "clippy-wasm" },
+  { task = "test" },
+  { tasks = ["shear", "deny"] },
+]
