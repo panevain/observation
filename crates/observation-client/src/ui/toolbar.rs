@@ -9,7 +9,7 @@ use crate::state::{LoadArea, Tool};
 use crate::theme::{Tokens, UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
-use observation_client_model::vm::{SaveVm, StatusVm};
+use observation_client_model::vm::{HistoryVm, SaveVm, StatusVm};
 use observation_core::scene::AreaRef;
 
 pub fn top_bar(
@@ -72,37 +72,18 @@ pub fn top_bar(
             }
         }
         ui.separator();
-        for (op, glyph, keys, can, what) in [
-            (
-                HistoryOp::Undo,
-                icons::ARROW_COUNTER_CLOCKWISE,
-                "Ctrl+Z",
-                d.history.can_undo(),
-                d.history.undo_label(),
-            ),
-            (
-                HistoryOp::Redo,
-                icons::ARROW_CLOCKWISE,
-                "Ctrl+Shift+Z",
-                d.history.can_redo(),
-                d.history.redo_label(),
-            ),
-        ] {
-            let name = match op {
-                HistoryOp::Undo => "Undo",
-                HistoryOp::Redo => "Redo",
-            };
-            let tip = match what {
-                Some(w) => format!("{name} {w} ({keys})"),
-                None => format!("Nothing to {} ({keys})", name.to_lowercase()),
+        for button in HistoryVm::new(&d.history).0 {
+            let glyph = match button.op {
+                HistoryOp::Undo => icons::ARROW_COUNTER_CLOCKWISE,
+                HistoryOp::Redo => icons::ARROW_CLOCKWISE,
             };
             if ui
-                .add_enabled(can, secondary(&t, glyph))
-                .on_hover_text(&tip)
-                .on_disabled_hover_text(&tip)
+                .add_enabled(button.enabled, secondary(&t, glyph))
+                .on_hover_text(&button.tip)
+                .on_disabled_hover_text(&button.tip)
                 .clicked()
             {
-                d.history_commands.write(HistoryCommand(op));
+                d.history_commands.write(HistoryCommand(button.op));
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
