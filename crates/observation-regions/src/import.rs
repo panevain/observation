@@ -203,6 +203,249 @@ mod tests {
     use observation_upstream::testing::{FakeHttp, FakeReply};
 
     use super::*;
+    use crate::catalog::Extract;
+    use crate::ports::{ManualClock, SystemClock};
+    use crate::testing::{FAKE_TIMESTAMP, FakeDownload, FakeToolchain, Reply, Step, chunk};
+
+    const PBF: &str = "https://download.geofabrik.de/europe/monaco-latest.osm.pbf";
+
+    /// A registry whose `monaco` import is running, allowing `max` bytes
+    /// of download.
+    async fn running(
+        dir: &Path,
+        max: u64,
+        clock: Arc<dyn crate::ports::Clock>,
+    ) -> (Arc<Registry>, JobId) {
+        let registry = Arc::new(Registry::open(dir, max, 7, clock).unwrap());
+        registry.enqueue("monaco", "Monaco").unwrap();
+        let (id, job) = registry.next_job().await;
+        let task = tokio::spawn(std::future::pending::<()>());
+        assert!(registry.started(&id, job, task.abort_handle()));
+        (registry, job)
+    }
+
+    fn tools(download: FakeDownload, http: FakeHttp) -> Tools {
+        Tools {
+            http: Arc::new(http),
+            download: Arc::new(download),
+            toolchain: Arc::new(FakeToolchain::default()),
+        }
+    }
+
+    /// Downloads `reply` with a cap of `max` bytes: the result, what was
+    /// written, and how long it took on Tokio's clock.
+    async fn fetch(reply: Reply, max: u64) -> (Result<(), String>, Option<Vec<u8>>, Duration) {
+        let dir = tempfile::tempdir().unwrap();
+        let (registry, job) = running(dir.path(), max, Arc::new(SystemClock)).await;
+        let tools = tools(FakeDownload::new(reply), FakeHttp::new());
+        let dest = dir.path().join("extract.osm.pbf");
+        let started = tokio::time::Instant::now();
+        let result = download(&tools, &registry, "monaco", job, PBF, &dest).await;
+        (result, std::fs::read(&dest).ok(), started.elapsed())
+    }
+
+    /// Every way a download ends, with its sentence: the status texts, the
+    /// 60 s waits for the head and for each piece, the size cap (declared
+    /// and while streaming) and an early end.
+    #[tokio::test(start_paused = true)]
+    async fn downloads_end_as_described() {
+        const MIB: u64 = 1 << 20;
+        let fail = |e: &str| Err(e.to_owned());
+        // The reply, the cap, the result, what was written, the seconds taken.
+        type Case = (Reply, u64, Result<(), String>, Option<&'static [u8]>, u64);
+        let cases: Vec<Case> = vec![
+            (
+                Reply::ok(Some(6), vec![chunk(b"abc"), chunk(b"def")]),
+                MIB,
+                Ok(()),
+                Some(b"abcdef"),
+                0,
+            ),
+            (
+                Reply::ok(None, vec![chunk(b"abc")]),
+                MIB,
+                Ok(()),
+                Some(b"abc"),
+                0,
+            ),
+            (
+                Reply::status(404, None),
+                MIB,
+                fail("could not download the extract: HTTP status client error (404 Not Found)"),
+                None,
+                0,
+            ),
+            (
+                Reply::status(503, Some("Busy")),
+                MIB,
+                fail("could not download the extract: HTTP status server error (503 Busy)"),
+                None,
+                0,
+            ),
+            (
+                Reply::Fail(TransportErrorKind::Connect),
+                MIB,
+                fail("could not download the extract: scripted Connect"),
+                None,
+                0,
+            ),
+            (
+                Reply::Hang,
+                MIB,
+                fail("the download server did not answer; try again later"),
+                None,
+                60,
+            ),
+            (
+                Reply::ok(Some(6), vec![chunk(b"abc"), Step::Hang]),
+                MIB,
+                fail("the download stalled; try again later"),
+                Some(b""),
+                60,
+            ),
+            (
+                Reply::ok(
+                    Some(6),
+                    vec![chunk(b"abc"), Step::Fail(TransportErrorKind::Body)],
+                ),
+                MIB,
+                fail("the download failed: scripted Body"),
+                Some(b""),
+                0,
+            ),
+            (
+                Reply::ok(Some(6), vec![chunk(b"abc")]),
+                MIB,
+                fail("the download ended early; try again"),
+                Some(b"abc"),
+                0,
+            ),
+            // The cap: declared, refused before the file is created ...
+            (
+                Reply::ok(Some(3 * MIB + 1), vec![]),
+                3 * MIB,
+                fail(
+                    "the extract is 4 MB, more than the 3 MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
+                ),
+                None,
+                0,
+            ),
+            (
+                Reply::ok(Some(10), vec![chunk(b"0123456789")]),
+                10,
+                Ok(()),
+                Some(b"0123456789"),
+                0,
+            ),
+            // ... and while streaming, at exactly one byte over.
+            (
+                Reply::ok(None, vec![chunk(b"012345"), chunk(b"6789")]),
+                10,
+                Ok(()),
+                Some(b"0123456789"),
+                0,
+            ),
+            (
+                Reply::ok(None, vec![chunk(b"012345"), chunk(b"6789A")]),
+                10,
+                fail(
+                    "the extract is 1 MB, more than the 0 MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
+                ),
+                Some(b"012345"),
+                0,
+            ),
+        ];
+        for (reply, max, want, written, secs) in cases {
+            let label = format!("{reply:?}, max {max}");
+            // A lost deadline fails here rather than hanging the test.
+            let (got, file, took) =
+                tokio::time::timeout(Duration::from_secs(3600), fetch(reply, max))
+                    .await
+                    .unwrap_or_else(|_| panic!("{label}: still waiting after an hour"));
+            assert_eq!(got, want, "{label}");
+            if want.is_ok() {
+                assert_eq!(file.as_deref(), written, "{label}");
+            } else if written.is_none() {
+                assert_eq!(file, None, "{label}: the file was created");
+            }
+            assert_eq!(took, Duration::from_secs(secs), "{label}");
+        }
+    }
+
+    /// Dropping the import (a cancel) drops the download's body, which ends
+    /// the transfer.
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_download_drops_its_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let (registry, job) = running(dir.path(), 1 << 20, Arc::new(SystemClock)).await;
+        let fake = Arc::new(FakeDownload::new(Reply::ok(
+            None,
+            vec![chunk(b"abc"), Step::Hang],
+        )));
+        let tools = Tools {
+            http: Arc::new(FakeHttp::new()),
+            download: fake.clone(),
+            toolchain: Arc::new(FakeToolchain::default()),
+        };
+        let dest = dir.path().join("extract.osm.pbf");
+        let task =
+            tokio::spawn(
+                async move { download(&tools, &registry, "monaco", job, PBF, &dest).await },
+            );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!fake.body_dropped.load(std::sync::atomic::Ordering::SeqCst));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(fake.body_dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(*fake.urls.lock().unwrap(), [PBF]);
+    }
+
+    /// A whole import on fakes: the tools run in order with the checked
+    /// timestamp, and the database lands in `db/<slug>-<clock's now>` with
+    /// its boundary.
+    #[tokio::test]
+    async fn an_import_lands_in_a_directory_named_by_the_clock() {
+        const SQUARE: &str = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::at_unix(1_700_000_000));
+        let (registry, job) = running(dir.path(), 1 << 20, clock).await;
+        let toolchain = Arc::new(FakeToolchain::default());
+        let tools = Tools {
+            http: Arc::new(FakeHttp::replying([FakeReply::ok(SQUARE)])),
+            download: Arc::new(FakeDownload::new(Reply::ok(Some(3), vec![chunk(b"pbf")]))),
+            toolchain: toolchain.clone(),
+        };
+        let extract = Extract {
+            entry: observation_core::regions::CatalogEntry {
+                id: "monaco".into(),
+                name: "Monaco".into(),
+                parent: None,
+            },
+            pbf_url: PBF.into(),
+            poly_url: "https://download.geofabrik.de/europe/monaco.poly".into(),
+        };
+        let imported = run(&tools, &registry, job, &extract).await.unwrap();
+        assert_eq!(imported.db_dir, "monaco-1700000000");
+        assert_eq!(imported.data_timestamp.as_deref(), Some(FAKE_TIMESTAMP));
+        let db = dir.path().join("db/monaco-1700000000");
+        assert_eq!(imported.db.dir, db);
+        assert_eq!(
+            std::fs::read_to_string(db.join("region.poly")).unwrap(),
+            SQUARE
+        );
+        assert!(
+            !dir.path().join("work/monaco").exists(),
+            "the work directory is gone"
+        );
+        assert_eq!(
+            *toolchain.calls.lock().unwrap(),
+            [
+                "tags_filter",
+                "file_info",
+                &format!("load Some({FAKE_TIMESTAMP:?})")
+            ]
+        );
+    }
 
     /// The boundary: a 60 s GET whose error bodies are not read, capped at
     /// 32 MiB, and the sentence for each way it fails.

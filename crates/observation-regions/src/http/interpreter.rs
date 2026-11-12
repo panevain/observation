@@ -97,9 +97,16 @@ mod tests {
         })
         .unwrap();
         let agent = Agent::new(&config).unwrap();
+        install_monaco(&agent, data.path(), data_timestamp).await;
+        let resp = ask(agent).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        resp.headers().clone()
+    }
 
+    /// Makes `monaco`, a unit square, a ready region with `data_timestamp`.
+    async fn install_monaco(agent: &Agent, data: &std::path::Path, data_timestamp: Option<&str>) {
         let square = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
-        let db_dir = data.path().join("db/monaco-1");
+        let db_dir = data.join("db/monaco-1");
         std::fs::create_dir_all(&db_dir).unwrap();
         agent.registry.enqueue("monaco", "Monaco").unwrap();
         let (id, job) = agent.registry.next_job().await;
@@ -120,8 +127,11 @@ mod tests {
                 disk_bytes: 0,
             })),
         );
+    }
 
-        let resp = interpreter(
+    /// Asks for a box inside `monaco`.
+    async fn ask(agent: Arc<Agent>) -> Result<Response, AgentError> {
+        interpreter(
             State(agent),
             Query(BBoxParam {
                 bbox: "0.2,0.2,0.3,0.3".into(),
@@ -129,9 +139,58 @@ mod tests {
             Form(QueryForm { data: "q".into() }),
         )
         .await
+    }
+
+    /// With one query running and 32 waiting, the next is turned away at
+    /// once with 503 "too many queries waiting"; the others all answer.
+    #[tokio::test]
+    async fn a_full_queue_answers_503() {
+        use futures_util::FutureExt;
+        use observation_upstream::testing::FakeHttp;
+        use std::sync::atomic::Ordering;
+
+        use crate::agent::Ports;
+        use crate::ports::SystemClock;
+        use crate::testing::{FakeDownload, FakeToolchain, GateRunner, Reply};
+
+        let data = tempfile::tempdir().unwrap();
+        let config = Config::from_lookup(|k| match k {
+            "OBS_REGIONS_DATA_DIR" => Some(data.path().display().to_string()),
+            "OBS_REGIONS_QUERY_CONCURRENCY" => Some("1".into()),
+            _ => None,
+        })
         .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        resp.headers().clone()
+        let runner = Arc::new(GateRunner::new());
+        let ports = Ports {
+            http: Arc::new(FakeHttp::new()),
+            download: Arc::new(FakeDownload::new(Reply::Hang)),
+            toolchain: Arc::new(FakeToolchain::default()),
+            query_runner: runner.clone(),
+            clock: Arc::new(SystemClock),
+        };
+        let agent = Agent::from_parts(&config, ports).unwrap();
+        install_monaco(&agent, data.path(), None).await;
+
+        let queued: Vec<_> = (0..33)
+            .map(|_| tokio::spawn(ask(Arc::clone(&agent))))
+            .collect();
+        // Let every task reach the queue (this runtime has one thread).
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(runner.started.load(Ordering::SeqCst), 1);
+        let refused = ask(Arc::clone(&agent))
+            .now_or_never()
+            .expect("turned away at once")
+            .unwrap_err();
+        assert_eq!(refused.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(refused.1, "too many queries waiting");
+
+        runner.release(33);
+        for task in queued {
+            assert_eq!(task.await.unwrap().unwrap().status(), StatusCode::OK);
+        }
+        assert_eq!(runner.started.load(Ordering::SeqCst), 33);
     }
 
     #[cfg(unix)]

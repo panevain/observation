@@ -208,9 +208,9 @@ where
     }
 }
 
-/// The download gives up connecting after 20 s. A loopback listener whose
-/// accept queue is full never completes another connection (Linux drops the
-/// SYN while `tcp_abort_on_overflow` is off, its default).
+/// The download gives up connecting after 20 s. Linux drops connection
+/// attempts to a listener whose accept queue is full, so a loopback listener
+/// with a full queue never completes another connection.
 #[test]
 fn the_download_stops_connecting_after_20_s() {
     paused_with_a_real_time_guard(|| async {

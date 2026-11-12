@@ -283,6 +283,113 @@ mod tests {
         );
     }
 
+    /// A directory with stand-in `osmium` and `update_database` scripts.
+    /// Each writes its arguments to `<name>.args` beside itself.
+    #[cfg(unix)]
+    fn stand_ins(osmium: &str, update_database: &str) -> (tempfile::TempDir, OsmTools) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        for (name, body) in [("osmium", osmium), ("update_database", update_database)] {
+            let path = dir.path().join(name);
+            let script = format!("#!/bin/sh\necho \"$@\" > \"$0.args\"\n{body}\n");
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let tools = OsmTools {
+            osmium: dir.path().join("osmium"),
+            overpass_bin: dir.path().to_owned(),
+        };
+        (dir, tools)
+    }
+
+    #[cfg(unix)]
+    fn args(dir: &tempfile::TempDir, name: &str) -> String {
+        std::fs::read_to_string(dir.path().join(format!("{name}.args"))).unwrap()
+    }
+
+    /// A tool's exit status decides: its stdout on success, its trimmed
+    /// stderr in the sentence on failure.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tools_succeed_or_fail_by_exit_status() {
+        let (dir, ok) = stand_ins("exit 0", "exit 0");
+        let (input, output) = (Path::new("/in.pbf"), Path::new("/out.pbf"));
+        ok.tags_filter(input, output).await.unwrap();
+        assert_eq!(
+            args(&dir, "osmium"),
+            "tags-filter /in.pbf w/building r/building w/highway n/addr:housenumber n/addr:housename -o /out.pbf --overwrite\n"
+        );
+        let (_dir, bad) = stand_ins("echo '  no such file  ' >&2; exit 2", "exit 0");
+        assert_eq!(
+            bad.tags_filter(input, output).await.unwrap_err(),
+            "osmium tags-filter failed: no such file"
+        );
+
+        let json = r#"{"header":{"option":{"osmosis_replication_timestamp":"2026-10-19T20:21:11Z"}},"data":{"count":{"nodes":5,"ways":3,"relations":1}}}"#;
+        let (dir, info) = stand_ins(&format!("echo '{json}'"), "exit 0");
+        let got = info.file_info(input).await.unwrap();
+        assert_eq!(args(&dir, "osmium"), "fileinfo -e -j /in.pbf\n");
+        assert_eq!(
+            got,
+            ports::FileInfo {
+                elements: 9,
+                replication_timestamp: Some("2026-10-19T20:21:11Z".into()),
+            }
+        );
+    }
+
+    /// The load pipes `osmium cat` into `update_database`, reporting the
+    /// elements counted so far; a failure names `update_database` first,
+    /// since osmium then fails too, on a broken pipe.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn loads_report_progress_and_name_the_failed_tool() {
+        const CAT: &str =
+            "printf '<osm>\\n<node id=\"1\"/>\\n<node id=\"2\"/>\\n<way id=\"3\"/>\\n</osm>\\n'";
+        let load = |tools: OsmTools| async move {
+            let mut seen = Vec::new();
+            let mut progress = |n| seen.push(n);
+            let result = tools
+                .load(
+                    Path::new("/f.pbf"),
+                    Path::new("/db"),
+                    Some("2026-10-19T20:21:11Z"),
+                    &mut progress,
+                )
+                .await;
+            (result, seen)
+        };
+
+        let (dir, tools) = stand_ins(CAT, "cat >/dev/null");
+        let (result, seen) = load(tools).await;
+        result.unwrap();
+        assert_eq!(seen.last(), Some(&3), "{seen:?}");
+        assert_eq!(args(&dir, "osmium"), "cat /f.pbf -f osm -o -\n");
+        assert_eq!(
+            args(&dir, "update_database"),
+            "--db-dir=/db/ --meta=no --compression-method=lz4 --map-compression-method=lz4 --version=2026-10-19T20:21:11Z\n"
+        );
+
+        let (_dir, tools) = stand_ins(CAT, "cat >/dev/null; echo 'disk full' >&2; exit 1");
+        assert_eq!(
+            load(tools).await.0.unwrap_err(),
+            "update_database failed: disk full"
+        );
+        let (_dir, tools) = stand_ins(
+            "echo 'broken pipe' >&2; exit 1",
+            "cat >/dev/null; echo 'disk full' >&2; exit 1",
+        );
+        assert_eq!(
+            load(tools).await.0.unwrap_err(),
+            "update_database failed: disk full"
+        );
+        let (_dir, tools) = stand_ins("echo 'bad input' >&2; exit 1", "cat >/dev/null");
+        assert_eq!(
+            load(tools).await.0.unwrap_err(),
+            "osmium cat failed: bad input"
+        );
+    }
+
     #[test]
     fn last_chars_is_char_safe() {
         assert_eq!(last_chars("  héllo wörld ", 5), "wörld");

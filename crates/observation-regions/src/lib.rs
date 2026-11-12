@@ -26,6 +26,8 @@ mod agent;
 mod fs;
 mod http;
 mod query;
+#[cfg(test)]
+mod testing;
 mod tools;
 
 pub use crate::agent::{Agent, Ports, StartError};
