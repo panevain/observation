@@ -67,7 +67,8 @@ cargo-deny = "0.20.2"
 TRUNK_SKIP_VERSION_CHECK = "true"
 
 # The package sets the tasks below build, named once so that adding or splitting a crate edits
-# only this block. The Dockerfile and the workflows' path filters name packages too.
+# only this block. The Dockerfile and the workflows' path filters name packages too; `mise run
+# sync` checks that every package they name is a crate.
 [vars]
 # What native-only tasks (clippy, doctests) leave out of `--workspace`: the wasm client, which
 # links Bevy and web-sys.
@@ -151,7 +152,7 @@ raw_args = true
 run = "cargo xtask tokens"
 
 [tasks.sync]
-description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, the advisory ignore lists agree, and every get_env falls back to [env] (mise.local.toml)"
+description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, the advisory ignore lists agree, every get_env falls back to [env] (mise.local.toml), every package named to cargo is a crate of the workspace (server_package is the Dockerfile's server build), and a crate's testing feature is enabled only from [dev-dependencies]"
 raw_args = true
 run = "cargo xtask sync"
 

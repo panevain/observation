@@ -1,7 +1,8 @@
 //! `cargo xtask sync`: pinned versions agree wherever they are repeated, nothing repeats what
 //! is pinned once, and the advisory ignore lists agree. Ported rule by rule from
 //! scripts/check-toolchain-sync.sh, matching what its grep, sed and awk lines matched,
-//! quirks included (each is noted where it is kept).
+//! quirks included (each is noted where it is kept). The rules in [`extra`] are newer: the
+//! script never had them.
 //!
 //! Sources of truth: rust-toolchain.toml for Rust (mise.lock records it for mise),
 //! .github/actions/setup-mise for the mise that the workflows, the Dockerfile and mise.toml's
@@ -78,6 +79,8 @@ pub enum Finding {
     /// hotfix.yml's inline `allowed=` list and .config/release.toml's `hotfix` list differ, or
     /// one of them cannot be read.
     HotfixList(String),
+    /// A rule the script did not have (see [`extra`]), written as it says.
+    Rule(String),
 }
 
 impl fmt::Display for Finding {
@@ -129,6 +132,7 @@ impl fmt::Display for Finding {
                  {name} with get_env without default=env.{name}; remove the entry"
             ),
             Self::HotfixList(why) => writeln!(f, "mismatch: {why}"),
+            Self::Rule(text) => writeln!(f, "{text}"),
         }
     }
 }
@@ -199,6 +203,8 @@ regex!(ALLOWED_PATH, r"^(?:[A-Za-z0-9_/-]|\\\.)+$");
 // The globs `*.y*ml` and `action.y*ml`.
 regex!(WORKFLOW_NAME, r"^.*\.y.*ml$");
 regex!(ACTION_NAME, r"^action\.y.*ml$");
+
+pub mod extra;
 
 /// A file's lines as grep, sed and awk read them: split at LF, the last one even without a
 /// final newline. A CR stays part of its line.
@@ -737,8 +743,17 @@ fn files(repo: &Path, paths: Vec<String>) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// Reads the repository at `repo` and runs the check; `git` searches its docs.
+/// Reads the repository at `repo` and runs every rule: the script's ([`check`]), then the
+/// newer ones ([`extra`]); `git` searches the docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
+    let s = snapshot(repo, git)?;
+    let mut report = check(&s);
+    report.findings.extend(extra::check(&s));
+    Ok(report.outcome())
+}
+
+/// Reads what the rules read from the repository at `repo`; `git` searches its docs.
+pub fn snapshot(repo: &Path, git: &dyn Git) -> Result<Snapshot> {
     let mut manifests = vec!["Cargo.toml".to_owned()];
     // Each glob expands to whole paths sorted as the shell sorts them, so
     // crates/observation-client-model/Cargo.toml comes before crates/observation-client/...
@@ -790,7 +805,7 @@ pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
         .grep(&flags, &pattern, &["*.md", ":!CHANGELOG.md"])
         .map(Option::unwrap_or_default)
         .map_err(|e| e.to_string());
-    Ok(check(&s).outcome())
+    Ok(s)
 }
 
 #[cfg(test)]
@@ -880,7 +895,8 @@ mod tests {
             .iter()
             .map(|&(k, v)| (k.into(), v.into()))
             .collect();
-        let out = ok(run(&tree, &git));
+        // The script's rules only: the golden is what the script printed.
+        let out = check(&ok(snapshot(&tree, &git))).outcome();
         format!(
             "== {}\nexit {}\n-- stdout\n{}-- stderr\n{}",
             case.name,
