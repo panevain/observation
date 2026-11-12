@@ -17,6 +17,8 @@ use crate::agent::Agent;
 mod catalog;
 #[cfg(test)]
 mod contract_tests;
+#[cfg(test)]
+mod format_tests;
 mod interpreter;
 mod regions;
 

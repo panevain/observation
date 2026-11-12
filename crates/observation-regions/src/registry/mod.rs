@@ -398,6 +398,73 @@ mod tests {
         assert_eq!(b.job.unwrap().since_unix, T0 + 20 + 7 * 86_400 + 1 + 5);
     }
 
+    /// `regions.json` byte for byte: a ready region with its own settings,
+    /// and one whose import is pending (queued again after a restart).
+    #[tokio::test]
+    async fn regions_json_is_these_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::at_unix(1_700_000_000));
+        let reg = Registry::open(dir.path(), 1, 7, clock.clone()).unwrap();
+        reg.enqueue("europe/monaco", "Monaco").unwrap();
+        let (id, job) = reg.next_job().await;
+        assert!(reg.started(&id, job, spawn_dummy()));
+        clock.advance(Duration::from_secs(100));
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "europe__monaco-1"))));
+        reg.change_settings(&id, Some(false), Some(Some(30)))
+            .unwrap();
+        reg.enqueue("andorra", "Andorra").unwrap();
+        let written = std::fs::read_to_string(dir.path().join("regions.json")).unwrap();
+        assert_eq!(written, GOLDEN_REGIONS_JSON);
+        // And it reads back as written.
+        drop(reg);
+        let reopened = Registry::open(dir.path(), 1, 7, clock).unwrap();
+        let ids: Vec<String> = reopened
+            .snapshot()
+            .regions
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, ["andorra", "europe/monaco"]);
+    }
+
+    const GOLDEN_REGIONS_JSON: &str = r#"[
+  {
+    "id": "andorra",
+    "name": "Andorra",
+    "db_dir": null,
+    "bbox": null,
+    "data_timestamp": null,
+    "imported_unix": null,
+    "disk_bytes": null,
+    "last_error": null,
+    "last_error_unix": null,
+    "last_attempt_unix": null,
+    "pending": true,
+    "auto_refresh": true,
+    "refresh_days": null
+  },
+  {
+    "id": "europe/monaco",
+    "name": "Monaco",
+    "db_dir": "europe__monaco-1",
+    "bbox": {
+      "south": 0.0,
+      "west": 0.0,
+      "north": 1.0,
+      "east": 1.0
+    },
+    "data_timestamp": "2026-01-01T00:00:00Z",
+    "imported_unix": 1700000100,
+    "disk_bytes": 5,
+    "last_error": null,
+    "last_error_unix": null,
+    "last_attempt_unix": 1700000100,
+    "pending": false,
+    "auto_refresh": false,
+    "refresh_days": 30
+  }
+]"#;
+
     #[tokio::test]
     async fn a_stale_job_cannot_touch_a_newer_import() {
         let dir = tempfile::tempdir().unwrap();

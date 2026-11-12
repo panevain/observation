@@ -8,6 +8,7 @@ mod basics;
 #[path = "../common/mod.rs"]
 mod common;
 mod elevation;
+mod formats;
 mod harness;
 mod limits;
 mod overpass;

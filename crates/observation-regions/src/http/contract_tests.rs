@@ -18,7 +18,7 @@ use tokio::time::Instant;
 use super::app;
 use crate::agent::{Agent, Ports};
 use crate::config::Config;
-use crate::ports::SystemClock;
+use crate::ports::ManualClock;
 use crate::testing::{FakeDownload, FakeToolchain, GateRunner, Reply};
 use crate::{poly, registry};
 
@@ -26,12 +26,13 @@ const INDEX_URL: &str = "https://download.geofabrik.de/index-v1-nogeom.json";
 const INDEX: &str = r#"{"features":[{"properties":{"id":"monaco","parent":"europe","name":"Monaco",
   "urls":{"pbf":"https://download.geofabrik.de/europe/monaco-latest.osm.pbf"}}}]}"#;
 const SQUARE: &str = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
-const TOKEN: &str = "s3cret";
+pub(super) const TOKEN: &str = "s3cret";
 
 /// An agent on fakes with the token, its catalog listing `monaco` (1234
 /// bytes), a ready region `square` (the unit square, data from
-/// 2026-10-31T19:43:02Z), and queries that answer at once.
-async fn agent(data: &std::path::Path) -> Arc<Agent> {
+/// 2026-10-31T19:43:02Z), queries that answer at once, and its clock at
+/// Unix 1 700 000 000.
+pub(super) async fn agent(data: &std::path::Path) -> Arc<Agent> {
     let http = FakeHttp::new();
     http.on(Method::GET, INDEX_URL, FakeReply::ok(INDEX));
     http.on(
@@ -52,7 +53,7 @@ async fn agent(data: &std::path::Path) -> Arc<Agent> {
         download: Arc::new(FakeDownload::new(Reply::Hang)),
         toolchain: Arc::new(FakeToolchain::default()),
         query_runner: runner,
-        clock: Arc::new(SystemClock),
+        clock: Arc::new(ManualClock::at_unix(1_700_000_000)),
     };
     let agent = Agent::from_parts(&config, ports).unwrap();
     let reg = &agent.registry;
