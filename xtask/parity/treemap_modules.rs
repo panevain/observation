@@ -120,6 +120,12 @@ fn names(names: &[(u64, &[u8])]) -> Vec<u8> {
 /// A module with every kind of section: one imported function (and a table, a memory, a
 /// global and a tag), one function per name with bodies of distinct sizes, three data segments.
 fn module(func_names: &[&str]) -> Vec<u8> {
+    let sizes: Vec<usize> = (0..func_names.len()).map(|i| (i * 37) % 61 + 2).collect();
+    sized_module(func_names, &sizes)
+}
+
+/// [`module`] with these body sizes (each at least 2).
+fn sized_module(func_names: &[&str], sizes: &[usize]) -> Vec<u8> {
     let imports = vec_of(&[
         [bytes("env"), bytes("f"), vec![0], leb(0)].concat(),
         [bytes("env"), bytes("t"), vec![1, 0x70, 1, 1, 2]].concat(),
@@ -130,7 +136,7 @@ fn module(func_names: &[&str]) -> Vec<u8> {
     let n = func_names.len();
     let bodies: Vec<Vec<u8>> = (0..n)
         .map(|i| {
-            let size = (i * 37) % 61 + 2;
+            let size = sizes[i];
             [leb(size as u64), vec![0; size - 1], vec![0x0B]].concat()
         })
         .collect();
@@ -534,6 +540,88 @@ fn cases() -> Vec<Case> {
             [body.clone(), vec![1], leb(1u64 << e)].concat(),
         ));
     }
+    // Many crates of every family, sizes from 2 bytes to 30 KB, some names too long for their
+    // tiles: what the treemap's grouping, tiling and labels do.
+    let prefixes = [
+        "bevy_ecs",
+        "bevy_render",
+        "encase",
+        "egui",
+        "epaint",
+        "wgpu_core",
+        "naga",
+        "glow",
+        "core",
+        "alloc",
+        "std",
+        "observation_client",
+        "observation_core",
+        "serde",
+        "smallvec",
+        "a_crate_with_a_name_much_too_long_for_its_tile",
+    ];
+    let mut many_names = Vec::new();
+    let mut many_sizes = Vec::new();
+    for k in 0..64 {
+        many_names.push(format!(
+            "{}{}::f",
+            prefixes[k % prefixes.len()],
+            k / prefixes.len()
+        ));
+        many_sizes.push(2 + (k * k * k * 7919) % 30_000);
+    }
+    let names: Vec<&str> = many_names.iter().map(String::as_str).collect();
+    let many = sized_module(&names, &many_sizes);
+    let many_case = |name: &str, expect, extra: &[&str]| {
+        case(
+            name,
+            expect,
+            &[&["--table", "100"], extra].concat(),
+            Some(many.clone()),
+        )
+    };
+    cases.extend([
+        many_case("many crates", "same", &[]),
+        many_case("threshold 0", "same", &["--threshold", "0"]),
+        many_case("threshold 0.02", "same", &["--threshold", "0.02"]),
+        many_case("threshold 1", "same", &["--threshold", "1"]),
+        many_case("threshold -1", "same", &["--threshold", "-1"]),
+        many_case("threshold nan", "fails", &["--threshold", "nan"]),
+        many_case("threshold -inf", "usage", &["--threshold", "-Infinity"]),
+        many_case("threshold =-inf", "stricter", &["--threshold=-Infinity"]),
+        many_case("threshold inf", "same", &["--threshold", "iNf"]),
+        many_case("threshold -.5", "same", &["--threshold", "-.5"]),
+        many_case("threshold 1e-2", "same", &["--threshold", "1e-2"]),
+        many_case("commit -5", "same", &["--commit", "-5"]),
+        many_case("commit -x", "usage", &["--commit", "-x"]),
+        many_case("commit -1e5", "usage", &["--commit", "-1e5"]),
+        many_case("commit =-x", "stricter", &["--commit=-x"]),
+        many_case("raw -1_0", "usage", &["--shipped-raw", "-1_0"]),
+        many_case("threshold ' 1_0e-3 '", "same", &["--threshold", " 1_0e-3 "]),
+        many_case("threshold 1__0", "usage", &["--threshold", "1__0"]),
+        many_case(
+            "threshold Arabic-Indic 3",
+            "stricter",
+            &["--threshold", "\u{663}"],
+        ),
+        many_case(
+            "commit, date and stage to escape",
+            "same",
+            &[
+                "--commit",
+                "<a & \"b\">",
+                "--date",
+                "2026-11-12 \u{e9}",
+                "--stage",
+                "x > y",
+            ],
+        ),
+        many_case(
+            "gzip and raw given",
+            "same",
+            &["--shipped-raw", "26716479", "--shipped-gzip", "8024364"],
+        ),
+    ]);
     // Names the port treats differently from the script, each in an otherwise valid module.
     for (name, expect, sym) in [
         (
@@ -575,6 +663,16 @@ fn split_gzip(stdout: &str) -> (String, Option<u64>) {
     }
 }
 
+/// The SVG with its `N.NN MB gzip` figures taken out, and the figures.
+fn split_svg_gzip(svg: &str) -> (String, Vec<f64>) {
+    let re = ok(regex::Regex::new(r"(-?[0-9]+\.[0-9]{2}) MB gzip"));
+    let figures = re
+        .captures_iter(svg)
+        .map(|c| ok(c[1].parse::<f64>()))
+        .collect();
+    (re.replace_all(svg, "N MB gzip").into_owned(), figures)
+}
+
 #[test]
 fn port_and_script_agree_on_every_module() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -588,11 +686,15 @@ fn port_and_script_agree_on_every_module() {
             ok(std::fs::write(&wasm, m));
         }
         let wasm = wasm.display().to_string();
-        let out = dir.path().join("out.svg").display().to_string();
-        let out = if c.out {
-            vec!["--out".to_owned(), out]
+        let out = dir.path().join(format!("s{i}.svg")).display().to_string();
+        let port_svg = dir.path().join(format!("p{i}.svg")).display().to_string();
+        let (out, port_svg) = if c.out {
+            (
+                vec!["--out".to_owned(), out],
+                vec!["--out".to_owned(), port_svg],
+            )
         } else {
-            vec![]
+            (vec![], vec![])
         };
         let script: Vec<String> =
             [vec!["--wasm".to_owned(), wasm.clone()], out, c.args.clone()].concat();
@@ -601,6 +703,7 @@ fn port_and_script_agree_on_every_module() {
         port_args.push(
             [
                 vec!["treemap".to_owned(), "--wasm".to_owned(), wasm],
+                port_svg,
                 c.args.clone(),
             ]
             .concat(),
@@ -627,7 +730,9 @@ fn port_and_script_agree_on_every_module() {
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     let mut failures = Vec::new();
     let (mut gzip_diff, mut gzip_diff_min) = (0i64, 0i64);
-    for ((c, script), args) in cases.iter().zip(&runs).zip(&port_args) {
+    for (i, ((c, script), args)) in cases.iter().zip(&runs).zip(&port_args).enumerate() {
+        let svg =
+            |side: &str| std::fs::read_to_string(dir.path().join(format!("{side}{i}.svg"))).ok();
         let port = ok(Command::new(env!("CARGO_BIN_EXE_xtask"))
             .args(args)
             .output());
@@ -656,7 +761,21 @@ fn port_and_script_agree_on_every_module() {
                     }
                     (s, p) => s == p,
                 };
-                script.exit == 0 && port_exit == 0 && s == p && gzip_ok && script.stderr == port_err
+                let (s_svg, s_mb) = split_svg_gzip(&svg("s").unwrap_or_default());
+                let (p_svg, p_mb) = split_svg_gzip(&svg("p").unwrap_or_default());
+                let svg_ok = !s_svg.is_empty()
+                    && s_svg == p_svg
+                    && s_mb.len() == p_mb.len()
+                    && s_mb
+                        .iter()
+                        .zip(&p_mb)
+                        .all(|(s, p)| (s - p).abs() <= 0.01 + s.abs() / 50.0);
+                script.exit == 0
+                    && port_exit == 0
+                    && s == p
+                    && gzip_ok
+                    && svg_ok
+                    && script.stderr == port_err
             }
             // The script's own message is kept; a traceback is not compared.
             "fails" => {

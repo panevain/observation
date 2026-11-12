@@ -422,6 +422,7 @@ pub fn is_space(c: char) -> bool {
 /// reads it too: digits other than ASCII (Python takes any Unicode decimal digit) and values
 /// outside the `i128` range.
 pub fn int_arg(text: &str) -> Result<i128, String> {
+    argparse_value(text)?;
     let invalid = || format!("invalid int value: {}", repr_str(text));
     let t = text.trim_matches(is_space);
     let (negative, digits) = match t.as_bytes().first() {
@@ -443,6 +444,47 @@ pub fn int_arg(text: &str) -> Result<i128, String> {
     }
     let sign = if negative { "-" } else { "" };
     format!("{sign}{digits}").parse().map_err(|_| invalid())
+}
+
+/// What argparse takes as an option's separate value: not a string that starts with `-`
+/// unless it looks like a negative number (`-5`, `-.5`, `-1.5`), which it would read as an
+/// option. (A value given as `--opt=-x` is refused here too, where argparse took it.)
+pub fn argparse_value(text: &str) -> Result<String, String> {
+    if let Some(rest) = text.strip_prefix('-') {
+        let (int, frac) = rest
+            .split_once('.')
+            .map_or((rest, None), |(i, f)| (i, Some(f)));
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        let negative_number = match frac {
+            None => digits(int),
+            Some(frac) => (int.is_empty() || digits(int)) && digits(frac),
+        };
+        if !negative_number {
+            return Err(format!(
+                "{} starts with `-` and is not a negative number",
+                repr_str(text)
+            ));
+        }
+    }
+    Ok(text.to_owned())
+}
+
+/// `float(text)` as argparse's `type=float` reads an option: Python whitespace around, `_`
+/// only between digits, `inf`, `infinity` and `nan` in any case. Refused where Python reads it
+/// too: digits other than ASCII.
+pub fn float_arg(text: &str) -> Result<f64, String> {
+    argparse_value(text)?;
+    let invalid = || format!("invalid float value: {}", repr_str(text));
+    let t = text.trim_matches(is_space);
+    let b = t.as_bytes();
+    let digit = |i: Option<usize>| i.and_then(|i| b.get(i)).is_some_and(u8::is_ascii_digit);
+    let underscores_ok = (0..b.len())
+        .filter(|&i| b[i] == b'_')
+        .all(|i| digit(i.checked_sub(1)) && digit(Some(i + 1)));
+    if !t.is_ascii() || !underscores_ok {
+        return Err(invalid());
+    }
+    t.replace('_', "").parse().map_err(|_| invalid())
 }
 
 /// `json.dumps()` of a string with the default `ensure_ascii`: `"` and `\` escaped, `\n`, `\r`,

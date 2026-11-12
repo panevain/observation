@@ -53,6 +53,11 @@ path = "parity/treemap_symbols.rs"
 name = "treemap_modules"
 path = "parity/treemap_modules.rs"
 
+# The treemap's tiling, rounding and SVG against the script's own functions, on generated input.
+[[test]]
+name = "treemap_math"
+path = "parity/treemap_math.rs"
+
 # Dependencies with no user yet: the commands that need them arrive in later changes. Remove in
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
 # the root workspace.

@@ -17,6 +17,7 @@ use flate2::write::ZlibEncoder;
 
 use crate::core::demangle::{Refused, crate_of_symbol};
 use crate::core::report::thousands;
+use crate::core::treemap::{self, Crash, Meta};
 use crate::core::wasm::{self, Item};
 use crate::{Error, Result};
 
@@ -30,7 +31,19 @@ pub struct Args {
     /// The raw and gzip sizes to print instead of the measured ones (0 counts as not given).
     pub shipped_raw: Option<i128>,
     pub shipped_gzip: Option<i128>,
+    /// Where the SVG goes.
+    pub out: PathBuf,
+    pub commit: String,
+    pub date: String,
+    pub stage: String,
+    /// Crates below this share of the total are grouped.
+    pub threshold: f64,
 }
+
+/// The script's defaults.
+pub const UNKNOWN: &str = "unknown";
+pub const STAGE: &str = "after wasm-bindgen and wasm-opt -Os";
+pub const THRESHOLD: &str = "0.005";
 
 /// What the command prints.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +53,7 @@ pub struct Output {
 }
 
 /// Bytes per crate, with the script's names for what is not a function.
-pub fn per_crate(items: &[(Item, u128)]) -> Result<HashMap<String, u128>> {
+pub fn per_crate(items: &[(Item, u128)]) -> Result<HashMap<String, i128>> {
     let mut per_crate = HashMap::new();
     for (item, size) in items {
         let crate_ = match item {
@@ -53,17 +66,14 @@ pub fn per_crate(items: &[(Item, u128)]) -> Result<HashMap<String, u128>> {
                 })?
                 .unwrap_or_else(|| "other / unnamed".to_owned()),
         };
-        *per_crate.entry(crate_).or_default() += size;
+        // At most 2^64 + the file's length each: a module has fewer items than bytes.
+        *per_crate.entry(crate_).or_default() += i128::try_from(*size).unwrap_or(i128::MAX);
     }
     Ok(per_crate)
 }
 
-fn size(n: u128) -> String {
-    thousands(i128::try_from(n).unwrap_or(i128::MAX))
-}
-
 /// The script's `top_table`: the `n` largest crates, largest first, then by name.
-pub fn top_table(per_crate: &HashMap<String, u128>, total: u128, n: usize) -> String {
+pub fn top_table(per_crate: &HashMap<String, i128>, total: i128, n: usize) -> Result<String> {
     let mut rows: Vec<_> = per_crate.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
     let mut lines = vec![format!(
@@ -71,14 +81,19 @@ pub fn top_table(per_crate: &HashMap<String, u128>, total: u128, n: usize) -> St
         "#", "crate", "bytes", "share"
     )];
     for (i, (crate_, &bytes)) in rows.into_iter().take(n).enumerate() {
+        if total == 0 {
+            return Err(Error::new(
+                "float division by zero (the crates total 0 bytes)",
+            ));
+        }
         let share = 100.0 * bytes as f64 / total as f64;
         lines.push(format!(
             "{:<4} {crate_:<30} {:>12} {share:>7.2}%",
             i + 1,
-            size(bytes)
+            thousands(bytes)
         ));
     }
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
 /// `zlib.compress(module, 9)`, with flate2's backend: zlib framing, level 9.
@@ -89,8 +104,8 @@ pub fn zlib(module: &[u8]) -> Result<Vec<u8>> {
         .map_err(|e| Error::new(format!("gzip: {e}")))
 }
 
-fn zlib_size(module: &[u8]) -> Result<u128> {
-    zlib(module).map(|v| v.len() as u128)
+fn zlib_size(module: &[u8]) -> Result<i128> {
+    zlib(module).map(|v| i128::try_from(v.len()).unwrap_or(i128::MAX))
 }
 
 pub fn run(args: &Args) -> Result<Output> {
@@ -101,23 +116,37 @@ pub fn run(args: &Args) -> Result<Output> {
     if !analysis.has_names {
         stderr.push_str("warning: no `name` section; functions cannot be attributed\n");
     }
-    let per_crate = per_crate(&analysis.items)?;
-    let total: u128 = per_crate.values().sum();
     // `args.shipped_raw or len(shipped)`: 0 is not given.
     let raw = match args.shipped_raw {
-        Some(n) if n != 0 => thousands(n),
-        _ => size(analysis.shipped.len() as u128),
+        Some(n) if n != 0 => n,
+        _ => i128::try_from(analysis.shipped.len()).unwrap_or(i128::MAX),
     };
     let gzip = match args.shipped_gzip {
-        Some(n) if n != 0 => thousands(n),
-        _ => size(zlib_size(&analysis.shipped)?),
+        Some(n) if n != 0 => n,
+        _ => zlib_size(&analysis.shipped)?,
     };
+    let per_crate = per_crate(&analysis.items)?;
+    let total: i128 = per_crate.values().sum();
+    let families = treemap::aggregate(&per_crate, total, args.threshold);
+    let meta = Meta {
+        raw,
+        gzip,
+        commit: args.commit.clone(),
+        date: args.date.clone(),
+        stage: args.stage.clone(),
+    };
+    let svg = treemap::render(&families, total, &meta)
+        .map_err(|Crash(why)| Error::new(format!("cannot draw the treemap: {why}")))?;
+    std::fs::write(&args.out, svg)
+        .map_err(|e| Error::new(format!("{}: {e}", args.out.display())))?;
     let mut stdout = String::new();
     if args.table > 0 {
         stdout = format!(
-            "{}\n\nattributed total {} B; shipped-equivalent module {raw} B; gzip -9 {gzip} B\n",
-            top_table(&per_crate, total, args.table),
-            size(total),
+            "{}\n\nattributed total {} B; shipped-equivalent module {} B; gzip -9 {} B\n",
+            top_table(&per_crate, total, args.table)?,
+            thousands(total),
+            thousands(raw),
+            thousands(gzip),
         );
     }
     Ok(Output { stdout, stderr })
@@ -166,11 +195,13 @@ mod tests {
         let args = Args {
             wasm,
             table: 1,
+            out: dir.path().join("m.svg"),
+            threshold: 0.005,
             ..Args::default()
         };
         let shipped = ok(wasm::analyse(&module)).shipped;
         assert_eq!(shipped.len(), module.len() - 7);
-        let want = format!("gzip -9 {} B\n", size(ok(zlib_size(&shipped))));
+        let want = format!("gzip -9 {} B\n", thousands(ok(zlib_size(&shipped))));
         let out = ok(run(&args)).stdout;
         assert!(out.ends_with(&want), "{out:?} should end with {want:?}");
     }

@@ -200,21 +200,36 @@ enum Command {
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
-    /// The size of a WebAssembly module per crate, from its `name` section (as
-    /// scripts/wasm-size-treemap.py measures it).
+    /// Draw a WebAssembly module's size per crate as a treemap (SVG), from its `name` section
+    /// (as scripts/wasm-size-treemap.py draws it).
     Treemap {
         /// A module that still has its `name` section.
         #[arg(long, value_name = "FILE")]
         wasm: PathBuf,
         /// Print the N largest crates and the totals (0: nothing).
-        #[arg(long, value_name = "N", default_value = "0", allow_negative_numbers = true, value_parser = table_arg)]
+        #[arg(long, value_name = "N", default_value = "0", allow_hyphen_values = true, value_parser = table_arg)]
         table: usize,
         /// The raw size to print instead of the measured one (0: measured).
-        #[arg(long, value_name = "BYTES", allow_negative_numbers = true, value_parser = xtask::core::py::int_arg)]
+        #[arg(long, value_name = "BYTES", allow_hyphen_values = true, value_parser = xtask::core::py::int_arg)]
         shipped_raw: Option<i128>,
         /// The gzip size to print instead of the measured one (0: measured).
-        #[arg(long, value_name = "BYTES", allow_negative_numbers = true, value_parser = xtask::core::py::int_arg)]
+        #[arg(long, value_name = "BYTES", allow_hyphen_values = true, value_parser = xtask::core::py::int_arg)]
         shipped_gzip: Option<i128>,
+        /// Where to write the SVG.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// The commit shown in the subtitle.
+        #[arg(long, default_value = cmd::treemap::UNKNOWN, allow_hyphen_values = true, value_parser = xtask::core::py::argparse_value)]
+        commit: String,
+        /// The date shown in the subtitle.
+        #[arg(long, default_value = cmd::treemap::UNKNOWN, allow_hyphen_values = true, value_parser = xtask::core::py::argparse_value)]
+        date: String,
+        /// The build stage shown in the subtitle.
+        #[arg(long, default_value = cmd::treemap::STAGE, allow_hyphen_values = true, value_parser = xtask::core::py::argparse_value)]
+        stage: String,
+        /// Crates below this share of the total are grouped.
+        #[arg(long, value_name = "SHARE", default_value = cmd::treemap::THRESHOLD, allow_hyphen_values = true, value_parser = xtask::core::py::float_arg)]
+        threshold: f64,
     },
     /// Fail when a WebAssembly module in dist/ is over its size budget
     /// (.config/wasm-size-budget.toml).
@@ -510,12 +525,22 @@ fn main() -> ExitCode {
             table,
             shipped_raw,
             shipped_gzip,
+            out,
+            commit,
+            date,
+            stage,
+            threshold,
         } => {
             let args = cmd::treemap::Args {
                 wasm,
                 table,
                 shipped_raw,
                 shipped_gzip,
+                out,
+                commit,
+                date,
+                stage,
+                threshold,
             };
             cmd::treemap::run(&args).map(|out| {
                 emit(b"", out.stderr.as_bytes());
