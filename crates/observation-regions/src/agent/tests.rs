@@ -1,12 +1,13 @@
-//! The production ports over loopback sockets: the settings of the
-//! extract-download client, which the import's tests replace with fakes.
+//! The production ports over loopback sockets: the settings of the one
+//! client behind the extract download and the HTTP port (the extract list,
+//! the sizes and the boundaries), which the other tests replace with fakes.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use observation_upstream::TransportErrorKind;
+use observation_upstream::{HttpRequest, TransportErrorKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::Instant;
@@ -87,6 +88,14 @@ async fn the_download_refuses_private_names_by_default() {
         .await
         .unwrap_err();
     assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
+    let err = ports
+        .http
+        .send(HttpRequest::head(format!(
+            "http://localhost:{port}/x-latest.osm.pbf"
+        )))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
     assert_eq!(seen.connections(), 0, "a private address was reached");
 }
 
@@ -132,8 +141,31 @@ async fn the_download_follows_redirects_only_on_its_host_and_sends_the_user_agen
         "the cross-host redirect was followed"
     );
 
+    // The same through the HTTP port.
+    let resp = ports
+        .http
+        .send(HttpRequest::get(
+            format!("http://127.0.0.1:{port}/latest"),
+            2,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 200, "the same-host redirect was not followed");
+    assert_eq!(resp.bytes().unwrap(), "ok");
+    let resp = ports
+        .http
+        .send(HttpRequest::get(format!("http://127.0.0.1:{port}/away"), 2))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 302);
+    assert_eq!(
+        other_seen.connections(),
+        0,
+        "the cross-host redirect was followed"
+    );
+
     let heads = seen.heads();
-    assert_eq!(heads.len(), 3, "{heads:?}");
+    assert_eq!(heads.len(), 6, "{heads:?}");
     let user_agent = format!("user-agent: {}\r\n", config.user_agent().to_lowercase());
     assert!(user_agent.starts_with("user-agent: observation-regions/"));
     assert!(heads.iter().all(|h| h.contains(&user_agent)), "{heads:?}");
@@ -205,6 +237,19 @@ fn the_download_stops_connecting_after_20_s() {
             .get(&format!("http://{addr}/x-latest.osm.pbf"))
             .await
             .unwrap_err();
+        assert_eq!(
+            err.kind,
+            TransportErrorKind::ConnectTimeout,
+            "{}",
+            err.message
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(20));
+        // The HTTP port's requests carry their own (shorter) timeouts; with
+        // a longer one, the connect timeout ends the request at 20 s.
+        let started = Instant::now();
+        let req = HttpRequest::head(format!("http://{addr}/x-latest.osm.pbf"))
+            .timeout(Duration::from_secs(60));
+        let err = ports.http.send(req).await.unwrap_err();
         assert_eq!(
             err.kind,
             TransportErrorKind::ConnectTimeout,

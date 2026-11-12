@@ -10,7 +10,7 @@ use futures_util::future::BoxFuture;
 use http::{Method, StatusCode};
 use observation_core::geo::BBox;
 use observation_core::provenance::parse_utc;
-use observation_upstream::{Body, HttpClient, HttpRequest, HttpResponse, redact};
+use observation_upstream::{Body, HttpClient, HttpRequest, HttpResponse, redact, status_error};
 
 use crate::{
     ActionKind, AgentError, OSM_BASE_HEADER, QueryResult, RegionAction, RegionAgent,
@@ -72,15 +72,15 @@ impl HttpRegionAgent {
             || paths::REGIONS.to_owned(),
             |v| format!("{}?since={v}", paths::REGIONS),
         );
-        // An error status's body is never read. Nor is a 3xx's (the client
-        // follows no redirects), which then reads as too large.
+        // An error status's body is never read; any other is read under the
+        // cap (a 3xx too: the client follows no redirects).
         let req = self
             .request(Method::GET, &path, MAX_JSON_BYTES)?
             .timeout(SNAPSHOT_TIMEOUT)
-            .error_max_bytes(0);
+            .skip_error_bodies();
         let resp = self.client.send(req).await.map_err(|e| e.to_string())?;
         if resp.status.is_client_error() || resp.status.is_server_error() {
-            return Err(status_error(resp.status));
+            return Err(status_error(resp.status, resp.reason.as_deref()));
         }
         let Body::Complete(body) = resp.body else {
             return Err("the snapshot is too large".into());
@@ -186,18 +186,6 @@ fn answer(resp: HttpResponse) -> Result<Bytes, AgentError> {
         StatusCode::UNAUTHORIZED => AgentError::Unauthorized,
         _ => AgentError::Other(msg),
     })
-}
-
-/// A 4xx or 5xx snapshot reply, worded as reqwest's `error_for_status`,
-/// with the status's canonical reason phrase: the port does not carry the
-/// one the reply sent, which reqwest printed when it differed.
-fn status_error(status: StatusCode) -> String {
-    let class = if status.is_client_error() {
-        "client"
-    } else {
-        "server"
-    };
-    format!("HTTP status {class} error ({status})")
 }
 
 impl RegionAgent for HttpRegionAgent {

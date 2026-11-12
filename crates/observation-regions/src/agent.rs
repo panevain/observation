@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use observation_upstream::{BoundedQueue, GuardedHttp, Redirects};
+use observation_upstream::{BoundedQueue, GuardedHttp, HttpClient, Redirects};
 
 use crate::catalog::Catalog;
 use crate::config::Config;
@@ -42,9 +42,8 @@ pub enum StartError {
 /// What the agent talks to: see [`Agent::from_parts`].
 #[derive(Debug, Clone)]
 pub struct Ports {
-    /// For the extract list and the boundaries. Temporary: they move to the
-    /// HTTP port next, and reqwest leaves this API.
-    pub client: reqwest::Client,
+    /// For the extract list, the boundaries and the download sizes.
+    pub http: Arc<dyn HttpClient>,
     pub download: Arc<dyn Download>,
     pub toolchain: Arc<dyn Toolchain>,
     pub query_runner: Arc<dyn QueryRunner>,
@@ -52,23 +51,18 @@ pub struct Ports {
 
 impl Ports {
     /// The download server and the programs that `config` names.
-    pub fn production(config: &Config) -> Result<Self, reqwest::Error> {
+    pub fn production(config: &Config) -> Result<Self, StartError> {
         // Extracts and the index come from one host; redirects may not leave it,
-        // and names may not resolve to private addresses unless allowed.
-        let client = observation_upstream::client_builder(
-            config.allow_private_upstreams,
-            observation_upstream::Redirects::SameHost,
-        )
-        .user_agent(config.user_agent())
-        .connect_timeout(Duration::from_secs(20))
-        .build()?;
-        let download = GuardedHttp::builder(config.allow_private_upstreams, Redirects::SameHost)
+        // and names may not resolve to private addresses unless allowed. One
+        // client (one connection pool) serves the index, the sizes, the
+        // boundaries and the downloads.
+        let client = GuardedHttp::builder(config.allow_private_upstreams, Redirects::SameHost)
             .user_agent(&config.user_agent())
             .connect_timeout(Duration::from_secs(20))
             .build()?;
         Ok(Self {
-            client,
-            download: Arc::new(ExtractDownload(download)),
+            http: Arc::new(client.clone()),
+            download: Arc::new(ExtractDownload(client)),
             toolchain: Arc::new(OsmTools {
                 osmium: config.osmium.clone(),
                 overpass_bin: config.overpass_bin.clone(),
@@ -98,12 +92,12 @@ impl Agent {
         );
         Ok(Arc::new(Self {
             catalog: Catalog::new(
-                ports.client.clone(),
+                Arc::clone(&ports.http),
                 config.catalog_url.clone(),
                 config.data_dir.join("catalog.json"),
             ),
             tools: Tools {
-                client: ports.client,
+                http: ports.http,
                 download: ports.download,
                 toolchain: ports.toolchain,
             },

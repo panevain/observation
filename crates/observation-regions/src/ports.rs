@@ -1,7 +1,9 @@
 //! The agent's outside world: the extract download and the programs it runs
 //! on an import and a query. The import and the query route see only these
 //! traits, so tests can run them on fakes. The production implementations
-//! are `ExtractDownload` (below), `tools.rs` and `query.rs`.
+//! are `ExtractDownload` (below), `tools.rs` and `query.rs`. The extract
+//! list, the boundaries and the download sizes go through
+//! [`HttpClient`](observation_upstream::HttpClient).
 
 use std::fmt;
 use std::path::Path;
@@ -10,7 +12,9 @@ use bytes::Bytes;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use http::StatusCode;
-use observation_upstream::{ByteStream, GuardedHttp, TransportError};
+use observation_upstream::{
+    Body, ByteStream, GuardedHttp, HttpResponse, TransportError, status_error,
+};
 
 /// Downloads an extract. Nothing here bounds the size or the time a body
 /// takes: the import caps the size, and times out the wait for the head and
@@ -27,7 +31,7 @@ pub struct DownloadResponse {
     pub status: StatusCode,
     /// The reply's own reason phrase, when not the canonical one
     /// (see [`observation_upstream::status_error`]).
-    pub reason: Option<Bytes>,
+    pub reason: Option<String>,
     /// The body's declared length.
     pub content_length: Option<u64>,
     pub body: Box<dyn DownloadBody>,
@@ -63,6 +67,20 @@ impl Download for ExtractDownload {
 impl DownloadBody for ByteStream {
     fn chunk(&mut self) -> BoxFuture<'_, Result<Option<Bytes>, TransportError>> {
         ByteStream::chunk(self).boxed()
+    }
+}
+
+/// The body of a response to a request sent with
+/// [`skip_error_bodies`](observation_upstream::HttpRequest::skip_error_bodies),
+/// as reqwest's `error_for_status` followed by a capped read gave it: a 4xx
+/// or 5xx is an error with its status text, and `None` is a body over the cap.
+pub(crate) fn checked_body(resp: HttpResponse) -> Result<Option<Bytes>, String> {
+    if resp.status.is_client_error() || resp.status.is_server_error() {
+        return Err(status_error(resp.status, resp.reason.as_deref()));
+    }
+    match resp.body {
+        Body::Complete(bytes) => Ok(Some(bytes)),
+        Body::TooLarge | Body::Skipped => Ok(None),
     }
 }
 

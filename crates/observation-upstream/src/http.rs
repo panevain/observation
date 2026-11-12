@@ -50,6 +50,10 @@ pub struct HttpRequest {
     /// When set, a response with this status never has its body read, as
     /// under `error_max_bytes` 0; other statuses follow the caps.
     pub body_skipped_for: Option<StatusCode>,
+    /// When set, a 4xx or 5xx body is never read ([`Body::Skipped`]) and
+    /// every other status, 3xx included, is read under `max_bytes`, as
+    /// reqwest's `error_for_status` followed by a capped read does.
+    pub skip_error_bodies: bool,
 }
 
 impl fmt::Debug for HttpRequest {
@@ -64,6 +68,7 @@ impl fmt::Debug for HttpRequest {
             .field("error_max_bytes", &self.error_max_bytes)
             .field("body_only_for", &self.body_only_for)
             .field("body_skipped_for", &self.body_skipped_for)
+            .field("skip_error_bodies", &self.skip_error_bodies)
             .finish()
     }
 }
@@ -112,6 +117,7 @@ impl HttpRequest {
             error_max_bytes: DEFAULT_ERROR_MAX_BYTES,
             body_only_for: None,
             body_skipped_for: None,
+            skip_error_bodies: false,
         }
     }
 
@@ -129,17 +135,41 @@ impl HttpRequest {
 
     /// Whether a response with `status` must not have its body read at all.
     pub(crate) fn skips_body(&self, status: StatusCode) -> bool {
-        (!status.is_success() && self.error_max_bytes == 0)
+        self.skips_error_body(status)
+            || (self.uses_error_cap(status) && self.error_max_bytes == 0)
             || self.body_only_for.is_some_and(|s| s != status)
             || self.body_skipped_for == Some(status)
     }
 
+    /// Whether a response with `status` comes back as [`Body::Skipped`].
+    fn skips_error_body(&self, status: StatusCode) -> bool {
+        self.skip_error_bodies && (status.is_client_error() || status.is_server_error())
+    }
+
+    fn uses_error_cap(&self, status: StatusCode) -> bool {
+        !status.is_success() && !self.skip_error_bodies
+    }
+
+    /// What an implementation returns, without reading it, for a body that
+    /// [`Self::skips_body`]: [`Body::Skipped`] for an error status under
+    /// [`Self::skip_error_bodies`]; otherwise empty if it is declared empty
+    /// and [`Body::TooLarge`] if not.
+    pub(crate) fn unread_body(&self, status: StatusCode, declared: Option<u64>) -> Body {
+        if self.skips_error_body(status) {
+            Body::Skipped
+        } else if declared == Some(0) {
+            Body::Complete(Bytes::new())
+        } else {
+            Body::TooLarge
+        }
+    }
+
     /// The cap that applies to a response with `status`.
     pub fn cap_for(&self, status: StatusCode) -> usize {
-        if status.is_success() {
-            self.max_bytes
-        } else {
+        if self.uses_error_cap(status) {
             self.error_max_bytes
+        } else {
+            self.max_bytes
         }
     }
 
@@ -188,6 +218,14 @@ impl HttpRequest {
     /// other status is read under its cap.
     pub fn skip_body_of(mut self, status: StatusCode) -> Self {
         self.body_skipped_for = Some(status);
+        self
+    }
+
+    /// Never reads a 4xx or 5xx body: it comes back as [`Body::Skipped`] at
+    /// once, so it can neither fail nor stall the request. Every other
+    /// status, 3xx included, is read under `max_bytes`.
+    pub fn skip_error_bodies(mut self) -> Self {
+        self.skip_error_bodies = true;
         self
     }
 
@@ -240,16 +278,19 @@ impl HttpRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
     pub status: StatusCode,
+    /// The reply's own reason phrase, when it sent one other than the
+    /// status's canonical phrase (HTTP/1 only); see [`crate::status_error`].
+    pub reason: Option<String>,
     pub headers: HeaderMap,
     pub body: Body,
 }
 
 impl HttpResponse {
-    /// The body, or `None` if it was over the cap.
+    /// The body, or `None` if it was over the cap or skipped.
     pub fn bytes(&self) -> Option<&Bytes> {
         match &self.body {
             Body::Complete(b) => Some(b),
-            Body::TooLarge => None,
+            Body::TooLarge | Body::Skipped => None,
         }
     }
 
@@ -271,6 +312,9 @@ pub enum Body {
     /// Longer than the request's `max_bytes` (declared or while streaming);
     /// reading stopped there.
     TooLarge,
+    /// An error status's body, left unread under
+    /// [`HttpRequest::skip_error_bodies`].
+    Skipped,
 }
 
 /// How a request failed to produce a response.
@@ -402,11 +446,38 @@ mod tests {
     }
 
     #[test]
+    fn skipping_error_bodies_reads_every_other_status_under_the_main_cap() {
+        let req = HttpRequest::get("http://a.example/", 100)
+            .error_max_bytes(0)
+            .skip_error_bodies();
+        for code in [400, 404, 499, 500, 503, 599] {
+            let status = StatusCode::from_u16(code).unwrap();
+            assert!(req.skips_body(status), "{status}");
+            assert_eq!(req.unread_body(status, Some(0)), Body::Skipped, "{status}");
+        }
+        for code in [200, 204, 301, 302, 304, 399] {
+            let status = StatusCode::from_u16(code).unwrap();
+            assert!(!req.skips_body(status), "{status}");
+            assert_eq!(req.cap_for(status), 100, "{status}");
+        }
+        let plain = HttpRequest::get("http://a.example/", 100).error_max_bytes(0);
+        assert_eq!(
+            plain.unread_body(StatusCode::NOT_FOUND, Some(0)),
+            Body::Complete(Bytes::new())
+        );
+        assert_eq!(
+            plain.unread_body(StatusCode::NOT_FOUND, None),
+            Body::TooLarge
+        );
+    }
+
+    #[test]
     fn content_length_is_read_from_the_header() {
         let mut headers = HeaderMap::new();
         headers.insert(http::header::CONTENT_LENGTH, HeaderValue::from_static("42"));
         let resp = HttpResponse {
             status: StatusCode::OK,
+            reason: None,
             headers,
             body: Body::Complete(Bytes::new()),
         };

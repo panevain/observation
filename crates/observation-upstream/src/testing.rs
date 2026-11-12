@@ -35,6 +35,8 @@ pub struct FakeReply {
 #[derive(Debug, Clone)]
 pub struct FakeResponse {
     pub status: StatusCode,
+    /// The reply's own reason phrase (see [`HttpResponse::reason`]).
+    pub reason: Option<String>,
     pub headers: HeaderMap,
     pub body: Bytes,
     /// Reading the body fails this way (if it is read at all).
@@ -53,6 +55,7 @@ impl FakeReply {
             delay: Duration::ZERO,
             outcome: Ok(FakeResponse {
                 status,
+                reason: None,
                 headers: HeaderMap::new(),
                 body: Bytes::new(),
                 body_failure: None,
@@ -82,6 +85,14 @@ impl FakeReply {
     pub fn body(mut self, body: impl Into<Bytes>) -> Self {
         if let Ok(r) = &mut self.outcome {
             r.body = body.into();
+        }
+        self
+    }
+
+    /// The reply's own reason phrase, in place of the status's canonical one.
+    pub fn reason(mut self, reason: &str) -> Self {
+        if let Ok(r) = &mut self.outcome {
+            r.reason = Some(reason.to_owned());
         }
         self
     }
@@ -294,17 +305,14 @@ impl FakeHttp {
             .in_body_of(status)),
             Ok(r) => Ok(HttpResponse {
                 body: if req.skips_body(r.status) {
-                    if r.body.is_empty() {
-                        Body::Complete(r.body)
-                    } else {
-                        Body::TooLarge
-                    }
+                    req.unread_body(r.status, Some(r.body.len() as u64))
                 } else if r.body.len() > req.cap_for(r.status) {
                     Body::TooLarge
                 } else {
                     Body::Complete(r.body)
                 },
                 status: r.status,
+                reason: r.reason,
                 headers: r.headers,
             }),
             Err(kind) => Err(TransportError::new(
@@ -408,11 +416,7 @@ where
             // `Content-Length` header describes a body that is not there).
             let declared = http_body::Body::size_hint(&body).exact();
             let body = if req.skips_body(parts.status) {
-                if declared == Some(0) {
-                    Body::Complete(Bytes::new())
-                } else {
-                    Body::TooLarge
-                }
+                req.unread_body(parts.status, declared)
             } else if declared.is_some_and(|n| n > cap as u64) {
                 Body::TooLarge
             } else {
@@ -431,6 +435,10 @@ where
             };
             Ok(HttpResponse {
                 status: parts.status,
+                reason: parts
+                    .extensions
+                    .get::<hyper::ext::ReasonPhrase>()
+                    .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned()),
                 headers: parts.headers,
                 body,
             })
@@ -968,5 +976,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(read.bytes().unwrap(), "oops");
+    }
+
+    /// Under `skip_error_bodies` an error body is skipped, never read (it
+    /// cannot fail), and comes with the reply's reason; a 3xx is read under
+    /// the main cap.
+    #[tokio::test]
+    async fn fake_skips_error_bodies_and_reads_redirects_under_the_main_cap() {
+        let fake = FakeHttp::replying([
+            FakeReply::status(StatusCode::NOT_FOUND)
+                .reason("Gone Fishing")
+                .body("gone")
+                .body_fails(TransportErrorKind::BodyTimeout),
+            FakeReply::status(StatusCode::SERVICE_UNAVAILABLE),
+            FakeReply::status(StatusCode::FOUND).body(vec![1u8; 100]),
+            FakeReply::status(StatusCode::FOUND).body(vec![1u8; 101]),
+        ]);
+        let get = || {
+            HttpRequest::get("http://t.example/", 100)
+                .error_max_bytes(0)
+                .skip_error_bodies()
+        };
+        let resp = fake.send(get()).await.unwrap();
+        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        assert_eq!(resp.reason.as_deref(), Some("Gone Fishing"));
+        assert_eq!(resp.body, Body::Skipped);
+        assert_eq!(resp.bytes(), None);
+        let resp = fake.send(get()).await.unwrap();
+        assert_eq!((resp.reason, resp.body), (None, Body::Skipped));
+        let resp = fake.send(get()).await.unwrap();
+        assert_eq!(resp.bytes().map(Bytes::len), Some(100));
+        assert_eq!(fake.send(get()).await.unwrap().body, Body::TooLarge);
+        fake.assert_drained();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn router_skips_error_bodies_even_endless_ones() {
+        let endless = |status: StatusCode| {
+            tower::service_fn(move |_req: http::Request<Full<Bytes>>| async move {
+                let frames: Frames = Box::new(futures_util::stream::repeat_with(|| frame(100)));
+                let mut resp = http::Response::new(http_body_util::StreamBody::new(frames));
+                *resp.status_mut() = status;
+                resp.extensions_mut()
+                    .insert(hyper::ext::ReasonPhrase::from_static(b"Back Soon"));
+                Ok::<_, Infallible>(resp)
+            })
+        };
+        let get = || {
+            HttpRequest::get("http://a.internal/", 1024)
+                .skip_error_bodies()
+                .timeout(Duration::from_secs(5))
+        };
+        let resp = RouterHttp::new(endless(StatusCode::SERVICE_UNAVAILABLE))
+            .send(get())
+            .await
+            .unwrap();
+        assert_eq!(resp.body, Body::Skipped);
+        assert_eq!(resp.reason.as_deref(), Some("Back Soon"));
+        let resp = RouterHttp::new(endless(StatusCode::MOVED_PERMANENTLY))
+            .send(get())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.body,
+            Body::TooLarge,
+            "a 3xx is read, up to the main cap"
+        );
     }
 }

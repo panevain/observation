@@ -46,13 +46,11 @@ impl GuardedHttp {
         }
         let resp = builder.send().await.map_err(transport_error)?;
         let status = resp.status();
+        let reason = reason_of(&resp);
         let headers = resp.headers().clone();
         let body = if req.skips_body(status) {
             // Dropped unread.
-            match resp.content_length() {
-                Some(0) => Body::Complete(Default::default()),
-                _ => Body::TooLarge,
-            }
+            req.unread_body(status, resp.content_length())
         } else {
             // Read here, under the request's own deadline, as reqwest's timeout covers the body.
             match read_capped(resp, req.cap_for(status))
@@ -65,6 +63,7 @@ impl GuardedHttp {
         };
         Ok(HttpResponse {
             status,
+            reason,
             headers,
             body,
         })
@@ -99,6 +98,15 @@ impl HttpClient for GuardedHttp {
     fn send(&self, req: HttpRequest) -> BoxFuture<'_, Result<HttpResponse, TransportError>> {
         self.exchange(req).boxed()
     }
+}
+
+/// The reply's own reason phrase, which hyper keeps only when it is not the
+/// status's canonical one. hyper passes on only ASCII phrases (an other
+/// phrase arrives empty), so the conversion loses nothing.
+pub(crate) fn reason_of(resp: &reqwest::Response) -> Option<String> {
+    resp.extensions()
+        .get::<hyper::ext::ReasonPhrase>()
+        .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned())
 }
 
 /// [`transport_error`] for a failure while reading the body, where a

@@ -74,8 +74,8 @@ async fn snapshots_are_long_polled_with_the_token() {
         assert_eq!(req.body, RequestBody::None);
         assert_eq!(req.timeout, Some(Duration::from_secs(40)));
         assert_eq!(req.max_bytes, MIB_4);
-        assert_eq!(
-            req.error_max_bytes, 0,
+        assert!(
+            req.skip_error_bodies,
             "an error status's body is never read"
         );
     }
@@ -106,6 +106,17 @@ async fn snapshot_failures_are_described() {
             status(503),
             "HTTP status server error (503 Service Unavailable)".to_owned(),
         ),
+        // The reply's own phrase, as reqwest printed it.
+        (
+            status(503).reason("Back Soon"),
+            "HTTP status server error (503 Back Soon)".to_owned(),
+        ),
+        // A 3xx is read under the cap, like a 2xx.
+        (
+            status(302).body(vec![b' '; MIB_4 + 1]),
+            "the snapshot is too large".to_owned(),
+        ),
+        (status(302).body("<html>"), bad_json.clone()),
         (
             FakeReply::ok(vec![b' '; MIB_4 + 1]),
             "the snapshot is too large".to_owned(),

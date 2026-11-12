@@ -302,6 +302,43 @@ async fn a_skipped_status_is_not_read() {
     assert_eq!(err.status, Some(http::StatusCode::INTERNAL_SERVER_ERROR));
 }
 
+/// Under `skip_error_bodies` an error status comes back at once, unread,
+/// though its body stalls; a 3xx is read, under the main cap.
+#[tokio::test]
+async fn skipped_error_bodies_are_not_read_but_redirects_are() {
+    let skipping = |port: u16| {
+        HttpRequest::get(format!("http://127.0.0.1:{port}/"), 10)
+            .skip_error_bodies()
+            .timeout(Duration::from_millis(300))
+    };
+    for head in [
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 10\r\n\r\nabcd",
+        "HTTP/1.1 503 Back Soon\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n",
+    ] {
+        let port = serve_stalled(head).await;
+        let started = Instant::now();
+        let resp = lax().send(skipping(port)).await.unwrap();
+        assert!(started.elapsed() < Duration::from_millis(300), "{head}");
+        assert_eq!(resp.body, Body::Skipped, "{head}");
+    }
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789",
+    )
+    .await;
+    let resp = lax().send(skipping(port)).await.unwrap();
+    assert_eq!(resp.status, http::StatusCode::FOUND);
+    assert_eq!(resp.bytes().unwrap(), "0123456789");
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 11\r\nConnection: close\r\n\r\n0123456789A",
+    )
+    .await;
+    let resp = lax().send(skipping(port)).await.unwrap();
+    assert_eq!(resp.body, Body::TooLarge, "a 3xx gets the main cap");
+    let port = serve_stalled("HTTP/1.1 302 Found\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let err = lax().send(skipping(port)).await.unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
+}
+
 #[tokio::test]
 async fn a_slow_answer_times_out_under_the_client_timeout() {
     let port = serve_stalled("").await;
@@ -449,6 +486,13 @@ async fn status_errors_read_as_reqwest_words_them() {
         let resp = lax().get_stream(&url).await.unwrap();
         assert_eq!(resp.reason.is_some(), own_reason, "{resp:?}");
         let ours = observation_upstream::status_error(resp.status, resp.reason.as_deref());
+        // The port carries the same phrase.
+        let sent = lax()
+            .send(HttpRequest::get(&url, 100).skip_error_bodies())
+            .await
+            .unwrap();
+        assert_eq!((sent.status, &sent.reason), (resp.status, &resp.reason));
+        assert_eq!(sent.body, Body::Skipped);
         let theirs = plain
             .get(&url)
             .send()

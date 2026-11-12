@@ -8,9 +8,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use observation_core::regions::{CatalogEntry, is_valid_region_id};
+use observation_upstream::{HttpClient, HttpRequest, status_error};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::Mutex;
+
+use crate::ports::checked_body;
 
 /// How long a fetched index is used before it is fetched again.
 const MAX_AGE: Duration = Duration::from_secs(24 * 3600);
@@ -121,7 +124,7 @@ fn origin(url: &str) -> Option<String> {
 /// Fetches and caches the index.
 #[derive(Debug)]
 pub struct Catalog {
-    client: reqwest::Client,
+    http: Arc<dyn HttpClient>,
     url: String,
     file: PathBuf,
     cached: Mutex<Option<(SystemTime, Arc<Vec<Extract>>)>>,
@@ -131,9 +134,9 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn new(client: reqwest::Client, url: String, file: PathBuf) -> Self {
+    pub fn new(http: Arc<dyn HttpClient>, url: String, file: PathBuf) -> Self {
         Self {
-            client,
+            http,
             url,
             file,
             cached: Mutex::new(None),
@@ -180,8 +183,8 @@ impl Catalog {
         loop {
             while set.len() < SIZE_CONCURRENCY && Instant::now() + SIZE_TIMEOUT <= deadline {
                 let Some((id, url)) = queue.next() else { break };
-                let client = self.client.clone();
-                set.spawn(async move { (id, head_size(&client, &url).await) });
+                let http = Arc::clone(&self.http);
+                set.spawn(async move { (id, head_size(&*http, &url).await) });
             }
             let Some(done) = set.join_next().await else {
                 break;
@@ -262,17 +265,16 @@ impl Catalog {
     }
 
     async fn fetch(&self) -> Result<(Vec<u8>, Vec<Extract>), CatalogError> {
-        let resp = self
-            .client
-            .get(&self.url)
+        let req = HttpRequest::get(&self.url, MAX_INDEX_BYTES)
             .timeout(Duration::from_secs(30))
-            .send()
+            .skip_error_bodies();
+        let resp = self
+            .http
+            .send(req)
             .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|e| CatalogError::Fetch(e.without_url().to_string()))?;
-        let bytes = crate::read_capped(resp, MAX_INDEX_BYTES)
-            .await
-            .map_err(|e| CatalogError::Fetch(e.without_url().to_string()))?
+            .map_err(|e| CatalogError::Fetch(e.to_string()))?;
+        let bytes = checked_body(resp)
+            .map_err(CatalogError::Fetch)?
             .ok_or_else(|| CatalogError::Fetch("the list is unexpectedly large".into()))?;
         let list = parse_index(&bytes, &self.url)?;
         if list.is_empty() {
@@ -283,28 +285,20 @@ impl Catalog {
 }
 
 /// The `Content-Length` of a `HEAD` for `url`, following its redirects (to
-/// the dated file). Read from the header: for a `HEAD`, reqwest's
-/// `content_length()` is the length of the (empty) body.
-async fn head_size(client: &reqwest::Client, url: &str) -> Option<u64> {
-    let resp = client
-        .head(url)
+/// the dated file). Read from the header, not from the (empty) body.
+async fn head_size(http: &dyn HttpClient, url: &str) -> Option<u64> {
+    let req = HttpRequest::head(url)
         .timeout(SIZE_TIMEOUT)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status);
-    match resp {
-        Ok(resp) => resp
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)?
-            .to_str()
-            .ok()?
-            .parse()
-            .ok(),
-        Err(e) => {
-            tracing::debug!(error = %e.without_url(), "extract size unknown");
-            None
+        .skip_error_bodies();
+    let error = match http.send(req).await {
+        Ok(resp) if resp.status.is_client_error() || resp.status.is_server_error() => {
+            status_error(resp.status, resp.reason.as_deref())
         }
-    }
+        Ok(resp) => return resp.content_length(),
+        Err(e) => e.to_string(),
+    };
+    tracing::debug!(error = %error, "extract size unknown");
+    None
 }
 
 #[cfg(test)]
@@ -370,7 +364,14 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
         let dir = tempfile::tempdir().unwrap();
         let catalog = Catalog::new(
-            reqwest::Client::new(),
+            Arc::new(
+                observation_upstream::GuardedHttp::builder(
+                    true,
+                    observation_upstream::Redirects::SameHost,
+                )
+                .build()
+                .unwrap(),
+            ),
             format!("{base}/index.json"),
             dir.path().join("catalog.json"),
         );
@@ -391,6 +392,112 @@ mod tests {
         );
         catalog.sizes(&ids(&["monaco"])).await.unwrap();
         assert_eq!(hits.load(Ordering::SeqCst), 1, "cached");
+    }
+
+    /// The index: a 30 s GET whose error bodies are not read, capped at
+    /// 16 MiB, and the sentence for each way it fails.
+    #[tokio::test]
+    async fn fetch_failures_are_described() {
+        use http::StatusCode;
+        use observation_upstream::TransportErrorKind;
+        use observation_upstream::testing::{FakeHttp, FakeReply};
+        const URL: &str = "https://download.geofabrik.de/index-v1-nogeom.json";
+        let cases = [
+            (
+                FakeReply::status(StatusCode::NOT_FOUND),
+                "could not fetch the extract list: HTTP status client error (404 Not Found)",
+            ),
+            (
+                FakeReply::status(StatusCode::BAD_GATEWAY).reason("Upstream Down"),
+                "could not fetch the extract list: HTTP status server error (502 Upstream Down)",
+            ),
+            (
+                FakeReply::ok(vec![b' '; MAX_INDEX_BYTES + 1]),
+                "could not fetch the extract list: the list is unexpectedly large",
+            ),
+            (
+                FakeReply::error(TransportErrorKind::Timeout),
+                "could not fetch the extract list: FakeHttp: scripted Timeout",
+            ),
+            (
+                FakeReply::ok("<html>"),
+                "the extract list could not be read: expected value at line 1 column 1",
+            ),
+            (
+                FakeReply::ok(r#"{"features":[]}"#),
+                "the extract list could not be read: it lists no extracts",
+            ),
+        ];
+        for (reply, want) in cases {
+            let fake = FakeHttp::replying([reply]);
+            let dir = tempfile::tempdir().unwrap();
+            let catalog = Catalog::new(
+                Arc::new(fake.clone()),
+                URL.to_owned(),
+                dir.path().join("catalog.json"),
+            );
+            let err = catalog.extracts().await.unwrap_err();
+            assert_eq!(err.to_string(), want);
+            let req = &fake.requests()[0];
+            assert_eq!((&req.method, req.url.as_str()), (&http::Method::GET, URL));
+            assert_eq!(req.timeout, Some(Duration::from_secs(30)));
+            assert_eq!(req.max_bytes, 16 * 1024 * 1024);
+            assert!(req.skip_error_bodies);
+            fake.assert_drained();
+        }
+    }
+
+    /// Sizes: a 5 s `HEAD` per extract whose error bodies are not read. The
+    /// size is the `Content-Length` header of a 2xx or 3xx reply, and unknown
+    /// after a 4xx or 5xx (whatever its header says) or a failed request.
+    #[tokio::test]
+    async fn sizes_are_read_from_head_replies() {
+        use http::header::CONTENT_LENGTH;
+        use http::{Method, StatusCode};
+        use observation_upstream::TransportErrorKind;
+        use observation_upstream::testing::{FakeHttp, FakeReply};
+        const URL: &str = "https://download.geofabrik.de/index-v1-nogeom.json";
+        const MONACO: &str = "https://download.geofabrik.de/europe/monaco-latest.osm.pbf";
+        const CALIFORNIA: &str =
+            "https://download.geofabrik.de/north-america/us/california-latest.osm.pbf";
+        let ids = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let rounds = [
+            (StatusCode::OK, Some(1234)),
+            (StatusCode::FOUND, Some(1234)),
+            (StatusCode::NOT_FOUND, None),
+            (StatusCode::SERVICE_UNAVAILABLE, None),
+        ];
+        for (status, want) in rounds {
+            let fake = FakeHttp::new();
+            fake.on(Method::GET, URL, FakeReply::ok(INDEX));
+            let reply = FakeReply::status(status).header(CONTENT_LENGTH, "1234");
+            fake.on(Method::HEAD, MONACO, reply);
+            let failed = FakeReply::error(TransportErrorKind::Connect);
+            fake.on(Method::HEAD, CALIFORNIA, failed);
+            let dir = tempfile::tempdir().unwrap();
+            let catalog = Catalog::new(
+                Arc::new(fake.clone()),
+                URL.to_owned(),
+                dir.path().join("catalog.json"),
+            );
+            let sizes = catalog
+                .sizes(&ids(&["monaco", "us/california"]))
+                .await
+                .unwrap();
+            assert_eq!(
+                sizes,
+                BTreeMap::from([
+                    ("monaco".to_owned(), want),
+                    ("us/california".to_owned(), None)
+                ]),
+                "{status}"
+            );
+            for req in fake.requests().iter().filter(|r| r.method == Method::HEAD) {
+                assert_eq!(req.timeout, Some(Duration::from_secs(5)));
+                assert!(req.skip_error_bodies);
+            }
+            fake.assert_drained();
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::fmt::{self, Write as _};
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
 
-use crate::guarded::{GuardedHttp, body_error, transport_error};
+use crate::guarded::{GuardedHttp, body_error, reason_of, transport_error};
 use crate::http::TransportError;
 
 /// The head of a streamed response; its body is read with [`ByteStream::chunk`].
@@ -16,7 +16,7 @@ pub struct StreamingResponse {
     pub status: StatusCode,
     /// The reply's own reason phrase, when it sent one other than the
     /// status's canonical phrase (HTTP/1 only); see [`status_error`].
-    pub reason: Option<Bytes>,
+    pub reason: Option<String>,
     pub headers: HeaderMap,
     pub body: ByteStream,
 }
@@ -51,10 +51,7 @@ impl GuardedHttp {
         let resp = self.client.get(url).send().await.map_err(transport_error)?;
         Ok(StreamingResponse {
             status: resp.status(),
-            reason: resp
-                .extensions()
-                .get::<hyper::ext::ReasonPhrase>()
-                .map(|r| Bytes::copy_from_slice(r.as_bytes())),
+            reason: reason_of(&resp),
             headers: resp.headers().clone(),
             body: ByteStream(resp),
         })
@@ -65,7 +62,7 @@ impl GuardedHttp {
 /// the URL): `HTTP status client error (404 Not Found)`, with the reply's
 /// own `reason` phrase in place of the canonical one when it sent one.
 /// `status` must be a 4xx or 5xx, as for reqwest.
-pub fn status_error(status: StatusCode, reason: Option<&[u8]>) -> String {
+pub fn status_error(status: StatusCode, reason: Option<&str>) -> String {
     debug_assert!(
         status.is_client_error() || status.is_server_error(),
         "{status} is not an error status"
@@ -79,7 +76,7 @@ pub fn status_error(status: StatusCode, reason: Option<&[u8]>) -> String {
         Some(reason) => format!(
             "HTTP status {class} error ({} {})",
             status.as_str(),
-            Escaped(reason)
+            Escaped(reason.as_bytes())
         ),
         None => format!("HTTP status {class} error ({status})"),
     }
@@ -115,8 +112,8 @@ mod tests {
         // The loopback test pins the phrases hyper passes on against reqwest;
         // these are the escapes it does not (hyper keeps only ASCII phrases).
         assert_eq!(
-            status_error(StatusCode::BAD_GATEWAY, Some(b"a\0\r\n\t\\\"~\x7f\xff")),
-            r#"HTTP status server error (502 a\0\r\n\t\\\"~\x7f\xff)"#
+            status_error(StatusCode::BAD_GATEWAY, Some("a\0\r\n\t\\\"~\x7f\u{ff}")),
+            r#"HTTP status server error (502 a\0\r\n\t\\\"~\x7f\xc3\xbf)"#
         );
         assert_eq!(
             status_error(StatusCode::IM_A_TEAPOT, None),
@@ -129,7 +126,7 @@ mod tests {
             "HTTP status client error (499 <unknown status code>)"
         );
         assert_eq!(
-            status_error(status(500), Some(b"Oops")),
+            status_error(status(500), Some("Oops")),
             "HTTP status server error (500 Oops)"
         );
     }

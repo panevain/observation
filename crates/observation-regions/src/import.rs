@@ -13,19 +13,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use observation_core::regions::JobPhase;
-use observation_upstream::status_error;
+use observation_upstream::{HttpClient, HttpRequest, status_error};
 use tokio::io::AsyncWriteExt;
 
 use crate::catalog::Extract;
 use crate::poly::{Boundary, MAX_POLY_BYTES};
-use crate::ports::{Download, Toolchain};
+use crate::ports::{Download, Toolchain, checked_body};
 use crate::registry::{Imported, JobId, RegionDb, Registry, now_unix, slug};
 
 /// What an import talks to.
 #[derive(Debug, Clone)]
 pub struct Tools {
     /// For the boundary.
-    pub client: reqwest::Client,
+    pub http: Arc<dyn HttpClient>,
     pub download: Arc<dyn Download>,
     pub toolchain: Arc<dyn Toolchain>,
 }
@@ -50,7 +50,7 @@ pub async fn run(
 
     let pbf = work.join("extract.osm.pbf");
     download(tools, registry, id, job, &extract.pbf_url, &pbf).await?;
-    let poly = fetch_poly(tools, &extract.poly_url).await?;
+    let poly = fetch_poly(&*tools.http, &extract.poly_url).await?;
     let boundary = Boundary::parse(&poly).map_err(|e| e.to_string())?;
 
     registry.progress(id, job, JobPhase::Filtering, 0, None);
@@ -161,19 +161,14 @@ async fn download(
     Ok(())
 }
 
-async fn fetch_poly(tools: &Tools, url: &str) -> Result<String, String> {
+async fn fetch_poly(http: &dyn HttpClient, url: &str) -> Result<String, String> {
     let fail = |e: String| format!("could not download the region boundary: {e}");
-    let resp = tools
-        .client
-        .get(url)
+    let req = HttpRequest::get(url, MAX_POLY_BYTES)
         .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| fail(e.without_url().to_string()))?;
-    let bytes = crate::read_capped(resp, MAX_POLY_BYTES)
-        .await
-        .map_err(|e| fail(e.without_url().to_string()))?
+        .skip_error_bodies();
+    let resp = http.send(req).await.map_err(|e| fail(e.to_string()))?;
+    let bytes = checked_body(resp)
+        .map_err(fail)?
         .ok_or_else(|| fail("it is unexpectedly large".into()))?;
     String::from_utf8(bytes.to_vec()).map_err(|_| fail("it is not text".into()))
 }
@@ -203,7 +198,55 @@ fn dir_size(dir: &Path) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use http::StatusCode;
+    use observation_upstream::TransportErrorKind;
+    use observation_upstream::testing::{FakeHttp, FakeReply};
+
     use super::*;
+
+    /// The boundary: a 60 s GET whose error bodies are not read, capped at
+    /// 32 MiB, and the sentence for each way it fails.
+    #[tokio::test]
+    async fn boundary_failures_are_described() {
+        const URL: &str = "https://download.geofabrik.de/europe/monaco.poly";
+        let cases = [
+            (FakeReply::ok("sq\nEND\n"), Ok("sq\nEND\n".to_owned())),
+            (
+                FakeReply::status(StatusCode::NOT_FOUND),
+                Err("HTTP status client error (404 Not Found)"),
+            ),
+            (
+                FakeReply::status(StatusCode::SERVICE_UNAVAILABLE).reason("Back Soon"),
+                Err("HTTP status server error (503 Back Soon)"),
+            ),
+            (
+                FakeReply::ok(vec![b'x'; MAX_POLY_BYTES + 1]),
+                Err("it is unexpectedly large"),
+            ),
+            (
+                FakeReply::ok(vec![b'x'; MAX_POLY_BYTES]),
+                Ok("x".repeat(MAX_POLY_BYTES)),
+            ),
+            (FakeReply::ok(vec![0xff]), Err("it is not text")),
+            (FakeReply::ok(""), Ok(String::new())),
+            (
+                FakeReply::error(TransportErrorKind::Connect),
+                Err("FakeHttp: scripted Connect"),
+            ),
+        ];
+        for (reply, want) in cases {
+            let fake = FakeHttp::replying([reply]);
+            let got = fetch_poly(&fake, URL).await;
+            let want = want.map_err(|e| format!("could not download the region boundary: {e}"));
+            assert_eq!(got, want);
+            let req = &fake.requests()[0];
+            assert_eq!((&req.method, req.url.as_str()), (&http::Method::GET, URL));
+            assert_eq!(req.timeout, Some(Duration::from_secs(60)));
+            assert_eq!(req.max_bytes, 32 * 1024 * 1024);
+            assert!(req.skip_error_bodies);
+            fake.assert_drained();
+        }
+    }
 
     #[test]
     fn accepts_only_iso_utc_timestamps() {
