@@ -13,6 +13,8 @@ use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::{AreaRef, SceneFile};
 
+pub mod area_load;
+
 /// Curated + user-defined camera models.
 #[derive(Debug)]
 pub struct Models {

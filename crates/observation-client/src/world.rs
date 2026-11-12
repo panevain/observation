@@ -15,13 +15,10 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use observation_client_model::document::area_load;
 use observation_core::address::Address;
-use observation_core::camera::CameraModel;
 use observation_core::coverage::StaticLayers;
-use observation_core::example::example_cameras;
 use observation_core::geo::{LatLon, Projection};
-use observation_core::provenance::{DataChange, Provenance};
-use observation_core::scene::{AreaRef, lift_onto_terrain};
 use observation_core::terrain::{TERRAIN_MARGIN_M, Terrain};
 use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
 
@@ -30,21 +27,6 @@ use observation_core::tiles::{TileId, tiles_covering, zoom_for_bbox};
 pub const GROUND_MARGIN_M: f32 = TERRAIN_MARGIN_M;
 /// Upper bound on ground tiles per area.
 const MAX_GROUND_TILES: usize = 64;
-/// Models used, in turn, for the example cameras on the demo street: a mix of
-/// types and brands.
-const EXAMPLE_MODELS: [&str; 10] = [
-    "ring-wired-doorbell-pro",
-    "ring-floodlight-cam-wired-plus",
-    "google-nest-doorbell-battery",
-    "reolink-rlc-810a",
-    "arlo-pro-4",
-    "eufy-eufycam-s3-pro",
-    "ubiquiti-unifi-g5-dome",
-    "wyze-cam-floodlight-pro",
-    "tp-link-tapo-c320ws",
-    "blink-outdoor-4",
-];
-
 /// Height of the coverage overlay above the map tiles, metres. Layers closer
 /// than the depth buffer can resolve at range fight and flicker.
 const OVERLAY_Y_M: f32 = 0.08;
@@ -445,45 +427,16 @@ fn on_area_loaded(
     });
 
     // An address picked in the old area means nothing in the new one.
-    editor.selected_address = None;
-    hover.hover_address = None;
     ui.jump_to_address = false;
-
-    // Document state.
-    let area = msg.request.area;
-    let keep = msg.request.keep_cameras && scene.area == Some(area);
-    if keep && std::mem::take(&mut scene.on_flat_ground) {
-        // A scene saved before terrain: its cameras stood on flat ground.
-        lift_onto_terrain(&mut scene.cameras, terrain);
-    }
-    if !keep {
-        scene.on_flat_ground = false;
-        scene.cameras.clear();
-        // A region belongs to the area it was drawn on, as does one being
-        // drawn.
-        scene.region = None;
-        editor.region_draft.clear();
-        editor.selected = None;
-        if area == AreaRef::Demo {
-            // A fresh demo street comes with example cameras to explore.
-            let picks: Vec<&CameraModel> = EXAMPLE_MODELS
-                .iter()
-                .filter_map(|id| models.get(id))
-                .collect();
-            for c in example_cameras(&bundle, &picks, EXAMPLE_MODELS.len()) {
-                scene.add_camera(c);
-            }
-        }
-    }
-    scene.area = Some(area);
-    scene.origin = bundle.origin;
-    // A restored or imported scene learns whether its map data changed
-    // since it was saved; any older notice was about the area replaced.
-    ui.data_change = scene.area_loaded(Provenance::of(&bundle, &models.catalog_version), keep);
-    if let Some(message) = ui.data_change.as_ref().map(DataChange::message) {
-        toasts.info(message);
-    }
-    scene.touch();
+    ui.data_change = area_load::apply(
+        &mut scene,
+        &mut editor,
+        &mut hover,
+        &mut toasts,
+        &models,
+        &msg.request,
+        &bundle,
+    );
     *coverage = CoverageState::default();
 
     if let Ok(mut o) = orbit.single_mut() {
@@ -494,13 +447,8 @@ fn on_area_loaded(
         o.yaw = 0.35;
     }
 
-    toasts.info(format!(
-        "Loaded {} buildings and {} street segments",
-        bundle.buildings.len(),
-        bundle.roads.len()
-    ));
     commands.insert_resource(Area {
-        area,
+        area: msg.request.area,
         bundle,
         layers,
     });
