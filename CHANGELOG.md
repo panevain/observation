@@ -92,6 +92,11 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- A camera group name longer than 80 characters whose 80th character is a space (or other whitespace) now loads the same every time. The space was kept at the end of the cut name on the first load and dropped on the next, so the same group could show under two slightly different names; it is now dropped on the first load.
+- Coverage counts stay right in scenes where more than 255 cameras see the same spot. The per-spot count stopped at 255, but each camera taken away (disabled, deleted, moved off) still lowered it by one, so such spots then showed fewer cameras than saw them, and once enough cameras were taken away a spot one camera still saw showed as unseen and dropped out of the coverage figures. The exact count is now kept behind the shown one, which still tops out at 255.
+- A rolled camera's body now tilts the same way as its coverage and view cone. It used to tilt the opposite way, so a camera rolled to the right looked rolled to the left. The coverage figures and saved scenes are unchanged.
+- The tool and panel shortcut keys (V, P, A, M, R, L, F, N, / and F1) no longer act while Ctrl, Cmd or Alt is held, and are left to the browser: on a QWERTY layout, Ctrl/Cmd+R reloads the page again instead of switching to the Region tool. Ctrl/Cmd+A still selects a text field's text, undo and redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl+Y) work as before, and so do the shortcuts with Shift.
+- Deleting the selected camera with Delete or Backspace while the Aim or Move tool is on goes back to the Select tool, as the camera list's **Delete** does. The tool used to stay on with no camera to work on.
 - `mise run up` now uses an `OBS_VERSION` set under `[env]` in `mise.local.toml`; before, only a variable exported in the shell was used, and a version pinned in `mise.local.toml` silently started `latest`. An exported variable still wins over `mise.local.toml`. `mise run sync` now refuses the pattern that caused it.
 - While the Region tool is on, the edge of the loaded area is drawn in red and the map beyond it is tinted and hatched. Corners clicked out there move to the edge, which used to look like part of the map refused corners for no reason (#71).
 - Selecting a camera no longer widens the inspector: a long model name is cut short in the model list's button, and the **Group** field takes only the width its pin button leaves, which also stops the button being cut off.
@@ -103,6 +108,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Clicks in the 3D view land under the pointer; they were offset by the tool rail and top bar.
 - Large dark patches no longer flicker across the ground while zooming (the plain ground and the map tiles were fighting in the depth buffer).
 - The map picker shows a stretched lower-zoom tile (or the finer tiles it has) while a tile loads, instead of an empty square.
+- Prepare release's summary, while there is no stable release yet and `[Unreleased]` has no entries (a pre-release, say), now reads *no CHANGELOG entries, but nothing released yet; first release, from Cargo.toml*. It used to read *…shipped files changed since v; first release…*, naming a version that does not exist.
 
 ### Security
 

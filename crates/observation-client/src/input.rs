@@ -3,7 +3,8 @@
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{
-    AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState, terrain_of,
+    AddressJump, Area, Editor, Hover, Models, Panels, Scene, Toasts, Tool, TrackScene, UiLayout,
+    terrain_of,
 };
 use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -12,9 +13,8 @@ use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, Ra
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
+use observation_client_model::commands::{self, EditCtx, Hit, HitTarget, Key};
 use observation_core::address::{Address, ON_OUTLINE_M};
-use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
-use observation_core::coverage::{MAX_REGION_POINTS, Region};
 use observation_core::terrain::Terrain;
 
 /// Pixels a press may travel and still count as a click/tap.
@@ -119,6 +119,11 @@ struct AddressKey {
     view: Affine3A,
 }
 
+/// Turns the frame's clicks, drags and hover into edits; what draws the
+/// scene, and Export, are ordered against it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PointerSet;
+
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
@@ -131,7 +136,7 @@ impl Plugin for InputPlugin {
                 Update,
                 (
                     keyboard,
-                    pointer.after(AreaLoadSet),
+                    pointer.in_set(PointerSet).after(AreaLoadSet),
                     focus_on_ground,
                     apply_orbit,
                 )
@@ -234,90 +239,75 @@ fn apply_orbit(
     }
 }
 
-fn keyboard(
+pub(crate) fn keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<EguiWantsInput>,
-    mut ui: ResMut<UiState>,
+    mut editor: ResMut<Editor>,
+    mut panels: ResMut<Panels>,
+    mut toasts: ResMut<Toasts>,
     mut scene: ResMut<Scene>,
     mut orbit: Query<&mut OrbitCamera>,
 ) {
     if wants.wants_any_keyboard_input() {
         return;
     }
-    for (key, tool) in [
-        (KeyCode::KeyV, Tool::Select),
-        (KeyCode::KeyP, Tool::Place),
-        (KeyCode::KeyA, Tool::Aim),
-        (KeyCode::KeyM, Tool::Move),
-        (KeyCode::KeyR, Tool::Region),
-        (KeyCode::KeyL, Tool::Address),
-    ] {
-        if keys.just_pressed(key) {
-            ui.tool = tool;
-        }
+    let pressed = |key| key_codes(key).iter().any(|k| keys.just_pressed(*k));
+    let mut ctx = EditCtx {
+        doc: &mut TrackScene(&mut scene),
+        editor: &mut editor,
+        panels: &mut panels,
+        toasts: &mut toasts,
+    };
+    if commands::keys(&mut ctx, &pressed, browser_modifier(&keys)) {
+        editor.focus_request = true;
     }
-    if keys.just_pressed(KeyCode::Escape) {
-        if ui.tool == Tool::Select {
-            ui.selected = None;
-        }
-        ui.tool = Tool::Select;
-        ui.map_open = false;
-        ui.help_open = false;
-        ui.regions_open = false;
+    // A one-shot request: read it, and clear it only when it is set.
+    let focus = editor.focus_request;
+    if focus {
+        editor.focus_request = false;
     }
-    if ui.tool == Tool::Region {
-        // Drawing a region: Enter closes it, Backspace undoes a corner.
-        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
-            finish_region(&mut ui, &mut scene);
-        }
-        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
-            ui.region_draft.pop();
-        }
-    } else if ui.tool == Tool::Address {
-        // The picked address, not the camera selected before the tool.
-        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
-            ui.selected_address = None;
-        }
-    } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
-        && let Some(id) = ui.selected.take()
-    {
-        scene.remove_camera(id);
-    }
-    if keys.just_pressed(KeyCode::Slash) || keys.just_pressed(KeyCode::F1) {
-        ui.help_open = !ui.help_open;
-    }
-    if keys.just_pressed(KeyCode::KeyF) {
-        ui.focus_request = true;
-    }
-    if std::mem::take(&mut ui.focus_request)
-        && let Some(c) = ui.selected.and_then(|id| scene.camera(id))
+    if focus
+        && let Some(c) = editor.selected.and_then(|id| scene.camera(id))
         && let Ok(mut o) = orbit.single_mut()
     {
         // `focus_on_ground` puts it on the ground under the camera.
         o.focus = Vec3::from_array(c.position).with_y(0.0);
         o.distance = o.distance.min(60.0);
     }
-    if keys.just_pressed(KeyCode::KeyN) {
-        ui.overlay = match ui.overlay {
-            crate::state::OverlayMode::Overlap => crate::state::OverlayMode::PerCamera,
-            crate::state::OverlayMode::PerCamera => crate::state::OverlayMode::Overlap,
-        };
+}
+
+/// Whether Ctrl, Cmd (Super) or Alt is held, or let go this very frame (a
+/// quick chord on a slow frame, as undo and redo count it): the tool and
+/// panel shortcuts then leave the key to the browser. Shift is not one of
+/// them.
+fn browser_modifier(keys: &ButtonInput<KeyCode>) -> bool {
+    let modifiers = [
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ];
+    keys.any_pressed(modifiers) || keys.any_just_released(modifiers)
+}
+
+/// The keys of a shortcut.
+fn key_codes(key: Key) -> &'static [KeyCode] {
+    match key {
+        Key::Tool(Tool::Select) => &[KeyCode::KeyV],
+        Key::Tool(Tool::Place) => &[KeyCode::KeyP],
+        Key::Tool(Tool::Aim) => &[KeyCode::KeyA],
+        Key::Tool(Tool::Move) => &[KeyCode::KeyM],
+        Key::Tool(Tool::Region) => &[KeyCode::KeyR],
+        Key::Tool(Tool::Address) => &[KeyCode::KeyL],
+        Key::Escape => &[KeyCode::Escape],
+        Key::Finish => &[KeyCode::Enter, KeyCode::NumpadEnter],
+        Key::Erase => &[KeyCode::Backspace, KeyCode::Delete],
+        Key::Help => &[KeyCode::Slash, KeyCode::F1],
+        Key::Focus => &[KeyCode::KeyF],
+        Key::Overlay => &[KeyCode::KeyN],
     }
-}
-
-/// A ray-cast hit on something the tools care about.
-#[derive(Debug, Clone, Copy)]
-struct Hit {
-    point: Vec3,
-    normal: Vec3,
-    target: HitTarget,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum HitTarget {
-    Building,
-    Ground,
-    Camera(u32),
 }
 
 /// Raw input sources for [`pointer`].
@@ -340,6 +330,7 @@ struct Targets<'w, 's> {
     area: Option<Res<'w, Area>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pointer(
     input: RawInput,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -347,7 +338,10 @@ fn pointer(
     mut ray_cast: MeshRayCast,
     targets: Targets,
     mut st: ResMut<PointerState>,
-    mut ui: ResMut<UiState>,
+    mut editor: ResMut<Editor>,
+    mut panels: ResMut<Panels>,
+    mut hovering: ResMut<Hover>,
+    mut toasts: ResMut<Toasts>,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
     jump: Res<AddressJump>,
@@ -520,35 +514,35 @@ fn pointer(
         orbit.distance = (orbit.distance * (1.0 - lines * 0.1)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
-    if ui.tool != Tool::Region {
-        if !ui.region_draft.is_empty() || ui.region_hover.is_some() {
-            ui.region_draft.clear();
-            ui.region_hover = None;
+    if editor.tool != Tool::Region {
+        if !editor.region_draft.is_empty() || editor.region_hover.is_some() {
+            editor.region_draft.clear();
+            editor.region_hover = None;
         }
     } else {
         let hover = pos
             .filter(|_| !over_ui)
             .and_then(|p| ground_point(camera, cam_t, p, terrain))
             .map(|p| clamp_to_area(p, area.as_deref()));
-        if ui.region_hover != hover {
-            ui.region_hover = hover;
+        if editor.region_hover != hover {
+            editor.region_hover = hover;
         }
         let snap = region_snap_m(orbit.distance);
-        if ui.region_snap_m != snap {
-            ui.region_snap_m = snap;
+        if editor.region_snap_m != snap {
+            editor.region_snap_m = snap;
         }
     }
 
-    if ui.tool != Tool::Address && ui.selected_address.is_some() {
-        ui.selected_address = None;
+    if editor.tool != Tool::Address && editor.selected_address.is_some() {
+        editor.selected_address = None;
     }
 
     let Some(pos) = pos else {
-        if ui.hover_scene.is_some() {
-            ui.hover_scene = None;
+        if hovering.hover_scene.is_some() {
+            hovering.hover_scene = None;
         }
-        if ui.hover_address.is_some() {
-            ui.hover_address = None;
+        if hovering.hover_address.is_some() {
+            hovering.hover_address = None;
         }
         st.address_key = None;
         return;
@@ -567,20 +561,20 @@ fn pointer(
             None
         } else if camera_at(cast(pos, true)).is_some() {
             camera_at(cast(pos, false))
-        } else if ui.tool != Tool::Place {
+        } else if editor.tool != Tool::Place {
             camera_at(near_body(&mut cast, pos, PICK_RADIUS_MOUSE_PX))
         } else {
             None
         };
-        if ui.hover_scene != hover {
-            ui.hover_scene = hover;
+        if hovering.hover_scene != hover {
+            hovering.hover_scene = hover;
         }
     }
 
     // The address under an idle mouse, looked up again only when the
     // pointer, the view or the area changes. Hidden while dragging and over
     // the panels.
-    if ui.tool == Tool::Address && active.is_empty() && !pressed && !over_ui {
+    if editor.tool == Tool::Address && active.is_empty() && !pressed && !over_ui {
         let key = AddressKey {
             pos,
             view: cam_t.affine(),
@@ -589,23 +583,24 @@ fn pointer(
             st.address_key = Some(key);
             st.address_found = address_under(&mut cast, pos);
             let hover = Some(st.address_found.as_ref().map(address_label));
-            if ui.hover_address != hover {
-                ui.hover_address = hover;
+            if hovering.hover_address != hover {
+                hovering.hover_address = hover;
             }
         }
     } else {
         st.address_key = None;
-        if ui.hover_address.is_some() {
-            ui.hover_address = None;
+        if hovering.hover_address.is_some() {
+            hovering.hover_address = None;
         }
     }
 
     if just_pressed && !over_ui {
         st.gesture = Gesture::Pending { start: pos, button };
-        if button == MouseButton::Left && ui.tool.needs_selection() && ui.selected.is_some() {
+        if button == MouseButton::Left && editor.tool.needs_selection() && editor.selected.is_some()
+        {
             st.gesture = Gesture::Tool;
             if let Some(hit) = cast(pos, false) {
-                apply_tool(&mut ui, &mut scene, &models, hit);
+                commands::apply_tool(&mut editor, &mut scene, &models, hit);
             }
         }
     }
@@ -628,7 +623,7 @@ fn pointer(
                 if delta != Vec2::ZERO
                     && let Some(hit) = cast(pos, false)
                 {
-                    apply_tool(&mut ui, &mut scene, &models, hit);
+                    commands::apply_tool(&mut editor, &mut scene, &models, hit);
                 }
             }
             _ => {}
@@ -641,11 +636,19 @@ fn pointer(
             ..
         } = st.gesture
         {
-            if ui.tool == Tool::Region {
+            if editor.tool == Tool::Region {
                 if let Some(p) = ground_point(camera, cam_t, pos, terrain) {
-                    region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
+                    commands::region_click(
+                        &mut EditCtx {
+                            doc: &mut **scene,
+                            editor: &mut editor,
+                            panels: &mut panels,
+                            toasts: &mut toasts,
+                        },
+                        clamp_to_area(p, area.as_deref()),
+                    );
                 }
-            } else if ui.tool == Tool::Address {
+            } else if editor.tool == Tool::Address {
                 // A click reuses the card's lookup for the same spot; a tap
                 // looks up afresh. A click away from any address clears
                 // the selection.
@@ -658,13 +661,13 @@ fn pointer(
                 } else {
                     address_under(&mut cast, pos)
                 };
-                ui.jump_to_address = jump.0 && picked.is_some();
-                ui.selected_address = picked;
+                editor.jump_to_address = jump.0 && picked.is_some();
+                editor.selected_address = picked;
             } else {
                 let mut hit = cast(pos, false);
                 // Placing near a camera should still place, so only the
                 // other tools reach for a body the press just missed.
-                if ui.tool != Tool::Place
+                if editor.tool != Tool::Place
                     && !matches!(
                         hit,
                         Some(Hit {
@@ -680,7 +683,16 @@ fn pointer(
                     };
                     hit = near_body(&mut cast, pos, radius).or(hit);
                 }
-                click(&mut ui, &mut scene, &models, hit);
+                commands::click(
+                    &mut EditCtx {
+                        doc: &mut **scene,
+                        editor: &mut editor,
+                        panels: &mut panels,
+                        toasts: &mut toasts,
+                    },
+                    &models,
+                    hit,
+                );
             }
         }
         st.gesture = Gesture::None;
@@ -719,49 +731,6 @@ pub fn region_snap_m(view_distance: f32) -> f32 {
     (view_distance * 0.02).clamp(1.0, 10.0)
 }
 
-/// Adds a region corner, or closes the region when the first corner is clicked.
-fn region_click(ui: &mut UiState, scene: &mut Scene, p: [f32; 2]) {
-    let closes = ui.region_draft.len() >= 3
-        && ui.region_draft.first().is_some_and(|f| {
-            Vec2::from_array(*f).distance(Vec2::from_array(p)) <= ui.region_snap_m
-        });
-    if closes {
-        finish_region(ui, scene);
-    } else if ui.region_draft.len() < MAX_REGION_POINTS {
-        ui.region_draft.push(p);
-    } else {
-        ui.error(format!(
-            "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
-        ));
-    }
-}
-
-/// Turns the draft into the scene's region (nothing to do without corners).
-fn finish_region(ui: &mut UiState, scene: &mut Scene) {
-    if ui.region_draft.is_empty() {
-        return;
-    }
-    let region = Region {
-        points: std::mem::take(&mut ui.region_draft),
-        enabled: true,
-    };
-    match region.problem() {
-        None => {
-            ui.info(format!(
-                "Coverage now counts only the {:.0} m² region",
-                region.area_m2()
-            ));
-            scene.region = Some(region);
-            scene.touch();
-            ui.tool = Tool::Select;
-        }
-        Some(problem) => {
-            ui.region_draft = region.points;
-            ui.error(problem.message());
-        }
-    }
-}
-
 /// Keeps a region corner on the loaded area, so a click near the horizon
 /// cannot put one kilometres away.
 fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
@@ -782,94 +751,129 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
     orbit.focus += (-right * delta.x + fwd * delta.y) * scale;
 }
 
-/// A click/tap (press + release without dragging).
-fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>) {
-    match ui.tool {
-        Tool::Select => match hit {
-            Some(Hit {
-                target: HitTarget::Camera(id),
-                ..
-            }) => ui.select(id),
-            _ => ui.selected = None,
-        },
-        Tool::Place => {
-            let Some(hit) = hit else { return };
-            if let HitTarget::Camera(id) = hit.target {
-                ui.select(id);
-                return;
-            }
-            let kind = models.kind_of(&ui.place_model);
-            let (position, yaw) = mount(hit, kind.default_mount_height_m());
-            let id = scene.add_camera(CameraPlacement {
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use observation_client_model::commands::Key;
+    use observation_core::camera::CameraPlacement;
+
+    /// `keyboard` alone, with a camera at (10, 3, 20) selected and the orbit
+    /// camera looking at the origin from 300 m.
+    fn keyboard_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<EguiWantsInput>()
+            .init_resource::<Scene>()
+            .init_resource::<Editor>()
+            .init_resource::<Panels>()
+            .init_resource::<Toasts>()
+            .add_systems(Update, keyboard);
+        let id = app
+            .world_mut()
+            .resource_mut::<Scene>()
+            .add_camera(CameraPlacement {
                 id: 0,
-                label: String::new(),
-                model_id: ui.place_model.clone(),
-                position: position.to_array(),
-                yaw_deg: yaw.unwrap_or(0.0),
-                pitch_deg: kind.default_pitch_deg(),
+                label: "Porch".to_owned(),
+                model_id: "m".to_owned(),
+                position: [10.0, 3.0, 20.0],
+                yaw_deg: 0.0,
+                pitch_deg: 0.0,
                 roll_deg: 0.0,
                 color: None,
                 enabled: true,
                 group: None,
             });
-            ui.select(id);
-            if yaw.is_none() {
-                // Placed on the ground: switch to Aim so the next click points it.
-                ui.tool = Tool::Aim;
-                ui.info("Click where the new camera should point");
-            }
-        }
-        // Handled in `pointer` (by `region_click` for Region).
-        Tool::Region | Tool::Address => {}
-        Tool::Aim | Tool::Move => {
-            if ui.selected.is_none()
-                && let Some(Hit {
-                    target: HitTarget::Camera(id),
-                    ..
-                }) = hit
-            {
-                ui.select(id);
-            }
+        app.world_mut().resource_mut::<Editor>().selected = Some(id);
+        app.world_mut().spawn(OrbitCamera::default());
+        app
+    }
+
+    /// The orbit camera's focus and distance.
+    fn orbit(app: &mut App) -> (Vec3, f32) {
+        let mut query = app.world_mut().query::<&OrbitCamera>();
+        let o = query.single(app.world()).expect("one orbit camera");
+        (o.focus, o.distance)
+    }
+
+    #[test]
+    fn a_focus_request_frames_the_selected_camera_once() {
+        let mut app = keyboard_app();
+        app.update();
+        assert_eq!(orbit(&mut app), (Vec3::ZERO, 300.0), "no request, no move");
+
+        app.world_mut().resource_mut::<Editor>().focus_request = true;
+        app.update();
+        assert_eq!(orbit(&mut app), (Vec3::new(10.0, 0.0, 20.0), 60.0));
+        assert!(!app.world().resource::<Editor>().focus_request);
+
+        // Consumed: moving the orbit away again stays put.
+        app.world_mut()
+            .query::<&mut OrbitCamera>()
+            .single_mut(app.world_mut())
+            .expect("one orbit camera")
+            .focus = Vec3::ZERO;
+        app.update();
+        assert_eq!(orbit(&mut app).0, Vec3::ZERO);
+    }
+
+    #[test]
+    fn ctrl_cmd_and_alt_count_as_browser_modifiers_but_shift_does_not() {
+        for (key, expected) in [
+            (KeyCode::ControlLeft, true),
+            (KeyCode::ControlRight, true),
+            (KeyCode::SuperLeft, true),
+            (KeyCode::SuperRight, true),
+            (KeyCode::AltLeft, true),
+            (KeyCode::AltRight, true),
+            (KeyCode::ShiftLeft, false),
+            (KeyCode::ShiftRight, false),
+        ] {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            keys.press(key);
+            keys.press(KeyCode::KeyR);
+            assert_eq!(browser_modifier(&keys), expected, "{key:?}");
         }
     }
-}
 
-fn apply_tool(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Hit) {
-    let Some(id) = ui.selected else { return };
-    let tool = ui.tool;
-    let Some(cam) = scene.camera_mut(id) else {
-        return;
-    };
-    match tool {
-        Tool::Aim => {
-            if !matches!(hit.target, HitTarget::Camera(c) if c == id) {
-                cam.look_at(hit.point);
-            }
-        }
-        Tool::Move => {
-            if matches!(hit.target, HitTarget::Camera(_)) {
-                return;
-            }
-            let kind = models.kind_of(&cam.model_id);
-            let (position, yaw) = mount(hit, kind.default_mount_height_m());
-            cam.position = position.to_array();
-            if let Some(y) = yaw {
-                cam.yaw_deg = y;
-            }
-        }
-        _ => {}
+    #[test]
+    fn a_modifier_let_go_this_frame_still_counts() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ControlLeft);
+        keys.clear();
+        keys.press(KeyCode::KeyR);
+        keys.release(KeyCode::ControlLeft);
+        assert!(browser_modifier(&keys));
+        keys.clear();
+        assert!(!browser_modifier(&keys));
     }
-}
 
-/// Mount position for a hit: on a wall, just in front of the surface facing
-/// outward; on the ground or a roof, raised to the mount height.
-fn mount(hit: Hit, mount_height: f32) -> (Vec3, Option<f32>) {
-    let wall = hit.target == HitTarget::Building && hit.normal.y.abs() < 0.5;
-    if wall {
-        let n = hit.normal.with_y(0.0).normalize_or(Vec3::X);
-        let yaw = yaw_pitch_from_forward(n).map(|(y, _)| y);
-        (hit.point + n * MOUNT_OFFSET_M, yaw)
-    } else {
-        (hit.point + Vec3::Y * mount_height, None)
+    /// The page hands these keys to the browser while a modifier is held;
+    /// its list must match the keys of the shortcuts that then do nothing.
+    #[test]
+    fn the_page_leaves_exactly_the_yielding_shortcut_keys_to_the_browser() {
+        let page = include_str!("../../../web/index.html");
+        let line = page
+            .lines()
+            .find(|l| l.contains("const BROWSER_KEYS"))
+            .expect("web/index.html lists BROWSER_KEYS");
+        let mut listed: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
+        let mut expected: Vec<String> = Tool::ALL
+            .into_iter()
+            .map(Key::Tool)
+            .chain([
+                Key::Escape,
+                Key::Finish,
+                Key::Erase,
+                Key::Help,
+                Key::Focus,
+                Key::Overlay,
+            ])
+            .filter(|k| k.yields_to_modifiers())
+            .flat_map(|k| key_codes(k).iter().map(|c| format!("{c:?}")))
+            .collect();
+        listed.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(listed, expected);
     }
 }

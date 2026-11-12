@@ -3,6 +3,7 @@
 //! Areas are small (≤ [`MAX_BBOX_SIDE_M`]), so a local equirectangular
 //! projection around the area centre is accurate to well under a metre.
 
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -218,6 +219,15 @@ impl Projection {
         [x, z]
     }
 
+    /// World `[x, z]` rectangle `(min, max)` a bbox's corners project to.
+    pub fn world_extent(&self, bbox: &BBox) -> (Vec2, Vec2) {
+        let corner =
+            |lat, lon| Vec2::from_array(self.to_world(LatLon::new(lat, lon)).map(|v| v as f32));
+        let nw = corner(bbox.north, bbox.west);
+        let se = corner(bbox.south, bbox.east);
+        (nw.min(se), nw.max(se))
+    }
+
     /// World `[x, z]` → lat/lon.
     pub fn to_latlon(&self, w: [f64; 2]) -> LatLon {
         LatLon {
@@ -298,6 +308,16 @@ mod tests {
         let q = LatLon::new(47.6012, -122.2987);
         let back = p.to_latlon(p.to_world(q));
         assert!((back.lat - q.lat).abs() < 1e-9 && (back.lon - q.lon).abs() < 1e-9);
+    }
+
+    #[test]
+    fn world_extent_spans_the_bbox() {
+        let b = BBox::around(LatLon::new(47.6, -122.3), 300.0);
+        let (min, max) = Projection::new(b.center()).world_extent(&b);
+        let size = max - min;
+        assert!((f64::from(size.x) - b.width_m()).abs() < 0.01, "{size}");
+        assert!((f64::from(size.y) - b.height_m()).abs() < 0.01, "{size}");
+        assert!(min.x < 0.0 && min.y < 0.0 && max.x > 0.0 && max.y > 0.0);
     }
 
     #[test]

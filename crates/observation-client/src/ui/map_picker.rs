@@ -2,6 +2,7 @@
 
 use super::widgets::{hint, primary, secondary};
 use crate::net::{ServerConfig, Tiles};
+use crate::platform::Clock;
 use crate::theme::{IMAGE_TINT, Tokens};
 use bevy::asset::Handle;
 use bevy::image::Image;
@@ -173,6 +174,7 @@ fn frac_rect([l, t, r, b]: [f32; 4]) -> Rect {
 pub fn register_tiles(
     p: &mut MapPicker,
     tiles: &mut Tiles,
+    clock: &dyn Clock,
     mut add_image: impl FnMut(&Handle<Image>) -> egui::TextureId,
 ) -> Vec<TileDraw> {
     let mut out = Vec::new();
@@ -185,7 +187,7 @@ pub fn register_tiles(
     tiles.retain_queue(|t| t.z != view.z || wanted.contains(t));
     let unit = frac_rect([0.0, 0.0, 1.0, 1.0]);
     for tile in wanted {
-        if let Some(h) = tiles.get(tile) {
+        if let Some(h) = tiles.get(tile, clock) {
             out.push(TileDraw {
                 tile,
                 texture: add_image(&h),

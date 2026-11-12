@@ -10,7 +10,7 @@
 //!
 //! The bump applies to the latest stable tag, or develop's version when that is higher; with no
 //! stable tag, develop's version. `--prerelease dev` gives `X.Y.Z-dev.N`, N one more than the
-//! highest such tag. The reason texts are the script's, including "since v" with no release.
+//! highest such tag. The reason texts are the script's.
 //!
 //! Where the script failed, this fails too; the differences, all failures, are listed in
 //! `release-plan/cases.toml` (`differs`).
@@ -150,10 +150,12 @@ pub fn plan(repo: &Path, version: &str, prerelease: &str, g: &dyn Git) -> Result
             format!("CHANGELOG has only {} entries", patch.join(", ")),
         )
     } else if shipped_changes(g, &latest)? {
-        (
-            "patch",
-            format!("no CHANGELOG entries, but shipped files changed since v{latest}"),
-        )
+        let reason = if latest.is_empty() {
+            "no CHANGELOG entries, but nothing released yet".to_owned()
+        } else {
+            format!("no CHANGELOG entries, but shipped files changed since v{latest}")
+        };
+        ("patch", reason)
     } else if !prerelease.is_empty() {
         (
             "patch",
