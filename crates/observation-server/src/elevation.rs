@@ -7,11 +7,12 @@ use std::sync::Arc;
 use observation_core::geo::BBox;
 use observation_core::terrain::{DEM_TILE_PX, DemTile, Terrain, dem_tiles_for, terrain_from_dem};
 use observation_core::tiles::TileId;
+use observation_upstream::HttpClient;
 
-use crate::cache::Cache;
 use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::ports::TileStore;
 use crate::tiles::TileProxy;
 
 /// Where bundles get their terrain from.
@@ -25,9 +26,9 @@ pub struct Elevation {
 impl Elevation {
     /// `client` must already carry the project `User-Agent` and a timeout.
     pub fn new(
-        client: reqwest::Client,
+        client: Arc<dyn HttpClient>,
         config: &Config,
-        cache: Arc<Cache>,
+        cache: Arc<dyn TileStore>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {

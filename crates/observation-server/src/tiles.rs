@@ -14,14 +14,14 @@ use std::time::{Duration, SystemTime};
 use axum::body::Bytes;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use observation_core::tiles::TileId;
+use observation_upstream::{Body, HttpClient, HttpRequest, TransportErrorKind};
 use tokio::sync::Semaphore;
 
-use crate::cache::{Cache, TileMeta, TileSet};
 use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
 use crate::domain::freshness::tile_is_fresh;
 use crate::error::ApiError;
-use crate::ports::TileStore;
+use crate::ports::{TileMeta, TileSet, TileStore};
 use crate::ratelimit::{ClientKey, RateLimiter};
 
 /// Maximum number of simultaneous upstream tile requests.
@@ -33,13 +33,13 @@ const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 /// The tile proxy.
 #[derive(Debug)]
 pub struct TileProxy {
-    client: reqwest::Client,
+    client: Arc<dyn HttpClient>,
     template: String,
     set: TileSet,
     /// Checks a downloaded tile beyond its PNG signature; one that fails is
     /// neither cached nor served.
     usable: fn(&[u8]) -> bool,
-    cache: Arc<Cache>,
+    cache: Arc<dyn TileStore>,
     permits: Semaphore,
     min_ttl: Duration,
     /// Per-client limit on upstream fetches (map tiles only).
@@ -52,9 +52,9 @@ impl TileProxy {
     /// The map tile proxy. `client` must already carry the project
     /// `User-Agent` and a timeout.
     pub fn new(
-        client: reqwest::Client,
+        client: Arc<dyn HttpClient>,
         config: &Config,
-        cache: Arc<Cache>,
+        cache: Arc<dyn TileStore>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -73,11 +73,11 @@ impl TileProxy {
     /// The elevation tile proxy for the `template` from `OBS_DEM_URL`, which
     /// keeps only tiles `usable` accepts.
     pub fn elevation(
-        client: reqwest::Client,
+        client: Arc<dyn HttpClient>,
         template: String,
         usable: fn(&[u8]) -> bool,
         config: &Config,
-        cache: Arc<Cache>,
+        cache: Arc<dyn TileStore>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -119,7 +119,7 @@ impl TileProxy {
         referer: Option<&HeaderValue>,
         client: Option<ClientKey>,
     ) -> Result<Tile, ApiError> {
-        let cached = TileStore::get(&*self.cache, self.set, id).await;
+        let cached = self.cache.get(self.set, id).await;
         if let Some(c) = &cached
             && tile_is_fresh(&c.meta, self.clock.now())
         {
@@ -146,7 +146,7 @@ impl TileProxy {
                     "miss"
                 };
                 self.count(result);
-                match TileStore::put(&*self.cache, self.set, id, &bytes, &meta).await {
+                match self.cache.put(self.set, id, &bytes, &meta).await {
                     Ok(_) => {}
                     Err(e) => {
                         tracing::warn!(error = %e, ?id, server = self.server(), "could not cache tile")
@@ -198,26 +198,44 @@ impl TileProxy {
             .acquire()
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let mut req = self.client.get(id.url(&self.template));
-        if let Some(r) = referer {
-            req = req.header(header::REFERER, r);
-        }
-        if let Some(meta) = stale {
-            if let Some(etag) = &meta.etag {
-                req = req.header(header::IF_NONE_MATCH, etag);
-            }
-            if let Some(lm) = &meta.last_modified {
-                req = req.header(header::IF_MODIFIED_SINCE, lm);
-            }
-        }
-        let resp = req.send().await.map_err(|e| {
-            tracing::warn!(error = %e.without_url(), ?id, server = self.server(), "tile request failed");
+        let unreachable = || {
             ApiError::Upstream(match self.set {
                 TileSet::Map => "could not reach the tile server; map tiles may be missing".into(),
                 TileSet::Dem => "could not reach the elevation server".into(),
             })
+        };
+        // Error bodies are never read; only the status and headers matter.
+        let mut req = HttpRequest::get(id.url(&self.template), MAX_TILE_BYTES).error_max_bytes(0);
+        if let Some(r) = referer {
+            req = req.header(header::REFERER, r.clone());
+        }
+        if let Some(meta) = stale {
+            let value = |v: &str| {
+                HeaderValue::from_str(v).map_err(|e| {
+                    tracing::warn!(error = %e, ?id, server = self.server(), "tile request failed");
+                    unreachable()
+                })
+            };
+            if let Some(etag) = &meta.etag {
+                req = req.header(header::IF_NONE_MATCH, value(etag)?);
+            }
+            if let Some(lm) = &meta.last_modified {
+                req = req.header(header::IF_MODIFIED_SINCE, value(lm)?);
+            }
+        }
+        let resp = self.client.send(req).await.map_err(|e| {
+            if e.kind == TransportErrorKind::Body {
+                tracing::warn!(error = %e, ?id, server = self.server(), "tile body failed");
+                ApiError::Upstream(format!(
+                    "the download from the {} was interrupted",
+                    self.server()
+                ))
+            } else {
+                tracing::warn!(error = %e, ?id, server = self.server(), "tile request failed");
+                unreachable()
+            }
         })?;
-        let status = resp.status();
+        let status = resp.status;
         let header_str =
             |h: &HeaderMap, name| h.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
         let new_meta = |headers: &HeaderMap, old: Option<&TileMeta>| TileMeta {
@@ -228,17 +246,19 @@ impl TileProxy {
         };
         match status {
             StatusCode::OK => {
-                let meta = new_meta(resp.headers(), None);
-                let body = crate::read_capped(resp, MAX_TILE_BYTES)
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(error = %e.without_url(), ?id, server = self.server(), "tile body failed");
-                        ApiError::Upstream(format!("the download from the {} was interrupted", self.server()))
-                    })?
-                    .ok_or_else(|| {
-                        tracing::warn!(max = MAX_TILE_BYTES, ?id, server = self.server(), "tile body too large");
-                        ApiError::Upstream(format!("the {} returned a tile that is too large", self.server()))
-                    })?;
+                let meta = new_meta(&resp.headers, None);
+                let Body::Complete(body) = resp.body else {
+                    tracing::warn!(
+                        max = MAX_TILE_BYTES,
+                        ?id,
+                        server = self.server(),
+                        "tile body too large"
+                    );
+                    return Err(ApiError::Upstream(format!(
+                        "the {} returned a tile that is too large",
+                        self.server()
+                    )));
+                };
                 if !body.starts_with(PNG_MAGIC) {
                     return Err(ApiError::Upstream(format!(
                         "the {} returned something that is not a PNG",
@@ -254,7 +274,7 @@ impl TileProxy {
                 }
                 Ok(Upstream::Fresh(body, meta))
             }
-            StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(resp.headers(), stale))),
+            StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(&resp.headers, stale))),
             StatusCode::NOT_FOUND => Err(ApiError::NotFound(match self.set {
                 TileSet::Map => "the tile server has no tile here",
                 TileSet::Dem => "the elevation server has no tile here",
@@ -270,7 +290,7 @@ impl TileProxy {
                     // Redirects are not followed (see `observation_upstream`).
                     tracing::warn!(
                         status = %other,
-                        location = ?resp.headers().get(header::LOCATION),
+                        location = ?resp.headers.get(header::LOCATION),
                         server = self.server(),
                         "upstream redirected; point OBS_TILE_URL or OBS_DEM_URL at the final URL"
                     );
@@ -337,6 +357,9 @@ fn max_age(value: &str) -> Option<u64> {
             .flatten()
     })
 }
+
+#[cfg(test)]
+mod proxy_tests;
 
 #[cfg(test)]
 mod tests {
@@ -438,45 +461,5 @@ mod tests {
             1_700_000_000,
             "an Expires in the past counts as no time"
         );
-    }
-
-    /// A cached tile is served while `expires_unix` is after "now" and goes
-    /// upstream from exactly then (here unreachable, so the copy is served stale).
-    #[tokio::test]
-    async fn cached_tiles_expire_at_expires_unix() {
-        let dir = tempfile::tempdir().unwrap();
-        let clock = Arc::new(crate::clock::ManualClock::at_unix(1_700_000_000));
-        let caps = crate::cache::CacheCaps {
-            bundle_bytes: 1 << 20,
-            tile_bytes: 1 << 20,
-            dem_bytes: 1 << 20,
-        };
-        let cache = Arc::new(Cache::open_with_clock(dir.path(), caps, clock.clone()));
-        let id = TileId::new(3, 2, 1).unwrap();
-        let meta = TileMeta {
-            expires_unix: 1_700_000_100,
-            ..TileMeta::default()
-        };
-        cache.put_tile(id, PNG_MAGIC, &meta).await.unwrap();
-        let config = Config::for_tests(
-            dir.path(),
-            dir.path(),
-            "http://127.0.0.1:9/",
-            "http://127.0.0.1:9/{z}/{x}/{y}.png",
-        );
-        // No proxy: the environment's proxy settings must not reach the test.
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let proxy = TileProxy::new(client, &config, cache, clock.clone());
-        let stale_at = |unix: u64| {
-            clock.set(std::time::UNIX_EPOCH + Duration::from_secs(unix));
-            let proxy = &proxy;
-            async move { proxy.get(id, None, None).await.unwrap().stale }
-        };
-        assert!(!stale_at(1_700_000_099).await);
-        assert!(
-            stale_at(1_700_000_100).await,
-            "expired at exactly expires_unix"
-        );
-        assert!(stale_at(1_700_000_101).await);
     }
 }

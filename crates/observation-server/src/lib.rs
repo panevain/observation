@@ -30,7 +30,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Bytes;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
-use observation_upstream::{GuardedHttp, Redirects, client_builder};
+use observation_upstream::{GuardedHttp, HttpClient, Redirects, client_builder};
 use thiserror::Error;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -93,16 +93,19 @@ impl AppState {
         let user_agent = config.user_agent();
         config.validate()?;
         // No redirects: an upstream must not be able to send us elsewhere.
-        let upstream = || client_builder(config.allow_private_upstreams, Redirects::None);
+        let upstream = || GuardedHttp::builder(config.allow_private_upstreams, Redirects::None);
         // Every attempt sets its own timeout (at most this one), as before.
-        let overpass_client = GuardedHttp::builder(config.allow_private_upstreams, Redirects::None)
+        let overpass_client = upstream()
             .user_agent(&user_agent)
             .timeout(config.overpass_timeout)
             .build()?;
-        let tile_client = upstream()
-            .user_agent(&user_agent)
-            .timeout(Duration::from_secs(20))
-            .build()?;
+        // Tile requests set none of their own: this one covers each fetch.
+        let tile_client: Arc<dyn HttpClient> = Arc::new(
+            upstream()
+                .user_agent(&user_agent)
+                .timeout(Duration::from_secs(20))
+                .build()?,
+        );
 
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let cache = Arc::new(Cache::open_with_clock(
@@ -142,9 +145,9 @@ impl AppState {
             None => None,
         };
         let elevation = Arc::new(Elevation::new(
-            tile_client.clone(),
+            Arc::clone(&tile_client),
             &config,
-            Arc::clone(&cache),
+            cache.clone(),
             Arc::clone(&clock),
         ));
         let bundles = Arc::new(BundleService::new(
