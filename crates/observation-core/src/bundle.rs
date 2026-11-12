@@ -498,61 +498,9 @@ fn segment_near(bbox: &BBox, a: LatLon, b: LatLon) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    pub(crate) fn sample() -> AreaBundle {
-        sample_on(Terrain::default())
-    }
-
-    /// [`sample`] on the given ground.
-    pub(crate) fn sample_on(terrain: Terrain) -> AreaBundle {
-        let bbox = BBox::around(LatLon::new(51.5, -0.12), 200.0);
-        let c = bbox.center();
-        let d = 0.0001;
-        let b = OsmBuilding {
-            osm_id: 42,
-            outer: vec![
-                LatLon::new(c.lat, c.lon),
-                LatLon::new(c.lat, c.lon + d),
-                LatLon::new(c.lat + d, c.lon + d),
-                LatLon::new(c.lat + d, c.lon),
-                LatLon::new(c.lat, c.lon),
-            ],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.5,
-            address: None,
-        };
-        let r = OsmRoad {
-            osm_id: 7,
-            highway: "residential".into(),
-            name: Some("Test St".into()),
-            width_m: 6.0,
-            points: vec![
-                LatLon::new(c.lat - d, c.lon - d),
-                LatLon::new(c.lat - d, c.lon + 2.0 * d),
-            ],
-        };
-        let a = OsmAddressPoint {
-            address: Address {
-                housenumber: Some("12".into()),
-                street: Some("Test St".into()),
-                ..Address::default()
-            },
-            point: LatLon::new(c.lat + d / 2.0, c.lon + d / 2.0),
-        };
-        build_bundle(
-            bbox,
-            &[b],
-            &[r],
-            &[a],
-            terrain,
-            "© OpenStreetMap contributors",
-            1_700_000_000,
-            Some(1_699_990_000),
-        )
-    }
+    use crate::testing::{box_footprint, sample_bundle as sample, sample_bundle_on as sample_on};
 
     #[test]
     fn round_trip() {
@@ -717,13 +665,7 @@ pub(crate) mod tests {
     /// Two houses side by side: `1` tagged on its building, `2` only as a
     /// node in its yard, nearer house 1's wall than the node is.
     fn neighbours() -> AreaBundle {
-        let square = |x: f32| Footprint {
-            outer: vec![[x, 0.0], [x + 10.0, 0.0], [x + 10.0, 10.0], [x, 10.0]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.0,
-            base_m: 0.0,
-        };
+        let square = |x: f32| box_footprint(x, 0.0, x + 10.0, 10.0, 6.0);
         let addr = |n: &str| Address {
             housenumber: Some(n.into()),
             street: Some("Main St".into()),

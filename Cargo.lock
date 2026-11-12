@@ -4736,6 +4736,7 @@ version = "0.1.0"
 dependencies = [
  "earcut",
  "glam",
+ "observation-core",
  "postcard",
  "ron",
  "serde",

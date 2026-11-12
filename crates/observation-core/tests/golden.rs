@@ -15,21 +15,19 @@
 //! and review the diff. Old files must keep loading, so every test also reads
 //! the committed bytes back.
 //!
-//! The fixture area lies on the equator, so its projection's cosine is exactly
-//! 1 and the bytes do not depend on the platform's `cos`. The view cone is
-//! written out rather than built from angles for the same reason.
+//! The area is [`rich_bundle`], which lies on the equator, so its
+//! projection's cosine is exactly 1 and the bytes do not depend on the
+//! platform's `cos`. The view cone is written out rather than built from
+//! angles for the same reason.
 
 use glam::Vec3;
-use observation_core::address::Address;
-use observation_core::bundle::{
-    AreaBundle, BUNDLE_MAGIC, BUNDLE_VERSION, OsmAddressPoint, OsmBuilding, OsmRoad, build_bundle,
-};
+use observation_core::bundle::{AreaBundle, BUNDLE_MAGIC, BUNDLE_VERSION};
 use observation_core::camera::Catalog;
 use observation_core::coverage_job::{JOB_VERSION, Job, JobRequest, JobResponse, LayerInputs};
 use observation_core::frustum::ViewCone;
-use observation_core::geo::{BBox, LatLon};
+use observation_core::geo::LatLon;
 use observation_core::scene::SceneFile;
-use observation_core::terrain::Terrain;
+use observation_core::testing::rich_bundle;
 use std::path::{Path, PathBuf};
 
 // ----- harness ---------------------------------------------------------------
@@ -114,165 +112,6 @@ fn describe(expected: &[u8], actual: &[u8]) -> String {
 
 // ----- fixtures --------------------------------------------------------------
 
-/// A 0.001° × 0.0012° box (about 111 m × 134 m) centred on the equator at
-/// 10° E.
-fn fixture_bbox() -> BBox {
-    BBox {
-        south: -0.0005,
-        west: 9.9994,
-        north: 0.0005,
-        east: 10.0006,
-    }
-}
-
-/// A closed ring through `corners` (lat, lon offsets from the box centre).
-fn ring(corners: &[(f64, f64)]) -> Vec<LatLon> {
-    let c = fixture_bbox().center();
-    let mut r: Vec<LatLon> = corners
-        .iter()
-        .map(|&(lat, lon)| LatLon::new(c.lat + lat, c.lon + lon))
-        .collect();
-    r.push(r[0]);
-    r
-}
-
-/// Ground falling to the north-west and rising to the south-east, written
-/// out sample by sample (no elevation function involved).
-fn fixture_terrain() -> Terrain {
-    let (cols, rows) = (12u32, 11u32);
-    let mut heights_dm = Vec::new();
-    for row in 0..rows {
-        for col in 0..cols {
-            let (c, r) = (col as i16 - 6, row as i16 - 5);
-            heights_dm.push(c * 4 + r * 3 + (c * r) % 5);
-        }
-    }
-    Terrain {
-        min: [-220.0, -210.0],
-        cell_m: 40.0,
-        cols,
-        rows,
-        heights_dm,
-        datum_m: 123.5,
-        attribution: "Elevation: golden fixture".to_owned(),
-    }
-}
-
-/// OSM features as the server's parser hands them over: a house whose
-/// address lacks a street (filled from the nearest road), a relation with a
-/// courtyard, a raised building part, three roads (one running far beyond
-/// the box) and two address points.
-fn fixture_features() -> (Vec<OsmBuilding>, Vec<OsmRoad>, Vec<OsmAddressPoint>) {
-    let d = 0.0001;
-    let buildings = vec![
-        OsmBuilding {
-            osm_id: 101,
-            outer: ring(&[(0.0, -2.0 * d), (0.0, -d), (d, -d), (d, -2.0 * d)]),
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.5,
-            address: Some(Address {
-                housenumber: Some("1".into()),
-                ..Address::default()
-            }),
-        },
-        OsmBuilding {
-            osm_id: -202,
-            outer: ring(&[
-                (0.0, 0.5 * d),
-                (0.0, 3.0 * d),
-                (2.0 * d, 3.0 * d),
-                (2.0 * d, 0.5 * d),
-            ]),
-            holes: vec![ring(&[
-                (0.6 * d, 1.2 * d),
-                (1.4 * d, 1.2 * d),
-                (1.4 * d, 2.3 * d),
-                (0.6 * d, 2.3 * d),
-            ])],
-            min_height_m: 0.0,
-            height_m: 12.0,
-            address: Some(Address {
-                housename: Some("Ring House".into()),
-                street: Some("Equator Road".into()),
-                unit: Some("B".into()),
-                ..Address::default()
-            }),
-        },
-        OsmBuilding {
-            osm_id: 303,
-            outer: ring(&[(2.5 * d, -d), (2.5 * d, 0.2 * d), (3.2 * d, -0.4 * d)]),
-            holes: vec![],
-            min_height_m: 3.0,
-            height_m: 9.0,
-            address: None,
-        },
-    ];
-    let c = fixture_bbox().center();
-    let at = |lat: f64, lon: f64| LatLon::new(c.lat + lat, c.lon + lon);
-    let roads = vec![
-        OsmRoad {
-            osm_id: 7001,
-            highway: "residential".into(),
-            name: Some("Equator Road".into()),
-            width_m: 6.0,
-            points: vec![
-                at(-2.0 * d, -0.2),
-                at(-2.0 * d, -5.0 * d),
-                at(-2.0 * d, 5.0 * d),
-                at(-2.5 * d, 0.2),
-            ],
-        },
-        OsmRoad {
-            osm_id: 7002,
-            highway: "footway".into(),
-            name: None,
-            width_m: 2.0,
-            points: vec![at(-2.0 * d, 0.0), at(0.0, 0.2 * d), at(2.4 * d, 0.2 * d)],
-        },
-        OsmRoad {
-            osm_id: 7003,
-            highway: "service".into(),
-            name: Some("Back Lane".into()),
-            width_m: 6.5,
-            points: vec![at(3.5 * d, -5.0 * d), at(3.5 * d, 5.0 * d)],
-        },
-    ];
-    let addresses = vec![
-        OsmAddressPoint {
-            address: Address {
-                housenumber: Some("3".into()),
-                street: Some("Equator Road".into()),
-                unit: Some("1".into()),
-                ..Address::default()
-            },
-            point: at(1.0 * d, 1.0 * d),
-        },
-        OsmAddressPoint {
-            address: Address {
-                housenumber: Some("5".into()),
-                ..Address::default()
-            },
-            point: at(-0.5 * d, 4.0 * d),
-        },
-    ];
-    (buildings, roads, addresses)
-}
-
-fn fixture_bundle() -> AreaBundle {
-    let (buildings, roads, addresses) = fixture_features();
-    build_bundle(
-        fixture_bbox(),
-        &buildings,
-        &roads,
-        &addresses,
-        fixture_terrain(),
-        "© OpenStreetMap contributors",
-        1_793_500_000,
-        Some(1_793_475_782),
-    )
-}
-
 /// Looking north from the road, written out rather than built from angles.
 fn fixture_job() -> Job {
     Job {
@@ -296,7 +135,7 @@ fn fixture_job() -> Job {
 
 #[test]
 fn golden_bundle() {
-    let bundle = fixture_bundle();
+    let bundle = rich_bundle();
     // The fixture covers what the format carries.
     assert_eq!(
         bundle.buildings.len(),
@@ -340,7 +179,7 @@ fn golden_bundle() {
 
 #[test]
 fn golden_job_messages() {
-    let inputs = LayerInputs::new(&fixture_bundle(), 1.0, 1.0);
+    let inputs = LayerInputs::new(&rich_bundle(), 1.0, 1.0);
     let layers = inputs.build();
     let job = fixture_job();
     let result = job.run(&layers);
