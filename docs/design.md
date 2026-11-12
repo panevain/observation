@@ -32,9 +32,10 @@ The browser only ever talks to its own origin. Upstream services are reached by 
 | `observation-core` | Pure logic with no engine dependency, shared by both sides. `geo` (projection, bounding boxes), `regions` (region status JSON), `tiles` (slippy-map maths), `building` (height inference, extrusion), `bundle` (wire format, road widths), `camera` (models, DORI, catalogue parsing), `frustum` (view cones), `occlusion` (line of sight), `coverage` (raster, statistics), `scene` (saved files), `provenance` (data date, caveats, fingerprints, UTC timestamps) |
 | `observation-server` | `config` (environment), `overpass` (client and parser), `bundles` (cache plus single-flight), `cache` (disk), `tiles` (proxy), `demo` (fixture bundle), `regions` (region agent client and status relay), `routes/*`, `error` |
 | `observation-regions` | Optional region agent binary: `catalog` (Geofabrik index), `poly` (boundaries, containment), `import` (download, filter, Overpass import), `registry` (regions, queue, persistence), HTTP API in `lib` |
-| `observation-client` | Bevy app compiled to `wasm32-unknown-unknown`: networking, 3D world, camera bodies, coverage systems, input, persistence, egui UI, design tokens |
+| `observation-client` | Bevy app compiled to `wasm32-unknown-unknown`: a library (`ClientPlugins`: networking, 3D world, camera bodies, coverage systems, input, persistence, undo, egui UI, design tokens), the browser and native implementations of the platform ports (`platform/`), and two binaries, the app and the coverage worker |
+| `observation-client-model` | The client's engine-free logic, without Bevy, egui or `web-sys`: `platform` (the ports and their shared types), `document`, `editor`, `toasts`, `commands`, `history`, `net`, `coverage`, `persist`, `vm` (view-models), and `testing` (fakes of the ports, behind the `testing` feature) |
 
-Core, server and region agent are the workspace's default members, so plain `cargo build` and `cargo test` do not compile the Bevy client. Workspace lints forbid `unsafe` code and warn on `unwrap`, `dbg!` and `todo!`; CI turns warnings into errors.
+Core, server and region agent are the workspace's default members, so plain `cargo build` and `cargo test` do not compile the Bevy client. The client's model crate is a default member too, so its tests run there. Workspace lints forbid `unsafe` code and warn on `unwrap`, `dbg!` and `todo!`; CI turns warnings into errors.
 
 ## Coordinate frame
 
@@ -287,8 +288,12 @@ Layers, outermost first: request tracing, security headers, gzip and brotli comp
 
 The client is a Bevy app (`DefaultPlugins` with WebGL2) whose UI is egui via `bevy_egui`. The canvas is `#observation-canvas`, and egui panels around it set the 3D camera's viewport rectangle, so the scene is never drawn under a panel.
 
+The client is two crates. `observation-client` is a library whose `ClientPlugins` group is the whole app on top of Bevy; its `observation-client` binary adds `DefaultPlugins`, mesh picking and egui, then `ClientPlugins`. `observation-client-model` holds the state and the rules that change it, with no Bevy, egui or `web-sys` dependency (the compiler enforces it), so it builds natively and for wasm and is tested with plain `cargo test`. The Bevy systems are adapters: they read resources and messages, call the model, and write assets, entities and messages. The model's `clippy.toml` forbids `SystemTime::now`, `Instant::now` and `thread::sleep`, which panic on `wasm32-unknown-unknown`.
+
 | Plugin | Role |
 | --- | --- |
+| `PlatformPlugin` | Built first: inserts the `Platform` resource (the ports, below) unless a test already inserted fakes |
+| `ResourcesPlugin` | Inserts the resources the other plugins share: theme tokens, the stored font and Address-jump preferences, the camera catalogue, the document and the editing state |
 | `NetPlugin` | `fetch` bundles and tiles from the page's origin, reply through a channel drained every frame. Tile queue: at most 6 requests in flight, newest first, soft cap of 400 tiles |
 | `WorldPlugin` | Builds the 3D area on load: building mesh, ground, map tiles draped on the ground (at most 64 tiles, plus a 150 m margin around the area), lights, coverage overlay assets |
 | `CamerasPlugin` | Camera bodies (a small coloured box with a lens) and view-cone gizmos |
@@ -296,9 +301,31 @@ The client is a Bevy app (`DefaultPlugins` with WebGL2) whose UI is egui via `be
 | `CoveragePlugin` | Incremental coverage computation (in a Web Worker in the browser, see [below](#coverage-worker)) and overlay painting |
 | `InputPlugin` | Orbit camera, pointer and touch gestures, tool actions, shortcuts |
 | `PersistPlugin` | Autosave, restore, JSON export and import |
+| `HistoryPlugin` | Undo and redo: the shortcuts, and recording settled edits as steps |
 | `UiPlugin` | Panels, dialogs, toasts, theme application and following the system light/dark setting |
+| `LoaderPlugin` | Hides the page's loading screen at start-up |
 
-Resources: **`Scene`** is the user's document (area, origin, cameras, analysis parameters, a revision counter that drives sync, coverage and autosave). **`UiState`** is transient state (tool, selection, overlay mode, toggles, toasts). **`Models`** holds the shipped catalogue and the scene's custom models. **`Area`** holds the loaded bundle and the precomputed analysis layers.
+Resources are newtypes over model types (a private field with `Deref`/`DerefMut`), so their change detection works as before. **`Scene`** is the user's document (`document::Document`: area, origin, cameras, analysis parameters, a revision counter that drives sync, coverage and autosave). **`Models`** holds the shipped catalogue and the scene's custom models. **`Editor`** is the editing state (tool, selection, the Place tool's model, the region being drawn, and two one-shot requests: frame the selected camera in the 3D view, and scroll the camera list to a picked address). **`Panels`** holds which panels and dialogs are open and the overlay settings, **`Hover`** what the pointer is over, and **`Toasts`** the messages on screen. **`DataChangeNotice`** says that a restored or imported scene's area came back with different map data, until it is dismissed, another area loads, or undo or redo moves away from that step. **`Loading`** is the area request that counts, **`Autosave`** the autosave timer and the last save's outcome, and **`Area`** the loaded bundle with its precomputed analysis layers. The coverage backend is a non-send resource, since in the browser it owns the worker's JavaScript handle.
+
+### Model crate and ports
+
+The model's modules:
+
+- `platform`: the ports. `Http` (requests and server-sent events), `KeyValueStore` (`localStorage` and `sessionStorage`), `FileDialogs` (download and file picker), `Clock` (wall-clock milliseconds) and `ColorScheme` are `Send + Sync`; a result that arrives later goes to a callback, which may run before the call returns. `JobChannel`, the coverage worker's byte-level link, has no `Send` bound. `HttpRequest`'s `Debug` hides the admin token.
+- `document`: `Document`, `Models`, `Snapshot` and `LoadArea`; `document::area_load` is what loading an area does to the document (a fresh area starts empty or, for the demo street, with example cameras; a restored scene's own area keeps its cameras; the provenance is brought up to date).
+- `editor` and `toasts`: the editing state, panels and hover, and the toasts.
+- `commands`: what the tools, keys and buttons do, through an `EditCtx` (the document, editor, panels and toasts). The document is passed as a `Tracked` value, which takes write access only on a path that writes, because in the client write access marks the resource changed and so re-runs coverage, painting and autosave.
+- `history`: `History::observe` records a snapshot once an edit settles, and `History::step` undoes or redoes.
+- `net`: the server's published settings, the tile queue, the area request that counts, and the text of a failed request.
+- `coverage`: the counts and figures (`CoverageState`), and `coverage::backend`, which runs jobs in the worker through a `JobChannel` or inline (see [Coverage worker](#coverage-worker)).
+- `persist`: the storage keys, `Autosaver` and `RestoreOutcome` (see [Persistence](#persistence)).
+- `vm`: the view-models, below.
+
+The client implements each port once for the browser (`platform/web.rs`) and once natively (`platform/native.rs`: no network and no storage, downloads written to the working directory, a dark colour scheme and no worker), and `PlatformPlugin` inserts them as one read-only `Platform` resource of `Arc<dyn …>` ports. `platform/` is the only place in the client library that tests the target; a test fails on a target condition (`target_arch`, `target_family` and the like) anywhere else under `src/`, apart from the coverage worker binary, which must not link the library.
+
+### View-models and panel commands
+
+The egui panels lay out view-models and send edits to `commands`; they never assign to document fields themselves. A view-model is worked out from the model each frame and says what a panel shows, while colours, icons and fonts stay with the panel: `StatusVm` (status bar: credits, the save status, the headline figures), `LoadingVm` (loading card: heading, timer, the stage shown after 5 and 25 s, whether it can be cancelled or offer the demo), `CameraListVm` (the grouped camera list), `CoverageSummaryVm` (the Coverage card and its ladder; `settings_line` stays a function, because the line is drawn after the ladder, whose click changes the level in the same frame) and `HistoryVm` (the undo and redo buttons). The Analysis tab and the Coverage card change the parameters and the region through `commands::set_params`, `clear_region` and `set_region_enabled`; the camera details write their edited copy back with `commands::update_camera`, only when it differs. All of them run inside `draw_ui`, as immediate calls, so an edit made in the UI is seen by `Update` systems on the next frame.
 
 ### Message flow
 
@@ -319,6 +346,18 @@ Resources: **`Scene`** is the user's document (area, origin, cameras, analysis p
 ```
 
 A failed load shows an error toast and leaves the previous area in place. Cameras are kept only when `keep_cameras` is set and the area is unchanged (restore and import); otherwise loading an area clears them.
+
+### Schedule
+
+Within `Update`, the net systems, the world systems, the camera systems, the coverage systems, the input systems and the history systems each run as a chain; `on_area_loaded` is in `AreaLoadSet` and `pointer` in `PointerSet`. On top of that, every pair of systems that use the same data and whose order the user can see has an edge, in the order the app ran them before the refactor: the key and import edits, then the camera bodies, the area load and `record`; then the net chain (so `record` runs before `start_area_loads` and `drain_replies`); what draws the scene (cones, coverage, region outline, address highlight) after `record` and before `pointer`; Export (`handle_actions`) after `pointer` and `record`; `apply_ground_tiles` before `drain_replies`. `forget_missing_place_model` runs after `record` and `receive_imports` and before `pointer`. Outside `Update`, `follow_scheme` runs in `PreUpdate`, `resolve_addresses` in `PostUpdate` before egui ends its pass, and `apply_theme` then `draw_ui` in egui's pass, after `Update`.
+
+On the web the executor is single-threaded, so `Update` runs one system at a time in an order Bevy resolves from those edges. Where two systems have no edge between them, Bevy's tie-breaking (or where it puts its automatic sync points) decides, and any new system or edge anywhere can change that. So tie-breaking is left only the pairs whose order does not matter. `schedule_tests` (a test module of the client library) checks this on the app the binary runs: `main.rs` and the tests both build it with `observation_client::app`, the tests with winit disabled and no graphics backend (so no render sub-app, no winit systems, and Bevy's web-only branches not taken; none of them adds a system to the client's schedules). On the built graphs it checks:
+
+- **Order-sensitive pairs** (40 in `Update`): each is ordered by declared edges in the stated direction, directly or through other systems, and stays so when an unrelated system is added. Each is listed with what its order gives.
+- **Commuting pairs**: the pairs of client systems in `Update` that use the same data, at least one mutably, and that no declared edge orders are exactly the listed ones (20), each with the data they share and why their order does not matter (toast lifetime, the autosave timer's phase, disjoint fields, input picked up from outside the frame). The check builds `Update` without automatic sync points, so a pair ordered only by a sync point counts as unordered.
+- **The other schedules** have no such pair among the client's systems.
+
+A system is the client's when its type name is in `observation_client`; Bevy's own pairs are left out. The full run order is not pinned: it would only pin tie-breaks between commuting systems. When the check fails, the message names the pair and what to do: add `.before`/`.after` edges for an order-sensitive pair, or list a new pair as commuting with its reason.
 
 ### Camera placement and input
 
@@ -367,6 +406,8 @@ Core code in `observation-core`; the client only schedules it and paints the res
 
 In the browser the per-camera computation runs in a dedicated worker: the `coverage-worker` binary of the client crate (`src/bin/coverage_worker.rs`, `observation-core` with plain wasm-bindgen and no Bevy). Trunk builds it from a second `rel="rust"` link in `web/index.html` (`data-type="worker"`, the `web` bindgen target and a loader shim, with the same profile and `wasm-opt` settings as the app). Trunk names worker files after the binary rather than by content hash, because the app has to know the URL, so the app starts a module worker from `/coverage-worker_loader.js`, and the server, which caches only names that carry a hash, has browsers revalidate these files. The messages (`observation_core::coverage_job`) are postcard behind a version byte, posted as `Uint8Array`s whose buffers are transferred. On each area load the client sends a new generation number and the inputs of `StaticLayers::from_parts` (ground grid, footprints, roads, façade cell size, terrain; not the render mesh), and the worker builds its own `StaticLayers` with the same function as the client; then the client sends one job (camera id, cache key, view cone, subject height) for each camera whose key changed or whose sight lines fall short of the range now needed, and the worker answers with its sight lines, or with `Stale` if the job belongs to an area it does not hold. The client keeps the cache, the counters and the statistics. It has at most one job per camera in flight, keeps showing the previous sight lines until the answer arrives, and drops answers for an earlier area or for a camera that has since been deleted or disabled. An answer for an earlier pose replaces only an even older visibility, never an up-to-date one, so the overlay of a dragged camera follows one job behind and catches up once it stops. Natively, and when the worker cannot be started, reports an error, has not said it is ready within 10 s, or answers `Stale` for the current area, the same jobs run inline on the main thread.
 
+The protocol side lives in the model's `coverage::backend` (`CoverageBackend`, over the byte-level `JobChannel` port): encoding and decoding, the queue held until the worker says it is ready, the 10 s timeout, and falling back to inline jobs. The browser's `JobChannel` is plain glue in `platform/web.rs`, and the client's `CoveragePlugin` builds the backend when the plugin is built. Tests drive it with a scripted channel and with a loopback channel that answers as the worker binary does, which checks that worker results equal inline ones.
+
 ### Why CPU ray casting rather than GPU shadow maps
 
 The usual way to show "what a light or camera sees" is to render a depth map from the camera and compare. It was rejected for these reasons:
@@ -396,6 +437,8 @@ The minimum supported viewport is 768 x 600 CSS px, enforced twice: a CSS media 
 ## Persistence
 
 The scene is serialised with `SceneFile` (`format: "observation-scene"`, `version: 2`) to `localStorage` under `observation.scene.v1` whenever its JSON changes, checked every 1.5 s. At start-up the stored scene is restored (and its area re-fetched); a missing entry loads the demo and opens the help card; an unreadable entry shows an error and falls back to the demo. Export and import use the same format through a file download and a file picker. `SceneFile::from_json` is the single validation point (see the threat model). Camera positions are relative to the stored origin, which comes from the bundle, so a saved scene lines up with its buildings as long as the area is regenerated from the same box. Positions are over the terrain (`y = 0` is the ground at the origin). Version 1 files and autosaves assumed flat ground at `y = 0`: they still load, and once their area arrives each camera is raised by the ground height under it, keeping its height above the ground (until then the autosave stays at version 1). A camera's optional `group` is stored only when set by hand (trimmed, at most 80 characters, blank dropped on load); addresses are never saved, since they are worked out again from the area. The optional `provenance` block is described under [Data date and provenance](#data-date-and-provenance).
+
+The rules are in the model's `persist` module, over the `KeyValueStore` port. `Autosaver` keeps the timer and the last JSON written: it writes only when the JSON differs, records `Saved` with the wall-clock time (Bevy's `Time<Real>`, not the virtual clock, which caps each frame at 250 ms) or `Failed` with the reason, and after a refused write (storage full, blocked or unavailable) tries again at the next check. The status bar shows the outcome ("Saved", or "Not saved" with the reason and a hint to export). `RestoreOutcome` reads the stored scene once at start-up and applies it: the saved scene, the demo with the help card, or the demo with a sticky error toast. `PersistPlugin` is the adapter: `restore` at start-up, `autosave` in `Update`, and export and import through the `FileDialogs` port.
 
 ### Data date and provenance
 
@@ -519,7 +562,10 @@ The README badges are images fetched by whoever views the README on GitHub (from
 - **Build checks**: the release `trunk build` (with the wasm size budget) and the Docker build with a smoke test.
 - **Browser smoke test** (`tests/browser/smoke.cjs`, CI's `browser (wasm smoke test)`): the release `dist/` in the app image, loaded in headless Chrome with WebGL2 on SwiftShader. It fails unless the client starts (removes its loading card), loads the demo street and starts the coverage worker without logging an error or panic; the screenshot and console log are kept as an artifact. Map tiles are answered by the test, so it sends nothing to OpenStreetMap. `mise run test:browser` runs it against a local server.
 
-The client has a few unit tests (`coverage`, `net`, `regions`, `state` and `ui::regions`) in its binary. `mise run test` (CI's `test` job) builds the client natively to run them alongside the rest of the workspace; beyond them, client behaviour is covered by compilation, clippy, the browser smoke test and the core tests of the logic it uses.
+- **Client model tests** (`observation-client-model`, plain `cargo test`) cover the commands, undo and redo, the tile queue and area requests, the coverage backend's worker protocol (with a scripted channel, and a loopback channel compared with inline results), area loading, the editing state, the toasts, autosave and restore, the view-models, and the fakes' own contracts.
+- **Client tests** (`observation-client`, built natively) run the Bevy systems headless over `MinimalPlugins` and fake ports (the model's `testing` feature): the network plugin, coverage, input, undo, regions and cameras; persistence goldens (`persist/golden.rs` with `tests/golden/*.json`) that pin the autosave JSON, restores, imports, exports and storage writes; the schedule checks (see [Schedule](#schedule)); the guard that keeps target conditions in `platform/`; and end-to-end tests of the whole `ClientPlugins` app (a saved scene restored, its area loaded, coverage from a loopback worker, an edit, the next autosave; and an unreadable autosave). Goldens are blessed only with `OBS_BLESS=1`, which is refused under `CI`.
+
+`mise run test` (CI's `test` job) builds the client natively to run them alongside the rest of the workspace. The egui panels, picking, the web ports and the real worker are covered by compilation, clippy and the browser smoke test.
 
 ## Known limitations and future work
 
