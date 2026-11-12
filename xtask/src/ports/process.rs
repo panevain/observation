@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::SystemTime;
 
-use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, Http, Response};
+use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, GitRun, Http, Response};
 use crate::core::time::Timestamp;
 use crate::{Error, Result};
 
@@ -134,6 +134,24 @@ impl Git for GitCli {
             _ => Err(failed(&cmd, &out)),
         }
     }
+
+    fn run(&self, args: &[&str]) -> Result<GitRun> {
+        use std::os::unix::process::ExitStatusExt as _;
+        let mut cmd = self.git(args);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let out = cmd.output().map_err(|e| spawn_error(&cmd, &e))?;
+        let code = out
+            .status
+            .code()
+            .or_else(|| out.status.signal().map(|s| -s))
+            .unwrap_or(-1);
+        Ok(GitRun {
+            code,
+            stdout: out.stdout,
+        })
+    }
 }
 
 /// `curl`, HTTPS only (redirects included), identifying itself with `user_agent`. It reads no
@@ -196,16 +214,19 @@ impl Http for Curl {
     }
 }
 
-/// cargo-audit, as `program` (default: `cargo-audit` from `PATH`).
+/// cargo-audit, as `program` (default: `cargo-audit` from `PATH`), and cargo, as `cargo`
+/// (default: `cargo` from `PATH`, so that rustup picks the toolchain of the directory it runs in).
 #[derive(Debug, Clone)]
 pub struct CargoCli {
     pub program: PathBuf,
+    pub cargo: PathBuf,
 }
 
 impl Default for CargoCli {
     fn default() -> Self {
         Self {
             program: "cargo-audit".into(),
+            cargo: "cargo".into(),
         }
     }
 }
@@ -235,6 +256,19 @@ impl Cargo for CargoCli {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(spawn_error(&cmd, &e)),
         }
+    }
+
+    fn update_workspace(&self, dir: &Path, manifest: Option<&str>) -> Result<bool> {
+        let mut cmd = Command::new(&self.cargo);
+        cmd.current_dir(dir).args(["update", "-w"]);
+        if let Some(manifest) = manifest {
+            cmd.args(["--manifest-path", manifest]);
+        }
+        let status = cmd
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| spawn_error(&cmd, &e))?;
+        Ok(status.success())
     }
 }
 
@@ -373,7 +407,10 @@ mod tests {
         std::fs::create_dir(tmp.path().join("sub")).unwrap_or_else(|e| panic!("{e}"));
         let lock = tmp.path().join("sub/Cargo.lock");
         std::fs::write(&lock, "{}").unwrap_or_else(|e| panic!("{e}"));
-        let cargo = CargoCli { program };
+        let cargo = CargoCli {
+            program,
+            ..CargoCli::default()
+        };
         let out = ok(cargo.audit_json(&lock));
         assert_eq!(
             out,
@@ -384,8 +421,34 @@ mod tests {
         );
         let missing = CargoCli {
             program: tmp.path().join("no-cargo-audit"),
+            ..CargoCli::default()
         };
         assert_eq!(ok(missing.audit_json(&lock)), None);
+    }
+
+    #[test]
+    fn cargo_update_runs_in_the_directory_and_reports_success() {
+        let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let cargo = script(
+            tmp.path(),
+            "cargo",
+            r#"echo "$(pwd) $*" >> log; [ "$*" = "update -w" ]"#,
+        );
+        let cli = CargoCli {
+            cargo,
+            ..CargoCli::default()
+        };
+        assert!(ok(cli.update_workspace(tmp.path(), None)));
+        assert!(!ok(
+            cli.update_workspace(tmp.path(), Some("fuzz/Cargo.toml"))
+        ));
+        let log = std::fs::read_to_string(tmp.path().join("log")).unwrap_or_else(|e| panic!("{e}"));
+        let dir = ok(std::fs::canonicalize(tmp.path()).map_err(|e| Error::new(e.to_string())));
+        let dir = dir.display();
+        assert_eq!(
+            log,
+            format!("{dir} update -w\n{dir} update -w --manifest-path fuzz/Cargo.toml\n")
+        );
     }
 
     #[test]
@@ -459,5 +522,9 @@ mod tests {
         assert!(!ok(git.is_commit("--all")));
         assert_eq!(ok(git.show("--output=written", "a.md")), None);
         assert!(!dir.path().join("written:a.md").exists());
+        let run = |args: &[&str]| ok(git.run(args));
+        assert_eq!(run(&["show", "HEAD:a.md"]).stdout, b"one\ntwo\n");
+        let missing = run(&["merge-base", "--is-ancestor", "nope", "HEAD"]);
+        assert_eq!((missing.code, missing.stdout.is_empty()), (128, true));
     }
 }

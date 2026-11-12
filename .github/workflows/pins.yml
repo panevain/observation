@@ -42,6 +42,7 @@ jobs:
     outputs:
       changed: ${{ steps.bump.outputs.changed }}
       automerge: ${{ steps.bump.outputs.automerge }}
+      sha256: ${{ steps.bump.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,16 +51,6 @@ jobs:
       - uses: $/.github/actions/setup-mise
         with:
           cache: false
-      # The sync check after the bump is an xtask command. xtask is built first, with the
-      # toolchain pinned before the bump (which may move it), and uncached like the rest of
-      # this job.
-      - uses: $/.github/actions/setup-rust
-      - name: Build xtask
-        id: xtask
-        run: |
-          set -euo pipefail
-          cargo build --locked --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask"
-          echo "bin=${RUNNER_TEMP}/xtask/debug/xtask" >> "${GITHUB_OUTPUT}"
       - name: Bump
         id: bump
         env:
@@ -91,15 +82,9 @@ jobs:
             fi
           } > "${out}/body.md"
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
+          echo "sha256=$(cd "${out}" && sha256sum -- pins.patch body.md | sha256sum | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
           echo "changed=true" >> "${GITHUB_OUTPUT}"
           echo "automerge=$(cat "${out}/automerge")" >> "${GITHUB_OUTPUT}"
-      # The bumped pins agree wherever they are repeated (mise run sync). Its own step, with no
-      # token in its environment; a failure fails the job before the patch is uploaded.
-      - name: Versions agree
-        if: steps.bump.outputs.changed == 'true'
-        env:
-          XTASK: ${{ steps.xtask.outputs.bin }}
-        run: '"${XTASK}" sync --repo .'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.bump.outputs.changed == 'true'
         with:
@@ -110,9 +95,43 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The bumped pins agree wherever they are repeated (`cargo xtask sync`). A job of its own, so
+  # that bump, whose patch the bot commits and may auto-merge, builds nothing; this one builds
+  # xtask (uncached, with the toolchain pinned before the bump, which may move it) and only
+  # passes or fails.
+  check:
+    name: check pins
+    needs: bump
+    if: needs.bump.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          cache: false
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
+        id: xtask
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pins
+          path: ${{ runner.temp }}/pins
+      - name: Versions agree
+        env:
+          XTASK: ${{ steps.xtask.outputs.path }}
+        run: |
+          set -euo pipefail
+          git apply "${RUNNER_TEMP}/pins/pins.patch"
+          "${XTASK}" --repo . sync
+
   pr:
     name: open pins PR
-    needs: bump
+    needs: [bump, check]
     if: needs.bump.outputs.changed == 'true' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -128,6 +147,21 @@ jobs:
         with:
           name: pins
           path: ${{ runner.temp }}/pins
+      # The artifact must be what bump wrote, which builds nothing: the sha256 of its files,
+      # a value from that job, is compared before anything reads them and before the token.
+      - name: Check the artifact
+        env:
+          DIR: ${{ runner.temp }}/pins
+          FILES: pins.patch body.md
+          SHA256: ${{ needs.bump.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::$1"; exit 1; }
+          [[ "${SHA256}" =~ ^[0-9a-f]{64}$ ]] || refuse "bad digest '${SHA256}'"
+          cd "${DIR}"
+          read -ra files <<<"${FILES}"
+          for f in "${files[@]}"; do [ -f "${f}" ] && [ ! -L "${f}" ] || refuse "${f} is not a regular file"; done
+          [ "$(sha256sum -- "${files[@]}" | sha256sum | cut -d' ' -f1)" = "${SHA256}" ] || refuse "the artifact is not the one bump wrote"
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0

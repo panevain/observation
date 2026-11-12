@@ -58,6 +58,96 @@ enum CoverageCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ReleaseCommand {
+    /// Move CHANGELOG.md's [Unreleased] entries under a dated VERSION heading (with no entries,
+    /// list the commits since the latest release that changed shipped files). A pre-release
+    /// leaves the file alone.
+    Changelog {
+        #[arg(long, value_name = "X.Y.Z")]
+        version: String,
+    },
+    /// Print the next release as version=, kind=, latest= and reason= lines (version empty
+    /// when there is nothing to release), from CHANGELOG.md's [Unreleased] section and the
+    /// shipped files changed since the latest stable tag.
+    Plan {
+        /// This version, if newer than the latest release and not tagged yet.
+        #[arg(long, value_name = "V", default_value = "")]
+        version: String,
+        /// A pre-release: X.Y.Z-dev.N, N one more than the highest such tag (even when nothing
+        /// changed). Empty: none.
+        #[arg(long, value_name = "dev", default_value = "", value_parser = ["", "dev"])]
+        prerelease: String,
+    },
+    /// Print origin's release state as key=value lines: latest (the newest stable v* tag),
+    /// main (main's workspace version), pending (main's version is not tagged yet), hotfix (a
+    /// hotfix/* branch exists), next (the patch release after latest).
+    State,
+    /// Read the release state and apply a workflow's check to it.
+    Gate {
+        kind: GateKind,
+        /// Prep only: a pre-release, to which no check applies (the state is still read).
+        #[arg(long)]
+        prerelease: bool,
+        /// Append the state lines, then go=true|false (prep, watch), to FILE ($GITHUB_OUTPUT).
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Append the verdict (prep, watch) to FILE ($GITHUB_STEP_SUMMARY).
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+    },
+    /// Print each path read from stdin (one per line) that is not on KIND's list in
+    /// .config/release.toml's [allowed-files]: whole paths, compared exactly.
+    UnexpectedFiles {
+        kind: FilesKind,
+        /// The list's file (default: .config/release.toml in the repository). A relative path
+        /// is taken from the repository.
+        #[arg(long, value_name = "FILE")]
+        config: Option<PathBuf>,
+    },
+    /// The workspace version (`version` in Cargo.toml's [workspace.package]).
+    #[command(subcommand)]
+    Version(VersionCommand),
+}
+
+/// Which list of .config/release.toml `release unexpected-files` reads.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum FilesKind {
+    /// What a hotfix may change in main.
+    Hotfix,
+    /// What a pre-release tag's commit may change over its parent.
+    Prerelease,
+}
+
+/// The workflow whose check `release gate` applies.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum GateKind {
+    /// Prepare release: skips (go=false) while a release or hotfix is open.
+    Prep,
+    /// Hotfix: fails unless main is the latest release and nothing else is open.
+    Hotfix,
+    /// Release watch: skips (go=false) without a release to watch or while one is open.
+    Watch,
+}
+
+#[derive(Debug, Subcommand)]
+enum VersionCommand {
+    /// Print the workspace version; fail unless it is X.Y.Z or X.Y.Z-pre.
+    Get {
+        /// The manifest (default: Cargo.toml in the repository; - reads stdin). A relative
+        /// path is taken from the repository.
+        file: Option<String>,
+        /// What an error calls it (default: FILE).
+        name: Option<String>,
+    },
+    /// Set the workspace version, then refresh the workspace crates' entries in Cargo.lock and
+    /// fuzz/Cargo.lock (`cargo update -w`).
+    Set {
+        /// X.Y.Z or X.Y.Z-pre, without the leading v.
+        version: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Dependabot pull requests whose auto-merge to enable or disable.
     #[command(subcommand)]
@@ -82,6 +172,9 @@ enum Command {
     /// Line coverage per crate.
     #[command(subcommand)]
     Coverage(CoverageCommand),
+    /// The release automation's steps.
+    #[command(subcommand)]
+    Release(ReleaseCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
     /// be, or the advisory ignore lists disagree.
     Sync,
@@ -122,6 +215,11 @@ fn append(path: &std::path::Path, text: &str) -> xtask::Result<()> {
         .open(path)
         .and_then(|mut f| f.write_all(text.as_bytes()))
         .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))
+}
+
+/// Whether the scripts' `${GITHUB_ACTIONS:+::error::}` applied: set and not empty.
+fn github_actions() -> bool {
+    std::env::var_os("GITHUB_ACTIONS").is_some_and(|v| !v.is_empty())
 }
 
 fn main() -> ExitCode {
@@ -198,6 +296,95 @@ fn main() -> ExitCode {
                 Ok(out.failed)
             })
         }
+        Command::Release(ReleaseCommand::State) => {
+            cmd::release::state::read(&GitCli::new(&repo), github_actions()).map(|state| {
+                let Some(state) = state else { return true };
+                emit(state.lines().as_bytes(), b"");
+                false
+            })
+        }
+        Command::Release(ReleaseCommand::Gate {
+            kind,
+            prerelease,
+            output,
+            summary,
+        }) => {
+            use cmd::release::state::{self, Kind};
+            let kind = match kind {
+                GateKind::Prep => Kind::Prep { prerelease },
+                GateKind::Hotfix => Kind::Hotfix,
+                GateKind::Watch => Kind::Watch,
+            };
+            let git = GitCli::new(&repo);
+            state::read(&git, github_actions()).and_then(|state| {
+                let Some(state) = state else { return Ok(true) };
+                if let Some(path) = &output {
+                    append(path, &state.lines())?;
+                }
+                let gated = state::render(kind, &state, &state::gate(kind, &state, &git)?);
+                emit(gated.stdout.as_bytes(), b"");
+                if let Some(path) = &summary {
+                    append(path, &gated.summary)?;
+                }
+                if let Some(path) = &output {
+                    append(path, &gated.output)?;
+                }
+                Ok(gated.failed)
+            })
+        }
+        Command::Release(ReleaseCommand::Changelog { version }) => {
+            cmd::release::changelog::run(&repo, &version, &GitCli::new(&repo), &SystemClock).map(
+                |out| {
+                    emit(out.as_bytes(), b"");
+                    false
+                },
+            )
+        }
+        Command::Release(ReleaseCommand::Plan {
+            version,
+            prerelease,
+        }) => cmd::release::plan::plan(&repo, &version, &prerelease, &GitCli::new(&repo)).map(
+            |plan| {
+                emit(plan.lines().as_bytes(), b"");
+                false
+            },
+        ),
+        Command::Release(ReleaseCommand::UnexpectedFiles { kind, config }) => {
+            let kind = match kind {
+                FilesKind::Hotfix => cmd::release::files::Kind::Hotfix,
+                FilesKind::Prerelease => cmd::release::files::Kind::Prerelease,
+            };
+            cmd::release::files::run(&repo, kind, config.as_deref(), &mut std::io::stdin().lock())
+                .map(|out| {
+                    emit(out.as_bytes(), b"");
+                    false
+                })
+        }
+        Command::Release(ReleaseCommand::Version(VersionCommand::Get { file, name })) => {
+            cmd::release::version::get(
+                &repo,
+                file.as_deref(),
+                name.as_deref(),
+                &mut std::io::stdin().lock(),
+                github_actions(),
+            )
+            .map(|line| {
+                emit(line.as_bytes(), b"");
+                false
+            })
+        }
+        Command::Release(ReleaseCommand::Version(VersionCommand::Set { version })) => {
+            let mut diagnostics = String::new();
+            let result = cmd::release::version::set(
+                &repo,
+                &version,
+                &CargoCli::default(),
+                github_actions(),
+                &mut diagnostics,
+            );
+            emit(b"", diagnostics.as_bytes());
+            result
+        }
         Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
             emit(out.stdout.as_bytes(), out.stderr.as_bytes());
             out.failed
@@ -255,5 +442,17 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// The script's argparse choices: `--prerelease` is "" or "dev"; changelog needs `--version`.
+    #[test]
+    fn release_plan_flags_as_the_script_took_them() {
+        let parse = |args: &[&str]| Cli::try_parse_from([&["xtask", "release"], args].concat());
+        assert!(parse(&["plan"]).is_ok());
+        assert!(parse(&["plan", "--prerelease", ""]).is_ok());
+        assert!(parse(&["plan", "--prerelease", "dev", "--version", "1.0.0"]).is_ok());
+        assert!(parse(&["plan", "--prerelease", "rc"]).is_err());
+        assert!(parse(&["changelog"]).is_err());
+        assert!(parse(&["changelog", "--version", "1.0.0"]).is_ok());
     }
 }

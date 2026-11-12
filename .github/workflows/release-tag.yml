@@ -99,6 +99,9 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
+          # Checked before the tag, which cannot be moved or deleted once pushed (v* tags are
+          # immutable), although plan compiles nothing.
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
           scripts/ci-git.sh identity "${BOT}"
           git -c core.hooksPath=/dev/null tag -a "v${VERSION}" -m "v${VERSION}" "${GITHUB_SHA}"
           scripts/ci-git.sh push-tag "v${VERSION}"

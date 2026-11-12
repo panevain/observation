@@ -1,0 +1,993 @@
+== plan: no tags, Added
+exit 0
+-- stdout
+version=0.1.0
+kind=minor
+latest=
+reason=CHANGELOG has Added entries; first release, from Cargo.toml
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no tags, no entries (shipped: no release to compare)
+exit 0
+-- stdout
+version=0.1.0
+kind=patch
+latest=
+reason=no CHANGELOG entries, but shipped files changed since v; first release, from Cargo.toml
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no tags, pre-release
+exit 0
+-- stdout
+version=0.1.0-dev.1
+kind=dev
+latest=
+reason=no CHANGELOG entries, but shipped files changed since v; first release, from Cargo.toml
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: dev tags only, numbering with a gap
+exit 0
+-- stdout
+version=0.1.0-dev.4
+kind=dev
+latest=
+reason=no CHANGELOG entries, but shipped files changed since v; first release, from Cargo.toml
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: dev tags only, stable plan
+exit 0
+-- stdout
+version=0.1.0
+kind=patch
+latest=
+reason=CHANGELOG has only Fixed entries; first release, from Cargo.toml
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Added after v0.1.0
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: develop ahead of the latest tag
+exit 0
+-- stdout
+version=0.3.0
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: develop behind the bump
+exit 0
+-- stdout
+version=0.5.0
+kind=minor
+latest=0.4.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Removed before 1.0.0
+exit 0
+-- stdout
+version=0.5.0
+kind=minor
+latest=0.4.0
+reason=CHANGELOG has Removed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Removed from 1.0.0
+exit 0
+-- stdout
+version=2.0.0
+kind=major
+latest=1.2.0
+reason=CHANGELOG has Removed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Removed and Added from 1.0.0
+exit 0
+-- stdout
+version=2.0.0
+kind=major
+latest=1.2.0
+reason=CHANGELOG has Added, Removed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Deprecated and Changed
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Changed, Deprecated entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: only Fixed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: only Security
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Security entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Fixed and Security
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Fixed, Security entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Fixed and Added
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: entries before any heading count as Changed
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Changed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: an unknown heading only
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: a heading with no entries
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: heading with spaces around it
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: entries split by U+2028
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: an entry without a space is no entry
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Unreleased heading with text after it
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Unreleased at the end of the file
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: entries after the next release heading do not count
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: CRLF changelog
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, a shipped change since the tag
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, nothing since the tag
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, only not-shipped changes
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, scripts/other.sh changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, docsx/a.txt changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, .github2/x changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, Dockerfile changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, crates/a/src/lib.rs changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, fuzzy.txt changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, README.txt changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, crates/a/NOTES.md changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, a shipped file deleted
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, a shipped change in a merge
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: nothing changed, pre-release
+exit 0
+-- stdout
+version=0.1.1-dev.1
+kind=dev
+latest=0.1.0
+reason=nothing changed (pre-release requested anyway)
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: nothing changed, pre-release, existing dev tags
+exit 0
+-- stdout
+version=0.1.1-dev.11
+kind=dev
+latest=0.1.0
+reason=nothing changed (pre-release requested anyway)
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: Added, pre-release
+exit 0
+-- stdout
+version=0.2.0-dev.2
+kind=dev
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: empty --prerelease
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: unknown --prerelease
+exit 2
+-- stdout
+-- stderr
+usage: release-plan.py plan [-h] [--repo REPO] [--version VERSION]
+                            [--prerelease {,dev}]
+release-plan.py plan: error: argument --prerelease: invalid choice: 'rc' (choose from '', 'dev')
+-- CHANGELOG.md
+-- end
+== plan: version given
+exit 0
+-- stdout
+version=0.2.0
+kind=explicit
+latest=0.1.0
+reason=version given
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: version given, no tags
+exit 0
+-- stdout
+version=0.0.1
+kind=explicit
+latest=
+reason=version given
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: version given, a pre-release
+exit 0
+-- stdout
+version=0.2.0-rc.1
+kind=explicit
+latest=0.1.0
+reason=version given
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: version given and pre-release
+exit 0
+-- stdout
+version=0.2.0
+kind=explicit
+latest=0.1.0
+reason=version given
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: version given, already tagged
+exit 1
+-- stdout
+-- stderr
+v0.2.0-rc.1 already exists
+-- CHANGELOG.md
+-- end
+== plan: version given, not newer
+exit 1
+-- stdout
+-- stderr
+0.1.0-rc.1 is not newer than the latest release v0.1.0
+-- CHANGELOG.md
+-- end
+== plan: version given, equal core
+exit 1
+-- stdout
+-- stderr
+0.01.0 is not newer than the latest release v0.1.0
+-- CHANGELOG.md
+-- end
+== plan: version given, older
+exit 1
+-- stdout
+-- stderr
+0.0.9 is not newer than the latest release v0.1.0
+-- CHANGELOG.md
+-- end
+== plan: version given, not semver
+exit 1
+-- stdout
+-- stderr
+not a semver version: v0.2.0
+-- CHANGELOG.md
+-- end
+== plan: version given, Arabic-Indic digits
+exit 0
+-- stdout
+version=١.0.0
+kind=explicit
+latest=0.1.0
+reason=version given
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: empty version given
+exit 0
+-- stdout
+version=0.2.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: tags that are not X.Y.Z
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: numeric order of tags
+exit 0
+-- stdout
+version=0.10.1
+kind=patch
+latest=0.10.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: leading zeros tie
+exit 0
+-- stdout
+version=0.1.2
+kind=patch
+latest=0.1.01
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: a tag with Arabic-Indic digits
+exit 0
+-- stdout
+version=1.0.1
+kind=patch
+latest=١.0.0
+reason=CHANGELOG has only Fixed entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no CHANGELOG.md
+exit 1
+-- stdout
+-- stderr
+FileNotFoundError: [Errno 2] No such file or directory: '$REPO/CHANGELOG.md'
+-- CHANGELOG.md
+-- end
+== plan: no [Unreleased] heading
+exit 1
+-- stdout
+-- stderr
+CHANGELOG.md has no ## [Unreleased] heading
+-- CHANGELOG.md
+-- end
+== plan: no workspace version
+exit 1
+-- stdout
+-- stderr
+no version in Cargo.toml [workspace.package]
+-- CHANGELOG.md
+-- end
+== plan: workspace version not semver
+exit 1
+-- stdout
+-- stderr
+not a semver version: 0.1
+-- CHANGELOG.md
+-- end
+== plan: workspace version after other keys
+exit 0
+-- stdout
+version=0.5.0
+kind=minor
+latest=0.1.0
+reason=CHANGELOG has Added entries
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: workspace version after a blank line
+exit 1
+-- stdout
+-- stderr
+no version in Cargo.toml [workspace.package]
+-- CHANGELOG.md
+-- end
+== plan: no workspace version needed with a version given
+exit 0
+-- stdout
+version=0.2.0
+kind=explicit
+latest=0.1.0
+reason=version given
+-- stderr
+-- CHANGELOG.md
+-- end
+== changelog: entries
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- a
+
+### Fixed
+
+- f
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: entries, extra blank lines
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- a
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no entries, commits since the tag
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.1] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates:
+  - Pin the base image
+  - Merged side
+  - Bump serde
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no entries, nothing since the tag
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.1] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates.
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no entries, only not-shipped commits
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.1] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates.
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no entries, a merge that differs from both parents
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.1] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates:
+  - Meanwhile on main
+  - Side change
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== plan: no entries, a merge that differs from both parents
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== changelog: no entries, no tags
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.0] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates:
+  - Pin the base image
+  - Merged side
+  - Bump serde
+  - init
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no entries, a blank subject
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.1] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates:
+  - Real
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no entries, stable tag beside dev tags
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates:
+  - Two
+  - One
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: a link-reference block at the end
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- a
+
+## [0.1.0] - 2026-01-01
+
+- First.
+
+[Unreleased]: https://example.com/compare/v0.1.0...HEAD
+[0.1.0]: https://example.com/releases/tag/v0.1.0
+-- end
+== changelog: link references inside the Unreleased section
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# C
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- a
+
+[Unreleased]: https://example.com/compare/v0.1.0...HEAD
+
+-- end
+== changelog: Unreleased at the end of the file
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# C
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+- a
+
+-- end
+== changelog: CRLF
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- A thing.
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: pre-release
+exit 0
+-- stdout
+0.2.0-dev.1 is a pre-release; CHANGELOG.md is left as it is.
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- A thing.
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: pre-release, no CHANGELOG.md
+exit 0
+-- stdout
+0.2.0-dev.1 is a pre-release; CHANGELOG.md is left as it is.
+-- stderr
+-- CHANGELOG.md
+-- end
+== changelog: not semver
+exit 1
+-- stdout
+-- stderr
+not a semver version: 0.2
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- A thing.
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: Arabic-Indic digits
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [١.0.0] - 2026-01-05
+
+### Added
+
+- A thing.
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
+== changelog: no [Unreleased] heading
+exit 1
+-- stdout
+-- stderr
+CHANGELOG.md has no ## [Unreleased] heading
+-- CHANGELOG.md
+# C
+-- end
+== changelog: no CHANGELOG.md
+exit 1
+-- stdout
+-- stderr
+FileNotFoundError: [Errno 2] No such file or directory: '$REPO/CHANGELOG.md'
+-- CHANGELOG.md
+-- end
+== changelog: no --version
+exit 2
+-- stdout
+-- stderr
+usage: release-plan.py changelog [-h] [--repo REPO] --version VERSION
+release-plan.py changelog: error: the following arguments are required: --version
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end

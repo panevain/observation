@@ -101,7 +101,10 @@ jobs:
         run: |
           set -euo pipefail
           jq -r '.hold[].number' <<<"${PRS}" | while read -r n; do
-            if gh pr merge "${n}" --repo "${REPO}" --disable-auto; then
+            # find builds code, so the number is checked as a value before gh sees it.
+            if ! [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::warning::not a pull request number: '${n}'"
+            elif gh pr merge "${n}" --repo "${REPO}" --disable-auto; then
               echo "- #${n}: on hold, auto-merge disabled" >> "${GITHUB_STEP_SUMMARY}"
             else
               echo "::warning::could not disable auto-merge on #${n}"

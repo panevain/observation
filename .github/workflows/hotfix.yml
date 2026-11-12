@@ -39,8 +39,12 @@ jobs:
     outputs:
       version: ${{ steps.state.outputs.next }}
       ready: ${{ steps.ready.outputs.ready }}
+      sha256: ${{ steps.ready.outputs.sha256 }}
     steps:
       # The scripts come from this workflow's ref (develop); they work on a checkout of main.
+      # This job builds nothing: what it writes into main/ becomes a pull request that merges
+      # itself without review, so it is written by the tree's own scripts (and cargo update,
+      # which resolves and runs no build script), never by code this job compiles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -89,7 +93,9 @@ jobs:
           python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
           (cd main && ../scripts/set-version.sh "${NEXT}")
           python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
-          # A hotfix only moves versions and pins.
+          # A hotfix only moves versions and pins: .config/release.toml's hotfix list, written out
+          # here and not checked by `cargo xtask sync`. open-pr, whose copy sync does check,
+          # checks the patch again before it commits it.
           unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
           [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
           git -C main diff --binary > "${out}/hotfix.patch"
@@ -99,6 +105,7 @@ jobs:
             echo "This PR merges itself when its checks pass. Release tag then waits for an approval of the \`release\` environment (Actions > Release tag > Review deployments) before it tags v${NEXT} and publishes."
           } > "${out}/body.md"
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
+          echo "sha256=$(cd "${out}" && sha256sum -- hotfix.patch body.md | sha256sum | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
           echo "ready=true" >> "${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.ready.outputs.ready == 'true'
@@ -130,6 +137,21 @@ jobs:
         with:
           name: hotfix
           path: ${{ runner.temp }}/hotfix
+      # The artifact must be what prepare wrote, which builds nothing: the sha256 of its files,
+      # a value from that job, is compared before anything reads them and before the token.
+      - name: Check the artifact
+        env:
+          DIR: ${{ runner.temp }}/hotfix
+          FILES: hotfix.patch body.md
+          SHA256: ${{ needs.prepare.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::$1"; exit 1; }
+          [[ "${SHA256}" =~ ^[0-9a-f]{64}$ ]] || refuse "bad digest '${SHA256}'"
+          cd "${DIR}"
+          read -ra files <<<"${FILES}"
+          for f in "${files[@]}"; do [ -f "${f}" ] && [ ! -L "${f}" ] || refuse "${f} is not a regular file"; done
+          [ "$(sha256sum -- "${files[@]}" | sha256sum | cut -d' ' -f1)" = "${SHA256}" ] || refuse "the artifact is not the one prepare wrote"
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -146,7 +168,32 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
-          git apply --index "${RUNNER_TEMP}/hotfix/hotfix.patch"
+          # prepare builds nothing, but its patch is still checked here, with git alone, before
+          # this token commits it: every entry must change the text of an existing regular file
+          # on the same list as there. No file added, deleted, renamed or copied, no mode or type
+          # change (a symlink or gitlink), no binary patch; anything else fails. What the allowed
+          # files now say is not judged here: that is for the review of the pull request.
+          # The list is .config/release.toml's hotfix list, written out here so that this job
+          # reads no data file and runs nothing built; `cargo xtask sync` keeps the two equal.
+          patch="${RUNNER_TEMP}/hotfix/hotfix.patch"
+          allowed='Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile'
+          tab=$'\t'
+          refuse() { echo "::error::$1"; exit 1; }
+          ! grep -qE '^(GIT binary patch|Binary files .* differ)$' "${patch}" || refuse "the patch holds a binary change"
+          tr -d '\000' < "${patch}" | cmp -s - "${patch}" || refuse "the patch holds a NUL byte"
+          # Before applying: one "added<TAB>deleted<TAB>path" line per entry and no summary line
+          # (create, delete, rename, copy, mode change, rewrite); "-" counts mean a binary entry.
+          # A `diff --git` header whose a/ and b/ paths differ, without rename lines, shows here
+          # as a plain change of the b/ path; the check after `git apply` refuses it (the a/ path
+          # is staged as a deletion).
+          stat="$(git apply --numstat --summary "${patch}")"
+          bad="$(grep -vxE "[0-9]+${tab}[0-9]+${tab}(${allowed})" <<<"${stat}" || true)"
+          [ -n "${stat}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
+          git apply --index "${patch}"
+          # After: each staged entry modifies a regular file, mode 100644 before and after.
+          staged="$(git diff --cached --raw --no-renames --no-abbrev)"
+          bad="$(grep -vxE ":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M${tab}(${allowed})" <<<"${staged}" || true)"
+          [ -n "${staged}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
           scripts/ci-git.sh identity "${BOT}"
           git switch -c "hotfix/${VERSION}"
           git -c core.hooksPath=/dev/null commit -m "hotfix: ${VERSION} (security updates)"
