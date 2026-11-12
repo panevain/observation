@@ -45,12 +45,13 @@ pub struct Snapshot {
     /// .config/release.toml (empty when there is none).
     pub release_toml: String,
     /// The files only the rules in [`extra`] read, each empty when there is none:
-    /// .config/cargo-cooldown.toml, .github/dependabot.yml, scripts/bump-pins.py and
-    /// scripts/security-patch.py.
+    /// .config/cargo-cooldown.toml, .github/dependabot.yml, scripts/bump-pins.py,
+    /// scripts/security-patch.py and compose.yaml.
     pub cooldown_toml: String,
     pub dependabot: String,
     pub bump_pins: String,
     pub security_patch: String,
+    pub compose: String,
     /// What `git grep` found for [`doc_pattern`] in the Markdown files (empty: nothing), or why
     /// it could not search.
     pub doc_pins: Result<String, String>,
@@ -817,6 +818,7 @@ pub fn snapshot(repo: &Path, git: &dyn Git) -> Result<Snapshot> {
         dependabot: optional(repo, extra::DEPENDABOT)?,
         bump_pins: optional(repo, extra::BUMP_PINS)?,
         security_patch: optional(repo, extra::SECURITY_PATCH)?,
+        compose: optional(repo, extra::COMPOSE)?,
         doc_pins: Ok(String::new()),
     };
     let pattern = doc_pattern(&s.mise_toml, &s.mise_ci_toml);

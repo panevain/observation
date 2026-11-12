@@ -13,6 +13,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = { version = "1.1", features = ["preserve_order"] }
 semver = "1.0"
+# Reads YAML (Dependabot's config, the workflows, compose.yaml) for sync's rules.
+yaml_serde = "0.10"
 # Measures the wasm modules' gzip size (wasm-budget): a bump of flate2 or miniz_oxide can move
 # those sizes, so check the headroom in the `wasm (trunk build)` job's output with it.
 flate2 = "1.1"

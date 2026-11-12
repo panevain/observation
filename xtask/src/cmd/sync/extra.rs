@@ -8,9 +8,15 @@
 //!   builds; every `crates/NAME` path a workflow names is a crate.
 //! - Images: release.yml's image matrix, prune-images.yml's package matrix, the release notes'
 //!   image loop, and the image tables of scripts/security-patch.py and `security-patch check`
-//!   name the same images, at the same registry path and Dockerfile stages.
-//! - Cooldown: .config/cargo-cooldown.toml's `days` is the cooldown of every Dependabot update,
-//!   of mise (`minimum_release_age`) and of scripts/bump-pins.py.
+//!   name the same images, at the same registry path and Dockerfile stages. Every `ghcr.io/`
+//!   reference in release.yml, compose.yaml and mise.toml is a released image (or the release
+//!   prefix and a variable); compose.yaml builds each service from its image's release stage;
+//!   every `build-image` target is a stage; a layer cache release.yml reads is written somewhere.
+//! - Cooldown: .config/cargo-cooldown.toml's `days` is every Dependabot `*-days` cooldown (and
+//!   cargo, github-actions and npm must have one), mise's `minimum_release_age` and
+//!   scripts/bump-pins.py's `COOLDOWN_DAYS`.
+//!
+//! YAML files are read with a YAML parser, so quoting, comments and flow style do not matter.
 //! - `testing`: a crate's `testing` feature is enabled only from `[dev-dependencies]` (fuzz/ is
 //!   outside the workspace and may enable it).
 
@@ -19,6 +25,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use toml::{Table, Value};
+use yaml_serde::Value as YValue;
 
 use super::{Finding, Snapshot, lines, re};
 use crate::cmd::security_patch::IMAGES;
@@ -27,38 +34,47 @@ regex!(
     CARGO_COMMAND,
     r#"(?:^|[\s;&|(`'"\[])cargo(?:\s+\+\S+)?\s+(?:build|check|clippy|test|nextest|run|doc|llvm-cov|chef|auditable|bench|fmt|rustc)(?:\s|$)"#
 );
+// The separator is optional only for `-p` (`-pNAME`), so that `--exclude-from-report` names
+// nothing.
 regex!(
     PACKAGE_FLAG,
-    r#"(?:^|[\s"'])(-p|--package|--exclude)(?:\s+|=)?["']?([^\s"';\\]+)"#
+    r#"(?:^|[\s"'])(?:(-p)(?:\s+|=)?|(--package|--exclude)(?:\s+|=))["']?([^\s"';\\]+)"#
+);
+// A command on xtask's or fuzz's workspace, whose packages are not the root's.
+regex!(
+    OTHER_WORKSPACE,
+    r"--manifest-path[ =](?:\./)?(?:xtask|fuzz)/|\{\{\s*vars\.xtask_manifest\s*\}\}"
 );
 regex!(STAGE, r"(?i)^\s*FROM\s.*\sAS\s+([A-Za-z0-9_.-]+)\s*$");
 regex!(FROM, r"(?i)^\s*FROM\s");
-// `crates/NAME` at the start of a path (`./` allowed), not inside a URL.
+// `crates/NAME` at the start of a path or after a `/` (`./` allowed); `packages` leaves out
+// those inside a URL.
 regex!(
     CRATE_PATH,
-    r"(?:^|[\s\x22'!\[,])(?:\./)?crates/([A-Za-z0-9_-]+)"
+    r"(?:^|[\s\x22'!\[,/])(?:\./)?crates/([A-Za-z0-9_-]+)"
 );
-regex!(MATRIX_IMAGE, r"^\s+- image: *([^\s#]+)\s*$");
-regex!(MATRIX_TARGET, r"^\s+target: *([^\s#]+)\s*$");
-regex!(
-    IMAGE_NAME,
-    r"^\s+IMAGE_NAME: *(\S+)\$\{\{ *matrix\.image *\}\}\s*$"
-);
-regex!(PRUNE_PACKAGES, r"^\s+package: *\[([^\]]*)\]\s*$");
 regex!(NOTES_LOOP, r"^\s*for name in ([^;]*); do\s*$");
+// An image reference `ghcr.io/OWNER/NAME`, or one whose name is a variable (`$x`, printf's `%s`).
+regex!(
+    GHCR,
+    r"ghcr\.io/((?:[A-Za-z0-9_.-]+/)*)([A-Za-z0-9_.-]*)([$%]?)"
+);
 regex!(SCRIPT_IMAGES_START, r"^IMAGES = \{\s*$");
 regex!(
     SCRIPT_IMAGE,
     r#"^\s+"([^"]+)": \("([^"]+)", "([^"]+)", (True|False)\),\s*$"#
 );
-// `KEY-days: N` (a comment line does not match).
-regex!(DEPENDABOT_DAYS, r"^\s+([a-z-]+-days): *(\S+)\s*$");
-regex!(BUMP_PINS_DAYS, r"^COOLDOWN_DAYS = (\S+)\s*$");
+regex!(BUMP_PINS_DAYS, r"^COOLDOWN_DAYS = (\S+?)\s*(?:#.*)?$");
+
+/// The Dependabot ecosystems that must have a cooldown (`docker` has none on purpose: base
+/// images get no security updates, so their digests move daily).
+pub const COOLDOWN_ECOSYSTEMS: &[&str] = &["cargo", "github-actions", "npm"];
 
 pub const RELEASE: &str = ".github/workflows/release.yml";
 pub const PRUNE: &str = ".github/workflows/prune-images.yml";
 pub const COOLDOWN: &str = ".config/cargo-cooldown.toml";
 pub const DEPENDABOT: &str = ".github/dependabot.yml";
+pub const COMPOSE: &str = "compose.yaml";
 pub const BUMP_PINS: &str = "scripts/bump-pins.py";
 pub const SECURITY_PATCH: &str = "scripts/security-patch.py";
 
@@ -99,8 +115,8 @@ fn commands(text: &str) -> Vec<String> {
 fn package_flags(command: &str) -> Vec<(String, String)> {
     PACKAGE_FLAG
         .captures_iter(command)
-        .filter(|c| !c[2].contains(['{', '$']))
-        .map(|c| (c[1].to_owned(), c[2].to_owned()))
+        .filter(|c| !c[3].contains(['{', '$']))
+        .filter_map(|c| Some((c.get(1).or(c.get(2))?.as_str().to_owned(), c[3].to_owned())))
         .collect()
 }
 
@@ -120,7 +136,7 @@ fn cargo_packages(text: &str, mise: bool) -> Vec<(String, String)> {
         // Each simple command on its own, so that `mkdir -p DIR; cargo build` names no DIR. A
         // command on another workspace (`--manifest-path`) names that workspace's packages.
         for simple in command.split([';', '&', '|']) {
-            if CARGO_COMMAND.is_match(simple) && !simple.contains("--manifest-path") {
+            if CARGO_COMMAND.is_match(simple) && !OTHER_WORKSPACE.is_match(simple) {
                 out.extend(package_flags(simple));
             }
         }
@@ -147,8 +163,10 @@ fn members(s: &Snapshot) -> Result<BTreeSet<String>, Finding> {
         .and_then(|w| w.get("exclude"))
         .and_then(Value::as_array)
         .is_some_and(|e| {
-            e.iter()
-                .any(|x| x.as_str().is_some_and(|x| x.starts_with("crates/")))
+            e.iter().any(|x| {
+                x.as_str()
+                    .is_some_and(|x| x.trim_start_matches("./").starts_with("crates/"))
+            })
         });
     if excluded || members != Some(&Value::Array(vec![Value::String("crates/*".into())])) {
         return Err(finding(
@@ -271,6 +289,12 @@ pub fn packages(s: &Snapshot) -> Vec<Finding> {
         let mut seen = BTreeSet::new();
         for command in commands(text) {
             for c in CRATE_PATH.captures_iter(&command) {
+                // Not a path inside a URL (`https://crates.io/crates/NAME`).
+                let start = c.get(1).map_or(0, |m| m.start() - "crates/".len());
+                let word = command[..start].rsplit(char::is_whitespace).next();
+                if word.is_some_and(|w| w.contains("://") || w.contains("crates.io")) {
+                    continue;
+                }
                 let dir = c[1].to_owned();
                 if !dirs.contains(dir.as_str()) && seen.insert(dir.clone()) {
                     out.push(finding(format!(
@@ -283,8 +307,31 @@ pub fn packages(s: &Snapshot) -> Vec<Finding> {
     out
 }
 
-/// What one file says about the images, or why it could not be read.
-type Images = Result<Vec<(String, String, String)>, String>;
+/// A YAML file, or why it is not one.
+pub(super) fn yaml(path: &str, text: &str) -> Result<YValue, String> {
+    yaml_serde::from_str(text).map_err(|e| format!("{path}: not YAML: {e}"))
+}
+
+/// A YAML scalar as text (`None` for a mapping, a sequence or null).
+pub(super) fn scalar(v: &YValue) -> Option<String> {
+    match v {
+        YValue::String(s) => Some(s.clone()),
+        YValue::Number(n) => Some(n.to_string()),
+        YValue::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// The entries of the mapping under `key` (none when there is no mapping there).
+pub(super) fn entries<'a>(
+    v: &'a YValue,
+    key: &str,
+) -> impl Iterator<Item = (&'a YValue, &'a YValue)> {
+    v.get(key)
+        .and_then(YValue::as_mapping)
+        .into_iter()
+        .flatten()
+}
 
 fn workflow<'a>(s: &'a Snapshot, path: &str) -> Option<&'a str> {
     s.workflows
@@ -293,34 +340,88 @@ fn workflow<'a>(s: &'a Snapshot, path: &str) -> Option<&'a str> {
         .map(|(_, t)| t.as_str())
 }
 
-/// release.yml's matrix: (image, registry path, target stage) for each `- image:` entry.
-fn release_images(release: &str) -> Images {
-    let prefixes: Vec<String> = lines(release)
-        .filter_map(|l| IMAGE_NAME.captures(l).map(|c| c[1].to_owned()))
-        .collect();
-    let [prefix] = &prefixes[..] else {
-        return Err(format!(
-            "{RELEASE} has {} IMAGE_NAME: <path>${{{{ matrix.image }}}} lines, expected one",
-            prefixes.len()
-        ));
-    };
-    let mut out: Vec<(String, String, String)> = Vec::new();
-    for line in lines(release) {
-        if let Some(c) = MATRIX_IMAGE.captures(line) {
-            out.push((c[1].to_owned(), format!("{prefix}{}", &c[1]), String::new()));
-        } else if let (Some(c), Some(last)) = (MATRIX_TARGET.captures(line), out.last_mut()) {
-            if !last.2.is_empty() {
-                return Err(format!("{RELEASE}: image {} has two targets", last.0));
-            }
-            last.2 = c[1].to_owned();
+/// One image of release.yml's matrix.
+struct Released {
+    name: String,
+    /// The registry path: IMAGE_NAME's prefix and the name.
+    path: String,
+    target: String,
+    /// The layer-cache scope it reads, and whether release.yml writes it too.
+    cache: Option<String>,
+    saves: bool,
+}
+
+/// release.yml's image matrix (`strategy.matrix.include` entries with an `image`, in the one
+/// job that has them) and the prefix of that job's `IMAGE_NAME: <prefix>${{ matrix.image }}`.
+fn release_images(release: &str) -> Result<(String, Vec<Released>), String> {
+    let doc = yaml(RELEASE, release)?;
+    let mut jobs = Vec::new();
+    for (job, def) in entries(&doc, "jobs") {
+        let include = def
+            .get("strategy")
+            .and_then(|s| s.get("matrix"))
+            .and_then(|m| m.get("include"))
+            .and_then(YValue::as_sequence);
+        let images: Vec<&YValue> = include
+            .into_iter()
+            .flatten()
+            .filter(|e| e.get("image").is_some())
+            .collect();
+        if !images.is_empty() {
+            jobs.push((scalar(job).unwrap_or_default(), def, images));
         }
     }
-    if out.is_empty() || out.iter().any(|i| i.2.is_empty()) {
+    let [(job, def, images)] = &jobs[..] else {
         return Err(format!(
-            "{RELEASE}: no image matrix with a target for each `- image:`"
+            "{RELEASE} has {} jobs with an image matrix (include: - image: ...), expected one",
+            jobs.len()
         ));
+    };
+    let image_name = def
+        .get("env")
+        .and_then(|e| e.get("IMAGE_NAME"))
+        .and_then(scalar);
+    let prefix = image_name
+        .as_deref()
+        .and_then(|n| n.strip_suffix("${{ matrix.image }}"))
+        .ok_or_else(|| {
+            format!("{RELEASE}: job {job}'s env has no IMAGE_NAME: <path>${{{{ matrix.image }}}}")
+        })?
+        .to_owned();
+    let mut out = Vec::new();
+    for entry in images {
+        let field = |key: &str| entry.get(key).and_then(scalar);
+        let name = field("image").ok_or_else(|| format!("{RELEASE}: an image that is not text"))?;
+        let target =
+            field("target").ok_or_else(|| format!("{RELEASE}: image {name} has no target"))?;
+        out.push(Released {
+            path: format!("{prefix}{name}"),
+            name,
+            target,
+            cache: field("cache"),
+            saves: entry.get("save-cache").and_then(YValue::as_bool) == Some(true),
+        });
     }
-    Ok(out)
+    Ok((prefix, out))
+}
+
+/// prune-images.yml's `strategy.matrix.package` list, in the one job that has one.
+fn prune_packages(prune: &str) -> Result<Vec<String>, String> {
+    let doc = yaml(PRUNE, prune)?;
+    let lists: Vec<&YValue> = entries(&doc, "jobs")
+        .filter_map(|(_, def)| def.get("strategy")?.get("matrix")?.get("package"))
+        .collect();
+    let [list] = &lists[..] else {
+        return Err(format!(
+            "{PRUNE} has {} jobs with a package matrix, expected one",
+            lists.len()
+        ));
+    };
+    list.as_sequence()
+        .into_iter()
+        .flatten()
+        .map(|p| scalar(p).ok_or_else(|| format!("{PRUNE}: a package that is not text")))
+        .collect()
 }
 
 /// The one line of `text` that `re` matches, split into names by `split`.
@@ -372,12 +473,41 @@ fn script_images(script: &str) -> Result<Vec<(String, String, String, bool)>, St
     Err(format!("{SECURITY_PATCH}: IMAGES is not closed"))
 }
 
+/// The local `build-image` steps of every workflow: (workflow, job, its `with:`).
+fn build_image_steps(s: &Snapshot) -> Result<Vec<(String, String, YValue)>, String> {
+    let mut out = Vec::new();
+    for (path, text) in &s.workflows {
+        if !path.starts_with(".github/workflows/") {
+            continue;
+        }
+        let doc = yaml(path, text)?;
+        for (job, def) in entries(&doc, "jobs") {
+            for step in def
+                .get("steps")
+                .and_then(YValue::as_sequence)
+                .into_iter()
+                .flatten()
+            {
+                let uses = step.get("uses").and_then(scalar).unwrap_or_default();
+                if uses
+                    .trim_end_matches('/')
+                    .ends_with("/.github/actions/build-image")
+                {
+                    let with = step.get("with").cloned().unwrap_or(YValue::Null);
+                    out.push((path.clone(), scalar(job).unwrap_or_default(), with));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn images(s: &Snapshot) -> Vec<Finding> {
     let mut out = Vec::new();
     let Some(release) = workflow(s, RELEASE) else {
         return vec![finding(format!("{RELEASE} is missing"))];
     };
-    let release_images = match release_images(release) {
+    let (prefix, released) = match release_images(release) {
         Ok(i) => i,
         Err(why) => return vec![finding(why)],
     };
@@ -386,7 +516,7 @@ pub fn images(s: &Snapshot) -> Vec<Finding> {
         v.sort();
         v.join(" ")
     };
-    let expected: Vec<String> = release_images.iter().map(|i| i.0.clone()).collect();
+    let expected: Vec<String> = released.iter().map(|i| i.name.clone()).collect();
     let mut compare = |label: String, got: Result<Vec<String>, String>| match got {
         Err(why) => out.push(finding(why)),
         Ok(got) if names(&got) != names(&expected) => out.push(Finding::Mismatch {
@@ -400,7 +530,7 @@ pub fn images(s: &Snapshot) -> Vec<Finding> {
         format!("{PRUNE} package matrix"),
         workflow(s, PRUNE)
             .ok_or_else(|| format!("{PRUNE} is missing"))
-            .and_then(|t| one_list(t, &PRUNE_PACKAGES, PRUNE, "package: [...] lines", &[','])),
+            .and_then(prune_packages),
     );
     compare(
         format!("{RELEASE} release notes' image loop"),
@@ -422,22 +552,23 @@ pub fn images(s: &Snapshot) -> Vec<Finding> {
         script.clone().map(|v| v.into_iter().map(|i| i.0).collect()),
     );
     let stages = stages(&s.dockerfile);
-    for (name, _, target) in &release_images {
-        if !stages.contains(target) {
+    for r in &released {
+        if !stages.contains(&r.target) {
             out.push(finding(format!(
-                "{RELEASE}: image {name} targets {target}, not a Dockerfile stage"
+                "{RELEASE}: image {} targets {}, not a Dockerfile stage",
+                r.name, r.target
             )));
         }
     }
     if let Ok(script) = script {
         for (name, path, stage, _) in &script {
-            if let Some((_, want, _)) = release_images.iter().find(|i| &i.0 == name)
-                && path != want
+            if let Some(r) = released.iter().find(|r| &r.name == name)
+                && path != &r.path
             {
                 out.push(Finding::Mismatch {
                     label: format!("{SECURITY_PATCH} IMAGES path of {name}"),
                     actual: path.clone(),
-                    expected: format!("{want} ({RELEASE}'s IMAGE_NAME)"),
+                    expected: format!("{} ({RELEASE}'s IMAGE_NAME)", r.path),
                 });
             }
             if !stages.contains(stage) {
@@ -457,7 +588,123 @@ pub fn images(s: &Snapshot) -> Vec<Finding> {
             )));
         }
     }
+
+    // Every image reference in these files is a released image, or the prefix and a variable.
+    for (file, text) in [
+        (RELEASE, release),
+        (COMPOSE, s.compose.as_str()),
+        ("mise.toml", s.mise_toml.as_str()),
+    ] {
+        let mut seen = BTreeSet::new();
+        for c in GHCR.captures_iter(text) {
+            let owner = format!("ghcr.io/{}", &c[1]);
+            let path = format!("{owner}{}", &c[2]);
+            let known = if !c[3].is_empty() {
+                owner == prefix
+            } else {
+                released.iter().any(|r| r.path == path)
+            };
+            if !known && seen.insert(path.clone()) {
+                out.push(finding(format!(
+                    "{file}: {path}{} is not an image {RELEASE} publishes ({prefix} and its image \
+                     matrix)",
+                    &c[3]
+                )));
+            }
+        }
+    }
+
+    // compose.yaml builds each service from the stage its image is released from.
+    if s.compose.is_empty() {
+        out.push(finding(format!("{COMPOSE} is missing")));
+    } else {
+        match yaml(COMPOSE, &s.compose) {
+            Err(why) => out.push(finding(why)),
+            Ok(doc) => {
+                for (service, def) in entries(&doc, "services") {
+                    let service = scalar(service).unwrap_or_default();
+                    let Some(target) = def
+                        .get("build")
+                        .and_then(|b| b.get("target"))
+                        .and_then(scalar)
+                    else {
+                        continue;
+                    };
+                    if !stages.contains(&target) {
+                        out.push(finding(format!(
+                            "{COMPOSE}: service {service} builds target {target}, not a Dockerfile \
+                             stage"
+                        )));
+                    }
+                    let image = def.get("image").and_then(scalar).unwrap_or_default();
+                    let path = GHCR
+                        .captures(&image)
+                        .filter(|c| c[3].is_empty())
+                        .map(|c| format!("ghcr.io/{}{}", &c[1], &c[2]));
+                    match released.iter().find(|r| Some(&r.path) == path.as_ref()) {
+                        Some(r) if r.target != target => out.push(finding(format!(
+                            "{COMPOSE}: service {service} builds target {target}, but its image \
+                             {} is released from target {} ({RELEASE})",
+                            r.path, r.target
+                        ))),
+                        Some(_) => {}
+                        None => out.push(finding(format!(
+                            "{COMPOSE}: service {service} builds target {target} but names no image \
+                             {RELEASE} publishes"
+                        ))),
+                    }
+                }
+            }
+        }
+    }
+
+    // build-image targets are stages; a layer cache release.yml reads but does not write is
+    // written by some build-image step.
+    match build_image_steps(s) {
+        Err(why) => out.push(finding(why)),
+        Ok(steps) => {
+            let mut saved = BTreeSet::new();
+            for (path, job, with) in &steps {
+                let input = |key: &str| with.get(key).and_then(scalar);
+                if let Some(target) = input("target")
+                    && !target.contains("${{")
+                    && !stages.contains(&target)
+                {
+                    out.push(finding(format!(
+                        "{path}: job {job} builds target {target}, not a Dockerfile stage"
+                    )));
+                }
+                if input("cache-save").as_deref() == Some("true")
+                    && let Some(scope) = input("cache-scope")
+                {
+                    saved.insert(scope);
+                }
+            }
+            for r in &released {
+                if let Some(cache) = &r.cache
+                    && !r.saves
+                    && !saved.contains(cache)
+                {
+                    out.push(finding(format!(
+                        "{RELEASE}: image {} reads the layer cache {cache}, which no build-image \
+                         step with cache-save: true writes",
+                        r.name
+                    )));
+                }
+            }
+        }
+    }
     out
+}
+
+/// A Dependabot value as the text compared with the days (a string keeps its quotes, so that it
+/// never equals a number).
+fn days_text(v: &YValue) -> String {
+    match v {
+        YValue::Number(n) => n.to_string(),
+        YValue::String(s) => format!("{s:?}"),
+        _ => "<not a number>".into(),
+    }
 }
 
 pub fn cooldown(s: &Snapshot) -> Vec<Finding> {
@@ -475,23 +722,45 @@ pub fn cooldown(s: &Snapshot) -> Vec<Finding> {
         Err(f) => return vec![f],
     };
     let mut out = Vec::new();
-    let mut check = |label: String, actual: String| {
-        if actual != days {
-            out.push(Finding::Mismatch {
-                label,
-                actual,
-                expected: format!("{days} ({COOLDOWN} days)"),
-            });
+    // (label, value) for each copy.
+    let mut copies = Vec::new();
+    if s.dependabot.is_empty() {
+        out.push(finding(format!("{DEPENDABOT} is missing")));
+    } else {
+        match yaml(DEPENDABOT, &s.dependabot) {
+            Err(why) => out.push(finding(why)),
+            Ok(doc) => {
+                let mut has = BTreeSet::new();
+                let updates = doc.get("updates").and_then(YValue::as_sequence);
+                for update in updates.into_iter().flatten() {
+                    let eco = update
+                        .get("package-ecosystem")
+                        .and_then(scalar)
+                        .unwrap_or_default();
+                    for (key, value) in entries(update, "cooldown") {
+                        let key = scalar(key).unwrap_or_default();
+                        if key.ends_with("-days") {
+                            if key == "default-days" {
+                                has.insert(eco.clone());
+                            }
+                            copies.push((
+                                format!("{DEPENDABOT} {eco} cooldown {key}"),
+                                days_text(value),
+                            ));
+                        }
+                    }
+                }
+                for eco in COOLDOWN_ECOSYSTEMS {
+                    if !has.contains(*eco) {
+                        out.push(finding(format!(
+                            "{DEPENDABOT}: package-ecosystem {eco} has no cooldown default-days \
+                             (sync requires one for {})",
+                            COOLDOWN_ECOSYSTEMS.join(", ")
+                        )));
+                    }
+                }
+            }
         }
-    };
-    let dependabot: Vec<_> = lines(&s.dependabot)
-        .filter_map(|l| DEPENDABOT_DAYS.captures(l))
-        .collect();
-    if dependabot.is_empty() {
-        check(format!("{DEPENDABOT} cooldown"), String::new());
-    }
-    for c in dependabot {
-        check(format!("{DEPENDABOT} {}", &c[1]), c[2].to_owned());
     }
     let age = parse("mise.toml", &s.mise_toml)
         .ok()
@@ -503,10 +772,10 @@ pub fn cooldown(s: &Snapshot) -> Vec<Finding> {
                 .map(str::to_owned)
         })
         .unwrap_or_default();
-    check(
+    copies.push((
         "mise.toml [settings] minimum_release_age (days)".into(),
         age,
-    );
+    ));
     let pins: Vec<_> = lines(&s.bump_pins)
         .filter_map(|l| BUMP_PINS_DAYS.captures(l).map(|c| c[1].to_owned()))
         .collect();
@@ -514,7 +783,16 @@ pub fn cooldown(s: &Snapshot) -> Vec<Finding> {
         [one] => one.clone(),
         _ => String::new(),
     };
-    check(format!("{BUMP_PINS} COOLDOWN_DAYS"), pins);
+    copies.push((format!("{BUMP_PINS} COOLDOWN_DAYS"), pins));
+    for (label, actual) in copies {
+        if actual != days {
+            out.push(Finding::Mismatch {
+                label,
+                actual,
+                expected: format!("{days} ({COOLDOWN} days)"),
+            });
+        }
+    }
     out
 }
 
@@ -561,9 +839,9 @@ fn package_of(key: &str, dep: &Value, workspace: &BTreeMap<String, String>) -> S
 }
 
 pub fn testing(s: &Snapshot) -> Vec<Finding> {
-    let members = match members(s) {
-        Ok(m) => m,
-        Err(f) => return vec![f],
+    // `packages` reports why the members cannot be read.
+    let Ok(members) = members(s) else {
+        return vec![];
     };
     // members() has parsed every manifest read here, so none fails to parse below.
     let parsed = |text: &str| toml::from_str::<Table>(text).unwrap_or_default();
@@ -668,16 +946,24 @@ mod tests {
         FROM scratch AS runtime-base\n\
         FROM runtime-base AS runtime\n";
     const RELEASE_YML: &str = "jobs:\n  image:\n    strategy:\n      matrix:\n        include:\n\
-        \x20         - image: observation\n            target: runtime\n\
-        \x20         - image: observation-regions\n            target: regions\n\
+        \x20         - image: observation\n            target: runtime\n            cache: image\n\
+        \x20           save-cache: true\n\
+        \x20         - image: observation-regions\n            target: regions\n            cache: image-regions\n\
         \x20   env:\n      IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }}\n\
-        \x20 notes:\n    steps:\n      - run: |\n          for name in observation observation-regions; do\n            echo\n          done\n";
+        \x20 notes:\n    steps:\n      - run: |\n          for name in observation observation-regions; do\n            echo ghcr.io/panevain/${name}\n          done\n";
     const PRUNE_YML: &str = "jobs:\n  prune:\n    strategy:\n      matrix:\n        package: [observation, observation-regions]\n";
     const SCRIPT: &str = "IMAGES = {\n    # name: (path, stage, rebuild fixes all)\n\
         \x20   \"observation\": (\"ghcr.io/panevain/observation\", \"runtime-base\", False),\n\
         \x20   \"observation-regions\": (\"ghcr.io/panevain/observation-regions\", \"regions\", True),\n}\n";
     const DEPENDABOT_YML: &str = "updates:\n  - package-ecosystem: cargo\n    cooldown:\n      default-days: 7\n\
+        \x20 - package-ecosystem: github-actions\n    cooldown:\n      default-days: 7\n\
+        \x20 - package-ecosystem: docker\n\
         \x20 - package-ecosystem: npm\n    cooldown:\n      # semver-major-days: 30\n      default-days: 7\n";
+    const COMPOSE_YAML: &str = "services:\n  observation:\n\
+        \x20   image: ${OBS_IMAGE:-ghcr.io/panevain/observation:${OBS_VERSION:-latest}}\n\
+        \x20   build:\n      context: .\n      target: runtime\n  regions:\n\
+        \x20   image: ghcr.io/panevain/observation-regions:latest\n\
+        \x20   build:\n      target: regions\n  other:\n    image: postgres\n";
 
     fn base() -> Snapshot {
         let manifest = |name: &str| format!("[package]\nname = \"{name}\"\n");
@@ -716,7 +1002,10 @@ mod tests {
                 (
                     ".github/workflows/ci.yml".into(),
                     "on:\n  push:\n    paths: [crates/**, \"!crates/app-web/**\"]\n\
-                     jobs:\n  test:\n    steps:\n      - run: cargo nextest run --exclude app-web\n"
+                     jobs:\n  test:\n    steps:\n      - run: cargo nextest run --exclude app-web\n\
+                     \x20 docker:\n    steps:\n      - uses: $/.github/actions/build-image\n\
+                     \x20       with:\n          target: regions\n          cache-scope: image-regions\n\
+                     \x20         cache-save: true\n"
                         .into(),
                 ),
             ],
@@ -728,6 +1017,7 @@ mod tests {
             dependabot: DEPENDABOT_YML.into(),
             bump_pins: "import os\n\nCOOLDOWN_DAYS = 7\n".into(),
             security_patch: SCRIPT.into(),
+            compose: COMPOSE_YAML.into(),
             doc_pins: Ok(String::new()),
         }
     }
@@ -747,6 +1037,7 @@ mod tests {
             "dependabot" => &mut s.dependabot,
             "bump-pins" => &mut s.bump_pins,
             "security-patch" => &mut s.security_patch,
+            "compose" => &mut s.compose,
             "ci" => file(&mut s.workflows, ".github/workflows/ci.yml"),
             "release" => file(&mut s.workflows, RELEASE),
             "prune" => file(&mut s.workflows, PRUNE),
@@ -810,7 +1101,7 @@ mod tests {
             docker | build --release -p app; | build --release -p lib; | server-build stage builds -p 'app lib', expected 'app'
             docker | AS server-build | AS server | Dockerfile has no server-build stage
             mise | server_package | server | mise.toml has no [vars] server_package
-            root | "crates/*" | "crates/*", "tools" | members are not ["crates/*"] && members are not ["crates/*"]
+            root | "crates/*" | "crates/*", "tools" | members are not ["crates/*"]
             mise | run = "mkdir -p corpus" | run = "mkdir -p a; cargo build -p app" | 
             docker | FROM debian AS regions | # cargo build -p nope\nFROM debian AS regions | 
             mise.ci | cargo audit | cargo update -p tokio@1.0.0 && cargo install -p x cargo-fuzz | 
@@ -823,18 +1114,24 @@ mod tests {
             docker | -p app-web | \\n    # a comment\n\n      -p app-www | Dockerfile: cargo -p app-www: not a crate
             ci | --exclude app-web | --manifest-path xtask/Cargo.toml -p xtask | 
             ci | --exclude app-web | --exclude app-web\n      - run: echo https://crates.io/crates/cargo-auditable ./crates/nope | ci.yml: crates/nope is not a crate
-            root | "crates/*"] | "crates/*"]\nexclude = ["crates/lib"] | excludes a path under crates/ && excludes a path under crates/
+            root | "crates/*"] | "crates/*"]\nexclude = ["crates/lib"] | excludes a path under crates/
+            root | "crates/*"] | "crates/*"]\nexclude = ["./crates/lib"] | excludes a path under crates/
+            ci | --exclude app-web | --exclude app-web --exclude-from-report app | 
+            ci | --exclude app-web | --manifest-path Cargo.toml -p bogus | ci.yml: cargo -p bogus: not a crate
+            ci | --exclude app-web | --exclude app-web\n      - run: ls "${GITHUB_WORKSPACE}/crates/bogus" | ci.yml: crates/bogus is not a crate
         "#,
         );
     }
 
-    /// `run`'s rule set has both rules of this module, after the script's.
+    /// `run`'s rule set has the four rules of this module, after the script's.
     #[test]
     fn all_runs_these_rules() {
         let mut s = base();
         s.mise_toml = s.mise_toml.replacen("-p lib", "-p nope", 1);
         field(&mut s, "app")
             .push_str("[dependencies]\nlib = { path = \"../lib\", features = [\"testing\"] }\n");
+        s.compose = s.compose.replacen("target: runtime", "target: runtim", 1);
+        s.bump_pins = s.bump_pins.replacen("= 7", "= 8", 1);
         let found: Vec<String> = super::super::all(&s)
             .findings
             .iter()
@@ -844,12 +1141,13 @@ mod tests {
             found.iter().any(|f| f.contains("cargo -p nope")),
             "{found:?}"
         );
-        assert!(
-            found
-                .iter()
-                .any(|f| f.contains("[dependencies] lib enables")),
-            "{found:?}"
-        );
+        for want in [
+            "[dependencies] lib enables",
+            "builds target runtim, not a Dockerfile stage",
+            "COOLDOWN_DAYS has '8'",
+        ] {
+            assert!(found.iter().any(|f| f.contains(want)), "{want}: {found:?}");
+        }
     }
 
     #[test]
@@ -858,9 +1156,25 @@ mod tests {
             r#"
             prune | , observation-regions] | ] | package matrix has 'observation', expected 'observation observation-regions
             release | for name in observation observation-regions | for name in observation-x observation-regions | image loop has 'observation-regions observation-x'
-            release | target: regions | target: region | image observation-regions targets region, not a Dockerfile stage
-            release | target: regions | target: regions\n            target: runtime | image observation-regions has two targets
-            release | IMAGE_NAME | NAME | 0 IMAGE_NAME
+            release | target: regions | target: region | image observation-regions targets region, not a Dockerfile stage && service regions builds target regions, but its image ghcr.io/panevain/observation-regions is released from target region
+            release | target: regions | target: regions\n            target: runtime | release.yml: not YAML
+            release | IMAGE_NAME | NAME | job image's env has no IMAGE_NAME
+            release | IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }} | IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }}\n      IMAGE_NAME: ghcr.io/panevain/x-${{ matrix.image }} | release.yml: not YAML
+            release | notes: | again:\n    strategy:\n      matrix:\n        include:\n          - image: observation\n            target: runtime\n  notes: | release.yml has 2 jobs with an image matrix
+            release | - image: observation-regions | - image: "observation-regions" # the agent | 
+            release | echo ghcr | echo target: ${{matrix.target}} ghcr | 
+            prune | [observation, observation-regions] | ["observation", "observation-regions"] # both | 
+            prune | [observation, observation-regions] | \n          - observation\n          - observation-regions | 
+            release | ghcr.io/panevain/${name} | ghcr.io/other/${name} | release.yml: ghcr.io/other/$ is not an image
+            compose | ghcr.io/panevain/observation-regions | ghcr.io/panevain/observation-agent | compose.yaml: ghcr.io/panevain/observation-agent is not an image && service regions builds target regions but names no image
+            compose | target: regions | target: regionz | service regions builds target regionz, not a Dockerfile stage && but its image ghcr.io/panevain/observation-regions is released from target regions
+            compose | target: runtime | target: regions | service observation builds target regions, but its image ghcr.io/panevain/observation is released from target runtime
+            compose | * |  | compose.yaml is missing
+            mise | [vars] | [vars]\nup = "verify ghcr.io/panevain/observation-agent:1"\n | mise.toml: ghcr.io/panevain/observation-agent is not an image
+            ci | target: regions | target: regionz | ci.yml: job docker builds target regionz, not a Dockerfile stage
+            ci | cache-scope: image-regions | cache-scope: image-regionz | image observation-regions reads the layer cache image-regions
+            ci | cache-save: true | cache-save: false | image observation-regions reads the layer cache image-regions
+            docker | FROM debian AS regions | FROM debian AS regionz | image observation-regions targets regions, not a Dockerfile stage && image observation-regions reads stage regions, not && service regions builds target regions, not && job docker builds target regions, not
             security-patch | "ghcr.io/panevain/observation" | "ghcr.io/other/observation" | path of observation has 'ghcr.io/other/observation' && security_patch::IMAGES differs
             security-patch | "regions", True | "regions", False | security_patch::IMAGES differs
             security-patch | "runtime-base" | "runtime-bas" | reads stage runtime-bas, not a Dockerfile stage && security_patch::IMAGES differs
@@ -868,7 +1182,7 @@ mod tests {
             security-patch | True),\n | True),\n    "x": 1,\n | IMAGES has a line sync cannot read
             security-patch | IMAGES = { | IMAGES = dict( | no `IMAGES = {` line
             security-patch | IMAGES = { | IMAGES = {\n}\nOTHER = { | IMAGES has '<nothing>' && security_patch::IMAGES differs
-            prune | package: | packages: | prune-images.yml has 0 package: [...] lines
+            prune | package: | packages: | prune-images.yml has 0 jobs with a package matrix
             security-patch | * |  | security-patch.py is missing
         "#,
         );
@@ -878,10 +1192,17 @@ mod tests {
     fn cooldowns_agree() {
         rows(
             r#"
-            cooldown | days = 7 | days = 5 | default-days has '7' && default-days has '7' && minimum_release_age (days) has '7' && COOLDOWN_DAYS has '7'
-            dependabot | default-days: 7\n  - | default-days: 3\n  - | default-days has '3', expected '7 (.config/cargo-cooldown.toml days)'
-            dependabot | default-days: 7\n  - | default-days: 7\n      semver-major-days: 30\n  - | semver-major-days has '30'
-            dependabot | * | updates: []\n | dependabot.yml cooldown has '<nothing>'
+            cooldown | days = 7 | days = 5 | cargo cooldown default-days has '7' && github-actions cooldown default-days has '7' && npm cooldown default-days has '7' && minimum_release_age (days) has '7' && COOLDOWN_DAYS has '7'
+            dependabot | default-days: 7\n  - | default-days: 3\n  - | cargo cooldown default-days has '3', expected '7 (.config/cargo-cooldown.toml days)'
+            dependabot | default-days: 7\n  - | default-days: 7\n      semver-major-days: 30\n  - | cargo cooldown semver-major-days has '30'
+            dependabot | default-days: 7\n  - | default-days: 3 # three\n  - | cargo cooldown default-days has '3'
+            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | cooldown: { default-days: 3 }\n  - package-ecosystem: github | cargo cooldown default-days has '3'
+            dependabot | default-days: 7\n  - | default-days: "7"\n  - | cargo cooldown default-days has '"7"'
+            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | \n  - package-ecosystem: github | package-ecosystem cargo has no cooldown default-days
+            dependabot | * | updates: []\n | ecosystem cargo has no && ecosystem github-actions has no && ecosystem npm has no
+            dependabot | * |  | dependabot.yml is missing
+            dependabot | * | updates: [ | dependabot.yml: not YAML
+            bump-pins | COOLDOWN_DAYS = 7 | COOLDOWN_DAYS = 7  # a week | 
             mise | "7d" | "1w" | minimum_release_age (days) has '<nothing>'
             bump-pins | COOLDOWN_DAYS = 7 | COOLDOWN_DAYS = 7\nCOOLDOWN_DAYS = 7 | COOLDOWN_DAYS has '<nothing>'
             cooldown | days = 7 | days = "7" | has no integer days
