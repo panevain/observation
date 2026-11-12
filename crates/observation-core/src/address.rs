@@ -1,9 +1,8 @@
 //! Street addresses from OSM `addr:*` tags, and which address a camera is at.
 
 use crate::building::Footprint;
-pub(crate) use crate::util::planar::dist;
 pub use crate::util::planar::ring_bounds;
-use crate::util::planar::{distance_to_segment, point_in_ring};
+use crate::util::planar::{dist, distance_to_segment, point_in_ring};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 

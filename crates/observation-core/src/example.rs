@@ -1,9 +1,10 @@
 //! Example cameras for a freshly loaded area: a handful of plausible
 //! installations on house fronts, each facing the nearest street.
 
-use crate::bundle::{AreaBundle, FOOT_WAYS};
+use crate::bundle::AreaBundle;
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
 use crate::occlusion::Occluders;
+use crate::osm::tags::FOOT_WAYS;
 use crate::terrain::Terrain;
 use crate::util::planar::closest_on_segment;
 use crate::util::planar::{clean_ring, signed_area2};
@@ -188,9 +189,10 @@ fn mount_point(terrain: &Terrain, at: Vec2, normal: Vec2, height: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::{OsmBuilding, OsmRoad, build_bundle};
     use crate::camera::CameraKind;
     use crate::geo::{BBox, LatLon};
+    use crate::osm::build::build_bundle;
+    use crate::osm::features::{OsmBuilding, OsmRoad};
 
     fn model(id: &str, kind: CameraKind) -> CameraModel {
         CameraModel {

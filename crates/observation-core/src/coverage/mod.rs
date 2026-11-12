@@ -30,7 +30,7 @@ pub use tally::{CoverageCounts, Tally};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::Road;
+    use crate::road::Road;
     use crate::terrain::Terrain;
     use crate::testing::box_footprint;
     use glam::Vec2;

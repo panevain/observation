@@ -8,9 +8,10 @@
 //! an older deployment is detected rather than misread.
 
 use crate::building::Footprint;
-use crate::bundle::{AreaBundle, Road};
+use crate::bundle::AreaBundle;
 use crate::coverage::{GroundGrid, Sight, StaticLayers};
 use crate::frustum::ViewCone;
+use crate::road::Road;
 use crate::terrain::Terrain;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

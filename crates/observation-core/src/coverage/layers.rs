@@ -54,7 +54,7 @@ impl StaticLayers {
     pub fn from_parts(
         grid: GroundGrid,
         footprints: &[&Footprint],
-        roads: &[crate::bundle::Road],
+        roads: &[crate::road::Road],
         facade_cell_m: f32,
         terrain: Terrain,
     ) -> Self {

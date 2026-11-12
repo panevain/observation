@@ -96,7 +96,7 @@ pub fn road_width_m(highway: &str, lanes: Option<&str>, width: Option<&str>) -> 
         _ => return None,
     };
     if let Some(w) = width
-        .and_then(crate::building::parse_length_m)
+        .and_then(parse_length_m)
         .filter(|w| (1.0..60.0).contains(w))
     {
         return Some(w);

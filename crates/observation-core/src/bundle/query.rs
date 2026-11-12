@@ -2,9 +2,10 @@
 
 use super::AreaBundle;
 use crate::address::{
-    Address, AddressPoint, AddressSource, MAX_ADDRESS_DISTANCE_M, dist, distance_to_footprint,
+    Address, AddressPoint, AddressSource, MAX_ADDRESS_DISTANCE_M, distance_to_footprint,
     near_bounds,
 };
+use crate::util::planar::dist;
 
 impl AreaBundle {
     /// The address a camera at world `[x, z]` belongs to (see

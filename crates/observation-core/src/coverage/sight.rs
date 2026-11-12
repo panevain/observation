@@ -308,7 +308,7 @@ mod tests {
                 })
                 .collect();
             let refs: Vec<&Footprint> = boxes.iter().collect();
-            let road = crate::bundle::Road {
+            let road = crate::road::Road {
                 osm_id: 1,
                 highway: "residential".into(),
                 name: None,

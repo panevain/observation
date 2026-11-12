@@ -3,12 +3,13 @@
 use super::features::{OsmAddressPoint, OsmBuilding, OsmRoad};
 use super::fingerprint::osm_fingerprint;
 use super::tags::names_addresses;
-use crate::address::{AddressPoint, building_of, ring_bounds};
+use crate::address::{AddressPoint, building_of};
 use crate::building::{Footprint, MeshData, extrude};
 use crate::bundle::{AreaBundle, Building};
 use crate::geo::{BBox, LatLon, Projection};
 use crate::road::Road;
 use crate::terrain::Terrain;
+use crate::util::planar::ring_bounds;
 
 /// Projects, extrudes and packs OSM features into a bundle, standing each
 /// building on the lowest ground under it.
