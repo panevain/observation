@@ -176,6 +176,22 @@ mod tests {
     use observation_core::camera::{CameraKind, CameraModel, Catalog};
 
     #[test]
+    fn the_editor_starts_on_select_with_nothing_picked() {
+        assert_eq!(
+            Editor::default(),
+            Editor {
+                tool: Tool::Select,
+                selected: None,
+                place_model: "generic-doorbell-160".to_owned(),
+                region_draft: vec![],
+                region_hover: None,
+                region_snap_m: 1.0,
+                selected_address: None,
+            }
+        );
+    }
+
+    #[test]
     fn a_missing_place_model_falls_back_to_the_default() {
         let mut models = Models::new(Catalog::default());
         let mut editor = Editor {
