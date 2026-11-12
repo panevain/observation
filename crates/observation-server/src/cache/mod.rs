@@ -22,33 +22,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use axum::body::Bytes;
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use observation_core::bundle::{BUNDLE_MAGIC, BUNDLE_VERSION};
 use observation_core::tiles::TileId;
-use serde::{Deserialize, Serialize};
 
 use self::store::Store;
 use crate::clock::{Clock, SystemClock};
+use crate::ports::{BundleStore, StoredBundle, TileStore};
+pub use crate::ports::{CachedTile, TileMeta, TileSet};
 
 mod scan;
 mod store;
-
-/// Validators and expiry stored next to every cached tile.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TileMeta {
-    /// Upstream `ETag`, sent back as `If-None-Match`.
-    pub etag: Option<String>,
-    /// Upstream `Last-Modified`, sent back as `If-Modified-Since`.
-    pub last_modified: Option<String>,
-    /// Unix time (seconds) after which the tile must be revalidated.
-    pub expires_unix: u64,
-}
-
-/// A tile read back from disk.
-#[derive(Debug, Clone)]
-pub struct CachedTile {
-    pub bytes: Bytes,
-    pub meta: TileMeta,
-}
 
 /// Size caps of the caches, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,13 +41,6 @@ pub struct CacheCaps {
     pub bundle_bytes: u64,
     pub tile_bytes: u64,
     pub dem_bytes: u64,
-}
-
-/// Which set of proxied tiles: map images or elevation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TileSet {
-    Map,
-    Dem,
 }
 
 /// Disk cache handle. Cheap to share behind an `Arc`.
@@ -152,21 +130,33 @@ impl Cache {
         key: &str,
         valid_after: Option<SystemTime>,
     ) -> Option<(Bytes, bool)> {
-        let path = self.bundle_path(key)?;
-        let meta = tokio::fs::metadata(&path).await.ok()?;
-        let bytes = tokio::fs::read(&path).await.ok()?;
+        let StoredBundle {
+            bytes,
+            written: modified,
+        } = self.read_bundle(key).await?;
         if !bytes.starts_with(&BUNDLE_MAGIC)
             || bytes.get(4..6) != Some(&BUNDLE_VERSION.to_le_bytes()[..])
         {
             tracing::warn!(key, "ignoring cached bundle with bad magic or old version");
             return None;
         }
-        let modified = meta.modified().ok();
         let age = modified.and_then(|m| self.clock.now().duration_since(m).ok());
         // An mtime in the future (clock skew) counts as fresh.
         let fresh = age.is_none_or(|a| a < self.bundle_ttl)
             && valid_after.is_none_or(|v| modified.is_none_or(|m| m >= v));
-        Some((Bytes::from(bytes), fresh))
+        Some((bytes, fresh))
+    }
+
+    /// A cached bundle as stored, with its file's mtime as the time it was
+    /// written. Reading never touches the file.
+    async fn read_bundle(&self, key: &str) -> Option<StoredBundle> {
+        let path = self.bundle_path(key)?;
+        let meta = tokio::fs::metadata(&path).await.ok()?;
+        let bytes = tokio::fs::read(&path).await.ok()?;
+        Some(StoredBundle {
+            bytes: Bytes::from(bytes),
+            written: meta.modified().ok(),
+        })
     }
 
     /// Stores a bundle atomically. When that would take the bundle cache over
@@ -310,6 +300,41 @@ impl Cache {
             let _ = tokio::fs::remove_file(&tmp).await;
         }
         result
+    }
+}
+
+impl BundleStore for Cache {
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<StoredBundle>> {
+        self.read_bundle(key).boxed()
+    }
+
+    fn put<'a>(&'a self, key: &'a str, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<bool>> {
+        self.put_bundle(key, bytes).boxed()
+    }
+}
+
+impl TileStore for Cache {
+    fn get(&self, set: TileSet, id: TileId) -> BoxFuture<'_, Option<CachedTile>> {
+        self.get_tile_in(set, id).boxed()
+    }
+
+    fn put<'a>(
+        &'a self,
+        set: TileSet,
+        id: TileId,
+        png: &'a [u8],
+        meta: &'a TileMeta,
+    ) -> BoxFuture<'a, io::Result<bool>> {
+        self.put_tile_in(set, id, png, meta).boxed()
+    }
+
+    fn revalidated<'a>(
+        &'a self,
+        set: TileSet,
+        id: TileId,
+        meta: &'a TileMeta,
+    ) -> BoxFuture<'a, io::Result<()>> {
+        self.update_tile_meta_in(set, id, meta).boxed()
     }
 }
 
@@ -506,6 +531,27 @@ mod tests {
             std::fs::metadata(png).unwrap().modified().unwrap(),
             clock.now()
         );
+    }
+
+    #[tokio::test]
+    async fn the_disk_cache_meets_the_store_contracts() {
+        use crate::testing::{
+            bundle_store_contract, bundle_store_declines, tile_store_contract, tile_store_declines,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(dir.path(), Duration::from_secs(3600), roomy());
+        bundle_store_contract(&cache).await;
+        tile_store_contract(&cache).await;
+        // Larger than the caps: declined without an error.
+        let small = tempfile::tempdir().unwrap();
+        let caps = CacheCaps {
+            bundle_bytes: 10,
+            tile_bytes: 10,
+            dem_bytes: 10,
+        };
+        let cache = Cache::open(small.path(), Duration::from_secs(3600), caps);
+        bundle_store_declines(&cache, &[0; 11]).await;
+        tile_store_declines(&cache, &[0; 11]).await;
     }
 
     #[tokio::test]

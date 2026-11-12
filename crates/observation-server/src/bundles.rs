@@ -18,6 +18,7 @@ use crate::clock::{Clock, unix_secs};
 use crate::elevation::Elevation;
 use crate::error::ApiError;
 use crate::overpass::{OsmData, OverpassClient};
+use crate::ports::BundleStore;
 use crate::ratelimit::{ClientKey, RateLimiter};
 use crate::regions::Regions;
 
@@ -192,7 +193,7 @@ impl BundleService {
         let bytes = Bytes::from(bundle.encode());
         metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);
         // `Ok(false)` (not cached) is logged by the cache with the reason.
-        if let Err(e) = self.cache.put_bundle(key, &bytes).await {
+        if let Err(e) = BundleStore::put(&*self.cache, key, &bytes).await {
             tracing::warn!(key, error = %e, "could not cache bundle");
         }
         tracing::info!(

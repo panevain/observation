@@ -13,6 +13,7 @@ use tokio::time::Instant;
 use super::{MAX_RESPONSE_BYTES, OverpassClient, build_query};
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::testing::MetricCounts;
 
 const FIXTURE: &str = include_str!("../../fixtures/demo-overpass.json");
 const URLS: [&str; 4] = [
@@ -336,72 +337,9 @@ async fn a_full_queue_refuses_at_once() {
     assert_eq!(fake.requests().len(), 4);
 }
 
-/// Counts `observation_overpass_fetches_total` by its labels (the
-/// workspace has no debugging recorder outside the client's dependency tree).
-#[derive(Debug, Default)]
-struct FetchCounts(std::sync::Mutex<std::collections::BTreeMap<String, Arc<CountFn>>>);
-
-#[derive(Debug, Default)]
-struct CountFn(std::sync::atomic::AtomicU64);
-
-impl metrics::CounterFn for CountFn {
-    fn increment(&self, value: u64) {
-        self.0.fetch_add(value, std::sync::atomic::Ordering::SeqCst);
-    }
-    fn absolute(&self, value: u64) {
-        self.0.store(value, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-impl metrics::Recorder for FetchCounts {
-    fn describe_counter(
-        &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
-    ) {
-    }
-    fn describe_gauge(
-        &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
-    ) {
-    }
-    fn describe_histogram(
-        &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
-    ) {
-    }
-    fn register_counter(&self, key: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Counter {
-        if key.name() != crate::metrics::OVERPASS_FETCH {
-            return metrics::Counter::noop();
-        }
-        let labels: Vec<String> = key
-            .labels()
-            .map(|l| format!("{}={}", l.key(), l.value()))
-            .collect();
-        let mut map = self.0.lock().unwrap();
-        let counter = map.entry(labels.join(",")).or_default();
-        metrics::Counter::from_arc(Arc::clone(counter))
-    }
-    fn register_gauge(&self, _: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
-        metrics::Gauge::noop()
-    }
-    fn register_histogram(
-        &self,
-        _: &metrics::Key,
-        _: &metrics::Metadata<'_>,
-    ) -> metrics::Histogram {
-        metrics::Histogram::noop()
-    }
-}
-
 #[tokio::test(start_paused = true)]
 async fn fetch_outcomes_are_counted() {
-    let recorder = FetchCounts::default();
+    let recorder = MetricCounts::default();
     let _guard = metrics::set_default_local_recorder(&recorder);
     let (client, fake) = setup(&URLS[..1]);
     on(&fake, URLS[0], ok());
@@ -413,13 +351,7 @@ async fn fetch_outcomes_are_counted() {
     assert!(client.fetch(&bbox()).await.is_err());
     // Refused while resting: counted as rate limited too.
     assert!(client.fetch(&bbox()).await.is_err());
-    let counts: Vec<(String, u64)> = recorder
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(k, v)| (k.clone(), v.0.load(std::sync::atomic::Ordering::SeqCst)))
-        .collect();
+    let counts = recorder.counters(crate::metrics::OVERPASS_FETCH);
     assert_eq!(
         counts,
         [

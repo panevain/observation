@@ -15,9 +15,12 @@ pub mod elevation;
 pub mod error;
 pub mod metrics;
 pub mod overpass;
+pub mod ports;
 pub mod ratelimit;
 pub mod regions;
 pub mod routes;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod tiles;
 
 use std::sync::Arc;

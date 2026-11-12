@@ -20,6 +20,7 @@ use crate::cache::{Cache, TileMeta, TileSet};
 use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::ports::TileStore;
 use crate::ratelimit::{ClientKey, RateLimiter};
 
 /// Maximum number of simultaneous upstream tile requests.
@@ -117,7 +118,7 @@ impl TileProxy {
         referer: Option<&HeaderValue>,
         client: Option<ClientKey>,
     ) -> Result<Tile, ApiError> {
-        let cached = self.cache.get_tile_in(self.set, id).await;
+        let cached = TileStore::get(&*self.cache, self.set, id).await;
         if let Some(c) = &cached
             && c.meta.expires_unix > unix_secs(self.clock.now())
         {
@@ -144,7 +145,7 @@ impl TileProxy {
                     "miss"
                 };
                 self.count(result);
-                match self.cache.put_tile_in(self.set, id, &bytes, &meta).await {
+                match TileStore::put(&*self.cache, self.set, id, &bytes, &meta).await {
                     Ok(_) => {}
                     Err(e) => {
                         tracing::warn!(error = %e, ?id, server = self.server(), "could not cache tile")
@@ -160,7 +161,7 @@ impl TileProxy {
                     )));
                 };
                 self.count("revalidated");
-                if let Err(e) = self.cache.update_tile_meta_in(self.set, id, &meta).await {
+                if let Err(e) = self.cache.revalidated(self.set, id, &meta).await {
                     tracing::warn!(error = %e, ?id, server = self.server(), "could not refresh tile metadata");
                 }
                 Ok(Tile::fresh(c.bytes))
