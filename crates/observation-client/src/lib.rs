@@ -5,7 +5,8 @@
 //! is computed here with the shared `observation-core` logic.
 //!
 //! [`ClientPlugins`] is the whole app on top of Bevy's `DefaultPlugins`, mesh
-//! picking and egui, which the `observation-client` binary adds.
+//! picking and egui; [`app`] adds them all, as the `observation-client`
+//! binary runs them.
 
 mod addresses;
 mod cameras;
@@ -17,6 +18,8 @@ mod net;
 mod persist;
 mod platform;
 mod regions;
+#[cfg(test)]
+mod schedule_tests;
 mod state;
 mod theme;
 mod ui;
@@ -24,11 +27,46 @@ mod world;
 
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
+use bevy::window::{PresentMode, WindowPlugin};
+use bevy_egui::EguiPlugin;
 use observation_core::camera::Catalog;
 
 /// Curated camera catalog: every `.ron` file under `assets/catalog/`, discovered by build.rs.
 mod catalog {
     include!(concat!(env!("OUT_DIR"), "/catalog_files.rs"));
+}
+
+/// Bevy's `DefaultPlugins` as the app uses them: a window in the page's
+/// `#observation-canvas`, and assets without `.meta` files.
+pub fn default_plugins() -> PluginGroupBuilder {
+    DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Observation".into(),
+                canvas: Some("#observation-canvas".into()),
+                fit_canvas_to_parent: true,
+                prevent_default_event_handling: true,
+                present_mode: PresentMode::AutoVsync,
+                ..default()
+            }),
+            ..default()
+        })
+        .set(AssetPlugin {
+            meta_check: bevy::asset::AssetMetaCheck::Never,
+            ..default()
+        })
+}
+
+/// The app: `defaults` (normally [`default_plugins`]), mesh picking, egui and
+/// [`ClientPlugins`], in that order. The order of the plugins decides how
+/// Bevy breaks ties between unordered systems, so the binary and the schedule
+/// tests both build the app here.
+pub fn app(defaults: PluginGroupBuilder) -> App {
+    let mut app = App::new();
+    app.add_plugins(defaults)
+        .add_plugins((MeshPickingPlugin, EguiPlugin::default()))
+        .add_plugins(ClientPlugins);
+    app
 }
 
 /// The app's plugins, in the order they are built: the platform's ports and
