@@ -60,11 +60,11 @@ fn xz() -> impl Strategy<Value = [f32; 2]> {
 }
 
 /// Any text, including whitespace and characters outside ASCII.
-fn text(max: usize) -> impl Strategy<Value = String> {
+pub(crate) fn text(max: usize) -> impl Strategy<Value = String> {
     prop::collection::vec(any::<char>(), 0..max).prop_map(String::from_iter)
 }
 
-fn opt_text() -> impl Strategy<Value = Option<String>> {
+pub(crate) fn opt_text() -> impl Strategy<Value = Option<String>> {
     prop::option::of(text(12))
 }
 
