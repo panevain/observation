@@ -14,9 +14,9 @@ use crate::{
     ActionKind, AgentError, QueryResult, RegionAction, RegionAgent, RegionsSnapshot, SizesRequest,
 };
 
-/// A placeholder: every test answers from [`FakeHttp`], so nothing is sent to it. It is an
-/// `https` URL because the client under test is also what production hands to the real HTTP
-/// client, and code scanning follows a plain `http://` literal from here to that request.
+/// A placeholder: every test answers from [`FakeHttp`], so nothing is sent to it. Code scanning
+/// follows a plain `http://` literal from a test to the real HTTP client's request (see "Plain
+/// HTTP and code scanning" in docs/design.md); this one has no reason to be one.
 const BASE: &str = "https://agent.example:8090";
 /// The caps, as literals so that changing one fails a test.
 const MIB_4: usize = 4 * 1024 * 1024;
