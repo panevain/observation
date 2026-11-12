@@ -18,16 +18,11 @@ concurrency:
 
 permissions: {}
 
-# mise.ci.toml's tools, environment and tasks (setup-rust's ci:toolchain).
-env:
-  MISE_ENV: ci
-
 jobs:
   plan:
     name: plan
     runs-on: ubuntu-24.04
-    # An uncached build of xtask, then the checks.
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read # find the PR that this push merged
@@ -38,23 +33,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # xtask from the pushed main commit, built without a cache (this job decides what is
-      # released). The job's token only reads, and the build step does not get it.
-      - uses: $/.github/actions/setup-mise
-        with:
-          cache: false
-      - uses: $/.github/actions/setup-rust
-      - uses: $/.github/actions/xtask
-        id: xtask
       - name: Version and kind
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
-          version="$("${XTASK}" release version get)"
+          version="$(scripts/workspace-version.sh)"
           if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
             echo "v${version} already exists; nothing to tag."
             exit 0
@@ -113,7 +99,8 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          # plan compiles code (xtask), so its output is checked before this token uses it.
+          # Checked before the tag, which cannot be moved or deleted once pushed (v* tags are
+          # immutable), although plan compiles nothing.
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
           scripts/ci-git.sh identity "${BOT}"
           git -c core.hooksPath=/dev/null tag -a "v${VERSION}" -m "v${VERSION}" "${GITHUB_SHA}"

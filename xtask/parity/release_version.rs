@@ -1,12 +1,12 @@
 //! `cargo xtask release version get|set` against scripts/workspace-version.sh and
 //! scripts/set-version.sh, both run for real: the scripts as they are in the tree, the port as
 //! the built binary, each in its own temporary repository built from the same case, with the
-//! real cargo. Release-prep's two bot jobs still run set-version.sh (until the release-prep
-//! split moves their edits into an unprivileged job and deletes both scripts, and this test with
-//! them), so the two must not drift: same exit status, stdout, stderr (paths aside), lockfiles
-//! and Cargo.toml, and where the script fails the port fails. It needs GNU sed (set-version.sh
-//! uses `sed -i -E`), as on the CI runners.
-
+//! real cargo. Release-prep's two bot jobs still run set-version.sh, and release-tag.yml, which
+//! compiles nothing, reads the version with workspace-version.sh for good, so the two must not
+//! drift: same exit status, stdout, stderr (paths aside), lockfiles and Cargo.toml, and where the
+//! script fails the port fails. It needs GNU sed (set-version.sh uses `sed -i -E`), as on the CI
+//! runners. Also here: the same two readers on this repository's Cargo.toml, and release-tag's
+//! tag kind (a shell `case` in the workflow), run by bash.
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write as _;
@@ -163,4 +163,84 @@ fn port_and_scripts_agree_on_every_case() {
     }
     assert!(compared > 40, "only {compared} cases ran");
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// release-tag.yml reads the version it tags with workspace-version.sh; the other workflows read
+/// it with the port. Both must give the same answer on this repository.
+#[test]
+fn this_repository_reads_the_same_version_with_both() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let read = |mut cmd: Command| {
+        let out = ok(cmd.current_dir(&repo).env_remove("GITHUB_ACTIONS").output());
+        (out.status.code(), out.stdout, out.stderr)
+    };
+    let script = read(Command::new("scripts/workspace-version.sh"));
+    let mut port = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    port.arg("--repo")
+        .arg(&repo)
+        .args(["release", "version", "get"]);
+    let port = read(port);
+    assert_eq!(
+        script.0,
+        Some(0),
+        "{:?}",
+        String::from_utf8_lossy(&script.2)
+    );
+    assert_eq!(script, port);
+}
+
+/// The tag kind in release-tag.yml's plan job (a `case` on the merged pull request's head
+/// branch), cut from the workflow file and run by bash: hotfix/* waits for an approval,
+/// release/* is tagged at once, anything else fails the job.
+#[test]
+fn release_tag_kind_reads_the_head_branch() {
+    let wf = ok(fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/release-tag.yml"),
+    ));
+    let lines: Vec<&str> = wf.lines().map(str::trim).collect();
+    let start = ok(lines
+        .iter()
+        .position(|l| *l == r#"case "${head}" in"#)
+        .ok_or("no case on the head branch in release-tag.yml"));
+    let end = ok(lines[start..]
+        .iter()
+        .position(|l| *l == "esac")
+        .ok_or("no esac"));
+    let block = lines[start..=start + end].join("\n");
+    let script = format!("set -euo pipefail\nhead=\"$1\"\n{block}\necho \"kind=${{kind}}\"\n");
+    for (head, want) in [
+        ("hotfix/1.2.1", Some("hotfix")),
+        ("hotfix/", Some("hotfix")),
+        ("release/1.3.0", Some("release")),
+        ("release/x/y", Some("release")),
+        ("", None),
+        ("hotfix", None),
+        ("xhotfix/1.2.1", None),
+        ("feature/release/1.3.0", None),
+        ("main", None),
+        ("Release/1.3.0", None),
+    ] {
+        let out = ok(Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", &script, "_", head])
+            .env("GITHUB_SHA", "0123abc")
+            .output());
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        match want {
+            Some(kind) => {
+                assert!(out.status.success(), "{head:?}: {stdout}");
+                assert_eq!(stdout, format!("kind={kind}\n"), "{head:?}");
+            }
+            None => {
+                assert_eq!(out.status.code(), Some(1), "{head:?}: {stdout}");
+                assert_eq!(
+                    stdout,
+                    format!(
+                        "::error::0123abc is not a merge of a release/* or hotfix/* PR (head \
+                         '{head}'); tag it by hand if it should be released.\n"
+                    ),
+                    "{head:?}"
+                );
+            }
+        }
+    }
 }
