@@ -135,6 +135,11 @@ impl Plugin for LoaderPlugin {
 }
 
 #[cfg(test)]
+mod app_tests;
+#[cfg(test)]
+mod target_cfg_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
