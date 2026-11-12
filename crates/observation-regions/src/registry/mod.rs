@@ -24,21 +24,21 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use observation_core::geo::BBox;
-use observation_core::regions::{
-    DEFAULT_MAX_REFRESH_DAYS, DEFAULT_MIN_REFRESH_DAYS, JobPhase, JobView, RegionView,
-    RegionsSnapshot,
-};
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use observation_core::regions::{JobPhase, JobView, RegionsSnapshot};
 use tokio::sync::{Notify, watch};
 use tokio::task::AbortHandle;
 
 use crate::poly::Boundary;
 
+mod persist;
+mod snapshot;
+mod state;
+
+pub use self::persist::{OpenError, RegionRecord};
+use self::snapshot::{build_snapshot, next_refresh};
+
 /// Progress is published at most this often (phase changes go out at once).
 const PUBLISH_EVERY: Duration = Duration::from_millis(250);
-/// A failed or cancelled scheduled refresh is not retried for this long.
-const RETRY_REFRESH_AFTER: u64 = 24 * 3600;
 
 pub fn now_unix() -> u64 {
     SystemTime::now()
@@ -92,40 +92,6 @@ impl Drop for RegionDb {
             }
         });
     }
-}
-
-/// What is kept about a region across restarts.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct RegionRecord {
-    pub id: String,
-    pub name: String,
-    /// Directory name under `db/` of the current database.
-    pub db_dir: Option<String>,
-    pub bbox: Option<BBox>,
-    pub data_timestamp: Option<String>,
-    pub imported_unix: Option<u64>,
-    pub disk_bytes: Option<u64>,
-    pub last_error: Option<String>,
-    /// When `last_error` happened (Unix seconds).
-    #[serde(default)]
-    pub last_error_unix: Option<u64>,
-    /// When the last import ended, however it ended (Unix seconds).
-    #[serde(default)]
-    pub last_attempt_unix: Option<u64>,
-    /// An import was queued or running; it is queued again after a restart.
-    #[serde(default)]
-    pub pending: bool,
-    /// Scheduled refreshes are on for this region.
-    #[serde(default = "yes")]
-    pub auto_refresh: bool,
-    /// Days between this region's scheduled refreshes; `None` uses the
-    /// agent's `OBS_REGIONS_DEFAULT_REFRESH_DAYS`.
-    #[serde(default)]
-    pub refresh_days: Option<u32>,
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// A finished import, ready to be swapped in.
@@ -204,17 +170,6 @@ pub enum ActionError {
     Busy,
 }
 
-/// `regions.json` exists but cannot be used. The agent refuses to start
-/// rather than treat every database as unreferenced and delete it.
-#[derive(Debug, Error)]
-#[error(
-    "{path} is unreadable ({reason}); fix or remove it to start (removing it deletes all imported regions)"
-)]
-pub struct OpenError {
-    path: String,
-    reason: String,
-}
-
 #[derive(Debug)]
 pub struct Registry {
     state: Mutex<State>,
@@ -244,87 +199,6 @@ impl Refresh {
 }
 
 impl Registry {
-    /// Loads `regions.json`, opens the databases it names, deletes leftovers
-    /// (unreferenced databases, interrupted downloads) and queues imports that
-    /// were pending when the agent stopped.
-    pub fn open(
-        data_dir: &Path,
-        max_download_bytes: u64,
-        refresh_days: u32,
-    ) -> Result<Self, OpenError> {
-        let path = data_dir.join("regions.json");
-        let records: Vec<RegionRecord> = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| OpenError {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            })?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => {
-                return Err(OpenError {
-                    path: path.display().to_string(),
-                    reason: e.to_string(),
-                });
-            }
-        };
-        let db_root = data_dir.join("db");
-        let mut state = State::default();
-        for mut record in records {
-            let db = record.db_dir.as_ref().and_then(|name| {
-                let dir = db_root.join(name);
-                let poly = std::fs::read_to_string(dir.join("region.poly")).ok()?;
-                match Boundary::parse(&poly) {
-                    Ok(b) => Some(Arc::new(RegionDb::new(dir, b))),
-                    Err(e) => {
-                        tracing::warn!(region = %record.id, error = %e, "region boundary unreadable");
-                        None
-                    }
-                }
-            });
-            if db.is_none() && record.db_dir.take().is_some() {
-                record.last_error =
-                    Some("the region's database was missing; import it again".into());
-            }
-            let job = record.pending.then(|| state.new_job());
-            if let Some((j, _)) = &job {
-                state.queue.push_back((record.id.clone(), *j));
-            }
-            state
-                .regions
-                .insert(record.id.clone(), Region { record, db, job });
-        }
-        // Leftovers of interrupted imports and replaced databases.
-        let _ = std::fs::remove_dir_all(data_dir.join("work"));
-        let referenced: Vec<String> = state
-            .regions
-            .values()
-            .filter_map(|r| r.record.db_dir.clone())
-            .collect();
-        if let Ok(entries) = std::fs::read_dir(&db_root) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if !referenced.contains(&name) {
-                    tracing::info!(dir = %name, "removing unreferenced region database");
-                    let _ = std::fs::remove_dir_all(e.path());
-                }
-            }
-        }
-        let refresh = Refresh {
-            days: refresh_days,
-            min_days: DEFAULT_MIN_REFRESH_DAYS,
-            max_days: DEFAULT_MAX_REFRESH_DAYS,
-        };
-        let snapshot = build_snapshot(&state, max_download_bytes, refresh);
-        let (tx, _) = watch::channel(snapshot);
-        Ok(Self {
-            state: Mutex::new(state),
-            tx,
-            wake: Notify::new(),
-            data_dir: data_dir.to_owned(),
-            max_download_bytes,
-            refresh,
-        })
-    }
-
     /// Sets the range a region's own refresh interval must lie in
     /// (`1 <= min_days <= max_days`, checked by the configuration).
     pub fn with_refresh_range(mut self, min_days: u32, max_days: u32) -> Self {
@@ -381,266 +255,6 @@ impl Registry {
         }
         drop(state);
         self.tx.send_replace(snapshot);
-    }
-
-    /// Queues an import (or re-import) of `id`.
-    pub fn enqueue(&self, id: &str, name: &str) -> Result<(), ActionError> {
-        let mut s = self.lock();
-        if s.regions.get(id).is_some_and(|r| r.job.is_some()) {
-            return Err(ActionError::Busy);
-        }
-        let job = s.new_job();
-        let job_id = job.0;
-        let region = s.regions.entry(id.to_owned()).or_insert_with(|| Region {
-            record: RegionRecord {
-                id: id.to_owned(),
-                auto_refresh: true,
-                ..RegionRecord::default()
-            },
-            db: None,
-            job: None,
-        });
-        region.record.name = name.to_owned();
-        region.record.pending = true;
-        region.job = Some(job);
-        s.queue.push_back((id.to_owned(), job_id));
-        self.commit(s, true);
-        self.wake.notify_one();
-        Ok(())
-    }
-
-    /// Cancels the queued or running import of `id`. A region that never
-    /// finished an import is forgotten.
-    pub fn cancel(&self, id: &str) -> Result<(), ActionError> {
-        let mut s = self.lock();
-        let region = s.regions.get_mut(id).ok_or(ActionError::NotFound)?;
-        let (job, _) = region.job.take().ok_or(ActionError::NotFound)?;
-        region.record.pending = false;
-        region.record.last_attempt_unix = Some(now_unix());
-        if region.db.is_none() {
-            s.regions.remove(id);
-        }
-        s.queue.retain(|(_, j)| *j != job);
-        s.abort_if_running(Some(job));
-        self.commit(s, true);
-        Ok(())
-    }
-
-    /// Cancels any import of `id` and deletes its data.
-    pub fn delete(&self, id: &str) -> Result<(), ActionError> {
-        let mut s = self.lock();
-        let region = s.regions.remove(id).ok_or(ActionError::NotFound)?;
-        if let Some(db) = &region.db {
-            db.retire();
-        }
-        let job = region.job.as_ref().map(|(j, _)| *j);
-        s.queue.retain(|(_, j)| Some(*j) != job);
-        s.abort_if_running(job);
-        self.commit(s, true);
-        drop(region);
-        Ok(())
-    }
-
-    /// Changes the refresh settings of `id`: turns scheduled refreshes on or
-    /// off, and sets the days between them (the caller checks them against
-    /// [`Registry::refresh_range`]) or, with `Some(None)`, returns the region
-    /// to the agent's default. `None` leaves a setting as it is. A refresh
-    /// already queued or running carries on (cancel it to stop it).
-    pub fn change_settings(
-        &self,
-        id: &str,
-        auto_refresh: Option<bool>,
-        refresh_days: Option<Option<u32>>,
-    ) -> Result<(), ActionError> {
-        let mut s = self.lock();
-        let r = &mut s.regions.get_mut(id).ok_or(ActionError::NotFound)?.record;
-        let before = (r.auto_refresh, r.refresh_days);
-        r.auto_refresh = auto_refresh.unwrap_or(r.auto_refresh);
-        if let Some(days) = refresh_days {
-            r.refresh_days = days;
-        }
-        if (r.auto_refresh, r.refresh_days) != before {
-            tracing::info!(region = id, on = r.auto_refresh, days = ?r.refresh_days, "refresh settings changed");
-            self.commit(s, true);
-        }
-        Ok(())
-    }
-
-    /// Waits until nothing runs and an import is queued; returns it.
-    pub async fn next_job(&self) -> (String, JobId) {
-        loop {
-            let notified = self.wake.notified();
-            {
-                let mut s = self.lock();
-                if s.running.is_none()
-                    && let Some(next) = s.queue.pop_front()
-                {
-                    return next;
-                }
-            }
-            notified.await;
-        }
-    }
-
-    /// Records the running job's abort handle (call right after spawning it).
-    /// Returns `false`, and aborts it, if the job was cancelled meanwhile.
-    pub fn started(&self, id: &str, job: JobId, handle: AbortHandle) -> bool {
-        let mut s = self.lock();
-        if s.job_region(id, job).is_none() {
-            handle.abort();
-            return false;
-        }
-        s.running = Some((job, handle));
-        true
-    }
-
-    /// Updates a job's progress; published when the phase changes or
-    /// [`PUBLISH_EVERY`] has passed. Ignored for a cancelled or replaced job.
-    pub fn progress(&self, id: &str, job: JobId, phase: JobPhase, done: u64, total: Option<u64>) {
-        let mut s = self.lock();
-        let due = s.last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_EVERY);
-        let Some((_, view)) = s.job_region(id, job).and_then(|r| r.job.as_mut()) else {
-            return;
-        };
-        let phase_changed = view.phase != phase;
-        if phase_changed {
-            view.since_unix = now_unix();
-        }
-        view.phase = phase;
-        view.done = done;
-        view.total = total;
-        if phase_changed || due {
-            self.commit(s, false);
-        }
-    }
-
-    /// Ends a job: installs `result` (retiring the database it replaces) or
-    /// records its error. `None` means it was cancelled. A result for a job
-    /// that is no longer current is dropped.
-    pub fn finish(&self, id: &str, job: JobId, result: Option<Result<Imported, String>>) {
-        let mut s = self.lock();
-        if s.running.as_ref().is_some_and(|(j, _)| *j == job) {
-            s.running = None;
-        }
-        let mut retired = None;
-        if let Some(region) = s.job_region(id, job) {
-            region.job = None;
-            region.record.pending = false;
-            region.record.last_attempt_unix = Some(now_unix());
-            match result {
-                Some(Ok(imported)) => {
-                    retired = region.db.replace(Arc::clone(&imported.db));
-                    let r = &mut region.record;
-                    r.db_dir = Some(imported.db_dir);
-                    r.bbox = imported.bbox;
-                    r.data_timestamp = imported.data_timestamp;
-                    r.imported_unix = Some(now_unix());
-                    r.disk_bytes = Some(imported.disk_bytes);
-                    r.last_error = None;
-                    r.last_error_unix = None;
-                    tracing::info!(region = id, "region ready");
-                }
-                // The region stays listed (with its old data, if any) so the error can be read.
-                Some(Err(e)) => {
-                    tracing::warn!(region = id, error = %e, "region import failed");
-                    region.record.last_error = Some(e);
-                    region.record.last_error_unix = Some(now_unix());
-                }
-                None => {}
-            }
-            if let Some(old) = &retired {
-                old.retire();
-            }
-        } else if let Some(Ok(imported)) = result {
-            imported.db.retire();
-        }
-        self.commit(s, true);
-        self.wake.notify_one();
-    }
-
-    /// The ready database whose boundary holds `bbox` (the smallest, if several).
-    pub fn covering(&self, bbox: &BBox) -> Option<Covering> {
-        let s = self.lock();
-        let area = |r: &Region| {
-            r.record
-                .bbox
-                .map_or(f64::MAX, |b| (b.north - b.south) * (b.east - b.west))
-        };
-        s.regions
-            .values()
-            // Cheap rejection by bounds before the polygon test.
-            .filter(|r| r.record.bbox.is_none_or(|b| b.contains_box(bbox)))
-            .filter(|r| {
-                r.db.as_ref()
-                    .is_some_and(|db| db.boundary.contains_bbox(bbox))
-            })
-            .min_by(|a, b| area(a).total_cmp(&area(b)))
-            .and_then(|r| {
-                Some(Covering {
-                    id: r.record.id.clone(),
-                    db: Arc::clone(r.db.as_ref()?),
-                    data_timestamp: r.record.data_timestamp.clone(),
-                })
-            })
-    }
-
-    /// Regions due for a scheduled refresh (see [`next_refresh`]).
-    pub fn due_for_refresh(&self) -> Vec<(String, String)> {
-        let now = now_unix();
-        self.lock()
-            .regions
-            .values()
-            .filter(|r| next_refresh(r, self.refresh).is_some_and(|t| t < now))
-            .map(|r| (r.record.id.clone(), r.record.name.clone()))
-            .collect()
-    }
-}
-
-/// When `r` is due for a scheduled refresh: its interval after its import,
-/// or, when a later attempt failed or was cancelled, a day after that attempt.
-/// `None` for a region that is not ready, has an import queued or running, or
-/// has auto-refresh off (as have all with the agent's default interval 0,
-/// whatever their own).
-fn next_refresh(r: &Region, refresh: Refresh) -> Option<u64> {
-    if refresh.days == 0 || !r.record.auto_refresh || r.db.is_none() || r.job.is_some() {
-        return None;
-    }
-    let imported = r.record.imported_unix?;
-    let days = refresh.days_for(r.record.refresh_days);
-    let due = imported.saturating_add(u64::from(days) * 86_400);
-    Some(match r.record.last_attempt_unix {
-        Some(t) if t > imported => due.max(t.saturating_add(RETRY_REFRESH_AFTER)),
-        _ => due,
-    })
-}
-
-fn build_snapshot(s: &State, max_download_bytes: u64, refresh: Refresh) -> RegionsSnapshot {
-    RegionsSnapshot {
-        version: s.version,
-        regions: s
-            .regions
-            .values()
-            .map(|r| RegionView {
-                id: r.record.id.clone(),
-                name: r.record.name.clone(),
-                ready: r.db.is_some(),
-                bbox: r.record.bbox,
-                data_timestamp: r.record.data_timestamp.clone(),
-                imported_unix: r.record.imported_unix,
-                last_attempt_unix: r.record.last_attempt_unix,
-                auto_refresh: r.record.auto_refresh,
-                refresh_days: r.record.refresh_days.map(|d| refresh.days_for(Some(d))),
-                next_refresh_unix: next_refresh(r, refresh),
-                disk_bytes: r.record.disk_bytes,
-                job: r.job.as_ref().map(|(_, v)| v.clone()),
-                last_error: r.record.last_error.clone(),
-                last_error_unix: r.record.last_error_unix,
-            })
-            .collect(),
-        max_download_bytes,
-        refresh_days: refresh.days,
-        min_refresh_days: refresh.min_days,
-        max_refresh_days: refresh.max_days,
     }
 }
 
