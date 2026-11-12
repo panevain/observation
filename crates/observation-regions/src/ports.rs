@@ -80,6 +80,7 @@ pub(crate) fn checked_body(resp: HttpResponse) -> Result<Option<Bytes>, String> 
     }
     match resp.body {
         Body::Complete(bytes) => Ok(Some(bytes)),
+        // `Skipped` comes only with a 4xx or 5xx, which is an error above.
         Body::TooLarge | Body::Skipped => Ok(None),
     }
 }

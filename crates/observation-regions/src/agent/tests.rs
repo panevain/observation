@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use observation_upstream::testing::{FakeHttp, FakeReply};
 use observation_upstream::{HttpRequest, TransportErrorKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -259,4 +260,40 @@ fn the_download_stops_connecting_after_20_s() {
         assert_eq!(started.elapsed(), Duration::from_secs(20));
         drop(listener);
     });
+}
+
+/// The agent built from its ports sends the extract list, the sizes and the
+/// boundary through `ports.http`, and contacts nothing else.
+#[tokio::test]
+async fn the_catalog_and_the_boundary_go_through_the_http_port() {
+    const INDEX: &str = r#"{"features":[{"properties":{"id":"monaco","name":"Monaco",
+      "urls":{"pbf":"https://download.geofabrik.de/europe/monaco-latest.osm.pbf"}}}]}"#;
+    const SQUARE: &str = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
+    let dir = tempfile::tempdir().unwrap();
+    let config = config(dir.path(), false);
+    assert_eq!(
+        config.catalog_url,
+        "https://download.geofabrik.de/index-v1-nogeom.json"
+    );
+    let fake = FakeHttp::new();
+    fake.on(http::Method::GET, &config.catalog_url, FakeReply::ok(INDEX));
+    let sized =
+        FakeReply::status(http::StatusCode::OK).header(http::header::CONTENT_LENGTH, "1234");
+    let pbf = "https://download.geofabrik.de/europe/monaco-latest.osm.pbf";
+    fake.on(http::Method::HEAD, pbf, sized);
+    let poly = "https://download.geofabrik.de/europe/monaco.poly";
+    fake.on(http::Method::GET, poly, FakeReply::ok(SQUARE));
+    let ports = Ports {
+        http: Arc::new(fake.clone()),
+        ..Ports::production(&config).unwrap()
+    };
+    let agent = Agent::from_parts(&config, ports).unwrap();
+
+    let extract = agent.catalog.find("monaco").await.unwrap().unwrap();
+    let sizes = agent.catalog.sizes(&["monaco".to_owned()]).await.unwrap();
+    assert_eq!(sizes["monaco"], Some(1234));
+    let boundary = crate::import::fetch_poly(&*agent.tools.http, &extract.poly_url).await;
+    assert_eq!(boundary.unwrap(), SQUARE);
+    assert_eq!(fake.requests().len(), 3);
+    fake.assert_drained();
 }

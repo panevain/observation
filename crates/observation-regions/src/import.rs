@@ -161,7 +161,7 @@ async fn download(
     Ok(())
 }
 
-async fn fetch_poly(http: &dyn HttpClient, url: &str) -> Result<String, String> {
+pub(crate) async fn fetch_poly(http: &dyn HttpClient, url: &str) -> Result<String, String> {
     let fail = |e: String| format!("could not download the region boundary: {e}");
     let req = HttpRequest::get(url, MAX_POLY_BYTES)
         .timeout(Duration::from_secs(60))
