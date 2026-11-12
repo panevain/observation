@@ -8,8 +8,9 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# Test doubles (a manual clock) for tests of code that builds on this crate.
-testing = []
+# Test doubles (a manual clock, memory stores, the app over fakes) for tests of
+# code that builds on this crate.
+testing = ["observation-regions-api/testing", "observation-upstream/testing"]
 
 [dependencies]
 observation-core.workspace = true

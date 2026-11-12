@@ -23,15 +23,15 @@ pub mod routes;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tiles;
+mod wiring;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
-use observation_regions_api::HttpRegionAgent;
-use observation_upstream::{GuardedHttp, HttpClient, Redirects};
+use observation_regions_api::RegionAgent;
+use observation_upstream::HttpClient;
 use thiserror::Error;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -41,11 +41,11 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::bundles::BundleService;
-use crate::cache::{Cache, CacheCaps};
-use crate::clock::{Clock, SystemClock, unix_secs};
+use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
 use crate::elevation::Elevation;
 use crate::overpass::OverpassClient;
+use crate::ports::{BundleStore, TileStore};
 use crate::ratelimit::RateLimiter;
 use crate::regions::Regions;
 use crate::tiles::TileProxy;
@@ -84,73 +84,56 @@ struct Inner {
 /// Most region event streams open at once.
 pub const MAX_EVENT_STREAMS: usize = 256;
 
+/// What [`AppState`] is built on: the upstreams, the region agent, the
+/// stores and the clock.
+#[derive(Debug, Clone)]
+pub struct Ports {
+    /// Overpass, with the configured Overpass timeout as its default.
+    pub overpass_http: Arc<dyn HttpClient>,
+    /// Map tiles and elevation tiles alike (one client for both).
+    pub tile_http: Arc<dyn HttpClient>,
+    /// The region agent; `None` without one.
+    pub agent: Option<Arc<dyn RegionAgent>>,
+    pub bundle_store: Arc<dyn BundleStore>,
+    pub tile_store: Arc<dyn TileStore>,
+    pub clock: Arc<dyn Clock>,
+}
+
 impl AppState {
     /// Builds the HTTP clients, opens the cache and prepares the demo bundle.
-    /// With a region agent configured, also starts following its regions
-    /// (so this must run inside a Tokio runtime).
+    /// Then starts trimming the cache and, with a region agent configured,
+    /// following its regions (so this must run inside a Tokio runtime).
     pub fn new(config: Config) -> Result<Self, StateError> {
-        let user_agent = config.user_agent();
         config.validate()?;
-        // No redirects: an upstream must not be able to send us elsewhere.
-        let upstream = || GuardedHttp::builder(config.allow_private_upstreams, Redirects::None);
-        // Every attempt sets its own timeout (at most this one), as before.
-        let overpass_client = upstream()
-            .user_agent(&user_agent)
-            .timeout(config.overpass_timeout)
-            .build()?;
-        // Tile requests set none of their own: this one covers each fetch.
-        let tile_client: Arc<dyn HttpClient> = Arc::new(
-            upstream()
-                .user_agent(&user_agent)
-                .timeout(Duration::from_secs(20))
-                .build()?,
-        );
+        let production = wiring::production_ports(&config)?;
+        let state = Self::from_ports(config, production.ports);
+        wiring::spawn_background(&state, production.cache);
+        Ok(state)
+    }
 
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let cache = Arc::new(Cache::open_with_clock(
-            &config.cache_dir,
-            CacheCaps {
-                bundle_bytes: config.bundle_cache_cap_bytes,
-                tile_bytes: config.tile_cache_cap_bytes,
-                dem_bytes: config.dem_cache_cap_bytes,
-            },
-            Arc::clone(&clock),
-        ));
-        // Off the request path: a cache from before a cap can be far over it.
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            let cache = Arc::clone(&cache);
-            runtime.spawn(async move { cache.trim().await });
-        }
-        let overpass = Arc::new(OverpassClient::new(Arc::new(overpass_client), &config));
-        let regions = match &config.regions_url {
-            Some(url) => {
-                // No overall timeout: snapshot requests long-poll (each request sets its own).
-                // The agent normally sits on a private network and is trusted with
-                // `OBS_REGIONS_TOKEN`, so addresses are not filtered, but it must not
-                // redirect that token elsewhere.
-                let client = GuardedHttp::builder(true, Redirects::None)
-                    .user_agent(&user_agent)
-                    .connect_timeout(Duration::from_secs(5))
-                    .build()?;
-                let agent = HttpRegionAgent::new(
-                    Arc::new(client),
-                    url.clone(),
-                    config.regions_token.clone(),
-                );
-                let regions = Arc::new(Regions::new(Arc::new(agent), config.admin_token.is_some()));
-                tokio::spawn(Arc::clone(&regions).run_poller());
-                Some(regions)
-            }
-            None => None,
-        };
+    /// The state over `ports`, with the services built on them and the demo
+    /// bundle dated by the ports' clock. Spawns nothing: the region poller
+    /// and the cache trim are [`AppState::new`]'s.
+    pub fn from_ports(config: Config, ports: Ports) -> Self {
+        let Ports {
+            overpass_http,
+            tile_http,
+            agent,
+            bundle_store,
+            tile_store,
+            clock,
+        } = ports;
+        let overpass = Arc::new(OverpassClient::new(overpass_http, &config));
+        let regions =
+            agent.map(|agent| Arc::new(Regions::new(agent, config.admin_token.is_some())));
         let elevation = Arc::new(Elevation::new(
-            Arc::clone(&tile_client),
+            Arc::clone(&tile_http),
             &config,
-            cache.clone(),
+            Arc::clone(&tile_store),
             Arc::clone(&clock),
         ));
         let bundles = Arc::new(BundleService::new(
-            cache.clone(),
+            bundle_store,
             overpass,
             regions.clone(),
             elevation,
@@ -160,7 +143,7 @@ impl AppState {
             config.bundle_ttl,
         ));
         let now = unix_secs(clock.now());
-        let tiles = TileProxy::new(tile_client, &config, cache, clock);
+        let tiles = TileProxy::new(tile_http, &config, tile_store, clock);
 
         let demo = match demo::build_demo(&config.attribution, &config.dem_attribution, now) {
             Ok(b) => Some(b),
@@ -169,7 +152,7 @@ impl AppState {
                 None
             }
         };
-        Ok(Self(Arc::new(Inner {
+        Self(Arc::new(Inner {
             config,
             bundles,
             tiles,
@@ -177,7 +160,7 @@ impl AppState {
             regions,
             shutdown: tokio::sync::watch::Sender::new(false),
             streams: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_STREAMS)),
-        })))
+        }))
     }
 
     /// The region agent client, if `OBS_REGIONS_URL` is set.

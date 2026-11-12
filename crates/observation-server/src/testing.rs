@@ -1,7 +1,7 @@
 //! Test doubles for the server's ports (stores, and the map data and terrain
-//! sources of a bundle), and the contract every store implementation must
-//! meet. Built for this crate's tests and, with the
-//! `testing` feature, for tests elsewhere.
+//! sources of a bundle), the contract every store implementation must meet,
+//! and [`TestApp`], the whole application over fakes. Built for this crate's
+//! tests and, with the `testing` feature, for tests elsewhere.
 //!
 //! The memory stores never evict: size caps, estimates and eviction are
 //! properties of the disk [`Cache`](crate::cache::Cache) and are tested on it.
@@ -20,14 +20,21 @@ use observation_core::tiles::TileId;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
+use axum::Router;
+use observation_regions_api::RegionAgent;
+use observation_regions_api::testing::FakeRegionAgent;
+use observation_upstream::testing::FakeHttp;
+
 use crate::clock::Clock;
 pub use crate::clock::ManualClock;
+use crate::config::Config;
 use crate::error::ApiError;
 use crate::overpass::OsmData;
 use crate::ports::{
     BundleStore, CachedTile, MapDataSource, StoredBundle, TerrainSource, TileMeta, TileSet,
     TileStore,
 };
+use crate::{AppState, Ports, app};
 
 /// How a memory store answers writes.
 #[derive(Debug, Default)]
@@ -556,6 +563,148 @@ impl metrics::Recorder for MetricCounts {
         metrics::Histogram::noop()
     }
 }
+
+/// The whole application over fakes: [`AppState::from_ports`] with
+/// [`FakeHttp`] for Overpass and for tiles, an optional [`FakeRegionAgent`],
+/// memory stores and a [`ManualClock`], on the production configuration
+/// unless [`TestAppBuilder::config`] changes it. Nothing is spawned: a test
+/// polls the agent itself (`state.regions()`).
+///
+/// Dropping it checks that every fake was drained: no request went
+/// unscripted and no reply was left unused.
+#[derive(Debug)]
+pub struct TestApp {
+    pub state: AppState,
+    pub router: Router,
+    pub overpass: FakeHttp,
+    pub tiles: FakeHttp,
+    pub agent: Option<FakeRegionAgent>,
+    pub bundle_store: Arc<MemBundleStore>,
+    pub tile_store: Arc<MemTileStore>,
+    pub clock: Arc<ManualClock>,
+}
+
+impl TestApp {
+    pub fn builder() -> TestAppBuilder {
+        TestAppBuilder::default()
+    }
+
+    /// Checks every fake now (it is also checked on drop).
+    pub fn assert_drained(&self) {
+        self.overpass.assert_drained();
+        self.tiles.assert_drained();
+        if let Some(agent) = &self.agent {
+            agent.assert_drained();
+        }
+    }
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.assert_drained();
+        }
+    }
+}
+
+/// A change to the configuration of a [`TestApp`].
+type ConfigTweak = Box<dyn FnOnce(&mut Config)>;
+
+/// Builds a [`TestApp`]; anything not set is a fresh fake, no agent, and a
+/// clock at 2023-11-14T22:13:20Z (Unix 1 700 000 000).
+#[derive(Default)]
+pub struct TestAppBuilder {
+    clock: Option<Arc<ManualClock>>,
+    overpass: Option<FakeHttp>,
+    tiles: Option<FakeHttp>,
+    agent: Option<FakeRegionAgent>,
+    tweaks: Vec<ConfigTweak>,
+}
+
+impl std::fmt::Debug for TestAppBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestAppBuilder")
+            .field("clock", &self.clock)
+            .field("overpass", &self.overpass)
+            .field("tiles", &self.tiles)
+            .field("agent", &self.agent)
+            .field("tweaks", &self.tweaks.len())
+            .finish()
+    }
+}
+
+impl TestAppBuilder {
+    pub fn clock(mut self, clock: Arc<ManualClock>) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
+    pub fn overpass(mut self, fake: FakeHttp) -> Self {
+        self.overpass = Some(fake);
+        self
+    }
+
+    /// Map and elevation tiles share it, as they share one client.
+    pub fn tiles(mut self, fake: FakeHttp) -> Self {
+        self.tiles = Some(fake);
+        self
+    }
+
+    pub fn agent(mut self, fake: FakeRegionAgent) -> Self {
+        self.agent = Some(fake);
+        self
+    }
+
+    /// Changes the production configuration; applied in order.
+    pub fn config(mut self, tweak: impl FnOnce(&mut Config) + 'static) -> Self {
+        self.tweaks.push(Box::new(tweak));
+        self
+    }
+
+    /// Panics if the configuration does not validate, as `AppState::new`
+    /// would refuse it.
+    pub fn build(self) -> TestApp {
+        let mut config = Config::from_lookup(|_| None).expect("the production configuration");
+        for tweak in self.tweaks {
+            tweak(&mut config);
+        }
+        config.validate().expect("a valid configuration");
+        let clock = self
+            .clock
+            .unwrap_or_else(|| Arc::new(ManualClock::at_unix(1_700_000_000)));
+        let overpass = self.overpass.unwrap_or_default();
+        let tiles = self.tiles.unwrap_or_default();
+        let bundle_store = Arc::new(MemBundleStore::new(clock.clone()));
+        let tile_store = Arc::new(MemTileStore::new());
+        let state = AppState::from_ports(
+            config,
+            Ports {
+                overpass_http: Arc::new(overpass.clone()),
+                tile_http: Arc::new(tiles.clone()),
+                agent: self
+                    .agent
+                    .clone()
+                    .map(|a| Arc::new(a) as Arc<dyn RegionAgent>),
+                bundle_store: bundle_store.clone(),
+                tile_store: tile_store.clone(),
+                clock: clock.clone(),
+            },
+        );
+        TestApp {
+            router: app(state.clone()),
+            state,
+            overpass,
+            tiles,
+            agent: self.agent,
+            bundle_store,
+            tile_store,
+            clock,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_app_tests;
 
 #[cfg(test)]
 mod tests {
