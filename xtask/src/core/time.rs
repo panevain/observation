@@ -120,6 +120,18 @@ impl Timestamp {
     /// `pubtime` and `created_at` use, and a hand-written `--now`. It rejects the rest
     /// (`20261111`, `2026-W46-3`, `T12`, `T1200`, a `t` separator, `+03`, `+03:00:30`).
     pub fn parse(s: &str) -> Option<Self> {
+        Self::parse_with_offset(s).map(|(t, _)| t)
+    }
+
+    /// As [`Timestamp::parse`], but only a time with an explicit offset (`Z`, `±HH:MM` or
+    /// `±HHMM`): what the cooldown script could compare with the current time. A naive time
+    /// (no offset) made its comparison raise.
+    pub fn parse_aware(s: &str) -> Option<Self> {
+        Self::parse_with_offset(s).and_then(|(t, aware)| aware.then_some(t))
+    }
+
+    /// The instant, and whether the string gave an offset.
+    fn parse_with_offset(s: &str) -> Option<(Self, bool)> {
         let b = s.as_bytes();
         let num = |range: std::ops::Range<usize>| -> Option<u32> {
             let t = s.get(range)?;
@@ -159,6 +171,12 @@ impl Timestamp {
                 }
             }
         }
+        let aware = !s[i..].is_empty();
+        // After a date alone, Python reads `+05:00` or `-05:00` as a time (any character may
+        // separate date and time), not an offset.
+        if aware && i == 10 {
+            return None;
+        }
         let offset_secs = match &s[i..] {
             "" | "Z" => 0,
             rest => {
@@ -184,10 +202,13 @@ impl Timestamp {
             }
         };
         let local = date.days_since_epoch() * MICROS_PER_DAY + secs * 1_000_000 + micros;
-        Some(Self {
-            micros: local - i64::from(offset_secs) * 1_000_000,
-            offset_secs,
-        })
+        Some((
+            Self {
+                micros: local - i64::from(offset_secs) * 1_000_000,
+                offset_secs,
+            },
+            aware,
+        ))
     }
 
     /// The calendar date in the offset the instant was written in.
@@ -196,17 +217,25 @@ impl Timestamp {
         Date::from_days_since_epoch(local.div_euclid(MICROS_PER_DAY))
     }
 
-    /// The same instant `days` whole days earlier.
-    pub fn minus_days(self, days: i64) -> Self {
-        Self {
-            micros: self.micros - days * MICROS_PER_DAY,
-            ..self
-        }
+    /// The same instant `days` whole days earlier, as Python's `datetime - timedelta(days)`:
+    /// `None` when that falls before 0001-01-01T00:00 in the instant's own offset (Python's
+    /// OverflowError), or `days` is negative or too large to count in microseconds.
+    pub fn checked_minus_days(self, days: i64) -> Option<Self> {
+        let offset = i64::from(self.offset_secs) * 1_000_000;
+        let earliest = Date::new(1, 1, 1)?.days_since_epoch() * MICROS_PER_DAY;
+        let micros = days
+            .checked_mul(MICROS_PER_DAY)
+            .filter(|_| days >= 0)
+            .and_then(|d| self.micros.checked_sub(d))?;
+        (micros.checked_add(offset)? >= earliest).then_some(Self { micros, ..self })
     }
 
     /// Whole days from `earlier` to `self`, rounded down (negative when `earlier` is later).
+    /// Both are within years 1 to 9999, so the difference cannot overflow.
     pub fn days_since(self, earlier: Self) -> i64 {
-        (self.micros - earlier.micros).div_euclid(MICROS_PER_DAY)
+        self.micros
+            .saturating_sub(earlier.micros)
+            .div_euclid(MICROS_PER_DAY)
     }
 }
 
@@ -252,10 +281,9 @@ mod tests {
         assert_eq!(ts("2026-11-11T01:00+0300").date().to_string(), "2026-11-11");
         assert_eq!(
             ts("2026-11-11T01:00+03:00")
-                .minus_days(7)
-                .date()
-                .to_string(),
-            "2026-11-04"
+                .checked_minus_days(7)
+                .map(|t| t.date().to_string()),
+            Some("2026-11-04".to_owned())
         );
         for bad in [
             "",
@@ -271,6 +299,29 @@ mod tests {
             "0000-01-01",
         ] {
             assert_eq!(Timestamp::parse(bad), None, "{bad}");
+        }
+    }
+
+    /// Python's `now - timedelta(days=n)` raised OverflowError from 739,932 days on for these
+    /// (the result's own-offset fields must stay in year 1 or later).
+    #[test]
+    fn subtracting_days_stops_before_year_one() {
+        for now in ["2026-11-12T10:00:00Z", "2026-11-12T01:00:00+05:00"] {
+            let now = ts(now);
+            assert_eq!(
+                now.checked_minus_days(739_931)
+                    .map(|t| t.date().to_string()),
+                Some("0001-01-01".to_owned())
+            );
+            for days in [
+                739_932,
+                200_000_000,
+                i64::MAX / MICROS_PER_DAY + 1,
+                i64::MAX,
+                -1,
+            ] {
+                assert_eq!(now.checked_minus_days(days), None, "{days}");
+            }
         }
     }
 

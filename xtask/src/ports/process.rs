@@ -144,10 +144,14 @@ pub struct Curl {
 }
 
 /// curl's arguments for a GET of `url`. `--disable` must come first to keep `.curlrc` out. The
-/// timeouts are urllib's `timeout=30`: 30 s to connect, and no 30 s without data.
+/// timeouts are urllib's `timeout=30`: 30 s to connect, and no 30 s without data. The URL is
+/// requested as written, as urllib did: `--globoff` keeps `[]` and `{}` from being expanded
+/// into other URLs, and `--path-as-is` keeps `/../` and `/./` in the path.
 fn curl_args<'a>(user_agent: &'a str, url: &'a str) -> Vec<&'a str> {
     vec![
         "--disable",
+        "--globoff",
+        "--path-as-is",
         "--silent",
         "--show-error",
         "--location",
@@ -294,6 +298,14 @@ mod tests {
         let args = curl_args("ua", "-o/tmp/x");
         assert_eq!(args[0], "--disable");
         assert_eq!(&args[args.len() - 2..], ["--", "-o/tmp/x"]);
+    }
+
+    /// `[]` and `{}` in a URL are not curl globs, and dot segments are sent as written.
+    #[test]
+    fn curl_requests_the_url_as_written() {
+        let args = curl_args("ua", "https://example.com/se/rd/serd[e-e]");
+        assert!(args.contains(&"--globoff"));
+        assert!(args.contains(&"--path-as-is"));
     }
 
     fn ok<T>(r: Result<T>) -> T {

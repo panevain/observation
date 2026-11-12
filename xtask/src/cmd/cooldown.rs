@@ -14,9 +14,12 @@
 //! (or unaffected) range of every such advisory. The last needs cargo-audit; without it, such
 //! updates need an exemption.
 //!
-//! It fails closed: an index answer other than success or 404, or a failed request, stops the
-//! check with an error. A crate the index does not know (404) whose API entry is missing too
-//! is reported as NOT FOUND, which fails.
+//! It fails closed. Every input on which the script stopped with an error stops this check
+//! with an error too: a failed request, an index answer other than success or 404, and any
+//! answer, report or configuration of a shape the script could not handle (it raised; here
+//! the message says what was wrong). A crate whose publication time neither the index nor the
+//! API gives is NOT FOUND, which fails; so is a lock entry whose name or version could not be
+//! a crates.io crate's, which is never put in a URL.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -24,8 +27,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::core::py;
 use crate::core::time::{Date, Timestamp};
-use crate::core::version::matches;
+use crate::core::version::{matches, version_key};
 use crate::ports::{Cargo, Clock, Git, Http};
 use crate::{Error, Result};
 
@@ -41,31 +45,64 @@ pub const USER_AGENT: &str = "observation-ci (https://github.com/panevain/observ
 /// A crate version: (name, version).
 pub type Package = (String, String);
 
+/// The tables of `for e in value` where the script then called `e.get`: an array's items, each
+/// of which must be a table. Python iterated a table's keys or a string's characters and
+/// failed on the first, so only an empty one passes; anything else could not be iterated.
+fn tables<'a>(value: Option<&'a toml::Value>, what: &str) -> Result<Vec<&'a toml::Table>> {
+    let bad = || Error::new(format!("{what} must be an array of tables"));
+    match value {
+        None => Ok(Vec::new()),
+        Some(toml::Value::Array(items)) => {
+            items.iter().map(|v| v.as_table().ok_or_else(bad)).collect()
+        }
+        Some(toml::Value::Table(t)) if t.is_empty() => Ok(Vec::new()),
+        Some(toml::Value::String(s)) if s.is_empty() => Ok(Vec::new()),
+        Some(_) => Err(bad()),
+    }
+}
+
 /// (name, version) of every crates.io package in a Cargo.lock's text; nothing for an empty
-/// text. Packages from other registries, git and paths are not counted.
-pub fn packages(text: &str) -> Result<BTreeSet<Package>> {
+/// text. Packages from other registries, git and paths are not counted. `path` names the
+/// lockfile in errors.
+pub fn packages(path: &str, text: &str) -> Result<BTreeSet<Package>> {
     if text.is_empty() {
         return Ok(BTreeSet::new());
     }
-    let lock: toml::Table =
-        toml::from_str(text).map_err(|e| Error::new(format!("Cargo.lock: {e}")))?;
+    let lock = py::parse_toml(text).map_err(|e| Error::new(format!("{path}: {e}")))?;
     let mut out = BTreeSet::new();
-    let Some(list) = lock.get("package").and_then(toml::Value::as_array) else {
-        return Ok(out);
-    };
-    for p in list {
-        let source = p.get("source").and_then(toml::Value::as_str);
-        if source.is_some_and(|s| CRATES_IO.contains(&s)) {
-            let field = |k: &str| {
-                p.get(k)
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_owned)
-                    .ok_or_else(|| Error::new(format!("Cargo.lock: a package has no `{k}`")))
+    for p in tables(lock.get("package"), &format!("{path}: `package`"))? {
+        let from_crates_io = match p.get("source") {
+            Some(toml::Value::String(s)) => CRATES_IO.contains(&s.as_str()),
+            // Python's `in` on a set: an array or table cannot be hashed.
+            Some(toml::Value::Array(_) | toml::Value::Table(_)) => {
+                return Err(Error::new(format!(
+                    "{path}: a package's `source` is not a string: {}",
+                    py::repr_table(p)
+                )));
+            }
+            _ => false,
+        };
+        if from_crates_io {
+            let field = |k: &str| match p.get(k) {
+                Some(toml::Value::String(s)) => Ok(s.clone()),
+                _ => Err(Error::new(format!(
+                    "{path}: a crates.io package's `{k}` is missing or not a string: {}",
+                    py::repr_table(p)
+                ))),
             };
             out.insert((field("name")?, field("version")?));
         }
     }
     Ok(out)
+}
+
+/// Whether `name` could be a crates.io crate's name (ASCII letters, digits, `-` and `_`, at
+/// most 64), so that it can go into an index or API URL as it is.
+pub fn valid_crate_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// The sparse index's path for a crate (index.crates.io/<path>).
@@ -84,241 +121,284 @@ pub fn index_path(name: &str) -> String {
     }
 }
 
-/// A crate's index file: each version's `pubtime`, if it has one. A later line for the same
-/// version wins.
-pub fn index_entries(body: &str) -> Result<BTreeMap<String, Option<String>>> {
+/// A crate's index file: each version's `pubtime` as the line has it (`None` without one). A
+/// later line for the same version wins. Lines are split as `str.splitlines` splits them; each
+/// must be a JSON object with a `vers`. A `vers` that is not a string names no version the
+/// lockfile can have; an array or object one could not be a dict key in the script.
+pub fn index_entries(body: &str) -> Result<BTreeMap<String, Option<Value>>> {
     let mut out = BTreeMap::new();
-    for line in body.split('\n').filter(|l| !l.is_empty()) {
+    for line in py::splitlines(body).into_iter().filter(|l| !l.is_empty()) {
         let entry: Value = serde_json::from_str(line)
             .map_err(|e| Error::new(format!("index line: {e}: {line}")))?;
         let vers = entry
-            .get("vers")
-            .and_then(Value::as_str)
+            .as_object()
+            .and_then(|o| o.get("vers"))
             .ok_or_else(|| Error::new(format!("index line without `vers`: {line}")))?;
-        let pubtime = entry
-            .get("pubtime")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        out.insert(vers.to_owned(), pubtime);
+        match vers {
+            Value::String(v) => {
+                out.insert(v.clone(), entry.get("pubtime").cloned());
+            }
+            Value::Array(_) | Value::Object(_) => {
+                return Err(Error::new(format!(
+                    "index line with an unusable `vers`: {line}"
+                )));
+            }
+            _ => {}
+        }
     }
     Ok(out)
 }
 
-/// The crates.io API's `version.created_at`, if the answer has one.
-pub fn api_created_at(body: &str) -> Result<Option<String>> {
+/// The crates.io API's `version.created_at` as the answer has it; `None` when either key is
+/// missing. Any other shape is an error (the script raised).
+pub fn api_created_at(body: &str) -> Result<Option<Value>> {
     let v: Value =
         serde_json::from_str(body).map_err(|e| Error::new(format!("crates.io API: {e}")))?;
-    Ok(v.get("version")
-        .and_then(|v| v.get("created_at"))
-        .and_then(Value::as_str)
-        .map(str::to_owned))
+    let unexpected = || Error::new(format!("crates.io API: unexpected answer: {body}"));
+    let top = v.as_object().ok_or_else(unexpected)?;
+    let Some(version) = top.get("version") else {
+        return Ok(None);
+    };
+    Ok(version
+        .as_object()
+        .ok_or_else(unexpected)?
+        .get("created_at")
+        .cloned())
 }
 
-/// A timestamp from the index or the API, as the script read it (`Z` meaning +00:00).
-pub fn parse_stamp(stamp: &str) -> Result<Timestamp> {
-    Timestamp::parse(stamp).ok_or_else(|| Error::new(format!("not a timestamp: {stamp:?}")))
+/// A publication time from the index or the API: a string with a UTC offset (the script
+/// compared it with the current time, which raised for one without).
+pub fn parse_stamp(stamp: &Value) -> Result<Timestamp> {
+    stamp
+        .as_str()
+        .and_then(Timestamp::parse_aware)
+        .ok_or_else(|| Error::new(format!("not a timestamp with a UTC offset: {stamp}")))
 }
 
-/// RustSec vulnerabilities in a cargo-audit JSON report: (crate, advisory id, the ranges a
-/// version must be in to be fixed: patched, then unaffected).
-pub fn vulnerabilities(json: &str) -> Result<Vec<(String, String, Vec<String>)>> {
-    let data: Value = serde_json::from_str(json).map_err(|e| Error::new(e.to_string()))?;
-    let list = data
-        .get("vulnerabilities")
-        .and_then(|v| v.get("list"))
-        .and_then(Value::as_array);
-    let mut out = Vec::new();
-    for v in list.into_iter().flatten() {
-        let ranges = |k: &str| -> Vec<String> {
-            v.get("versions")
-                .and_then(|r| r.get(k))
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default()
+/// RustSec vulnerabilities at BASE, by crate: (advisory id, fixed ranges), each as the report
+/// had it (the script used the ranges and ids as they came; see [`security_fix`]).
+pub type Vulnerable = BTreeMap<String, Vec<(Value, Vec<Value>)>>;
+
+/// Python's `list(x)` of a JSON value: an array's items, a string's characters or an object's
+/// keys; `None` for what cannot be iterated.
+fn py_list(v: &Value) -> Option<Vec<Value>> {
+    match v {
+        Value::Array(a) => Some(a.clone()),
+        Value::String(s) => Some(s.chars().map(|c| Value::String(c.to_string())).collect()),
+        Value::Object(o) => Some(o.keys().map(|k| Value::String(k.clone())).collect()),
+        _ => None,
+    }
+}
+
+/// The vulnerabilities in a cargo-audit JSON report, added to `found`:
+/// `vulnerabilities.list[]` with each one's `package.name`, `advisory.id` and
+/// `versions.patched` + `versions.unaffected`. A report of any shape the script could not
+/// read is an error. A package name that is not a string names no crate (the script kept it
+/// under a key no crate matched).
+pub fn add_vulnerabilities(report: &Value, found: &mut Vulnerable) -> Result<()> {
+    let bad = |what: &str| Error::new(format!("cargo-audit: unexpected report: {what}"));
+    let empty = serde_json::Map::new();
+    let top = report.as_object().ok_or_else(|| bad("not an object"))?;
+    let vulnerabilities = match top.get("vulnerabilities") {
+        None => &empty,
+        Some(v) => v.as_object().ok_or_else(|| bad("`vulnerabilities`"))?,
+    };
+    let list = match vulnerabilities.get("list") {
+        None => Vec::new(),
+        Some(l) => py_list(l).ok_or_else(|| bad("`vulnerabilities.list`"))?,
+    };
+    for v in &list {
+        let v = v
+            .as_object()
+            .ok_or_else(|| bad("a vulnerability is not an object"))?;
+        let ranges = match v.get("versions") {
+            None => &empty,
+            Some(r) => r.as_object().ok_or_else(|| bad("`versions`"))?,
         };
+        let mut fixed = Vec::new();
+        for key in ["patched", "unaffected"] {
+            if let Some(r) = ranges.get(key) {
+                fixed.extend(py_list(r).ok_or_else(|| bad(&format!("`versions.{key}`")))?);
+            }
+        }
         let name = v
             .get("package")
+            .and_then(Value::as_object)
             .and_then(|p| p.get("name"))
-            .and_then(Value::as_str);
+            .ok_or_else(|| bad("a vulnerability without `package.name`"))?;
         let id = v
             .get("advisory")
+            .and_then(Value::as_object)
             .and_then(|a| a.get("id"))
-            .and_then(Value::as_str);
-        let (Some(name), Some(id)) = (name, id) else {
-            return Err(Error::new(
-                "cargo-audit: a vulnerability without package name or advisory id",
-            ));
-        };
-        let mut fixed = ranges("patched");
-        fixed.extend(ranges("unaffected"));
-        out.push((name.to_owned(), id.to_owned(), fixed));
+            .ok_or_else(|| bad("a vulnerability without `advisory.id`"))?;
+        match name {
+            Value::String(name) => found
+                .entry(name.clone())
+                .or_default()
+                .push((id.clone(), fixed)),
+            Value::Array(_) | Value::Object(_) => return Err(bad("`package.name`")),
+            _ => {}
+        }
     }
-    Ok(out)
+    Ok(())
 }
 
-/// RustSec vulnerabilities at BASE, by crate: (advisory id, fixed ranges).
-pub type Vulnerable = BTreeMap<String, Vec<(String, Vec<String>)>>;
-
-/// The advisory IDs that `name@version` fixes, if it fixes every one its crate has at BASE
-/// (a range that cannot be read counts as not fixed).
-pub fn security_fix(name: &str, version: &str, vulnerable: &Vulnerable) -> Option<Vec<String>> {
-    let advisories = vulnerable.get(name).filter(|a| !a.is_empty())?;
+/// The advisory IDs that `name@version` fixes, if it fixes every one its crate has at BASE.
+/// A version or range that cannot be read counts as not fixed, as in the script; a range that
+/// is not a string, or an id that is not one when the ids are listed, is an error (the script
+/// raised).
+pub fn security_fix(
+    name: &str,
+    version: &str,
+    vulnerable: &Vulnerable,
+) -> Result<Option<Vec<String>>> {
+    let Some(advisories) = vulnerable.get(name).filter(|a| !a.is_empty()) else {
+        return Ok(None);
+    };
+    let readable = version_key(version).is_ok();
     for (_, fixed) in advisories {
         let mut any = false;
         for r in fixed {
+            // The script read the version before each range.
+            if !readable {
+                return Ok(None);
+            }
+            let Value::String(r) = r else {
+                return Err(Error::new(format!(
+                    "cargo-audit: a range of {name} is not a string: {r}"
+                )));
+            };
             match matches(version, r) {
                 Ok(true) => {
                     any = true;
                     break;
                 }
                 Ok(false) => {}
-                Err(_) => return None,
+                Err(_) => return Ok(None),
             }
         }
         if !any {
-            return None;
+            return Ok(None);
         }
     }
-    let ids: BTreeSet<&str> = advisories.iter().map(|(id, _)| id.as_str()).collect();
-    Some(ids.into_iter().map(str::to_owned).collect())
+    let mut ids = BTreeSet::new();
+    for (id, _) in advisories {
+        let Value::String(id) = id else {
+            return Err(Error::new(format!(
+                "cargo-audit: an advisory id of {name} is not a string: {id}"
+            )));
+        };
+        ids.insert(id.clone());
+    }
+    Ok(Some(ids.into_iter().collect()))
 }
 
-/// An exemption from .config/cargo-cooldown.toml that has not expired.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An exemption from .config/cargo-cooldown.toml that has not expired, with its values as
+/// tomllib gave them.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Exemption {
-    pub name: String,
-    /// `None`: every version of the crate.
-    pub version: Option<String>,
-    pub reason: String,
+    pub name: toml::Value,
+    /// `None`: every version of the crate. A value that is not a string matches no version.
+    pub version: Option<toml::Value>,
+    pub reason: toml::Value,
 }
 
-/// The configuration: the cooldown in days, the exemptions in force, and notes about expired
-/// ones.
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Exemption {
+    fn applies(&self, name: &str, version: &str) -> bool {
+        self.name.as_str() == Some(name)
+            && self
+                .version
+                .as_ref()
+                .is_none_or(|v| v.as_str() == Some(version))
+    }
+}
+
+/// The configuration: the cooldown in days (and as the script printed it), the exemptions in
+/// force, and notes about expired ones.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    pub days: u64,
+    pub days: i64,
+    /// `days` as the report shows it (`True` for `days = true`, a whole number to Python).
+    pub days_text: String,
     pub exempt: Vec<Exemption>,
     pub notes: Vec<String>,
 }
 
-/// A TOML value as Python's `repr` writes what tomllib made of it, for the script's messages.
-fn py_repr(v: &toml::Value) -> String {
-    match v {
-        toml::Value::String(s) => {
-            let quote = if s.contains('\'') && !s.contains('"') {
-                '"'
-            } else {
-                '\''
-            };
-            let mut out = String::from(quote);
-            for c in s.chars() {
-                match c {
-                    '\\' => out.push_str("\\\\"),
-                    '\n' => out.push_str("\\n"),
-                    '\t' => out.push_str("\\t"),
-                    '\r' => out.push_str("\\r"),
-                    c if c == quote => {
-                        out.push('\\');
-                        out.push(c);
-                    }
-                    c => out.push(c),
-                }
-            }
-            out.push(quote);
-            out
-        }
-        toml::Value::Integer(i) => i.to_string(),
-        toml::Value::Float(f) => f.to_string(),
-        toml::Value::Boolean(b) => if *b { "True" } else { "False" }.to_owned(),
-        toml::Value::Datetime(d) => match (d.date, d.time) {
-            (Some(date), None) => {
-                format!("datetime.date({}, {}, {})", date.year, date.month, date.day)
-            }
-            _ => d.to_string(),
-        },
-        toml::Value::Array(a) => {
-            format!("[{}]", a.iter().map(py_repr).collect::<Vec<_>>().join(", "))
-        }
-        toml::Value::Table(t) => format!(
-            "{{{}}}",
-            t.iter()
-                .map(|(k, v)| format!(
-                    "{}: {}",
-                    py_repr(&toml::Value::String(k.clone())),
-                    py_repr(v)
-                ))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-/// Reads the configuration; exemptions whose `until` is before `today` become notes.
+/// Reads the configuration; exemptions whose `until` is before `today` become notes. The
+/// checks are the script's, on Python's terms (truthiness, `isinstance`).
 pub fn load_config(text: &str, today: Date) -> Result<Config> {
-    let cfg: toml::Table =
-        toml::from_str(text).map_err(|e| Error::new(format!("{CONFIG}: {e}")))?;
-    let days = cfg
-        .get("days")
-        .and_then(toml::Value::as_integer)
-        .and_then(|d| u64::try_from(d).ok())
-        .ok_or_else(|| Error::new(format!("{CONFIG}: `days` must be a whole number of days")))?;
+    let cfg = py::parse_toml(text).map_err(|e| Error::new(format!("{CONFIG}: {e}")))?;
+    let (days, days_text) = match cfg.get("days") {
+        Some(toml::Value::Integer(d)) if *d >= 0 => (*d, d.to_string()),
+        // bool is an int to Python.
+        Some(toml::Value::Boolean(b)) => (i64::from(*b), if *b { "True" } else { "False" }.into()),
+        _ => {
+            return Err(Error::new(format!(
+                "{CONFIG}: `days` must be a whole number of days"
+            )));
+        }
+    };
     let mut exempt = Vec::new();
     let mut notes = Vec::new();
-    let empty = Vec::new();
-    let list = cfg
-        .get("exempt")
-        .and_then(toml::Value::as_array)
-        .unwrap_or(&empty);
-    for e in list {
-        let s = |k: &str| {
-            e.get(k)
-                .and_then(toml::Value::as_str)
-                .filter(|v| !v.is_empty())
-        };
-        let (Some(name), Some(reason)) = (s("name"), s("reason")) else {
+    for e in tables(cfg.get("exempt"), &format!("{CONFIG}: `exempt`"))? {
+        let truthy = |k: &str| e.get(k).filter(|v| py::toml_truthy(v));
+        let (Some(name), Some(reason)) = (truthy("name"), truthy("reason")) else {
             return Err(Error::new(format!(
                 "{CONFIG}: every exemption needs a name and a reason: {}",
-                py_repr(e)
+                py::repr_table(e)
             )));
         };
-        // An empty version matches no version, as in the script (but names none in notes).
-        let version = e.get("version").and_then(toml::Value::as_str);
         let until = match e.get("until") {
             None => None,
-            Some(toml::Value::Datetime(d)) if d.time.is_none() && d.offset.is_none() => d
+            Some(toml::Value::Datetime(d)) if d.time.is_none() => d
                 .date
                 .and_then(|d| Date::new(i32::from(d.year), u32::from(d.month), u32::from(d.day))),
+            // A date-time is a date to `isinstance`; comparing it with a date then raised.
+            Some(toml::Value::Datetime(d)) if d.date.is_some() => {
+                return Err(Error::new(format!(
+                    "{CONFIG}: `until` must be a date (YYYY-MM-DD), not a date and time: {}",
+                    py::repr_table(e)
+                )));
+            }
             Some(_) => {
                 return Err(Error::new(format!(
                     "{CONFIG}: `until` must be a date (YYYY-MM-DD): {}",
-                    py_repr(e)
+                    py::repr_table(e)
                 )));
             }
         };
+        let version = e.get("version");
         if let Some(until) = until.filter(|u| *u < today) {
-            let what = version
-                .filter(|v| !v.is_empty())
-                .map_or(name.to_owned(), |v| format!("{name} {v}"));
+            let what = match version.filter(|v| py::toml_truthy(v)) {
+                Some(v) => format!("{} {}", py::str_toml(name), py::str_toml(v)),
+                None => py::str_toml(name),
+            };
             notes.push(format!(
                 "the exemption for {what} expired on {until}; remove it"
             ));
             continue;
         }
         exempt.push(Exemption {
-            name: name.to_owned(),
-            version: version.map(str::to_owned),
-            reason: reason.to_owned(),
+            name: name.clone(),
+            version: version.cloned(),
+            reason: reason.clone(),
         });
     }
     Ok(Config {
         days,
+        days_text,
         exempt,
         notes,
+    })
+}
+
+/// The cutoff: `now` less the cooldown. An error where Python's datetime could not subtract
+/// it (before year 1), as the script stopped there.
+pub fn cutoff(now: Timestamp, days: i64) -> Result<Timestamp> {
+    now.checked_minus_days(days).ok_or_else(|| {
+        Error::new(format!(
+            "{CONFIG}: `days` = {days} reaches back before the year 1"
+        ))
     })
 }
 
@@ -339,42 +419,39 @@ pub fn verdicts(
     published: &BTreeMap<Package, Option<Timestamp>>,
     config: &Config,
     vulnerable: &Vulnerable,
-    now: Timestamp,
-) -> Vec<Row> {
-    let cutoff = now.minus_days(i64::try_from(config.days).unwrap_or(i64::MAX));
-    new.iter()
-        .map(|p| {
-            let (name, version) = p;
-            let when = published.get(p).copied().flatten();
-            let rule = config
-                .exempt
-                .iter()
-                .find(|e| &e.name == name && e.version.as_ref().is_none_or(|v| v == version));
-            let fixes = security_fix(name, version, vulnerable);
-            let (verdict, failed) = if when.is_some_and(|w| w <= cutoff) {
-                ("ok".to_owned(), false)
-            } else if let Some(rule) = rule {
-                (format!("exempt: {}", rule.reason), false)
-            } else if let Some(ids) = fixes {
-                (format!("security fix ({})", ids.join(", ")), false)
-            } else if when.is_some() {
-                ("TOO NEW".to_owned(), true)
-            } else {
-                ("NOT FOUND on crates.io".to_owned(), true)
-            };
-            Row {
-                name: name.clone(),
-                version: version.clone(),
-                published: when,
-                verdict,
-                failed,
-            }
-        })
-        .collect()
+    cutoff: Timestamp,
+) -> Result<Vec<Row>> {
+    let mut rows = Vec::new();
+    for p in new {
+        let (name, version) = p;
+        let when = published.get(p).copied().flatten();
+        let rule = config.exempt.iter().find(|e| e.applies(name, version));
+        let fixes = security_fix(name, version, vulnerable)?;
+        let (verdict, failed) = if when.is_some_and(|w| w <= cutoff) {
+            ("ok".to_owned(), false)
+        } else if let Some(rule) = rule {
+            (format!("exempt: {}", py::str_toml(&rule.reason)), false)
+        } else if let Some(ids) = fixes {
+            (format!("security fix ({})", ids.join(", ")), false)
+        } else if when.is_some() {
+            ("TOO NEW".to_owned(), true)
+        } else {
+            ("NOT FOUND on crates.io".to_owned(), true)
+        };
+        rows.push(Row {
+            name: name.clone(),
+            version: version.clone(),
+            published: when,
+            verdict,
+            failed,
+        });
+    }
+    Ok(rows)
 }
 
-/// The Markdown report, as the script wrote it.
-pub fn render(days: u64, base: &str, rows: &[Row], notes: &[String], now: Timestamp) -> String {
+/// The Markdown report, as the script wrote it. `days` is the cooldown as the script printed
+/// it.
+pub fn render(days: &str, base: &str, rows: &[Row], notes: &[String], now: Timestamp) -> String {
     let mut lines = vec![
         format!("### Cargo cooldown ({days} days, against {base})"),
         String::new(),
@@ -483,59 +560,69 @@ fn vulnerable_at_base(
         let Some(out) = cargo.audit_json(&lock)? else {
             return Ok(None);
         };
-        let list = match vulnerabilities(&out.stdout) {
-            Ok(list) => list,
+        let report: Value = match serde_json::from_str(&py::universal_newlines(&out.stdout)) {
+            Ok(report) => report,
             Err(_) => {
                 diagnostics.push_str(&out.stdout);
                 diagnostics.push_str(&out.stderr);
                 return Err(Error::new("cargo-audit produced no JSON"));
             }
         };
-        for (name, id, fixed) in list {
-            found.entry(name).or_default().push((id, fixed));
-        }
+        add_vulnerabilities(&report, &mut found)?;
     }
     Ok(Some(found))
 }
 
-/// When crates.io published `name@version`: the index's `pubtime`, else the API's
-/// `created_at`, else `None`. Fails on any index answer but success or 404, and on a failed
-/// request.
+/// When crates.io published `name@version`: the index's `pubtime`, else (when the line has
+/// none, or a false one to Python) the API's `created_at`, else `None`. Fails on any index
+/// answer but success or 404, on a failed request, and on answers of a shape the script could
+/// not read. A name or version no crates.io crate can have is `None` (NOT FOUND, as crates.io
+/// answered the script for such a name) without a request: it is never put in a URL.
 fn published(
     name: &str,
     version: &str,
     http: &dyn Http,
-    index: &mut BTreeMap<String, BTreeMap<String, Option<String>>>,
+    index: &mut BTreeMap<String, BTreeMap<String, Option<Value>>>,
 ) -> Result<Option<Timestamp>> {
+    if !valid_crate_name(name) || semver::Version::parse(version).is_err() {
+        return Ok(None);
+    }
     if !index.contains_key(name) {
         let url = format!("https://index.crates.io/{}", index_path(name));
         let r = http.get(&url)?;
         let entries = match r.status {
             404 => BTreeMap::new(),
             s if s >= 400 => return Err(Error::new(format!("{url}: HTTP {s}"))),
-            _ => index_entries(&r.body)?,
+            _ => {
+                index_entries(&r.body).map_err(|e| Error::new(format!("{name} {version}: {e}")))?
+            }
         };
         index.insert(name.to_owned(), entries);
     }
-    let stamp = index
+    let pubtime = index
         .get(name)
         .and_then(|e| e.get(version))
         .cloned()
-        .flatten();
-    let stamp = match stamp {
+        .flatten()
+        .filter(py::json_truthy);
+    let stamp = match pubtime {
         Some(s) => s,
         None => {
             let r = http.get(&format!("https://crates.io/api/v1/crates/{name}/{version}"))?;
             if r.status >= 400 {
                 return Ok(None);
             }
-            match api_created_at(&r.body)? {
+            match api_created_at(&r.body)
+                .map_err(|e| Error::new(format!("{name} {version}: {e}")))?
+            {
                 Some(s) => s,
                 None => return Ok(None),
             }
         }
     };
-    parse_stamp(&stamp).map(Some)
+    parse_stamp(&stamp)
+        .map(Some)
+        .map_err(|e| Error::new(format!("{name} {version}: {e}")))
 }
 
 /// Runs the check on the repository at `repo`. `diagnostics` receives what goes to stderr
@@ -554,6 +641,7 @@ pub fn run(
     let text = fs::read_to_string(repo.join(CONFIG))
         .map_err(|e| Error::new(format!("{}: {e}", repo.join(CONFIG).display())))?;
     let mut config = load_config(&text, now.date())?;
+    let cutoff = cutoff(now, config.days)?;
     if !ports.git.is_commit(&args.base)? {
         return Err(Error::new(format!(
             "--base {}: not a commit in this repository (fetch it first?)",
@@ -563,15 +651,15 @@ pub fn run(
     let mut base_texts = Vec::new();
     let mut new = BTreeSet::new();
     for path in &args.lockfiles {
-        let base = ports.git.show(&args.base, path)?.unwrap_or_default();
+        let base = py::universal_newlines(&ports.git.show(&args.base, path)?.unwrap_or_default());
         let head_file = repo.join(path);
         let head = if head_file.exists() {
             fs::read_to_string(&head_file).map_err(|e| Error::new(format!("{path}: {e}")))?
         } else {
             String::new()
         };
-        let before = packages(&base)?;
-        new.extend(packages(&head)?.difference(&before).cloned());
+        let before = packages(path, &base)?;
+        new.extend(packages(path, &head)?.difference(&before).cloned());
         base_texts.push(base);
     }
     let vulnerable = if new.is_empty() {
@@ -593,9 +681,9 @@ pub fn run(
     for p in &new {
         times.insert(p.clone(), published(&p.0, &p.1, ports.http, &mut index)?);
     }
-    let rows = verdicts(&new, &times, &config, &vulnerable, now);
+    let rows = verdicts(&new, &times, &config, &vulnerable, cutoff)?;
     Ok(Outcome {
-        report: render(config.days, &args.base, &rows, &config.notes, now),
+        report: render(&config.days_text, &args.base, &rows, &config.notes, now),
         failed: rows.iter().any(|r| r.failed),
     })
 }

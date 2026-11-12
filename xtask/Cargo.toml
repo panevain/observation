@@ -24,7 +24,7 @@ tempfile = "3.27"
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
 # the root workspace.
 [package.metadata.cargo-shear]
-ignored = ["semver"]
+ignored = []
 
 [lints]
 workspace = true
