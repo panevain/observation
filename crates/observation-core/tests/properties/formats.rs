@@ -19,10 +19,40 @@ fn finite() -> impl Strategy<Value = f32> {
     prop_oneof![8 => -500.0..=500.0f32, 1 => -2.0e4..=2.0e4f32]
 }
 
-/// Mostly [`finite`], sometimes any bit pattern: NaN (with any payload), the
-/// infinities and signed zeros, which the codecs must carry unchanged.
+/// Any `f32` bit pattern. Uniform bits are NaN only 0.4% of the time and
+/// never an infinity in practice, so NaN (quiet or signalling, either sign,
+/// any payload), both infinities and both zeros are also drawn on purpose.
+/// proptest's `any::<f32>()` would draw none of NaN or the infinities.
+fn bits32() -> impl Strategy<Value = f32> {
+    prop_oneof![
+        3 => any::<u32>().prop_map(f32::from_bits),
+        1 => (any::<bool>(), 1..(1u32 << 23)).prop_map(|(negative, payload)| {
+            f32::from_bits(u32::from(negative) << 31 | 0x7f80_0000 | payload)
+        }),
+        1 => prop::sample::select(vec![f32::INFINITY, f32::NEG_INFINITY, 0.0, -0.0]),
+    ]
+}
+
+/// The `f64` counterpart of [`bits32`].
+fn bits64() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        3 => any::<u64>().prop_map(f64::from_bits),
+        1 => (any::<bool>(), 1..(1u64 << 52)).prop_map(|(negative, payload)| {
+            f64::from_bits(u64::from(negative) << 63 | 0x7ff0_0000_0000_0000 | payload)
+        }),
+        1 => prop::sample::select(vec![f64::INFINITY, f64::NEG_INFINITY, 0.0, -0.0]),
+    ]
+}
+
+/// Mostly [`finite`], sometimes any bit pattern ([`bits32`]), which the codecs
+/// must carry unchanged.
 fn num() -> impl Strategy<Value = f32> {
-    prop_oneof![9 => finite(), 1 => any::<f32>()]
+    prop_oneof![9 => finite(), 1 => bits32()]
+}
+
+/// The `f64` counterpart of [`num`].
+fn num64() -> impl Strategy<Value = f64> {
+    prop_oneof![9 => -180.0..=180.0f64, 1 => bits64()]
 }
 
 fn xz() -> impl Strategy<Value = [f32; 2]> {
@@ -148,7 +178,7 @@ fn bundle() -> impl Strategy<Value = AreaBundle> {
             indices,
         });
     (
-        (any::<[f64; 4]>(), any::<[f64; 2]>()),
+        ([num64(), num64(), num64(), num64()], [num64(), num64()]),
         prop::collection::vec(building, 0..4),
         prop::collection::vec(road(), 0..3),
         mesh,
@@ -282,6 +312,148 @@ fn response() -> impl Strategy<Value = JobResponse> {
     ]
 }
 
+/// The kinds of special value a strategy drew, by bit pattern.
+#[derive(Default, Debug)]
+struct Specials {
+    quiet_nan: u32,
+    signalling_nan: u32,
+    negative_nan: u32,
+    infinity: u32,
+    neg_infinity: u32,
+    neg_zero: u32,
+}
+
+impl Specials {
+    fn add(&mut self, bits: u64, sign: u64, exp: u64, quiet: u64) {
+        let mantissa = bits & !(sign | exp);
+        if bits & exp == exp && mantissa != 0 {
+            if mantissa & quiet != 0 {
+                self.quiet_nan += 1;
+            } else {
+                self.signalling_nan += 1;
+            }
+            if bits & sign != 0 {
+                self.negative_nan += 1;
+            }
+        } else if bits == exp {
+            self.infinity += 1;
+        } else if bits == sign | exp {
+            self.neg_infinity += 1;
+        } else if bits == sign {
+            self.neg_zero += 1;
+        }
+    }
+
+    fn all_seen(&self) -> bool {
+        [
+            self.quiet_nan,
+            self.signalling_nan,
+            self.negative_nan,
+            self.infinity,
+            self.neg_infinity,
+            self.neg_zero,
+        ]
+        .iter()
+        .all(|&n| n > 0)
+    }
+}
+
+/// The number strategies really draw every kind of special value, so the
+/// round trips below carry them. (`any::<f32>()` draws no NaN and no
+/// infinity, which this test would catch.)
+#[test]
+fn number_strategies_draw_nan_payloads_and_both_infinities() {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+    let mut runner = TestRunner::new(config(1));
+    let (mut f, mut d) = (Specials::default(), Specials::default());
+    for _ in 0..2000 {
+        let x = num().new_tree(&mut runner).unwrap().current();
+        f.add(u64::from(x.to_bits()), 1 << 31, 0x7f80_0000, 1 << 22);
+        let y = bits64().new_tree(&mut runner).unwrap().current();
+        d.add(y.to_bits(), 1 << 63, 0x7ff0_0000_0000_0000, 1 << 51);
+    }
+    assert!(f.all_seen(), "f32 specials drawn: {f:?}");
+    assert!(d.all_seen(), "f64 specials drawn: {d:?}");
+}
+
+/// A fixed message and bundle holding NaN payloads (quiet and signalling,
+/// both signs), both infinities and a negative zero re-encode byte for byte
+/// and decode to the same bit patterns.
+#[test]
+fn special_floats_survive_the_codecs_bit_for_bit() {
+    let f32s = [
+        f32::from_bits(0x7fc0_0000),
+        f32::from_bits(0x7fc1_2345),
+        f32::from_bits(0x7f80_0001),
+        f32::from_bits(0xffbf_ffff),
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        -0.0,
+        f32::from_bits(1),
+    ];
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let msg = JobResponse::Done(JobResult {
+        generation: 1,
+        camera_id: 2,
+        key: 3,
+        sight: Sight {
+            range: f32::NAN,
+            ground: (0..8).collect(),
+            ground_d2: f32s.to_vec(),
+            facade: vec![9],
+            facade_d2: vec![f32::NEG_INFINITY],
+        },
+    });
+    let bytes = msg.encode();
+    let Ok(JobResponse::Done(back)) = JobResponse::decode(&bytes) else {
+        panic!("special floats did not decode");
+    };
+    assert_eq!(bits(&back.sight.ground_d2), bits(&f32s));
+    assert_eq!(back.sight.range.to_bits(), f32::NAN.to_bits());
+    assert_eq!(JobResponse::Done(back).encode(), bytes);
+
+    let f64s = [
+        f64::from_bits(0x7ff8_0000_0000_0001),
+        f64::from_bits(0xfff0_0000_0000_0001),
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    let b = AreaBundle {
+        bbox: BBox {
+            south: f64s[0],
+            west: f64s[1],
+            north: f64s[2],
+            east: f64s[3],
+        },
+        origin: LatLon::new(-0.0, f64::NAN),
+        buildings: Vec::new(),
+        roads: Vec::new(),
+        mesh: MeshData {
+            positions: vec![[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]],
+            normals: Vec::new(),
+            indices: Vec::new(),
+        },
+        addresses: Vec::new(),
+        terrain: Terrain::default(),
+        attribution: String::new(),
+        generated_unix: 0,
+        osm_base_unix: None,
+        osm_fingerprint: 0,
+    };
+    let bytes = b.encode();
+    let back = AreaBundle::decode(&bytes).expect("special floats decode");
+    let got = [
+        back.bbox.south,
+        back.bbox.west,
+        back.bbox.north,
+        back.bbox.east,
+    ];
+    assert_eq!(got.map(f64::to_bits), f64s.map(f64::to_bits));
+    assert_eq!(back.origin.lat.to_bits(), (-0.0f64).to_bits());
+    assert_eq!(back.encode(), bytes);
+}
+
 proptest! {
     #![proptest_config(config(128))]
 
@@ -290,7 +462,9 @@ proptest! {
         let bytes = b.encode();
         let back = AreaBundle::decode(&bytes);
         prop_assert_eq!(back.as_ref().map(AreaBundle::encode), Ok(bytes));
-        // NaN is not equal to itself, so compare values only without it.
+        // The bytes are compared above, so every bit pattern (NaN payloads
+        // included) is checked. NaN is not equal to itself, so values are
+        // compared as well only when there is none.
         if b == b {
             prop_assert_eq!(back, Ok(b));
         }
