@@ -256,6 +256,24 @@ async fn a_stalled_body_times_out() {
     assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
 }
 
+/// A status whose body the request does not want comes back at once,
+/// unread, though its body stalls.
+#[tokio::test]
+async fn an_unwanted_body_is_not_read() {
+    let port =
+        serve_stalled("HTTP/1.1 206 Partial Content\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let resp = lax()
+        .send(
+            HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100)
+                .body_only_for(http::StatusCode::OK)
+                .timeout(Duration::from_secs(30)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status, http::StatusCode::PARTIAL_CONTENT);
+    assert_eq!(resp.body, Body::TooLarge);
+}
+
 #[tokio::test]
 async fn a_slow_answer_times_out_under_the_client_timeout() {
     let port = serve_stalled("").await;

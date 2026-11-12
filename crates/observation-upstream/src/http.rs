@@ -44,6 +44,9 @@ pub struct HttpRequest {
     /// is not read up to a large success cap. 0 means such a body is never
     /// read: it is [`Body::TooLarge`] unless it is declared empty.
     pub error_max_bytes: usize,
+    /// When set, only a response with this status has its body read; any
+    /// other comes back as an error status does under `error_max_bytes` 0.
+    pub body_only_for: Option<StatusCode>,
 }
 
 impl fmt::Debug for HttpRequest {
@@ -56,6 +59,7 @@ impl fmt::Debug for HttpRequest {
             .field("timeout", &self.timeout)
             .field("max_bytes", &self.max_bytes)
             .field("error_max_bytes", &self.error_max_bytes)
+            .field("body_only_for", &self.body_only_for)
             .finish()
     }
 }
@@ -102,6 +106,7 @@ impl HttpRequest {
             timeout: None,
             max_bytes,
             error_max_bytes: DEFAULT_ERROR_MAX_BYTES,
+            body_only_for: None,
         }
     }
 
@@ -119,7 +124,8 @@ impl HttpRequest {
 
     /// Whether a response with `status` must not have its body read at all.
     pub(crate) fn skips_body(&self, status: StatusCode) -> bool {
-        !status.is_success() && self.error_max_bytes == 0
+        (!status.is_success() && self.error_max_bytes == 0)
+            || self.body_only_for.is_some_and(|s| s != status)
     }
 
     /// The cap that applies to a response with `status`.
@@ -160,6 +166,15 @@ impl HttpRequest {
     pub fn bearer(self, token: &str) -> Result<Self, InvalidHeaderValue> {
         let value = HeaderValue::from_str(&format!("Bearer {token}"))?;
         Ok(self.header(AUTHORIZATION, value))
+    }
+
+    /// Reads the body of a response with `status` only: any other response
+    /// is returned unread, empty if it is declared empty and
+    /// [`Body::TooLarge`] otherwise, so that its body can neither fail nor
+    /// stall the request.
+    pub fn body_only_for(mut self, status: StatusCode) -> Self {
+        self.body_only_for = Some(status);
+        self
     }
 
     pub fn error_max_bytes(mut self, max: usize) -> Self {
@@ -350,6 +365,11 @@ mod tests {
         assert!(req.skips_body(StatusCode::NOT_MODIFIED));
         assert!(!req.skips_body(StatusCode::OK));
         assert!(!HttpRequest::get("http://a.example/", 0).skips_body(StatusCode::BAD_GATEWAY));
+        let req = HttpRequest::get("http://a.example/", 10).body_only_for(StatusCode::OK);
+        assert!(!req.skips_body(StatusCode::OK));
+        assert!(req.skips_body(StatusCode::PARTIAL_CONTENT));
+        assert!(req.skips_body(StatusCode::NO_CONTENT));
+        assert!(req.skips_body(StatusCode::NOT_FOUND));
     }
 
     #[test]

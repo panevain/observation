@@ -37,6 +37,8 @@ pub struct FakeResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub body: Bytes,
+    /// Reading the body fails this way (if it is read at all).
+    pub body_failure: Option<TransportErrorKind>,
 }
 
 impl FakeReply {
@@ -53,6 +55,7 @@ impl FakeReply {
                 status,
                 headers: HeaderMap::new(),
                 body: Bytes::new(),
+                body_failure: None,
             }),
         }
     }
@@ -79,6 +82,15 @@ impl FakeReply {
     pub fn body(mut self, body: impl Into<Bytes>) -> Self {
         if let Ok(r) = &mut self.outcome {
             r.body = body.into();
+        }
+        self
+    }
+
+    /// The body breaks off with `kind` if it is read (a body the request
+    /// does not read cannot fail).
+    pub fn body_fails(mut self, kind: TransportErrorKind) -> Self {
+        if let Ok(r) = &mut self.outcome {
+            r.body_failure = Some(kind);
         }
         self
     }
@@ -271,8 +283,22 @@ impl FakeHttp {
             None => wait.await,
         }
         match reply.outcome {
+            Ok(FakeResponse {
+                status,
+                body_failure: Some(kind),
+                ..
+            }) if !req.skips_body(status) => Err(TransportError::new(
+                kind,
+                format!("FakeHttp: scripted {kind:?} in the body"),
+            )),
             Ok(r) => Ok(HttpResponse {
-                body: if r.body.len() > req.cap_for(r.status) {
+                body: if req.skips_body(r.status) {
+                    if r.body.is_empty() {
+                        Body::Complete(r.body)
+                    } else {
+                        Body::TooLarge
+                    }
+                } else if r.body.len() > req.cap_for(r.status) {
                     Body::TooLarge
                 } else {
                     Body::Complete(r.body)
@@ -302,7 +328,8 @@ fn timed_out() -> TransportError {
 /// such as an axum `Router`, without a socket. The URL's path and query become
 /// the request URI and its host (and port, unless the default) the `Host`
 /// header; unlike reqwest, it adds no `User-Agent`, `Accept` or
-/// `Content-Length` of its own.
+/// `Content-Length` of its own. Its timeout covers the whole exchange, so a
+/// body that stalls is reported as `Timeout`, not `BodyTimeout`.
 #[derive(Clone)]
 pub struct RouterHttp<S> {
     service: S,
@@ -725,6 +752,26 @@ mod tests {
             fake.send(get()).await.unwrap().body,
             Body::Complete(Bytes::new())
         );
+    }
+
+    /// A scripted body failure happens only if the body is read.
+    #[tokio::test]
+    async fn fake_body_failures_happen_only_when_the_body_is_read() {
+        let fake = FakeHttp::replying([
+            FakeReply::ok("abc").body_fails(TransportErrorKind::Body),
+            FakeReply::status(StatusCode::PARTIAL_CONTENT)
+                .body("abc")
+                .body_fails(TransportErrorKind::BodyTimeout),
+        ]);
+        let get = || HttpRequest::get("http://t.example/", 10).body_only_for(StatusCode::OK);
+        assert_eq!(
+            fake.send(get()).await.unwrap_err().kind,
+            TransportErrorKind::Body
+        );
+        let resp = fake.send(get()).await.unwrap();
+        assert_eq!(resp.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(resp.body, Body::TooLarge, "not read");
+        fake.assert_drained();
     }
 
     type Frames = Box<

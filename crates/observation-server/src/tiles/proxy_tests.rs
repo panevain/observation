@@ -8,7 +8,7 @@ use observation_core::tiles::TileId;
 use observation_upstream::testing::{FakeHttp, FakeReply};
 use observation_upstream::{HttpRequest, TransportErrorKind};
 
-use super::{MAX_TILE_BYTES, PNG_MAGIC, TileProxy};
+use super::{PNG_MAGIC, TileProxy};
 use crate::clock::{Clock, ManualClock};
 use crate::config::Config;
 use crate::error::ApiError;
@@ -113,7 +113,8 @@ async fn a_miss_is_fetched_with_the_policy_headers_then_served_from_the_store() 
     assert_eq!(header_of(&req, header::IF_NONE_MATCH), None);
     assert_eq!(header_of(&req, header::IF_MODIFIED_SINCE), None);
     assert_eq!(req.timeout, None, "the client's 20 s covers it");
-    assert_eq!((req.max_bytes, req.error_max_bytes), (MAX_TILE_BYTES, 0));
+    assert_eq!((req.max_bytes, req.error_max_bytes), (2 * 1024 * 1024, 0));
+    assert_eq!(req.body_only_for, Some(StatusCode::OK));
     // Stored with the validators and the 7-day floor over max-age=60.
     let stored = r.store.get(TileSet::Map, id()).await.unwrap();
     assert_eq!(
@@ -262,9 +263,14 @@ async fn failures_serve_the_expired_copy_or_fail() {
             "the tile server returned something that is not a PNG",
         ),
         (
-            FakeReply::ok(vec![0x89; MAX_TILE_BYTES + 1]),
+            FakeReply::ok(vec![0x89; 2 * 1024 * 1024 + 1]),
             StatusCode::BAD_GATEWAY,
             "the tile server returned a tile that is too large",
+        ),
+        (
+            FakeReply::status(StatusCode::NOT_MODIFIED),
+            StatusCode::BAD_GATEWAY,
+            "the tile server sent an unexpected 'not modified' reply",
         ),
         (
             FakeReply::status(StatusCode::FOUND).header(header::LOCATION, "https://elsewhere/"),
@@ -289,6 +295,7 @@ async fn failures_serve_the_expired_copy_or_fail() {
         );
     }
     let errors_counted = counts(&recorder);
+    // Every row but the 304 without a copy, which counts nothing (as before).
     assert_eq!(errors_counted[0], ("result=error".to_owned(), 10));
 }
 
@@ -348,10 +355,12 @@ async fn a_client_over_its_limit_gets_the_expired_copy_or_a_429() {
     );
 }
 
+/// Exactly four fetches run at once: with five tiles of 10 s each, four
+/// requests are in flight until one finishes, and only then the fifth.
 #[tokio::test(start_paused = true)]
 async fn at_most_four_fetches_go_upstream_at_once() {
     let r = rig();
-    let ids: Vec<TileId> = (0..6).map(|y| TileId::new(12, 654, y).unwrap()).collect();
+    let ids: Vec<TileId> = (0..5).map(|y| TileId::new(12, 654, y).unwrap()).collect();
     for id in &ids {
         let url = format!("https://a.tile.example/12/654/{}.png", id.y);
         r.fake.on(
@@ -361,12 +370,62 @@ async fn at_most_four_fetches_go_upstream_at_once() {
         );
     }
     let started = tokio::time::Instant::now();
-    let tiles =
-        futures_util::future::join_all(ids.iter().map(|&id| r.proxy.get(id, None, None))).await;
+    let fetches = futures_util::future::join_all(ids.iter().map(|&id| r.proxy.get(id, None, None)));
+    let watch = async {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert_eq!(r.fake.requests().len(), 4, "four at once");
+        tokio::time::sleep(Duration::from_millis(4_900)).await;
+        assert_eq!(r.fake.requests().len(), 4, "the fifth waits");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(r.fake.requests().len(), 5, "then starts");
+    };
+    let (tiles, ()) = tokio::join!(fetches, watch);
     assert!(tiles.iter().all(Result::is_ok));
-    // Four at once, then the other two.
     assert_eq!(started.elapsed(), Duration::from_secs(20));
     r.fake.assert_drained();
+}
+
+/// Only a 200's body is read: another 2xx is the error it always was, at
+/// once, even when its body would break off or stall.
+#[tokio::test(start_paused = true)]
+async fn the_body_of_a_2xx_other_than_200_is_not_read() {
+    for (status, failure) in [
+        (StatusCode::PARTIAL_CONTENT, TransportErrorKind::BodyTimeout),
+        (StatusCode::PARTIAL_CONTENT, TransportErrorKind::Body),
+        (StatusCode::NO_CONTENT, TransportErrorKind::BodyTimeout),
+        (StatusCode::NO_CONTENT, TransportErrorKind::Body),
+    ] {
+        let r = rig();
+        r.fake.on(
+            Method::GET,
+            URL,
+            FakeReply::status(status).body(png(1)).body_fails(failure),
+        );
+        let started = tokio::time::Instant::now();
+        let e = r.proxy.get(id(), None, None).await.unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "the tile server answered with an error (HTTP {})",
+                status.as_u16()
+            ),
+            "{failure:?}"
+        );
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        let [req] = r.fake.requests().try_into().unwrap();
+        assert_eq!(req.body_only_for, Some(StatusCode::OK));
+    }
+}
+
+/// The cap is 2 MiB: a tile of exactly that size is accepted.
+#[tokio::test]
+async fn a_tile_of_exactly_two_mib_is_accepted() {
+    let r = rig();
+    let mut big = PNG_MAGIC.to_vec();
+    big.resize(2 * 1024 * 1024, 7);
+    r.fake.on(Method::GET, URL, FakeReply::ok(big.clone()));
+    let tile = r.proxy.get(id(), None, None).await.unwrap();
+    assert_eq!(tile.bytes.len(), 2 * 1024 * 1024);
 }
 
 /// The store failing to write does not fail the request.

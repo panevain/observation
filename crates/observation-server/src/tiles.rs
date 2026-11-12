@@ -204,8 +204,11 @@ impl TileProxy {
                 TileSet::Dem => "could not reach the elevation server".into(),
             })
         };
-        // Error bodies are never read; only the status and headers matter.
-        let mut req = HttpRequest::get(id.url(&self.template), MAX_TILE_BYTES).error_max_bytes(0);
+        // Only a 200's body is read; for any other status only the status and
+        // headers matter.
+        let mut req = HttpRequest::get(id.url(&self.template), MAX_TILE_BYTES)
+            .error_max_bytes(0)
+            .body_only_for(StatusCode::OK);
         if let Some(r) = referer {
             req = req.header(header::REFERER, r.clone());
         }
@@ -223,6 +226,9 @@ impl TileProxy {
                 req = req.header(header::IF_MODIFIED_SINCE, value(lm)?);
             }
         }
+        // A new tile's expiry counts from before its download (the body is
+        // read within `send`), never later.
+        let sent = self.clock.now();
         let resp = self.client.send(req).await.map_err(|e| {
             if matches!(
                 e.kind,
@@ -241,15 +247,15 @@ impl TileProxy {
         let status = resp.status;
         let header_str =
             |h: &HeaderMap, name| h.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
-        let new_meta = |headers: &HeaderMap, old: Option<&TileMeta>| TileMeta {
+        let new_meta = |headers: &HeaderMap, old: Option<&TileMeta>, now| TileMeta {
             etag: header_str(headers, header::ETAG).or_else(|| old.and_then(|m| m.etag.clone())),
             last_modified: header_str(headers, header::LAST_MODIFIED)
                 .or_else(|| old.and_then(|m| m.last_modified.clone())),
-            expires_unix: expiry_unix(headers, self.min_ttl, self.clock.now()),
+            expires_unix: expiry_unix(headers, self.min_ttl, now),
         };
         match status {
             StatusCode::OK => {
-                let meta = new_meta(&resp.headers, None);
+                let meta = new_meta(&resp.headers, None, sent);
                 let Body::Complete(body) = resp.body else {
                     tracing::warn!(
                         max = MAX_TILE_BYTES,
@@ -277,7 +283,11 @@ impl TileProxy {
                 }
                 Ok(Upstream::Fresh(body, meta))
             }
-            StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(&resp.headers, stale))),
+            StatusCode::NOT_MODIFIED => Ok(Upstream::NotModified(new_meta(
+                &resp.headers,
+                stale,
+                self.clock.now(),
+            ))),
             StatusCode::NOT_FOUND => Err(ApiError::NotFound(match self.set {
                 TileSet::Map => "the tile server has no tile here",
                 TileSet::Dem => "the elevation server has no tile here",
