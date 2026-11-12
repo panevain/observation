@@ -585,6 +585,8 @@ mod tests {
     > + Clone
     + Send
     + Sync {
+        /// The most `?pad=n` may ask for.
+        const MAX_PAD: usize = 64 * 1024;
         tower::service_fn(|req: http::Request<Full<Bytes>>| async move {
             let pad: usize = req
                 .uri()
@@ -604,7 +606,11 @@ mod tests {
             );
             let body = req.into_body().collect().await.unwrap().to_bytes();
             let mut text = format!("{head} {}", String::from_utf8_lossy(&body)).into_bytes();
-            text.resize(text.len().max(pad), b'.');
+            // `?pad=n` pads the answer to n bytes. The size comes from the request, so it is
+            // bounded here: the tests ask for a few thousand bytes at most.
+            if pad > text.len() && pad <= MAX_PAD {
+                text.resize(pad, b'.');
+            }
             Ok::<_, Infallible>(http::Response::new(Full::new(Bytes::from(text))))
         })
     }
