@@ -18,8 +18,10 @@
 //! with an error too: a failed request, an index answer other than success or 404, and any
 //! answer, report or configuration of a shape the script could not handle (it raised; here
 //! the message says what was wrong). A crate whose publication time neither the index nor the
-//! API gives is NOT FOUND, which fails; so is a lock entry whose name or version could not be
-//! a crates.io crate's, which is never put in a URL.
+//! API gives is NOT FOUND, which fails. A new lock entry whose name or version could not be a
+//! crates.io crate's is an error before any verdict, and is never put in a URL: the script's
+//! request for such an entry raised wherever urllib refused the URL (a space or control
+//! character, or a non-ASCII one), so no exemption or security fix may pass it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -573,20 +575,42 @@ fn vulnerable_at_base(
     Ok(Some(found))
 }
 
+/// Fails unless a new lock entry (from `lockfile`) could be a crates.io crate: a name of
+/// [`valid_crate_name`] and a version `semver` reads. Only such an entry is put in a URL.
+///
+/// The script requested such an entry's index file and then its API URL, and urllib raised
+/// (exit 1) when the URL, its ends stripped and any `#…` cut off, kept a byte in `\x00-\x20`
+/// or `\x7f` (`InvalidURL`) or a non-ASCII character (`UnicodeEncodeError`). Every such entry
+/// fails here. So do the rest, where the script's request went through (`serde.rs`,
+/// `1.0.0#x`, a trailing space): those are listed as stricter.
+pub fn check_lock_entry(lockfile: &str, name: &str, version: &str) -> Result<()> {
+    let what = if !valid_crate_name(name) {
+        "its name is not a crates.io crate name (ASCII letters, digits, `-` and `_`, at most 64)"
+    } else if semver::Version::parse(version).is_err() {
+        "its version is not a semver version"
+    } else {
+        return Ok(());
+    };
+    Err(Error::new(format!(
+        "{lockfile}: new crates.io package name = {}, version = {}: {what}",
+        py::repr_str(name),
+        py::repr_str(version)
+    )))
+}
+
 /// When crates.io published `name@version`: the index's `pubtime`, else (when the line has
 /// none, or a false one to Python) the API's `created_at`, else `None`. Fails on any index
 /// answer but success or 404, on a failed request, and on answers of a shape the script could
-/// not read. A name or version no crates.io crate can have is `None` (NOT FOUND, as crates.io
-/// answered the script for such a name) without a request: it is never put in a URL.
+/// not read. The entry must have passed [`check_lock_entry`]; it is checked again here, so that
+/// nothing else is ever put in a URL.
 fn published(
+    lockfile: &str,
     name: &str,
     version: &str,
     http: &dyn Http,
     index: &mut BTreeMap<String, BTreeMap<String, Option<Value>>>,
 ) -> Result<Option<Timestamp>> {
-    if !valid_crate_name(name) || semver::Version::parse(version).is_err() {
-        return Ok(None);
-    }
+    check_lock_entry(lockfile, name, version)?;
     if !index.contains_key(name) {
         let url = format!("https://index.crates.io/{}", index_path(name));
         let r = http.get(&url)?;
@@ -650,6 +674,8 @@ pub fn run(
     }
     let mut base_texts = Vec::new();
     let mut new = BTreeSet::new();
+    // The first lockfile each new entry was found in, for errors.
+    let mut found_in = BTreeMap::new();
     for path in &args.lockfiles {
         let base = py::universal_newlines(&ports.git.show(&args.base, path)?.unwrap_or_default());
         let head_file = repo.join(path);
@@ -659,7 +685,10 @@ pub fn run(
             String::new()
         };
         let before = packages(path, &base)?;
-        new.extend(packages(path, &head)?.difference(&before).cloned());
+        for p in packages(path, &head)?.difference(&before) {
+            found_in.entry(p.clone()).or_insert(path.as_str());
+            new.insert(p.clone());
+        }
         base_texts.push(base);
     }
     let vulnerable = if new.is_empty() {
@@ -678,8 +707,12 @@ pub fn run(
     };
     let mut index = BTreeMap::new();
     let mut times = BTreeMap::new();
+    // In the script's order: each entry's requests, and so its error, before the next entry's,
+    // and every one before any verdict.
     for p in &new {
-        times.insert(p.clone(), published(&p.0, &p.1, ports.http, &mut index)?);
+        let lockfile = found_in.get(p).copied().unwrap_or_default();
+        let when = published(lockfile, &p.0, &p.1, ports.http, &mut index)?;
+        times.insert(p.clone(), when);
     }
     let rows = verdicts(&new, &times, &config, &vulnerable, cutoff)?;
     Ok(Outcome {
@@ -882,6 +915,81 @@ mod tests {
             None,
             "the golden has more cases than cases.toml"
         );
+    }
+
+    /// A new lock entry the script's request raised on (urllib refused the URL) fails before
+    /// any request and before an exemption or a security fix could pass it (the fakes panic on
+    /// a request nobody set up). It names the lockfile and the entry.
+    #[test]
+    fn an_entry_no_url_can_hold_is_an_error() {
+        let lock = |name: &str, version: &str| {
+            format!(
+                "version = 4\n\n[[package]]\nname = {name:?}\nversion = {version:?}\n\
+                 source = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+            )
+        };
+        let advisory = r#"{"vulnerabilities": {"list": [{"advisory": {"id": "RUSTSEC-0000-0001"},
+            "package": {"name": "serde"}, "versions": {"patched": [">= 1.0.0"], "unaffected": []}}]}}"#;
+        let cases = [
+            ("serde", "1.0.0 x", "serde", "its version"),
+            ("a b", "1.0.0", "a b", "its name"),
+            ("s\u{e9}rde", "1.0.0", "s\u{e9}rde", "its name"),
+            ("serde", " 1.0.0", "", "its version"),
+        ];
+        for (name, version, exempt, what) in cases {
+            let tmp = ok(tempfile::tempdir());
+            let repo = tmp.path();
+            ok(fs::create_dir_all(repo.join("fuzz")));
+            ok(fs::create_dir_all(repo.join(".config")));
+            let config = if exempt.is_empty() {
+                "days = 7\n".to_owned()
+            } else {
+                format!("days = 7\n[[exempt]]\nname = {exempt:?}\nreason = \"r\"\n")
+            };
+            ok(fs::write(repo.join(CONFIG), config));
+            let base = lock("serde", "0.9.0");
+            ok(fs::write(repo.join("fuzz/Cargo.lock"), lock(name, version)));
+            let git = FakeGit {
+                commits: vec!["base".into()],
+                files: HashMap::from([(
+                    ("base".into(), "fuzz/Cargo.lock".into()),
+                    Some(base.clone()),
+                )]),
+                ..FakeGit::default()
+            };
+            let cargo = FakeCargo {
+                audit_installed: true,
+                audits: HashMap::from([(
+                    base,
+                    AuditOutput {
+                        stdout: advisory.into(),
+                        stderr: String::new(),
+                    },
+                )]),
+                ..FakeCargo::default()
+            };
+            let ports = Ports {
+                git: &git,
+                http: &FakeHttp::default(),
+                cargo: &cargo,
+                clock: &FixedClock(Timestamp::from_unix_micros(0)),
+            };
+            let args = Args {
+                base: "base".into(),
+                lockfiles: vec!["fuzz/Cargo.lock".into()],
+                now: Some("2026-11-12T00:00:00Z".into()),
+            };
+            let err = match run(repo, &args, &ports, &mut String::new()) {
+                Ok(out) => panic!("{name:?} {version:?} passed the check: {}", out.report),
+                Err(e) => e.to_string(),
+            };
+            let want = format!(
+                "fuzz/Cargo.lock: new crates.io package name = {}, version = {}: {what}",
+                py::repr_str(name),
+                py::repr_str(version)
+            );
+            assert!(err.starts_with(&want), "{err}");
+        }
     }
 
     #[test]
