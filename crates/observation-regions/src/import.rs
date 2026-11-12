@@ -8,26 +8,26 @@
 //! once the work directory is removed. Child processes are killed when the
 //! job's future is dropped (cancellation).
 
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use observation_core::regions::JobPhase;
-use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use observation_upstream::status_error;
+use tokio::io::AsyncWriteExt;
 
 use crate::catalog::Extract;
 use crate::poly::{Boundary, MAX_POLY_BYTES};
+use crate::ports::{Download, Toolchain};
 use crate::registry::{Imported, JobId, RegionDb, Registry, now_unix, slug};
 
-/// The tools and limits an import needs.
+/// What an import talks to.
 #[derive(Debug, Clone)]
 pub struct Tools {
+    /// For the boundary.
     pub client: reqwest::Client,
-    pub osmium: PathBuf,
-    pub overpass_bin: PathBuf,
+    pub download: Arc<dyn Download>,
+    pub toolchain: Arc<dyn Toolchain>,
 }
 
 /// Longest wait for the next piece of a download.
@@ -55,37 +55,25 @@ pub async fn run(
 
     registry.progress(id, job, JobPhase::Filtering, 0, None);
     let filtered = work.join("filtered.osm.pbf");
-    let mut filter = Command::new(&tools.osmium);
-    filter
-        .arg("tags-filter")
-        .arg(&pbf)
-        .args([
-            "w/building",
-            "r/building",
-            "w/highway",
-            "n/addr:housenumber",
-            "n/addr:housename",
-        ])
-        .arg("-o")
-        .arg(&filtered)
-        .arg("--overwrite");
-    run_tool(filter, "osmium tags-filter").await?;
+    tools.toolchain.tags_filter(&pbf, &filtered).await?;
     let _ = tokio::fs::remove_file(&pbf).await;
 
-    let info = file_info(tools, &filtered).await?;
-    let total = info.data.count.nodes + info.data.count.ways + info.data.count.relations;
+    let info = tools.toolchain.file_info(&filtered).await?;
+    let total = info.elements;
     registry.progress(id, job, JobPhase::Importing, 0, Some(total));
     let db = work.join("db");
     tokio::fs::create_dir_all(&db)
         .await
         .map_err(|e| format!("could not create the database directory: {e}"))?;
     let version = info
-        .header
-        .option
-        .osmosis_replication_timestamp
+        .replication_timestamp
         .as_deref()
         .filter(|t| is_osm_timestamp(t));
-    import(tools, registry, id, job, &filtered, &db, total, version).await?;
+    let mut progress = |done| registry.progress(id, job, JobPhase::Importing, done, Some(total));
+    tools
+        .toolchain
+        .load(&filtered, &db, version, &mut progress)
+        .await?;
     let _ = tokio::fs::remove_file(&filtered).await;
 
     registry.progress(id, job, JobPhase::Finishing, 0, None);
@@ -108,7 +96,7 @@ pub async fn run(
         bbox: boundary.bbox(),
         db: Arc::new(RegionDb::new(dest, boundary)),
         db_dir,
-        data_timestamp: info.header.option.osmosis_replication_timestamp,
+        data_timestamp: info.replication_timestamp,
         disk_bytes,
     })
 }
@@ -124,12 +112,16 @@ async fn download(
     let max = registry.max_download_bytes();
     // The body may take hours, so only the wait for the headers is bounded here
     // (and each piece of the body below).
-    let mut resp = tokio::time::timeout(READ_STALL, tools.client.get(url).send())
+    let resp = tokio::time::timeout(READ_STALL, tools.download.get(url))
         .await
         .map_err(|_| "the download server did not answer; try again later".to_owned())?
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| format!("could not download the extract: {}", e.without_url()))?;
-    let total = resp.content_length();
+        .map_err(|e| format!("could not download the extract: {e}"))?;
+    if resp.status.is_client_error() || resp.status.is_server_error() {
+        let e = status_error(resp.status, resp.reason.as_deref());
+        return Err(format!("could not download the extract: {e}"));
+    }
+    let total = resp.content_length;
+    let mut body = resp.body;
     let too_big = |n: u64| {
         format!(
             "the extract is {} MB, more than the {} MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
@@ -146,10 +138,10 @@ async fn download(
     let mut done = 0u64;
     registry.progress(id, job, JobPhase::Downloading, 0, total);
     loop {
-        let chunk = tokio::time::timeout(READ_STALL, resp.chunk())
+        let chunk = tokio::time::timeout(READ_STALL, body.chunk())
             .await
             .map_err(|_| "the download stalled; try again later".to_owned())?
-            .map_err(|e| format!("the download failed: {}", e.without_url()))?;
+            .map_err(|e| format!("the download failed: {e}"))?;
         let Some(chunk) = chunk else { break };
         done += chunk.len() as u64;
         if done > max {
@@ -186,200 +178,12 @@ async fn fetch_poly(tools: &Tools, url: &str) -> Result<String, String> {
     String::from_utf8(bytes.to_vec()).map_err(|_| fail("it is not text".into()))
 }
 
-#[derive(Debug, Deserialize)]
-struct FileInfo {
-    header: Header,
-    data: Data,
-}
-
-#[derive(Debug, Deserialize)]
-struct Header {
-    #[serde(default)]
-    option: HeaderOptions,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct HeaderOptions {
-    osmosis_replication_timestamp: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Data {
-    count: Counts,
-}
-
-#[derive(Debug, Deserialize)]
-struct Counts {
-    nodes: u64,
-    ways: u64,
-    relations: u64,
-}
-
-async fn file_info(tools: &Tools, file: &Path) -> Result<FileInfo, String> {
-    let mut cmd = Command::new(&tools.osmium);
-    cmd.arg("fileinfo").arg("-e").arg("-j").arg(file);
-    let out = run_tool(cmd, "osmium fileinfo").await?;
-    serde_json::from_slice(&out).map_err(|e| format!("osmium fileinfo output unreadable: {e}"))
-}
-
 /// Whether `s` is an OSM data date as Overpass reports it,
 /// `YYYY-MM-DDTHH:MM:SSZ` with a real date and time (the same check the
 /// server applies: [`observation_core::provenance::parse_utc`]). Checked
 /// before a timestamp reaches a command line or a response header.
 pub fn is_osm_timestamp(s: &str) -> bool {
     observation_core::provenance::parse_utc(s).is_some()
-}
-
-/// Pipes `osmium cat -f osm` into `update_database`, counting elements on the
-/// way for progress. With a `version` (the extract's replication timestamp,
-/// see [`is_osm_timestamp`]) the database records it, and Overpass reports it
-/// as `timestamp_osm_base`.
-async fn import(
-    tools: &Tools,
-    registry: &Registry,
-    id: &str,
-    job: JobId,
-    filtered: &Path,
-    db: &Path,
-    total: u64,
-    version: Option<&str>,
-) -> Result<(), String> {
-    let mut cat = Command::new(&tools.osmium);
-    cat.arg("cat")
-        .arg(filtered)
-        .args(["-f", "osm", "-o", "-"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut update = Command::new(tools.overpass_bin.join("update_database"));
-    update
-        .arg(format!("--db-dir={}/", db.display()))
-        .args([
-            "--meta=no",
-            "--compression-method=lz4",
-            "--map-compression-method=lz4",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(version) = version {
-        update.arg(format!("--version={version}"));
-    }
-    let mut cat = cat
-        .spawn()
-        .map_err(|e| format!("could not start osmium: {e}"))?;
-    let mut update = update
-        .spawn()
-        .map_err(|e| format!("could not start update_database: {e}"))?;
-    let cat_err = tokio::spawn(tail(cat.stderr.take()));
-    let update_err = tokio::spawn(tail(update.stderr.take()));
-    let (Some(mut xml), Some(mut sink)) = (cat.stdout.take(), update.stdin.take()) else {
-        return Err("could not connect osmium to update_database".into());
-    };
-
-    let mut counter = ElementCounter::default();
-    let mut buf = vec![0u8; 256 * 1024];
-    let relay = async {
-        loop {
-            let n = xml.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            counter.feed(&buf[..n]);
-            sink.write_all(&buf[..n]).await?;
-            registry.progress(id, job, JobPhase::Importing, counter.count, Some(total));
-        }
-        sink.shutdown().await
-    }
-    .await;
-    // Unblock osmium if update_database stopped reading (and vice versa).
-    drop(xml);
-    drop(sink);
-    let cat_status = cat.wait().await;
-    let update_status = update.wait().await;
-    let cat_err = cat_err.await.unwrap_or_default();
-    let update_err = update_err.await.unwrap_or_default();
-    // update_database first: when it dies, osmium fails too, on a broken pipe.
-    match (update_status, cat_status) {
-        (Ok(u), _) if !u.success() => Err(format!("update_database failed: {update_err}")),
-        (_, Ok(c)) if !c.success() => Err(format!("osmium cat failed: {cat_err}")),
-        (Err(e), _) | (_, Err(e)) => Err(format!("import tool failed: {e}")),
-        _ => relay.map_err(|e| format!("the import was interrupted: {e}")),
-    }
-}
-
-/// Runs a tool to completion; its stdout on success, its stderr in the error.
-async fn run_tool(mut cmd: Command, what: &str) -> Result<Vec<u8>, String> {
-    let out = cmd
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|e| format!("could not start {what}: {e}"))?;
-    if out.status.success() {
-        Ok(out.stdout)
-    } else {
-        Err(format!(
-            "{what} failed: {}",
-            last_chars(&String::from_utf8_lossy(&out.stderr), 500)
-        ))
-    }
-}
-
-/// The last 500 characters a child wrote to stderr.
-async fn tail(stream: Option<impl AsyncRead + Unpin>) -> String {
-    let mut out = Vec::new();
-    if let Some(mut s) = stream {
-        let mut buf = [0u8; 4096];
-        while let Ok(n) = s.read(&mut buf).await {
-            if n == 0 {
-                break;
-            }
-            out.extend_from_slice(&buf[..n]);
-            if out.len() > 64 * 1024 {
-                out.drain(..out.len() - 4096);
-            }
-        }
-    }
-    last_chars(&String::from_utf8_lossy(&out), 500)
-}
-
-fn last_chars(s: &str, n: usize) -> String {
-    let s = s.trim();
-    let skip = s.chars().count().saturating_sub(n);
-    s.chars().skip(skip).collect()
-}
-
-/// Counts `<node `, `<way ` and `<relation ` starts in an XML stream fed in
-/// arbitrary chunks.
-#[derive(Debug, Default)]
-pub struct ElementCounter {
-    pub count: u64,
-    /// The end of the previous chunk, for matches split across chunks.
-    carry: Vec<u8>,
-}
-
-impl ElementCounter {
-    const PATTERNS: [&'static [u8]; 3] = [b"<node ", b"<way ", b"<relation "];
-    const KEEP: usize = 9; // longest pattern - 1
-
-    pub fn feed(&mut self, chunk: &[u8]) {
-        let mut window = std::mem::take(&mut self.carry);
-        let carried = window.len();
-        window.extend_from_slice(chunk);
-        for p in Self::PATTERNS {
-            // Matches lying wholly in the carry were counted last time.
-            self.count += window
-                .windows(p.len())
-                .enumerate()
-                .filter(|(i, w)| *w == p && i + p.len() > carried)
-                .count() as u64;
-        }
-        let keep = window.len().min(Self::KEEP);
-        self.carry = window[window.len() - keep..].to_vec();
-    }
 }
 
 /// Total size of the files below `dir`.
@@ -402,33 +206,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counts_elements_across_chunk_boundaries() {
-        let xml = b"<osm>\n  <node id=\"1\"/>\n  <node id=\"2\">\n    <tag k=\"a\" v=\"b\"/>\n  </node>\n  <way id=\"3\">\n    <nd ref=\"1\"/>\n  </way>\n  <relation id=\"4\">\n    <member type=\"node\" ref=\"1\"/>\n  </relation>\n</osm>\n";
-        let mut whole = ElementCounter::default();
-        whole.feed(xml);
-        assert_eq!(whole.count, 4);
-        for size in 1..12 {
-            let mut c = ElementCounter::default();
-            for chunk in xml.chunks(size) {
-                c.feed(chunk);
-            }
-            assert_eq!(c.count, 4, "chunk size {size}");
-        }
-    }
-
-    #[test]
-    fn parses_fileinfo() {
-        let json = br#"{"file":{},"header":{"boxes":[],"option":{"osmosis_replication_timestamp":"2026-10-19T20:21:11Z"}},
-          "data":{"count":{"changesets":0,"nodes":27352,"ways":5321,"relations":32}}}"#;
-        let info: FileInfo = serde_json::from_slice(json).unwrap();
-        assert_eq!(info.data.count.nodes, 27352);
-        assert_eq!(
-            info.header.option.osmosis_replication_timestamp.as_deref(),
-            Some("2026-10-19T20:21:11Z")
-        );
-    }
-
-    #[test]
     fn accepts_only_iso_utc_timestamps() {
         assert!(is_osm_timestamp("2026-10-31T19:43:02Z"));
         for bad in [
@@ -447,10 +224,5 @@ mod tests {
         ] {
             assert!(!is_osm_timestamp(bad), "{bad:?}");
         }
-    }
-
-    #[test]
-    fn last_chars_is_char_safe() {
-        assert_eq!(last_chars("  héllo wörld ", 5), "wörld");
     }
 }

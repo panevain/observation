@@ -1135,6 +1135,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "http",
+ "hyper",
  "reqwest",
  "thiserror",
  "tokio",

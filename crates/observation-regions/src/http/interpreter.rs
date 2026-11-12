@@ -12,7 +12,6 @@ use serde::Deserialize;
 use super::{AgentError, err};
 use crate::agent::Agent;
 use crate::import;
-use crate::query::run_query;
 use crate::registry::Covering;
 
 /// Largest query text accepted.
@@ -52,7 +51,7 @@ pub(super) async fn interpreter(
     let started = std::time::Instant::now();
     let out = tokio::time::timeout(
         agent.query_timeout,
-        run_query(&agent.tools.overpass_bin, &db.dir, &form.data),
+        agent.query_runner.run(&db.dir, &form.data),
     )
     .await
     .map_err(|_| err(StatusCode::GATEWAY_TIMEOUT, "the query took too long"))?

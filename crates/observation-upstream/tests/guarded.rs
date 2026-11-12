@@ -424,3 +424,104 @@ async fn proxy_variables_are_ignored_while_filtering() {
     assert!(out.status.success(), "{text}");
     assert!(text.contains("1 passed"), "{text}");
 }
+
+/// Answers every request with `response`, which need not be UTF-8.
+async fn serve_bytes(response: &'static [u8]) -> u16 {
+    serve(move |mut sock, _| async move {
+        let _ = sock.write_all(response).await;
+    })
+    .await
+    .0
+}
+
+#[tokio::test]
+async fn status_errors_read_as_reqwest_words_them() {
+    let plain = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (response, own_reason) in [
+        (&b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"[..], false),
+        (b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", false),
+        (b"HTTP/1.1 404 Gone \"Fishing\"\t\\ x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true),
+        // Not ASCII: hyper keeps an empty phrase, and reqwest prints it so.
+        (b"HTTP/1.1 410 Gone \xff\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true),
+        (b"HTTP/1.1 503 Back Soon\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true),
+    ] {
+        let url = format!("http://127.0.0.1:{}/x", serve_bytes(response).await);
+        let resp = lax().get_stream(&url).await.unwrap();
+        assert_eq!(resp.reason.is_some(), own_reason, "{resp:?}");
+        let ours = observation_upstream::status_error(resp.status, resp.reason.as_deref());
+        let theirs = plain
+            .get(&url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap_err()
+            .without_url()
+            .to_string();
+        assert_eq!(ours, theirs);
+    }
+    assert_eq!(
+        observation_upstream::status_error(reqwest::StatusCode::NOT_FOUND, None),
+        "HTTP status client error (404 Not Found)"
+    );
+}
+
+#[tokio::test]
+async fn streams_are_read_piece_by_piece_with_no_cap() {
+    // Far past every cap the port applies: get_stream applies none.
+    let port = serve_endless(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        chunk(),
+    )
+    .await;
+    let mut resp = lax()
+        .get_stream(&format!("http://127.0.0.1:{port}/"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.content_length(), None);
+    let mut read = 0;
+    while read < 4 << 20 {
+        read += resp.body.chunk().await.unwrap().unwrap().len();
+    }
+
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 302 Found\r\nLocation: http://a.example/\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmoved",
+    )
+    .await;
+    let mut resp = lax()
+        .get_stream(&format!("http://127.0.0.1:{port}/"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 302, "returned, not followed");
+    assert_eq!(resp.headers["location"], "http://a.example/");
+    assert_eq!(resp.body.content_length(), Some(5));
+    let mut body = Vec::new();
+    while let Some(piece) = resp.body.chunk().await.unwrap() {
+        body.extend_from_slice(&piece);
+    }
+    assert_eq!(body, b"moved");
+}
+
+#[tokio::test]
+async fn a_broken_stream_is_a_body_error_with_its_status() {
+    let (port, _) =
+        serve_fixed("HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc").await;
+    let mut resp = lax()
+        .get_stream(&format!("http://127.0.0.1:{port}/"))
+        .await
+        .unwrap();
+    let err = loop {
+        match resp.body.chunk().await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("the short body ended cleanly"),
+            Err(e) => break e,
+        }
+    };
+    assert_eq!(err.kind, TransportErrorKind::Body, "{}", err.message);
+    assert_eq!(err.status, Some(reqwest::StatusCode::OK));
+
+    let err = lax().get_stream("http://127.0.0.1:1/").await.unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
+    assert!(!err.message.contains("127.0.0.1"), "{}", err.message);
+}

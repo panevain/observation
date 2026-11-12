@@ -1,13 +1,29 @@
 //! Running Overpass queries against an imported database.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
+use crate::ports::QueryRunner;
+
 /// Largest query result returned (the server accepts 32 MB).
 const MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
+
+/// The production [`QueryRunner`]: Overpass's `osm3s_query` in `bin`.
+#[derive(Debug, Clone)]
+pub struct Osm3sQuery {
+    pub bin: PathBuf,
+}
+
+impl QueryRunner for Osm3sQuery {
+    fn run<'a>(&'a self, db: &'a Path, query: &'a str) -> BoxFuture<'a, Result<Vec<u8>, String>> {
+        run_query(&self.bin, db, query).boxed()
+    }
+}
 
 /// Runs `osm3s_query` directly on a database directory (no dispatcher: the
 /// databases are read-only once imported).
@@ -106,8 +122,11 @@ pub(crate) mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn queries_return_output_and_errors() {
-        let ok = fake_query_bin("echo '{\"elements\":[]}'");
-        let out = run_query(ok.path(), Path::new("/db"), "q").await.unwrap();
+        let dir = fake_query_bin("echo '{\"elements\":[]}'");
+        let ok = Osm3sQuery {
+            bin: dir.path().to_owned(),
+        };
+        let out = ok.run(Path::new("/db"), "q").await.unwrap();
         assert_eq!(out, b"{\"elements\":[]}\n");
         let bad = fake_query_bin("echo 'runtime error: broken' >&2; exit 3");
         let e = run_query(bad.path(), Path::new("/db"), "q")

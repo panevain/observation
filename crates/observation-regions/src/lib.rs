@@ -19,14 +19,16 @@ pub mod catalog;
 pub mod config;
 pub mod import;
 pub mod poly;
+pub mod ports;
 pub mod registry;
 
 mod agent;
 mod fs;
 mod http;
 mod query;
+mod tools;
 
-pub use crate::agent::{Agent, StartError};
+pub use crate::agent::{Agent, Ports, StartError};
 pub use crate::fs::{write_atomic, write_atomic_blocking};
 pub use crate::http::{AgentError, app};
 pub use observation_upstream::read_capped;

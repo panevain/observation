@@ -23,6 +23,7 @@ mod body;
 mod guarded;
 mod http;
 mod queue;
+mod stream;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
@@ -33,6 +34,7 @@ pub use crate::http::{
 pub use body::read_capped;
 pub use guarded::{GuardedHttp, GuardedHttpBuilder};
 pub use queue::{BoundedQueue, QueueError};
+pub use stream::{ByteStream, StreamingResponse, status_error};
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};

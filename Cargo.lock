@@ -4748,6 +4748,9 @@ name = "observation-regions"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
+ "futures-util",
+ "http",
  "observation-core",
  "observation-regions-api",
  "observation-upstream",
@@ -4815,6 +4818,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "hyper",
  "reqwest",
  "thiserror 2.0.21",
  "tokio",

@@ -3,12 +3,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use observation_upstream::BoundedQueue;
+use observation_upstream::{BoundedQueue, GuardedHttp, Redirects};
 
 use crate::catalog::Catalog;
 use crate::config::Config;
 use crate::import::{self, Tools};
+use crate::ports::{Download, QueryRunner, Toolchain};
+use crate::query::Osm3sQuery;
 use crate::registry::{self, Registry};
+use crate::tools::OsmTools;
 
 /// Queries allowed to wait for a free slot.
 const MAX_WAITING_QUERIES: usize = 32;
@@ -19,6 +22,7 @@ pub struct Agent {
     pub registry: Arc<Registry>,
     pub catalog: Catalog,
     pub tools: Tools,
+    pub(crate) query_runner: Arc<dyn QueryRunner>,
     pub(crate) token: Option<String>,
     pub(crate) queries: BoundedQueue,
     pub(crate) query_timeout: Duration,
@@ -35,9 +39,19 @@ pub enum StartError {
     Client(#[from] reqwest::Error),
 }
 
-impl Agent {
-    /// Opens the data directory and builds the HTTP client.
-    pub fn new(config: &Config) -> Result<Arc<Self>, StartError> {
+/// What the agent talks to: see [`Agent::from_parts`].
+#[derive(Debug, Clone)]
+pub struct Ports {
+    /// For the extract list and the boundaries.
+    pub client: reqwest::Client,
+    pub download: Arc<dyn Download>,
+    pub toolchain: Arc<dyn Toolchain>,
+    pub query_runner: Arc<dyn QueryRunner>,
+}
+
+impl Ports {
+    /// The download server and the programs that `config` names.
+    pub fn production(config: &Config) -> Result<Self, reqwest::Error> {
         // Extracts and the index come from one host; redirects may not leave it,
         // and names may not resolve to private addresses unless allowed.
         let client = observation_upstream::client_builder(
@@ -47,6 +61,32 @@ impl Agent {
         .user_agent(config.user_agent())
         .connect_timeout(Duration::from_secs(20))
         .build()?;
+        let download = GuardedHttp::builder(config.allow_private_upstreams, Redirects::SameHost)
+            .user_agent(&config.user_agent())
+            .connect_timeout(Duration::from_secs(20))
+            .build()?;
+        Ok(Self {
+            client,
+            download: Arc::new(download),
+            toolchain: Arc::new(OsmTools {
+                osmium: config.osmium.clone(),
+                overpass_bin: config.overpass_bin.clone(),
+            }),
+            query_runner: Arc::new(Osm3sQuery {
+                bin: config.overpass_bin.clone(),
+            }),
+        })
+    }
+}
+
+impl Agent {
+    /// Opens the data directory and builds the production ports.
+    pub fn new(config: &Config) -> Result<Arc<Self>, StartError> {
+        Self::from_parts(config, Ports::production(config)?)
+    }
+
+    /// Opens the data directory; the agent talks to the world through `ports`.
+    pub fn from_parts(config: &Config, ports: Ports) -> Result<Arc<Self>, StartError> {
         let registry = Arc::new(
             Registry::open(
                 &config.data_dir,
@@ -57,15 +97,16 @@ impl Agent {
         );
         Ok(Arc::new(Self {
             catalog: Catalog::new(
-                client.clone(),
+                ports.client.clone(),
                 config.catalog_url.clone(),
                 config.data_dir.join("catalog.json"),
             ),
             tools: Tools {
-                client,
-                osmium: config.osmium.clone(),
-                overpass_bin: config.overpass_bin.clone(),
+                client: ports.client,
+                download: ports.download,
+                toolchain: ports.toolchain,
             },
+            query_runner: ports.query_runner,
             registry,
             token: config.token.clone(),
             queries: BoundedQueue::new(config.query_concurrency, MAX_WAITING_QUERIES),

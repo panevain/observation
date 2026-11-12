@@ -18,7 +18,7 @@ use crate::{Redirects, client_builder, read_capped};
 /// redirects its [`Redirects`] policy allows.
 #[derive(Debug, Clone)]
 pub struct GuardedHttp {
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
 }
 
 /// Configures a [`GuardedHttp`]; only settings that cannot weaken the guards
@@ -103,7 +103,7 @@ impl HttpClient for GuardedHttp {
 
 /// [`transport_error`] for a failure while reading the body, where a
 /// timeout is a [`TransportErrorKind::BodyTimeout`].
-fn body_error(e: reqwest::Error) -> TransportError {
+pub(crate) fn body_error(e: reqwest::Error) -> TransportError {
     let mut error = transport_error(e);
     if error.kind == TransportErrorKind::Timeout {
         error.kind = TransportErrorKind::BodyTimeout;
@@ -114,7 +114,7 @@ fn body_error(e: reqwest::Error) -> TransportError {
 /// Classifies a reqwest error. A timeout while connecting stays apart from
 /// one after connecting: the host was never reached, which is not the same
 /// as being slow.
-fn transport_error(e: reqwest::Error) -> TransportError {
+pub(crate) fn transport_error(e: reqwest::Error) -> TransportError {
     let kind = if e.is_timeout() && e.is_connect() {
         TransportErrorKind::ConnectTimeout
     } else if e.is_timeout() {

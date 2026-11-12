@@ -16,6 +16,8 @@ bytes = "1"
 form_urlencoded = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 http = "1"
+# Its `ReasonPhrase`, the reply's own reason phrase that reqwest reports a status error with.
+hyper = { version = "1", default-features = false, features = ["http1"] }
 reqwest.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
