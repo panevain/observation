@@ -496,6 +496,25 @@ mod tests {
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
+    /// bash's `[[ -z "$(...)" ]]` on a branch listing: `$(...)` drops NULs (with a warning) and
+    /// trailing newlines, so only those bytes are no output. Checked against bash 5.2.
+    #[test]
+    fn printed_reads_a_listing_as_bash_did() {
+        for (stdout, want) in [
+            (&b""[..], false),
+            (b"\n", false),
+            (b"\0", false),
+            (b"\0\n", false),
+            (b"\n\0\n\n", false),
+            (b"x", true),
+            (b" \n", true),
+            (b"\0x\n", true),
+            (b"\nx", true),
+        ] {
+            assert_eq!(printed(stdout), want, "{stdout:?}");
+        }
+    }
+
     /// git prints neither bytes that are not UTF-8 nor NULs in a ref name; the script's sed and
     /// grep would have read them on their own terms, so the port refuses them.
     #[test]

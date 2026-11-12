@@ -121,8 +121,12 @@ jobs:
         id: issue
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERSION: ${{ needs.scan.outputs.version }}
         run: |
           set -euo pipefail
+          # scan compiles code (xtask), so the version it found is checked before the issue
+          # steps below put it in a title. (`action` is only compared, with 'hotfix'.)
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
           { cat "${RUNNER_TEMP}/report/summary.md"; echo; echo "_Updated by [Release watch](${RUN_URL})._"; } > "${RUNNER_TEMP}/body.md"
           echo "attention=$(jq -r .attention "${RUNNER_TEMP}/report/report.json")" >> "${GITHUB_OUTPUT}"
       - name: Open or update the tracking issue

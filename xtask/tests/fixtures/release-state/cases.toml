@@ -98,9 +98,9 @@ github_actions = "true"
 
 [[case]]
 name = "patch 08"
-targets = ["state"]
+targets = ["state", "prep", "prep-pre", "hotfix", "watch"]
 github_actions = "true"
-differs = { "state" = "stricter" }
+differs = { "state" = "stricter", "prep" = "stricter", "prep-pre" = "stricter", "hotfix" = "message", "watch" = "stricter" }
 [case.git]
 "ls-remote --tags --refs origin v*" = { code = 0, stdout = "0123456789abcdef0123456789abcdef01234567\trefs/tags/v1.2.08\n" }
 "fetch --quiet --depth=1 origin main" = { code = 0, stdout = "" }
@@ -341,29 +341,45 @@ github_actions = "true"
 
 [[case]]
 name = "tag lookup fails"
-targets = ["state"]
+targets = ["state", "prep", "prep-pre", "hotfix", "watch"]
 github_actions = "true"
-differs = { "state" = "stricter" }
+differs = { "state" = "stricter", "prep" = "stricter", "prep-pre" = "stricter", "hotfix" = "message", "watch" = "stricter" }
 [case.git]
-"ls-remote --tags --refs origin v*" = { code = 0, stdout = "" }
+"ls-remote --tags --refs origin v*" = { code = 0, stdout = "0123456789abcdef0123456789abcdef01234567\trefs/tags/v1.2.0\n" }
 "fetch --quiet --depth=1 origin main" = { code = 0, stdout = "" }
-"show FETCH_HEAD:Cargo.toml" = { code = 0, stdout = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n" }
-"ls-remote --exit-code --tags origin refs/tags/v0.1.0" = { code = 128, stdout = "" }
+"show FETCH_HEAD:Cargo.toml" = { code = 0, stdout = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"1.2.0\"\nedition = \"2024\"\n" }
+"ls-remote --exit-code --tags origin refs/tags/v1.2.0" = { code = 128, stdout = "" }
 "ls-remote --heads origin refs/heads/hotfix/*" = { code = 0, stdout = "" }
 "ls-remote --heads origin refs/heads/release/*" = { code = 0, stdout = "" }
+"merge-base --is-ancestor v1.2.0 HEAD" = { code = 0, stdout = "" }
+
+[[case]]
+name = "tag lookup exits 1"
+targets = ["state", "prep", "prep-pre", "hotfix", "watch"]
+github_actions = "true"
+differs = { "state" = "stricter", "prep" = "stricter", "prep-pre" = "stricter", "hotfix" = "message", "watch" = "stricter" }
+[case.git]
+"ls-remote --tags --refs origin v*" = { code = 0, stdout = "0123456789abcdef0123456789abcdef01234567\trefs/tags/v1.2.0\n" }
+"fetch --quiet --depth=1 origin main" = { code = 0, stdout = "" }
+"show FETCH_HEAD:Cargo.toml" = { code = 0, stdout = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"1.2.0\"\nedition = \"2024\"\n" }
+"ls-remote --exit-code --tags origin refs/tags/v1.2.0" = { code = 1, stdout = "" }
+"ls-remote --heads origin refs/heads/hotfix/*" = { code = 0, stdout = "" }
+"ls-remote --heads origin refs/heads/release/*" = { code = 0, stdout = "" }
+"merge-base --is-ancestor v1.2.0 HEAD" = { code = 0, stdout = "" }
 
 [[case]]
 name = "hotfix listing fails"
-targets = ["state"]
+targets = ["state", "prep", "prep-pre", "hotfix", "watch"]
 github_actions = "true"
-differs = { "state" = "stricter" }
+differs = { "state" = "stricter", "prep" = "stricter", "prep-pre" = "stricter", "hotfix" = "stricter", "watch" = "stricter" }
 [case.git]
-"ls-remote --tags --refs origin v*" = { code = 0, stdout = "" }
+"ls-remote --tags --refs origin v*" = { code = 0, stdout = "0123456789abcdef0123456789abcdef01234567\trefs/tags/v1.2.0\n" }
 "fetch --quiet --depth=1 origin main" = { code = 0, stdout = "" }
-"show FETCH_HEAD:Cargo.toml" = { code = 0, stdout = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n" }
-"ls-remote --exit-code --tags origin refs/tags/v0.1.0" = { code = 2, stdout = "" }
+"show FETCH_HEAD:Cargo.toml" = { code = 0, stdout = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"1.2.0\"\nedition = \"2024\"\n" }
+"ls-remote --exit-code --tags origin refs/tags/v1.2.0" = { code = 0, stdout = "0123456789abcdef0123456789abcdef01234567\trefs/tags/v1.2.0\n" }
 "ls-remote --heads origin refs/heads/hotfix/*" = { code = 128, stdout = "" }
 "ls-remote --heads origin refs/heads/release/*" = { code = 0, stdout = "" }
+"merge-base --is-ancestor v1.2.0 HEAD" = { code = 0, stdout = "" }
 
 [[case]]
 name = "hotfix listing prints only a newline"

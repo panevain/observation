@@ -48,10 +48,62 @@ env:
   MISE_ENV: ci
 
 jobs:
-  plan:
-    name: plan release
+  # The release checks, run by xtask, which this job builds from develop (uncached). Building
+  # runs the build scripts and proc macros of xtask's crates, so this job holds no write
+  # permission, no environment and no token beyond contents: read, and only its `go` output
+  # leaves it, compared exactly in plan's `if`. No version or sha comes from here: plan checks
+  # develop out itself and works both out with no compiled code, so nothing that ran here can
+  # choose what the bot jobs below release. plan checks develop out a little later than this job
+  # judged it; commits landing in between only add to the release, v<latest> stays an ancestor
+  # as develop moves on, and a release/* or hotfix/* branch appearing in between is the same race
+  # as between two lines of one step.
+  gate:
+    name: release gate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      go: ${{ steps.gate.outputs.go }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+          fetch-depth: 0 # tags: the back-merge check needs v<latest> locally
+      - uses: $/.github/actions/setup-mise
+        with:
+          cache: false
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
+        id: xtask
+      - name: Release state
+        id: gate
+        env:
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          XTASK: ${{ steps.xtask.outputs.path }}
+        run: |
+          set -euo pipefail
+          # A stable release goes through main, so it waits while a release or hotfix is open,
+          # waits for its tag or for its back-merge (each reason goes to the summary). A
+          # pre-release does not go through main: only the state is read.
+          gate=(--prerelease)
+          if [[ "${VERSION}" != *-* ]] && [ "${PRERELEASE:-none}" = none ]; then
+            gate=()
+          fi
+          "${XTASK}" release gate prep "${gate[@]}" --output "${RUNNER_TEMP}/state" --summary "${GITHUB_STEP_SUMMARY}"
+          # go=true or go=false on every path that does not fail; a missing go means the gate failed.
+          go="$(sed -n 's/^go=//p' "${RUNNER_TEMP}/state")"
+          [[ "${go}" = true || "${go}" = false ]] || { echo "::error::no go=true|false from the release gate"; exit 1; }
+          echo "go=${go}" >> "${GITHUB_OUTPUT}"
+
+  plan:
+    name: plan release
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
     outputs:
@@ -64,32 +116,15 @@ jobs:
           ref: develop
           persist-credentials: false
           fetch-depth: 0 # tags, and the history since the latest release
-      # xtask from develop, built without a cache (this job decides what is released). The job's
-      # token only reads.
-      - uses: $/.github/actions/setup-mise
-        with:
-          cache: false
-      - uses: $/.github/actions/setup-rust
-      - uses: $/.github/actions/xtask
-        id: xtask
+      # Compiles nothing: version and sha are what the bot jobs below release.
       - name: Version
         id: plan
         env:
           VERSION: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
-          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
           skip() { echo "$1" | tee -a "${GITHUB_STEP_SUMMARY}"; exit 0; }
-          # A stable release goes through main, so it waits while a release or hotfix is open,
-          # waits for its tag or for its back-merge (each reason goes to the summary). A
-          # pre-release does not go through main: only the state is read.
-          gate=(--prerelease)
-          if [[ "${VERSION}" != *-* ]] && [ "${PRERELEASE:-none}" = none ]; then
-            gate=()
-          fi
-          "${XTASK}" release gate prep "${gate[@]}" --output "${RUNNER_TEMP}/state" --summary "${GITHUB_STEP_SUMMARY}"
-          grep -qx 'go=true' "${RUNNER_TEMP}/state" || exit 0
           args=()
           if [ -n "${VERSION}" ]; then
             args=(--version "${VERSION}")
