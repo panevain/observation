@@ -1,4 +1,5 @@
-//! The server's storage ports: where bundles and proxied tiles are kept.
+//! The server's ports: where bundles and proxied tiles are kept, and where
+//! a bundle's map data and terrain come from.
 //!
 //! A store only keeps bytes and says when they were written; whether a
 //! stored bundle or tile is still good is decided by the callers with
@@ -12,8 +13,14 @@ use std::time::SystemTime;
 
 use axum::body::Bytes;
 use futures_util::future::BoxFuture;
+use observation_core::geo::BBox;
+use observation_core::terrain::Terrain;
 use observation_core::tiles::TileId;
 use serde::{Deserialize, Serialize};
+use tokio::time::Instant;
+
+use crate::error::ApiError;
+use crate::overpass::OsmData;
 
 /// Validators and expiry stored next to every cached tile.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,4 +88,23 @@ pub trait TileStore: Send + Sync + Debug {
         id: TileId,
         meta: &'a TileMeta,
     ) -> BoxFuture<'a, io::Result<()>>;
+}
+
+/// Buildings, roads and addresses for an area from a public source: the
+/// [`OverpassClient`](crate::overpass::OverpassClient) in production.
+pub trait MapDataSource: Send + Sync + Debug {
+    /// The map data for `bbox`, within a request budget that started at
+    /// `started` (time already spent on the area counts against it).
+    fn fetch_since<'a>(
+        &'a self,
+        bbox: &'a BBox,
+        started: Instant,
+    ) -> BoxFuture<'a, Result<OsmData, ApiError>>;
+}
+
+/// Ground heights for an area: [`Elevation`](crate::elevation::Elevation)
+/// in production.
+pub trait TerrainSource: Send + Sync + Debug {
+    /// The terrain under `bbox` and its margin.
+    fn terrain<'a>(&'a self, bbox: &'a BBox) -> BoxFuture<'a, Result<Terrain, ApiError>>;
 }

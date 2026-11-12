@@ -1,23 +1,33 @@
-//! Test doubles for the server's ports, and the contract every store
-//! implementation must meet. Built for this crate's tests and, with the
+//! Test doubles for the server's ports (stores, and the map data and terrain
+//! sources of a bundle), and the contract every store implementation must
+//! meet. Built for this crate's tests and, with the
 //! `testing` feature, for tests elsewhere.
 //!
 //! The memory stores never evict: size caps, estimates and eviction are
 //! properties of the disk [`Cache`](crate::cache::Cache) and are tested on it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use axum::body::Bytes;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use observation_core::geo::BBox;
+use observation_core::terrain::Terrain;
 use observation_core::tiles::TileId;
+use tokio::sync::Notify;
+use tokio::time::Instant;
 
 use crate::clock::Clock;
 pub use crate::clock::ManualClock;
-use crate::ports::{BundleStore, CachedTile, StoredBundle, TileMeta, TileSet, TileStore};
+use crate::error::ApiError;
+use crate::overpass::OsmData;
+use crate::ports::{
+    BundleStore, CachedTile, MapDataSource, StoredBundle, TerrainSource, TileMeta, TileSet,
+    TileStore,
+};
 
 /// How a memory store answers writes.
 #[derive(Debug, Default)]
@@ -331,6 +341,145 @@ pub async fn tile_store_declines(store: &dyn TileStore, png: &[u8]) {
     assert!(store.get(TileSet::Map, id).await.is_none());
 }
 
+/// A scripted [`MapDataSource`] ([`FakeMapData`]) or [`TerrainSource`]
+/// ([`FakeTerrain`]). Calls take the queued replies in order; a reply can be
+/// held behind a [`Gate`] until the test opens it. A call with no reply left
+/// answers [`ApiError::Internal`] and is counted, so check
+/// [`Self::assert_drained`] (a panic inside a spawned build would be lost).
+/// Clones share the script.
+#[derive(Debug)]
+pub struct FakeSource<T>(Arc<SourceInner<T>>);
+
+/// The fake Overpass of a bundle build.
+pub type FakeMapData = FakeSource<OsmData>;
+/// The fake elevation of a bundle build.
+pub type FakeTerrain = FakeSource<Terrain>;
+
+/// A queued reply and the gate holding it, if any.
+type Scripted<T> = (Result<T, ApiError>, Option<Gate>);
+
+#[derive(Debug)]
+struct SourceInner<T> {
+    replies: Mutex<VecDeque<Scripted<T>>>,
+    /// The boxes asked for, with the budget start for map data.
+    calls: Mutex<Vec<(BBox, Option<Instant>)>>,
+    unscripted: AtomicUsize,
+}
+
+impl<T> Clone for FakeSource<T> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<T> Default for FakeSource<T> {
+    fn default() -> Self {
+        Self(Arc::new(SourceInner {
+            replies: Mutex::default(),
+            calls: Mutex::default(),
+            unscripted: AtomicUsize::new(0),
+        }))
+    }
+}
+
+impl<T: Send + 'static> FakeSource<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queues a reply given at once.
+    pub fn reply(&self, reply: Result<T, ApiError>) {
+        lock(&self.0.replies).push_back((reply, None));
+    }
+
+    /// Queues a reply held until the returned gate is opened.
+    pub fn gated(&self, reply: Result<T, ApiError>) -> Gate {
+        let gate = Gate::default();
+        lock(&self.0.replies).push_back((reply, Some(gate.clone())));
+        gate
+    }
+
+    /// How many calls were made, scripted or not.
+    pub fn calls(&self) -> usize {
+        lock(&self.0.calls).len()
+    }
+
+    /// The budget start each map data call was given, in call order.
+    pub fn started(&self) -> Vec<Option<Instant>> {
+        lock(&self.0.calls).iter().map(|c| c.1).collect()
+    }
+
+    /// Panics if a reply is left or a call found none.
+    #[track_caller]
+    pub fn assert_drained(&self) {
+        assert_eq!(
+            self.0.unscripted.load(Ordering::SeqCst),
+            0,
+            "unscripted calls"
+        );
+        assert!(lock(&self.0.replies).is_empty(), "replies left");
+    }
+
+    fn answer(
+        &self,
+        bbox: &BBox,
+        started: Option<Instant>,
+    ) -> BoxFuture<'static, Result<T, ApiError>> {
+        lock(&self.0.calls).push((*bbox, started));
+        let next = lock(&self.0.replies).pop_front();
+        let Some((reply, gate)) = next else {
+            self.0.unscripted.fetch_add(1, Ordering::SeqCst);
+            return async { Err(ApiError::Internal("unscripted fake source call".into())) }.boxed();
+        };
+        async move {
+            if let Some(gate) = gate {
+                gate.0.entered.notify_one();
+                gate.0.open.notified().await;
+            }
+            reply
+        }
+        .boxed()
+    }
+}
+
+impl MapDataSource for FakeMapData {
+    fn fetch_since<'a>(
+        &'a self,
+        bbox: &'a BBox,
+        started: Instant,
+    ) -> BoxFuture<'a, Result<OsmData, ApiError>> {
+        self.answer(bbox, Some(started))
+    }
+}
+
+impl TerrainSource for FakeTerrain {
+    fn terrain<'a>(&'a self, bbox: &'a BBox) -> BoxFuture<'a, Result<Terrain, ApiError>> {
+        self.answer(bbox, None)
+    }
+}
+
+/// Holds one scripted reply of a [`FakeSource`] until opened.
+#[derive(Debug, Clone, Default)]
+pub struct Gate(Arc<GateInner>);
+
+#[derive(Debug, Default)]
+struct GateInner {
+    entered: Notify,
+    open: Notify,
+}
+
+impl Gate {
+    /// Waits until the call holding this reply has started.
+    pub async fn entered(&self) {
+        self.0.entered.notified().await;
+    }
+
+    /// Lets the held reply through (now, or as soon as its call comes).
+    pub fn open(&self) {
+        self.0.open.notify_one();
+    }
+}
+
 /// A [`metrics::Recorder`] that keeps counter values, for tests that assert
 /// metric labels (set it with `metrics::set_default_local_recorder` on a
 /// current-thread runtime). Gauges and histograms are dropped.
@@ -472,5 +621,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tiles.revalidations(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fake_source_answers_in_order_and_holds_gated_replies() {
+        let bbox = BBox::new(47.0, -122.0, 47.001, -121.999).unwrap();
+        let map = FakeMapData::new();
+        let gate = map.gated(Ok(OsmData {
+            osm_base_unix: Some(1),
+            ..OsmData::default()
+        }));
+        map.reply(Err(ApiError::Upstream("second".into())));
+        let started = Instant::now();
+        let first = tokio::spawn({
+            let map = map.clone();
+            async move { map.fetch_since(&bbox, started).await }
+        });
+        gate.entered().await;
+        assert!(!first.is_finished(), "held until opened");
+        let second = map.fetch_since(&bbox, started).await;
+        assert!(matches!(second, Err(ApiError::Upstream(m)) if m == "second"));
+        gate.open();
+        assert_eq!(first.await.unwrap().unwrap().osm_base_unix, Some(1));
+        assert_eq!(map.started(), vec![Some(started); 2]);
+        map.assert_drained();
+
+        let terrain = FakeTerrain::new();
+        assert!(matches!(
+            terrain.terrain(&bbox).await,
+            Err(ApiError::Internal(_))
+        ));
+        assert_eq!(terrain.calls(), 1);
+        assert_eq!(terrain.started(), vec![None]);
+        let drained = std::panic::catch_unwind(|| terrain.assert_drained());
+        assert!(drained.is_err(), "an unscripted call is reported");
     }
 }

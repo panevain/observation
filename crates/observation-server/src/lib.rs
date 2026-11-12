@@ -151,7 +151,7 @@ impl AppState {
             Arc::clone(&clock),
         ));
         let bundles = Arc::new(BundleService::new(
-            Arc::clone(&cache),
+            cache.clone(),
             overpass,
             regions.clone(),
             elevation,

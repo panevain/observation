@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use observation_core::geo::BBox;
 use observation_core::terrain::{DEM_TILE_PX, DemTile, Terrain, dem_tiles_for, terrain_from_dem};
 use observation_core::tiles::TileId;
@@ -12,7 +14,7 @@ use observation_upstream::HttpClient;
 use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
-use crate::ports::TileStore;
+use crate::ports::{TerrainSource, TileStore};
 use crate::tiles::TileProxy;
 
 /// Where bundles get their terrain from.
@@ -69,6 +71,12 @@ impl Elevation {
         })
         .await
         .map_err(|e| ApiError::Internal(format!("elevation task failed: {e}")))?
+    }
+}
+
+impl TerrainSource for Elevation {
+    fn terrain<'a>(&'a self, bbox: &'a BBox) -> BoxFuture<'a, Result<Terrain, ApiError>> {
+        Elevation::terrain(self, bbox).boxed()
     }
 }
 

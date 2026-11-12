@@ -13,13 +13,11 @@ use observation_core::bundle::build_bundle;
 use observation_core::geo::BBox;
 use tracing::Instrument;
 
-use crate::cache::Cache;
 use crate::clock::{Clock, unix_secs};
 use crate::domain::freshness::usable_bundle;
-use crate::elevation::Elevation;
 use crate::error::ApiError;
-use crate::overpass::{OsmData, OverpassClient};
-use crate::ports::BundleStore;
+use crate::overpass::OsmData;
+use crate::ports::{BundleStore, MapDataSource, TerrainSource};
 use crate::ratelimit::{ClientKey, RateLimiter};
 use crate::regions::Regions;
 
@@ -36,10 +34,11 @@ type Flight = Shared<BoxFuture<'static, Result<Bytes, ApiError>>>;
 /// waiting client disconnects.
 #[derive(Debug)]
 pub struct BundleService {
-    cache: Arc<Cache>,
-    overpass: Arc<OverpassClient>,
+    store: Arc<dyn BundleStore>,
+    /// Public Overpass: asked when no local region has the area.
+    overpass: Arc<dyn MapDataSource>,
     regions: Option<Arc<Regions>>,
-    elevation: Arc<Elevation>,
+    elevation: Arc<dyn TerrainSource>,
     attribution: String,
     in_flight: Mutex<HashMap<String, Flight>>,
     /// Per-client limit on new builds.
@@ -52,17 +51,17 @@ pub struct BundleService {
 
 impl BundleService {
     pub fn new(
-        cache: Arc<Cache>,
-        overpass: Arc<OverpassClient>,
+        store: Arc<dyn BundleStore>,
+        overpass: Arc<dyn MapDataSource>,
         regions: Option<Arc<Regions>>,
-        elevation: Arc<Elevation>,
+        elevation: Arc<dyn TerrainSource>,
         attribution: String,
         limiter: RateLimiter,
         clock: Arc<dyn Clock>,
         bundle_ttl: Duration,
     ) -> Self {
         Self {
-            cache,
+            store,
             overpass,
             regions,
             elevation,
@@ -78,7 +77,7 @@ impl BundleService {
     /// data since `valid_after`; expired bundles too, to serve when the
     /// upstream is down.
     async fn cached(&self, key: &str, valid_after: Option<SystemTime>) -> Option<(Bytes, bool)> {
-        let stored = BundleStore::get(&*self.cache, key).await?;
+        let stored = self.store.get(key).await?;
         usable_bundle(key, stored, self.clock.now(), self.bundle_ttl, valid_after)
     }
 
@@ -206,7 +205,7 @@ impl BundleService {
         let bytes = Bytes::from(bundle.encode());
         metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);
         // `Ok(false)` (not cached) is logged by the cache with the reason.
-        if let Err(e) = BundleStore::put(&*self.cache, key, &bytes).await {
+        if let Err(e) = self.store.put(key, &bytes).await {
             tracing::warn!(key, error = %e, "could not cache bundle");
         }
         tracing::info!(

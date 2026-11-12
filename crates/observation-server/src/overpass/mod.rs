@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::http::{StatusCode, header};
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use observation_core::geo::BBox;
 use observation_upstream::{
     Body, BoundedQueue, HttpClient, HttpRequest, QueueError, TransportError, TransportErrorKind,
@@ -19,6 +21,7 @@ use tokio::time::Instant;
 
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::ports::MapDataSource;
 
 mod parse;
 mod query;
@@ -307,6 +310,16 @@ impl OverpassClient {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)[endpoint] =
             Some(Instant::now() + self.cooldown);
+    }
+}
+
+impl MapDataSource for OverpassClient {
+    fn fetch_since<'a>(
+        &'a self,
+        bbox: &'a BBox,
+        started: Instant,
+    ) -> BoxFuture<'a, Result<OsmData, ApiError>> {
+        OverpassClient::fetch_since(self, bbox, started).boxed()
     }
 }
 
