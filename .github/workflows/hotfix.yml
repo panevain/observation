@@ -153,11 +153,27 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
-          git apply --index "${RUNNER_TEMP}/hotfix/hotfix.patch"
-          # prepare compiles code (xtask), so the patch is checked again here, against the same
-          # list as there, before this token commits it.
-          unexpected="$(git diff --cached --name-only --no-renames | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
-          [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
+          # prepare compiles code (xtask), so its patch is checked here, with git alone, before
+          # this token commits it: every entry must change the text of an existing regular file
+          # on the same list as there. No file added, deleted, renamed or copied, no mode or type
+          # change (a symlink or gitlink), no binary patch; anything else fails. What the allowed
+          # files now say is not judged here: that is for the review of the pull request.
+          patch="${RUNNER_TEMP}/hotfix/hotfix.patch"
+          allowed='Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile'
+          tab=$'\t'
+          refuse() { echo "::error::$1"; exit 1; }
+          ! grep -qE '^(GIT binary patch|Binary files .* differ)$' "${patch}" || refuse "the patch holds a binary change"
+          tr -d '\000' < "${patch}" | cmp -s - "${patch}" || refuse "the patch holds a NUL byte"
+          # Before applying: one "added<TAB>deleted<TAB>path" line per entry and no summary line
+          # (create, delete, rename, copy, mode change, rewrite); "-" counts mean a binary entry.
+          stat="$(git apply --numstat --summary "${patch}")"
+          bad="$(grep -vxE "[0-9]+${tab}[0-9]+${tab}(${allowed})" <<<"${stat}" || true)"
+          [ -n "${stat}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
+          git apply --index "${patch}"
+          # After: each staged entry modifies a regular file, mode 100644 before and after.
+          staged="$(git diff --cached --raw --no-renames --no-abbrev)"
+          bad="$(grep -vxE ":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M${tab}(${allowed})" <<<"${staged}" || true)"
+          [ -n "${staged}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
           scripts/ci-git.sh identity "${BOT}"
           git switch -c "hotfix/${VERSION}"
           git -c core.hooksPath=/dev/null commit -m "hotfix: ${VERSION} (security updates)"
