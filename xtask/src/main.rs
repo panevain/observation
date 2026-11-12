@@ -59,6 +59,25 @@ enum CoverageCommand {
 
 #[derive(Debug, Subcommand)]
 enum ReleaseCommand {
+    /// Move CHANGELOG.md's [Unreleased] entries under a dated VERSION heading (with no entries,
+    /// list the commits since the latest release that changed shipped files). A pre-release
+    /// leaves the file alone.
+    Changelog {
+        #[arg(long, value_name = "X.Y.Z")]
+        version: String,
+    },
+    /// Print the next release as version=, kind=, latest= and reason= lines (version empty
+    /// when there is nothing to release), from CHANGELOG.md's [Unreleased] section and the
+    /// shipped files changed since the latest stable tag.
+    Plan {
+        /// This version, if newer than the latest release and not tagged yet.
+        #[arg(long, value_name = "V", default_value = "")]
+        version: String,
+        /// A pre-release: X.Y.Z-dev.N, N one more than the highest such tag (even when nothing
+        /// changed). Empty: none.
+        #[arg(long, value_name = "dev", default_value = "", value_parser = ["", "dev"])]
+        prerelease: String,
+    },
     /// Print origin's release state as key=value lines: latest (the newest stable v* tag),
     /// main (main's workspace version), pending (main's version is not tagged yet), hotfix (a
     /// hotfix/* branch exists), next (the patch release after latest).
@@ -313,6 +332,23 @@ fn main() -> ExitCode {
                 Ok(gated.failed)
             })
         }
+        Command::Release(ReleaseCommand::Changelog { version }) => {
+            cmd::release::changelog::run(&repo, &version, &GitCli::new(&repo), &SystemClock).map(
+                |out| {
+                    emit(out.as_bytes(), b"");
+                    false
+                },
+            )
+        }
+        Command::Release(ReleaseCommand::Plan {
+            version,
+            prerelease,
+        }) => cmd::release::plan::plan(&repo, &version, &prerelease, &GitCli::new(&repo)).map(
+            |plan| {
+                emit(plan.lines().as_bytes(), b"");
+                false
+            },
+        ),
         Command::Release(ReleaseCommand::UnexpectedFiles { kind, config }) => {
             let kind = match kind {
                 FilesKind::Hotfix => cmd::release::files::Kind::Hotfix,
@@ -406,5 +442,17 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// The script's argparse choices: `--prerelease` is "" or "dev"; changelog needs `--version`.
+    #[test]
+    fn release_plan_flags_as_the_script_took_them() {
+        let parse = |args: &[&str]| Cli::try_parse_from([&["xtask", "release"], args].concat());
+        assert!(parse(&["plan"]).is_ok());
+        assert!(parse(&["plan", "--prerelease", ""]).is_ok());
+        assert!(parse(&["plan", "--prerelease", "dev", "--version", "1.0.0"]).is_ok());
+        assert!(parse(&["plan", "--prerelease", "rc"]).is_err());
+        assert!(parse(&["changelog"]).is_err());
+        assert!(parse(&["changelog", "--version", "1.0.0"]).is_ok());
     }
 }
