@@ -173,10 +173,14 @@ mod tests {
         app
     }
 
-    fn undo(app: &mut App) {
+    fn command(app: &mut App, op: HistoryOp) {
         app.world_mut()
             .resource_mut::<Messages<HistoryCommand>>()
-            .write(HistoryCommand(HistoryOp::Undo));
+            .write(HistoryCommand(op));
+    }
+
+    fn undo(app: &mut App) {
+        command(app, HistoryOp::Undo);
     }
 
     fn cameras(app: &App) -> usize {
@@ -219,5 +223,36 @@ mod tests {
         app.update();
         assert_eq!(cameras(&app), 1, "the request was dropped");
         assert!(app.world().resource::<History>().can_undo());
+    }
+
+    #[test]
+    fn of_two_commands_in_one_frame_the_last_wins_and_both_are_used_up() {
+        // Redo then Undo: Redo alone has nothing to do, so only the last
+        // one can explain the undo.
+        let mut app = app();
+        command(&mut app, HistoryOp::Redo);
+        undo(&mut app);
+        app.update();
+        assert_eq!(cameras(&app), 0);
+        // Undo then Redo: the camera is back only if Redo was not dropped
+        // for coming second, and the next frame finds nothing left to run.
+        let mut app = app_with_redo();
+        undo(&mut app);
+        command(&mut app, HistoryOp::Redo);
+        app.update();
+        assert_eq!(cameras(&app), 1);
+        app.update();
+        assert_eq!(cameras(&app), 1);
+        assert!(app.world().resource::<History>().can_undo());
+        assert!(!app.world().resource::<History>().can_redo());
+    }
+
+    /// As [`app`], with the camera undone so a redo is offered.
+    fn app_with_redo() -> App {
+        let mut app = app();
+        undo(&mut app);
+        app.update();
+        assert_eq!(cameras(&app), 0);
+        app
     }
 }

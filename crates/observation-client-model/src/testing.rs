@@ -354,6 +354,31 @@ impl ColorScheme for FakeColorScheme {
     }
 }
 
+/// A [`Tracked`](crate::commands::Tracked) value that counts write
+/// access, which the client's resources record as a change.
+#[derive(Debug, Default)]
+pub struct Counting<T> {
+    pub value: T,
+    pub writes: usize,
+}
+
+impl<T> Counting<T> {
+    pub fn new(value: T) -> Self {
+        Self { value, writes: 0 }
+    }
+}
+
+impl<T> crate::commands::Tracked<T> for Counting<T> {
+    fn get(&self) -> &T {
+        &self.value
+    }
+
+    fn get_mut(&mut self) -> &mut T {
+        self.writes += 1;
+        &mut self.value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

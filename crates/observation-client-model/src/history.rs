@@ -240,6 +240,7 @@ fn describe(before: &Snapshot, after: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Counting;
     use crate::toasts::ToastKind;
     use observation_core::camera::{CameraKind, CameraPlacement, Catalog};
     use observation_core::coverage::Region;
@@ -429,6 +430,42 @@ mod tests {
     }
 
     #[test]
+    fn a_step_withdraws_an_offered_undo() {
+        for op in [HistoryOp::Undo, HistoryOp::Redo] {
+            let mut f = Fixture::new();
+            let id = f.add("Porch");
+            if op == HistoryOp::Redo {
+                f.step(HistoryOp::Undo);
+                f.step(HistoryOp::Redo);
+                f.step(HistoryOp::Undo);
+            }
+            f.toasts.info_with("Deleted Porch", ToastAction::Undo);
+            assert!(f.step(op).is_some(), "{op:?}");
+            assert!(f.toasts.iter().all(|t| t.action.is_none()), "{op:?} {id}");
+        }
+    }
+
+    #[test]
+    fn removing_several_cameras_offers_undo_with_the_count() {
+        let mut f = Fixture::new();
+        let a = f.add("Porch");
+        let b = f.add("Gate");
+        f.add("Drive");
+        f.doc.remove_camera(a);
+        f.doc.remove_camera(b);
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((
+                ToastKind::Info,
+                "2 cameras removed",
+                Some(&ToastAction::Undo)
+            ))
+        );
+        assert_eq!(f.history.undo_label().as_deref(), Some("camera changes"));
+    }
+
+    #[test]
     fn stepping_across_an_area_change_reloads_that_area() {
         let mut f = Fixture::new();
         f.add("Porch");
@@ -510,34 +547,11 @@ mod tests {
         );
     }
 
-    /// Counts write access, which the client's resources record as a change.
-    struct Counting<T> {
-        value: T,
-        writes: usize,
-    }
-
-    impl<T> Tracked<T> for Counting<T> {
-        fn get(&self) -> &T {
-            &self.value
-        }
-
-        fn get_mut(&mut self) -> &mut T {
-            self.writes += 1;
-            &mut self.value
-        }
-    }
-
     #[test]
     fn a_step_writes_the_document_only_when_there_is_one() {
         let mut f = Fixture::new();
-        let mut doc = Counting {
-            value: std::mem::take(&mut f.doc),
-            writes: 0,
-        };
-        let mut models = Counting {
-            value: Models::new(Catalog::default()),
-            writes: 0,
-        };
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
+        let mut models = Counting::new(Models::new(Catalog::default()));
         let none = f.history.step(
             HistoryOp::Redo,
             &mut doc,
@@ -548,10 +562,7 @@ mod tests {
         assert_eq!((none, doc.writes, models.writes), (None, 0, 0));
         f.doc = doc.value;
         f.add("Porch");
-        let mut doc = Counting {
-            value: std::mem::take(&mut f.doc),
-            writes: 0,
-        };
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
         f.history.step(
             HistoryOp::Undo,
             &mut doc,

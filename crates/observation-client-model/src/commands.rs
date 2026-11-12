@@ -490,6 +490,7 @@ fn invalid_reason(e: CatalogError) -> String {
 mod tests {
     use super::*;
     use crate::editor::InspectorTab;
+    use crate::testing::Counting;
     use crate::toasts::ToastKind;
     use observation_core::camera::{CUSTOM_ID_PREFIX, CameraKind, Catalog};
     use observation_core::terrain::FLAT;
@@ -831,29 +832,6 @@ mod tests {
         f.press(&[Key::Overlay]);
         assert_eq!(f.panels.overlay, OverlayMode::Overlap);
         assert!(f.press(&[Key::Focus]));
-    }
-
-    /// Counts write access, which the client's resources record as a change.
-    struct Counting<T> {
-        value: T,
-        writes: usize,
-    }
-
-    impl<T> Counting<T> {
-        fn new(value: T) -> Self {
-            Self { value, writes: 0 }
-        }
-    }
-
-    impl<T> Tracked<T> for Counting<T> {
-        fn get(&self) -> &T {
-            &self.value
-        }
-
-        fn get_mut(&mut self) -> &mut T {
-            self.writes += 1;
-            &mut self.value
-        }
     }
 
     #[test]
