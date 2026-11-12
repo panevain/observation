@@ -21,6 +21,8 @@ pub use observation_core::regions::{
 };
 
 mod client;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use crate::client::HttpRegionAgent;
 

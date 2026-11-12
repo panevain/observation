@@ -30,7 +30,8 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Bytes;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
-use observation_upstream::{GuardedHttp, HttpClient, Redirects, client_builder};
+use observation_regions_api::HttpRegionAgent;
+use observation_upstream::{GuardedHttp, HttpClient, Redirects};
 use thiserror::Error;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -51,8 +52,6 @@ use crate::tiles::TileProxy;
 
 /// `content-security-policy` sent with every response.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
-
-pub(crate) use observation_upstream::read_capped;
 
 /// The shared state could not be built.
 #[derive(Debug, Error)]
@@ -129,16 +128,16 @@ impl AppState {
                 // The agent normally sits on a private network and is trusted with
                 // `OBS_REGIONS_TOKEN`, so addresses are not filtered, but it must not
                 // redirect that token elsewhere.
-                let client = client_builder(true, Redirects::None)
+                let client = GuardedHttp::builder(true, Redirects::None)
                     .user_agent(&user_agent)
                     .connect_timeout(Duration::from_secs(5))
                     .build()?;
-                let regions = Arc::new(Regions::new(
-                    client,
+                let agent = HttpRegionAgent::new(
+                    Arc::new(client),
                     url.clone(),
                     config.regions_token.clone(),
-                    config.admin_token.is_some(),
-                ));
+                );
+                let regions = Arc::new(Regions::new(Arc::new(agent), config.admin_token.is_some()));
                 tokio::spawn(Arc::clone(&regions).run_poller());
                 Some(regions)
             }
@@ -282,25 +281,4 @@ pub fn app(state: AppState) -> Router {
         // Echo the id on the response; the outermost layer assigns it first.
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn response(len: usize) -> reqwest::Response {
-        reqwest::Response::from(axum::http::Response::new(reqwest::Body::from(vec![
-            7u8;
-            len
-        ])))
-    }
-
-    #[tokio::test]
-    async fn read_capped_boundary() {
-        let body = read_capped(response(16), 16).await.unwrap();
-        assert_eq!(body.map(|b| b.len()), Some(16), "exactly `max` is accepted");
-        assert!(read_capped(response(0), 16).await.unwrap().is_some());
-        // Declared length over the cap: refused before reading.
-        assert!(read_capped(response(17), 16).await.unwrap().is_none());
-    }
 }

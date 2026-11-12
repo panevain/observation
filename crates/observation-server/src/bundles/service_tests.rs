@@ -13,6 +13,7 @@ use futures_util::future::BoxFuture;
 use observation_core::bundle::{AreaBundle, build_bundle};
 use observation_core::geo::BBox;
 use observation_core::terrain::Terrain;
+use observation_regions_api::testing::FakeRegionAgent;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
@@ -393,12 +394,8 @@ async fn an_offline_agent_counts_not_covered_and_overpass_is_charged() {
     let recorder = MetricCounts::default();
     let _guard = metrics::set_default_local_recorder(&recorder);
     // Never contacted: nothing polls it here, so it stays offline.
-    let regions = Arc::new(Regions::new(
-        reqwest::Client::new(),
-        "http://127.0.0.1:9".into(),
-        None,
-        false,
-    ));
+    let agent = FakeRegionAgent::new();
+    let regions = Arc::new(Regions::new(Arc::new(agent.clone()), false));
     let store = mem_store();
     let r = rig_on(store.clone(), store, Some(regions));
     r.terrain.reply(Ok(Terrain::default()));
@@ -410,6 +407,7 @@ async fn an_offline_agent_counts_not_covered_and_overpass_is_charged() {
     );
     assert_eq!(bundle_counts(&recorder), vec![result("built", 1)]);
     assert_eq!(tokens_left(&r.service, client(1)), 9);
+    assert!(agent.calls().is_empty());
 }
 
 #[tokio::test(start_paused = true)]

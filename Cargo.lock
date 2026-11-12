@@ -4785,6 +4785,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "observation-core",
+ "observation-regions-api",
  "observation-upstream",
  "png",
  "reqwest",

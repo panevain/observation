@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# A scripted region agent for tests of code that builds on this crate.
+testing = ["dep:tokio"]
+
 [dependencies]
 observation-core.workspace = true
 observation-upstream.workspace = true
@@ -15,6 +19,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 http = "1"
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 observation-upstream = { workspace = true, features = ["testing"] }

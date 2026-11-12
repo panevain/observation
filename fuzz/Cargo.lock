@@ -1092,6 +1092,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-regions-api"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http",
+ "observation-core",
+ "observation-upstream",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "observation-server"
 version = "0.1.0"
 dependencies = [
@@ -1101,6 +1114,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "observation-core",
+ "observation-regions-api",
  "observation-upstream",
  "png",
  "reqwest",
