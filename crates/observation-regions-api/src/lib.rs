@@ -62,7 +62,8 @@ pub struct QueryResult {
 }
 
 /// Why a catalog request or an action failed. The agent's own `error` text
-/// is kept where it answered with one.
+/// is kept where it answered with one. The `Display` texts are for logs, not
+/// the server's API error texts, which the server maps from the variants.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentError {
     /// 400 or 404: the request was refused.
@@ -124,12 +125,13 @@ mod tests {
 
     #[test]
     fn action_routes_are_the_regions_route_and_the_action_name() {
-        for kind in [
-            ActionKind::Import,
-            ActionKind::Cancel,
-            ActionKind::Delete,
-            ActionKind::Settings,
+        for (kind, route) in [
+            (ActionKind::Import, "/regions/import"),
+            (ActionKind::Cancel, "/regions/cancel"),
+            (ActionKind::Delete, "/regions/delete"),
+            (ActionKind::Settings, "/regions/settings"),
         ] {
+            assert_eq!(paths::action(kind), route);
             assert_eq!(
                 paths::action(kind),
                 format!("{}/{}", paths::REGIONS, kind.path())

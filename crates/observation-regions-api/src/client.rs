@@ -1,5 +1,6 @@
 //! [`RegionAgent`] over HTTP.
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +10,7 @@ use futures_util::future::BoxFuture;
 use http::{Method, StatusCode};
 use observation_core::geo::BBox;
 use observation_core::provenance::parse_utc;
-use observation_upstream::{Body, HttpClient, HttpRequest, HttpResponse};
+use observation_upstream::{Body, HttpClient, HttpRequest, HttpResponse, redact};
 
 use crate::{
     ActionKind, AgentError, OSM_BASE_HEADER, QueryResult, RegionAction, RegionAgent,
@@ -28,12 +29,21 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(40);
 const CALL_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// The region agent at `base`, called through `client` with the server's
-/// token.
-#[derive(Debug)]
+/// token. Its `Debug` output hides the token and any credentials in `base`.
 pub struct HttpRegionAgent {
     client: Arc<dyn HttpClient>,
     base: String,
     token: Option<String>,
+}
+
+impl fmt::Debug for HttpRegionAgent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpRegionAgent")
+            .field("client", &self.client)
+            .field("base", &redact(&self.base))
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl HttpRegionAgent {
@@ -62,7 +72,8 @@ impl HttpRegionAgent {
             || paths::REGIONS.to_owned(),
             |v| format!("{}?since={v}", paths::REGIONS),
         );
-        // An error status's body is never read.
+        // An error status's body is never read. Nor is a 3xx's (the client
+        // follows no redirects), which then reads as too large.
         let req = self
             .request(Method::GET, &path, MAX_JSON_BYTES)?
             .timeout(SNAPSHOT_TIMEOUT)
@@ -177,7 +188,9 @@ fn answer(resp: HttpResponse) -> Result<Bytes, AgentError> {
     })
 }
 
-/// A 4xx or 5xx snapshot reply, worded as reqwest's `error_for_status`.
+/// A 4xx or 5xx snapshot reply, worded as reqwest's `error_for_status`,
+/// with the status's canonical reason phrase: the port does not carry the
+/// one the reply sent, which reqwest printed when it differed.
 fn status_error(status: StatusCode) -> String {
     let class = if status.is_client_error() {
         "client"
