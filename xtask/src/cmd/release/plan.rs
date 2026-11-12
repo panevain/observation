@@ -716,6 +716,7 @@ mod tests {
         {c3} | {c3} | 0.2.0-dev.1 | prerelease | '' | dev | '' | v0.2.0-dev.1 already exists
         {c3} | {c3} | 0.4.0 | stable | 0.7.0 | '' | '' | 0.4.0 is not the version given to this run (0.7.0)
         {c3} | {c3} | 0.0.9 | stable | 0.0.9 | '' | '' | 0.0.9 is not newer than the latest release v0.1.0
+        {c3} | {c3} | 0.1.0-rc.1 | prerelease | 0.1.0-rc.1 | '' | '' | 0.1.0-rc.1 is not newer than the latest release v0.1.0
         {c3} | {c3} | 0.1.1 | stable | '' | '' | '' | 0.1.1 is not a version this run may release (0.4.0 0.4.0)
         {c3} | {c3} | 0.2.0 | stable | '' | '' | '' | 0.2.0 is not a version this run may release (0.4.0 0.4.0)
         {c3} | {c3} | 1.0.0 | stable | '' | '' | '' | 1.0.0 is not a version this run may release (0.4.0 0.4.0)
@@ -840,6 +841,12 @@ mod tests {
         git_out(&dir, &["tag", "v1.2.3-dev.0000000000000000001", &d1]);
         let big = "{d1} | {d1} | 1.2.3-dev.5 | prerelease | '' | dev | '' | pre-release number too large: v1.2.3-dev.0000000000000000001";
         run_forged(script, &dir, &names, big, &mut problems);
+        git_out(&dir, &["tag", "-d", "v1.2.3-dev.0000000000000000001"]);
+        // The latest release spelled with a leading zero: the same X.Y.Z is still not newer.
+        git_out(&dir, &["tag", "-d", "v1.2.2"]);
+        git_out(&dir, &["tag", "v01.2.2", &d1]);
+        let zero = "{d1} | {d1} | 1.2.2 | stable | 1.2.2 | '' | '' | 1.2.2 is not newer than the latest release v1.2.2";
+        run_forged(script, &dir, &names, zero, &mut problems);
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
