@@ -32,6 +32,8 @@ Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`; Release 
 
 Everything Release watch finds, fixable or not, is kept in an issue titled `Security: v<x.y.z>`, which it closes when there is nothing left. Advisories with no compatible fix (a semver-incompatible bump, or no fix yet) need a person: a code change on a hotfix branch, or an ignore with a reason in `deny.toml`, `.cargo/audit.toml` and `osv-scanner.toml` if the code is unreachable. Run Hotfix by hand with `force` to publish a patch release on fresh base images when nothing is flagged.
 
+Run by hand, **Prepare release**, **Hotfix**, **Release watch**, **Pins** and **Treemap** take a **dry run** input: the run does its checks and writes its summary and artifacts (the patch, the PR body, the report, the treemap), but skips the jobs that hold the bot's token or write, so no branch, tag, pull request or issue is touched and no hotfix is started. A scheduled run is never a dry run.
+
 ### Bot app (one-time setup)
 
 Pull requests, pushes and tags made with a workflow's `GITHUB_TOKEN` do not start other workflows (pull request checks wait for a manual approval), so the release workflows act as a GitHub App:

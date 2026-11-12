@@ -1,0 +1,164 @@
+name: Open a bot pull request
+description: >-
+  Pushes the current HEAD to a branch with scripts/ci-git.sh and opens a pull request from it,
+  then optionally turns on auto-merge. Runs in the bot jobs only, after the workflow has made
+  its commit: it compiles and runs nothing from the tree but scripts/ci-git.sh, as each job's
+  own steps did before. The flows differ where the workflows did (push or force-push, what
+  happens when the pull request already exists, the merge method), so each is an input.
+  Prints the pull request's URL (when gh gave one) and sets the `url` output.
+
+inputs:
+  token:
+    description: The bot's token (contents and pull-requests write)
+    required: true
+  branch:
+    description: The branch to push HEAD to and open the pull request from
+    required: true
+  base:
+    description: The pull request's base branch
+    required: true
+  title:
+    description: The pull request's title
+    required: true
+  body:
+    description: The pull request's body (or body-file)
+    required: false
+    default: ""
+  body-file:
+    description: A file with the pull request's body (or body)
+    required: false
+    default: ""
+  force-push:
+    description: >-
+      true to replace the branch (for a branch that is the workflow's own, rebuilt by every
+      run); false to push it as new, which fails if it exists
+    required: false
+    default: "false"
+  if-exists:
+    description: >-
+      When a pull request from the branch is already open (gh pr create fails): fail; edit
+      (update its body from body-file); or show (print its URL)
+    required: false
+    default: fail
+  delete-branch-on-failure:
+    description: >-
+      true to delete the pushed branch when the pull request cannot be opened (so that a re-run
+      can push it again where rulesets forbid force-pushes); the step still fails
+    required: false
+    default: "false"
+  summary:
+    description: true to also append the URL to the run's summary
+    required: false
+    default: "false"
+  auto-merge:
+    description: >-
+      none; merge (auto-merge with a merge commit); or squash-unless-hold (auto-merge by
+      squash, only for the commit pushed here, when auto-merge-allowed is true and the pull
+      request is not labelled hold, and turned off again otherwise)
+    required: false
+    default: none
+  auto-merge-allowed:
+    description: For squash-unless-hold, whether this run's changes may merge themselves
+    required: false
+    default: "false"
+  auto-merge-disabled-note:
+    description: For squash-unless-hold, the summary line written when auto-merge is turned off
+    required: false
+    default: "Auto-merge disabled."
+  auto-merge-warning:
+    description: >-
+      For merge, the end of the warning printed when auto-merge cannot be turned on (after
+      "could not enable auto-merge on URL"); empty to fail the step instead
+    required: false
+    default: ""
+
+outputs:
+  url:
+    description: The pull request's URL (empty when an existing one was edited)
+    value: ${{ steps.open.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - id: open
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.branch }}
+        BASE: ${{ inputs.base }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        BODY_FILE: ${{ inputs.body-file }}
+        FORCE_PUSH: ${{ inputs.force-push }}
+        IF_EXISTS: ${{ inputs.if-exists }}
+        DELETE_ON_FAILURE: ${{ inputs.delete-branch-on-failure }}
+        SUMMARY: ${{ inputs.summary }}
+        AUTO_MERGE: ${{ inputs.auto-merge }}
+        AUTO_MERGE_ALLOWED: ${{ inputs.auto-merge-allowed }}
+        DISABLED_NOTE: ${{ inputs.auto-merge-disabled-note }}
+        MERGE_WARNING: ${{ inputs.auto-merge-warning }}
+      run: |
+        set -euo pipefail
+        case "${IF_EXISTS}" in
+          fail | edit | show) ;;
+          *) echo "::error::if-exists must be fail, edit or show, not '${IF_EXISTS}'"; exit 1 ;;
+        esac
+        case "${AUTO_MERGE}" in
+          none | merge | squash-unless-hold) ;;
+          *) echo "::error::auto-merge must be none, merge or squash-unless-hold, not '${AUTO_MERGE}'"; exit 1 ;;
+        esac
+        if [ -n "${BODY_FILE}" ]; then
+          body=(--body-file "${BODY_FILE}")
+        else
+          body=(--body "${BODY}")
+        fi
+        if [ "${FORCE_PUSH}" = true ]; then
+          scripts/ci-git.sh push-force "${BRANCH}"
+        else
+          scripts/ci-git.sh push "${BRANCH}"
+        fi
+        url=""
+        if ! url="$(gh pr create --base "${BASE}" --head "${BRANCH}" --title "${TITLE}" "${body[@]}")"; then
+          url=""
+          case "${IF_EXISTS}" in
+            edit) gh pr edit "${BRANCH}" "${body[@]}" ;;
+            show) url="$(gh pr view "${BRANCH}" --json url --jq .url)" ;;
+            *)
+              if [ "${DELETE_ON_FAILURE}" = true ]; then
+                # Branch rulesets forbid force-pushes, so a leftover branch would block a re-run.
+                echo "could not open the pull request; removing ${BRANCH} so the workflow can be re-run." >&2
+                scripts/ci-git.sh delete "${BRANCH}"
+              fi
+              exit 1
+              ;;
+          esac
+        fi
+        if [ -n "${url}" ]; then
+          if [ "${SUMMARY}" = true ]; then
+            echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "${url}"
+          fi
+        fi
+        echo "url=${url}" >> "${GITHUB_OUTPUT}"
+        case "${AUTO_MERGE}" in
+          merge)
+            if [ -z "${MERGE_WARNING}" ]; then
+              gh pr merge --auto --merge "${url}"
+            else
+              gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url}${MERGE_WARNING}"
+            fi
+            ;;
+          squash-unless-hold)
+            # Auto-merge outlives a force-push, so it is switched off again when this run's
+            # changes need a person. --match-head-commit: only the commit pushed above merges.
+            state="$(gh pr view "${BRANCH}" --json autoMergeRequest,labels)"
+            if [ "${AUTO_MERGE_ALLOWED}" = true ] && ! jq -e '.labels | any(.name == "hold")' <<<"${state}" >/dev/null; then
+              gh pr merge "${BRANCH}" --auto --squash --match-head-commit "$(git rev-parse HEAD)"
+              echo "Auto-merge enabled." >> "${GITHUB_STEP_SUMMARY}"
+            elif jq -e '.autoMergeRequest' <<<"${state}" >/dev/null; then
+              gh pr merge "${BRANCH}" --disable-auto
+              echo "${DISABLED_NOTE}" >> "${GITHUB_STEP_SUMMARY}"
+            fi
+            ;;
+        esac
