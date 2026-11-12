@@ -68,7 +68,22 @@ pub struct CamerasPlugin;
 impl Plugin for CamerasPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_assets)
-            .add_systems(Update, (sync_bodies, draw_frustums).chain());
+            // Bodies after the key and import edits and before the area load
+            // and `record`; cones after `record` and before the pointer. On
+            // the web this decides which frame bodies and cones show an edit in.
+            .add_systems(
+                Update,
+                (
+                    sync_bodies
+                        .after(crate::input::keyboard)
+                        .after(crate::persist::receive_imports)
+                        .before(crate::world::AreaLoadSet),
+                    draw_frustums
+                        .after(crate::history::record)
+                        .before(crate::input::PointerSet),
+                )
+                    .chain(),
+            );
     }
 }
 

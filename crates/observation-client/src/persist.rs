@@ -51,7 +51,10 @@ impl Plugin for PersistPlugin {
             .add_systems(
                 Update,
                 (
-                    handle_actions,
+                    // After the frame's edits: an Export includes them.
+                    handle_actions
+                        .after(crate::history::record)
+                        .after(crate::input::PointerSet),
                     receive_imports,
                     autosave,
                     save_font.run_if(resource_changed::<UiFont>),
