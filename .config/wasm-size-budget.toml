@@ -10,11 +10,18 @@
 # (the server sends gzip or brotli to browsers).
 
 [observation-client]
-# 26,683,425 raw and 8,020,291 gzip on develop at 5a18361 (Bevy 0.20.1).
+# 26,683,425 raw and 8,020,291 gzip (zlib) on develop at 5a18361 (Bevy 0.20.1). The gzip
+# limit was 8,300,000 against zlib's gzip. When the check moved to flate2 it was raised by the
+# most the two can differ on this module: for the same release build, flate2 gave 8,091,379
+# and zlib 7.69 MiB, which is 8,058,307 to 8,068,792 B (the old check printed MiB to two
+# decimals). The difference is 22,587 to 33,072 B, so the limit rose by 33,072, rounded up.
 raw = 27_500_000
-gzip = 8_300_000
+gzip = 8_334_000
 
 [coverage-worker]
-# 48,722 raw and 22,190 gzip on develop at 5a18361.
+# 48,722 raw and 22,190 gzip (zlib) on develop at 5a18361. The gzip limit was 32,000 against
+# zlib's gzip. When the check moved to flate2 it was raised by 1.33%, the largest difference
+# measured between flate2 and zlib on small real wasm files (this module is too small to
+# compare in the old check's MiB output): 32,426, rounded up.
 raw = 64_000
-gzip = 32_000
+gzip = 32_450
