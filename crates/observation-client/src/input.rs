@@ -267,17 +267,20 @@ fn keyboard(
     }
 }
 
-/// Whether Ctrl, Cmd (Super) or Alt is held: the tool and panel shortcuts
-/// then leave the key to the browser. Shift is not one of them.
+/// Whether Ctrl, Cmd (Super) or Alt is held, or let go this very frame (a
+/// quick chord on a slow frame, as undo and redo count it): the tool and
+/// panel shortcuts then leave the key to the browser. Shift is not one of
+/// them.
 fn browser_modifier(keys: &ButtonInput<KeyCode>) -> bool {
-    keys.any_pressed([
+    let modifiers = [
         KeyCode::ControlLeft,
         KeyCode::ControlRight,
         KeyCode::SuperLeft,
         KeyCode::SuperRight,
         KeyCode::AltLeft,
         KeyCode::AltRight,
-    ])
+    ];
+    keys.any_pressed(modifiers) || keys.any_just_released(modifiers)
 }
 
 /// The keys of a shortcut.
@@ -762,6 +765,18 @@ mod tests {
             keys.press(KeyCode::KeyR);
             assert_eq!(browser_modifier(&keys), expected, "{key:?}");
         }
+    }
+
+    #[test]
+    fn a_modifier_let_go_this_frame_still_counts() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ControlLeft);
+        keys.clear();
+        keys.press(KeyCode::KeyR);
+        keys.release(KeyCode::ControlLeft);
+        assert!(browser_modifier(&keys));
+        keys.clear();
+        assert!(!browser_modifier(&keys));
     }
 
     /// The page hands these keys to the browser while a modifier is held;
