@@ -332,6 +332,18 @@ mod tests {
     }
 
     #[test]
+    fn nothing_starts_hovered() {
+        assert_eq!(
+            Hover::default(),
+            Hover {
+                hover_list: None,
+                hover_scene: None,
+                hover_address: None,
+            }
+        );
+    }
+
+    #[test]
     fn the_list_hover_wins_over_the_scene_hover() {
         let mut hover = Hover::default();
         assert_eq!(hover.hovered(), None);
