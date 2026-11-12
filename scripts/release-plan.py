@@ -127,7 +127,10 @@ def cmd_plan(a):
     elif counts.keys() & PATCH:
         kind, reason = "patch", "CHANGELOG has only " + ", ".join(sorted(counts.keys() & PATCH)) + " entries"
     elif shipped_changes(a.repo, latest):
-        kind, reason = "patch", f"no CHANGELOG entries, but shipped files changed since v{latest}"
+        if latest:
+            kind, reason = "patch", f"no CHANGELOG entries, but shipped files changed since v{latest}"
+        else:
+            kind, reason = "patch", "no CHANGELOG entries, but nothing released yet"
     elif a.prerelease:
         kind, reason = "patch", "nothing changed (pre-release requested anyway)"
     else:
