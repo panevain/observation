@@ -1362,7 +1362,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
 fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
     // A scene with more could not be restored or imported.
     if d.models.custom.len() >= MAX_CUSTOM_MODELS {
-        d.ui.error(format!(
+        d.toasts.error(format!(
             "Cannot add this model: a scene holds at most {MAX_CUSTOM_MODELS} custom models. Delete one you no longer use first"
         ));
         return;
@@ -1372,7 +1372,7 @@ fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
     match model.validate() {
         Ok(()) => {
             d.ui.place_model = model.id.clone();
-            d.ui.info(format!(
+            d.toasts.info(format!(
                 "Added “{}” — it is now the model for new cameras",
                 model.name
             ));
@@ -1380,9 +1380,9 @@ fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
             d.scene.touch();
             *draft = Draft::editing(model);
         }
-        Err(e) => {
-            d.ui.error(format!("Cannot add this model: {}", invalid_reason(e)))
-        }
+        Err(e) => d
+            .toasts
+            .error(format!("Cannot add this model: {}", invalid_reason(e))),
     }
 }
 
@@ -1390,12 +1390,13 @@ fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
 /// to it by id.
 fn save_custom_model(d: &mut UiData, model: CameraModel) {
     if let Err(e) = model.validate() {
-        d.ui.error(format!("Cannot save this model: {}", invalid_reason(e)));
+        d.toasts
+            .error(format!("Cannot save this model: {}", invalid_reason(e)));
         return;
     }
     let name = model.display_name();
     if d.models.update_custom(model) {
-        d.ui.info(format!("Saved “{name}”"));
+        d.toasts.info(format!("Saved “{name}”"));
         d.scene.touch();
     }
 }
@@ -1413,7 +1414,7 @@ fn delete_custom_model(d: &mut UiData, id: &str) {
         } else {
             format!("{users} cameras use it")
         };
-        d.ui.error(format!(
+        d.toasts.error(format!(
             "Cannot delete “{name}”: {users}. Give them another model or delete them first"
         ));
         return;

@@ -12,6 +12,8 @@ use observation_core::terrain::{FLAT, Terrain};
 use crate::platform::SaveFailure;
 pub use observation_client_model::document::Snapshot;
 use observation_client_model::document::{self, Document};
+use observation_client_model::toasts;
+pub use observation_client_model::toasts::{ToastAction, ToastKind};
 
 /// Ground raster resolution, metres.
 pub const GROUND_CELL_M: f32 = 0.5;
@@ -206,7 +208,6 @@ pub struct UiState {
     /// Wall-clock seconds since start-up, for "saved just now" and the
     /// loading timer.
     pub now: f64,
-    pub toasts: Vec<Toast>,
     /// Corners placed so far with the Region tool, world `[x, z]`.
     pub region_draft: Vec<[f32; 2]>,
     /// Ground point under the pointer while drawing a region.
@@ -251,7 +252,6 @@ impl Default for UiState {
             history_request: None,
             save: SaveState::Pending,
             now: 0.0,
-            toasts: Vec::new(),
             region_draft: Vec::new(),
             region_hover: None,
             region_snap_m: 1.0,
@@ -265,37 +265,9 @@ impl Default for UiState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
-    Info,
-    Error,
-}
-
-/// A button on a toast.
-#[derive(Debug, Clone)]
-pub enum ToastAction {
-    Undo,
-    /// Send this area request again.
-    Retry(LoadArea),
-}
-
-impl ToastAction {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Undo => "Undo",
-            Self::Retry(_) => "Retry",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Toast {
-    pub kind: ToastKind,
-    pub text: String,
-    pub action: Option<ToastAction>,
-    /// Seconds remaining; errors stay until dismissed.
-    pub ttl: f32,
-}
+/// The toasts on screen, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Toasts(toasts::Toasts);
 
 /// Outcome of the autosave, shown in the status bar.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -327,49 +299,6 @@ impl UiState {
         if models.get(&self.place_model).is_none() {
             self.place_model = Self::default().place_model;
         }
-    }
-
-    pub fn info(&mut self, text: impl Into<String>) {
-        self.push_toast(ToastKind::Info, text.into(), None, 4.0);
-    }
-
-    /// An info toast with a button; it stays a little longer to be reached.
-    pub fn info_with(&mut self, text: impl Into<String>, action: ToastAction) {
-        self.push_toast(ToastKind::Info, text.into(), Some(action), 8.0);
-    }
-
-    /// A passing problem with what the user just did (a refused click, an
-    /// invalid form): shown for a while, then gone.
-    pub fn error(&mut self, text: impl Into<String>) {
-        self.push_toast(ToastKind::Error, text.into(), None, 8.0);
-    }
-
-    /// A failure that loses or blocks work (a load, an import, a restore):
-    /// stays until dismissed, so it is never missed.
-    pub fn error_sticky(&mut self, text: impl Into<String>) {
-        self.push_toast(ToastKind::Error, text.into(), None, f32::INFINITY);
-    }
-
-    /// A sticky error with a button (Retry).
-    pub fn error_with(&mut self, text: impl Into<String>, action: ToastAction) {
-        self.push_toast(ToastKind::Error, text.into(), Some(action), f32::INFINITY);
-    }
-
-    fn push_toast(&mut self, kind: ToastKind, text: String, action: Option<ToastAction>, ttl: f32) {
-        // A newer Undo supersedes an older one: only the latest step is one
-        // click away.
-        if matches!(action, Some(ToastAction::Undo)) {
-            self.toasts
-                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
-        }
-        // The same message again replaces the old one instead of piling up.
-        self.toasts.retain(|t| t.kind != kind || t.text != text);
-        self.toasts.push(Toast {
-            kind,
-            text,
-            action,
-            ttl,
-        });
     }
 }
 
@@ -428,6 +357,12 @@ pub fn grid_bounds(grid: &GroundGrid) -> Rect {
 /// Request to (re)load an area, as a message.
 #[derive(Debug, Clone, Message, Deref)]
 pub struct LoadArea(document::LoadArea);
+
+impl From<document::LoadArea> for LoadArea {
+    fn from(request: document::LoadArea) -> Self {
+        Self(request)
+    }
+}
 
 impl LoadArea {
     pub fn new(area: AreaRef, keep_cameras: bool) -> Self {

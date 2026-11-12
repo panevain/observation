@@ -6,7 +6,7 @@ use super::widgets::{hint, keycap, primary, secondary, swatch};
 use crate::addresses::address_label;
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{ToastAction, ToastKind, Tool, UiState};
+use crate::state::{ToastAction, ToastKind, Toasts, Tool, UiState};
 use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
 use observation_core::scene::AreaRef;
@@ -264,9 +264,9 @@ pub fn toasts(
     ctx: &egui::Context,
     t: &Tokens,
     vp: egui::Rect,
-    ui_state: &UiState,
+    toasts: &Toasts,
 ) -> Option<ToastEvent> {
-    if ui_state.toasts.is_empty() {
+    if toasts.is_empty() {
         return None;
     }
     let mut event = None;
@@ -275,8 +275,8 @@ pub fn toasts(
         .pivot(Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(vp.center().x, vp.max.y - t.space.lg))
         .show(ctx, |ui| {
-            let n = ui_state.toasts.len();
-            for (i, toast) in ui_state.toasts.iter().enumerate().rev().take(3) {
+            let n = toasts.len();
+            for (i, toast) in toasts.iter().enumerate().rev().take(3) {
                 let error = toast.kind == ToastKind::Error;
                 let (icon, accent) = if error {
                     (icons::WARNING_CIRCLE, t.danger)

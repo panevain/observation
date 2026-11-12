@@ -6,7 +6,9 @@
 //! Undoing across an area change reloads that area and keeps the restored
 //! cameras.
 
-use crate::state::{LoadArea, Loading, Models, Scene, Snapshot, ToastAction, Tool, UiState};
+use crate::state::{
+    LoadArea, Loading, Models, Scene, Snapshot, ToastAction, Toasts, Tool, UiState,
+};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::touch::Touches;
@@ -106,6 +108,7 @@ pub fn record(
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
     mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     loading: Res<Loading>,
     mouse: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
@@ -142,10 +145,9 @@ pub fn record(
             Some(last) if last == now => h.last = Some(last),
             Some(last) => {
                 // An offered Undo belongs to the step before this one.
-                ui.toasts
-                    .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+                toasts.forget_undo();
                 if let Some(text) = destructive(&last, &now) {
-                    ui.info_with(text, ToastAction::Undo);
+                    toasts.info_with(text, ToastAction::Undo);
                 }
                 h.undo.push(last);
                 if h.undo.len() > MAX_STEPS {
@@ -176,9 +178,8 @@ pub fn record(
         HistoryOp::Redo => ("Redid", describe(&current, &target)),
     };
     // Any offered Undo now points at a different step.
-    ui.toasts
-        .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
-    ui.info(format!("{verb}: {what}"));
+    toasts.forget_undo();
+    toasts.info(format!("{verb}: {what}"));
     if target.area != current.area
         && let Some(area) = target.area
     {

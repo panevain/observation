@@ -5,7 +5,7 @@
 
 use crate::platform::{Clock, HttpRequest, Platform, unix_secs};
 use crate::regions::{CatalogState, RegionRequest, Regions};
-use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, UiState};
+use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, Toasts};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::platform::collections::{HashMap, HashSet};
@@ -333,7 +333,7 @@ fn drain_replies(
     mut images: ResMut<Assets<Image>>,
     mut loaded: MessageWriter<AreaLoaded>,
     mut loading: ResMut<Loading>,
-    mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     mut config: ResMut<ServerConfig>,
     mut regions: ResMut<Regions>,
 ) {
@@ -360,7 +360,7 @@ fn drain_replies(
                 Ok(bytes) => {
                     regions.live = true;
                     match serde_json::from_slice(&bytes) {
-                        Ok(status) => regions.update(status, &mut ui),
+                        Ok(status) => regions.update(status, &mut toasts),
                         Err(e) => warn!("unreadable region status: {e}"),
                     }
                 }
@@ -387,12 +387,12 @@ fn drain_replies(
                     serde_json::from_slice(&b).map_err(|e| format!("unreadable reply: {e}"))
                 }) {
                     Ok(status) => {
-                        regions.update(status, &mut ui);
+                        regions.update(status, &mut toasts);
                         if action == ActionKind::Import {
                             regions.store_token(&*net.platform.session);
                         }
                     }
-                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.verb())),
+                    Err(e) => toasts.error(format!("Could not {} {id}: {e}", action.verb())),
                 }
             }
             Request::Area(request) => {
@@ -407,9 +407,9 @@ fn drain_replies(
                         .map_err(|e| format!("{e}; reload the page and try again"))
                 });
                 if let Err(e) = &result {
-                    ui.error_with(
+                    toasts.error_with(
                         format!("Could not load area: {e}"),
-                        ToastAction::Retry(request.clone()),
+                        ToastAction::Retry((*request).clone()),
                     );
                 }
                 loaded.write(AreaLoaded { request, result });

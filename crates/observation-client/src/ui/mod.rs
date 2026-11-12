@@ -14,7 +14,7 @@ use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::platform::Platform;
-use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
+use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Toasts, Tool, UiState};
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
 };
@@ -58,16 +58,13 @@ fn apply_theme(
 
 /// Wall-clock time: the virtual clock caps each frame at 250 ms, which would
 /// slow toasts and the loading timer whenever frames are sparse.
-fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>) {
+fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>, mut toasts: ResMut<Toasts>) {
     let dt = time.delta_secs();
     ui.now = time.elapsed_secs_f64();
-    if ui.toasts.is_empty() {
+    if toasts.is_empty() {
         return;
     }
-    for t in &mut ui.toasts {
-        t.ttl -= dt;
-    }
-    ui.toasts.retain(|t| t.ttl > 0.0);
+    toasts.tick(dt);
 }
 
 /// Everything the panels need, bundled to keep system signatures readable.
@@ -75,6 +72,7 @@ fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>) {
 pub struct UiData<'w> {
     pub tokens: Res<'w, Tokens>,
     pub ui: ResMut<'w, UiState>,
+    pub toasts: ResMut<'w, Toasts>,
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
@@ -220,19 +218,17 @@ fn draw_ui(
     }
     overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
     overlays::address_card(&ctx, &t, viewport_rect, &d.ui);
-    match overlays::toasts(&ctx, &t, viewport_rect, &d.ui) {
+    match overlays::toasts(&ctx, &t, viewport_rect, &d.toasts) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
             d.ui.history_request = Some(HistoryOp::Undo);
-            d.ui.toasts
-                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+            d.toasts.forget_undo();
         }
         Some(overlays::ToastEvent::Action(ToastAction::Retry(req))) => {
-            d.ui.toasts
-                .retain(|t| !matches!(t.action, Some(ToastAction::Retry(_))));
-            load.write(req);
+            d.toasts.forget_retry();
+            load.write(LoadArea::from(req));
         }
-        Some(overlays::ToastEvent::Dismiss(i)) if i < d.ui.toasts.len() => {
-            d.ui.toasts.remove(i);
+        Some(overlays::ToastEvent::Dismiss(i)) if i < d.toasts.len() => {
+            d.toasts.dismiss(i);
         }
         _ => {}
     }

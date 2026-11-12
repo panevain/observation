@@ -9,7 +9,7 @@ use observation_core::regions::{
 };
 
 use crate::platform::KeyValueStore;
-use crate::state::UiState;
+use observation_client_model::toasts::Toasts;
 
 /// `sessionStorage` key of the admin token (kept for the browser session only).
 const TOKEN_KEY: &str = "observation.admin-token";
@@ -154,7 +154,7 @@ impl Regions {
     }
 
     /// Takes in a new status and toasts imports that just finished.
-    pub fn update(&mut self, status: RegionsStatus, ui: &mut UiState) {
+    pub fn update(&mut self, status: RegionsStatus, toasts: &mut Toasts) {
         if let Some(old) = &self.status {
             for new in &status.snapshot.regions {
                 let Some(before) = old.snapshot.regions.iter().find(|r| r.id == new.id) else {
@@ -165,10 +165,10 @@ impl Regions {
                 }
                 match (&new.last_error, before.last_error == new.last_error) {
                     (Some(e), false) => {
-                        ui.error_sticky(format!("Importing {} failed: {e}", new.name));
+                        toasts.error_sticky(format!("Importing {} failed: {e}", new.name));
                     }
                     (None, _) if new.ready && new.imported_unix != before.imported_unix => {
-                        ui.info(format!(
+                        toasts.info(format!(
                             "{} is ready: areas there now load from this server",
                             new.name
                         ));

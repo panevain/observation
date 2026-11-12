@@ -21,7 +21,7 @@
 use super::{ADDRESS_JUMP_KEY, FONT_KEY, PersistAction, PersistPlugin, STORAGE_KEY};
 use crate::platform::SaveFailure;
 use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
-use crate::state::{LoadArea, Models, SaveState, Scene, Snapshot, ToastKind, UiState};
+use crate::state::{LoadArea, Models, SaveState, Scene, Snapshot, ToastKind, Toasts, UiState};
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -315,8 +315,7 @@ impl Harness {
     fn toasts(&self) -> Vec<(ToastKind, String, bool)> {
         self.app
             .world()
-            .resource::<UiState>()
-            .toasts
+            .resource::<Toasts>()
             .iter()
             .map(|t| (t.kind, t.text.clone(), t.ttl.is_infinite()))
             .collect()

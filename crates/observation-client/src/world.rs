@@ -5,7 +5,7 @@ use crate::input::OrbitCamera;
 use crate::net::Tiles;
 use crate::platform::Platform;
 use crate::state::{
-    Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, UiState, grid_bounds,
+    Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, Toasts, UiState, grid_bounds,
 };
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
@@ -260,6 +260,7 @@ fn on_area_loaded(
     mut scene: ResMut<Scene>,
     models: Res<Models>,
     mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     mut coverage: ResMut<CoverageState>,
     mut orbit: Query<&mut OrbitCamera>,
     old: Query<Entity, With<AreaEntity>>,
@@ -476,7 +477,7 @@ fn on_area_loaded(
     // since it was saved; any older notice was about the area replaced.
     ui.data_change = scene.area_loaded(Provenance::of(&bundle, &models.catalog_version), keep);
     if let Some(message) = ui.data_change.as_ref().map(DataChange::message) {
-        ui.info(message);
+        toasts.info(message);
     }
     scene.touch();
     *coverage = CoverageState::default();
@@ -489,7 +490,7 @@ fn on_area_loaded(
         o.yaw = 0.35;
     }
 
-    ui.info(format!(
+    toasts.info(format!(
         "Loaded {} buildings and {} street segments",
         bundle.buildings.len(),
         bundle.roads.len()

@@ -1,7 +1,7 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
 use crate::platform::{KeyValueStore, Platform};
-use crate::state::{AddressJump, LoadArea, Models, SaveState, Scene, UiState};
+use crate::state::{AddressJump, LoadArea, Models, SaveState, Scene, Toasts, UiState};
 use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -108,6 +108,7 @@ fn restore(
     mut models: ResMut<Models>,
     mut load: MessageWriter<LoadArea>,
     mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     platform: Res<Platform>,
 ) {
     match platform
@@ -121,7 +122,7 @@ fn restore(
             load.write(LoadArea::new(area, true));
         }
         Some(Err(e)) => {
-            ui.error_sticky(format!(
+            toasts.error_sticky(format!(
                 "Your saved scene could not be restored: {e}. Starting with the demo street instead"
             ));
             load.write(LoadArea::demo());
@@ -170,7 +171,7 @@ fn handle_actions(
     p: Res<Persist>,
     scene: Res<Scene>,
     models: Res<Models>,
-    mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     platform: Res<Platform>,
 ) {
     for a in actions.read() {
@@ -182,10 +183,10 @@ fn handle_actions(
                             .files
                             .download(EXPORT_NAME, SCENE_MIME, &file.to_json())
                     {
-                        ui.error(format!("Could not export the scene: {e}"));
+                        toasts.error(format!("Could not export the scene: {e}"));
                     }
                 }
-                None => ui.error("Nothing to export yet; wait for an area to finish loading"),
+                None => toasts.error("Nothing to export yet; wait for an area to finish loading"),
             },
             PersistAction::Import => {
                 let tx = p.import_tx.clone();
@@ -206,13 +207,14 @@ pub fn receive_imports(
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
     mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     mut load: MessageWriter<LoadArea>,
 ) {
     for picked in p.import_rx.try_iter() {
         let text = match picked {
             Ok(text) => text,
             Err(e) => {
-                ui.error_sticky(format!("Import failed: could not read the file: {e}"));
+                toasts.error_sticky(format!("Import failed: could not read the file: {e}"));
                 continue;
             }
         };
@@ -223,9 +225,9 @@ pub fn receive_imports(
                 scene.load_file(file, &mut models);
                 ui.selected = None;
                 load.write(LoadArea::new(area, true));
-                ui.info(format!("Imported scene with {n} camera(s)"));
+                toasts.info(format!("Imported scene with {n} camera(s)"));
             }
-            Err(e) => ui.error_sticky(format!("Import failed: {e}")),
+            Err(e) => toasts.error_sticky(format!("Import failed: {e}")),
         }
     }
 }

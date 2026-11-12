@@ -3,7 +3,7 @@
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{
-    AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Tool, UiLayout, UiState, terrain_of,
+    AddressJump, Area, MOUNT_OFFSET_M, Models, Scene, Toasts, Tool, UiLayout, UiState, terrain_of,
 };
 use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -238,6 +238,7 @@ fn keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<EguiWantsInput>,
     mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     mut scene: ResMut<Scene>,
     mut orbit: Query<&mut OrbitCamera>,
 ) {
@@ -268,7 +269,7 @@ fn keyboard(
     if ui.tool == Tool::Region {
         // Drawing a region: Enter closes it, Backspace undoes a corner.
         if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
-            finish_region(&mut ui, &mut scene);
+            finish_region(&mut ui, &mut toasts, &mut scene);
         }
         if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
             ui.region_draft.pop();
@@ -348,6 +349,7 @@ fn pointer(
     targets: Targets,
     mut st: ResMut<PointerState>,
     mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
     jump: Res<AddressJump>,
@@ -643,7 +645,12 @@ fn pointer(
         {
             if ui.tool == Tool::Region {
                 if let Some(p) = ground_point(camera, cam_t, pos, terrain) {
-                    region_click(&mut ui, &mut scene, clamp_to_area(p, area.as_deref()));
+                    region_click(
+                        &mut ui,
+                        &mut toasts,
+                        &mut scene,
+                        clamp_to_area(p, area.as_deref()),
+                    );
                 }
             } else if ui.tool == Tool::Address {
                 // A click reuses the card's lookup for the same spot; a tap
@@ -680,7 +687,7 @@ fn pointer(
                     };
                     hit = near_body(&mut cast, pos, radius).or(hit);
                 }
-                click(&mut ui, &mut scene, &models, hit);
+                click(&mut ui, &mut toasts, &mut scene, &models, hit);
             }
         }
         st.gesture = Gesture::None;
@@ -720,24 +727,24 @@ pub fn region_snap_m(view_distance: f32) -> f32 {
 }
 
 /// Adds a region corner, or closes the region when the first corner is clicked.
-fn region_click(ui: &mut UiState, scene: &mut Scene, p: [f32; 2]) {
+fn region_click(ui: &mut UiState, toasts: &mut Toasts, scene: &mut Scene, p: [f32; 2]) {
     let closes = ui.region_draft.len() >= 3
         && ui.region_draft.first().is_some_and(|f| {
             Vec2::from_array(*f).distance(Vec2::from_array(p)) <= ui.region_snap_m
         });
     if closes {
-        finish_region(ui, scene);
+        finish_region(ui, toasts, scene);
     } else if ui.region_draft.len() < MAX_REGION_POINTS {
         ui.region_draft.push(p);
     } else {
-        ui.error(format!(
+        toasts.error(format!(
             "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
         ));
     }
 }
 
 /// Turns the draft into the scene's region (nothing to do without corners).
-fn finish_region(ui: &mut UiState, scene: &mut Scene) {
+fn finish_region(ui: &mut UiState, toasts: &mut Toasts, scene: &mut Scene) {
     if ui.region_draft.is_empty() {
         return;
     }
@@ -747,7 +754,7 @@ fn finish_region(ui: &mut UiState, scene: &mut Scene) {
     };
     match region.problem() {
         None => {
-            ui.info(format!(
+            toasts.info(format!(
                 "Coverage now counts only the {:.0} m² region",
                 region.area_m2()
             ));
@@ -757,7 +764,7 @@ fn finish_region(ui: &mut UiState, scene: &mut Scene) {
         }
         Some(problem) => {
             ui.region_draft = region.points;
-            ui.error(problem.message());
+            toasts.error(problem.message());
         }
     }
 }
@@ -783,7 +790,13 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
 }
 
 /// A click/tap (press + release without dragging).
-fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>) {
+fn click(
+    ui: &mut UiState,
+    toasts: &mut Toasts,
+    scene: &mut Scene,
+    models: &Models,
+    hit: Option<Hit>,
+) {
     match ui.tool {
         Tool::Select => match hit {
             Some(Hit {
@@ -816,7 +829,7 @@ fn click(ui: &mut UiState, scene: &mut Scene, models: &Models, hit: Option<Hit>)
             if yaw.is_none() {
                 // Placed on the ground: switch to Aim so the next click points it.
                 ui.tool = Tool::Aim;
-                ui.info("Click where the new camera should point");
+                toasts.info("Click where the new camera should point");
             }
         }
         // Handled in `pointer` (by `region_click` for Region).
