@@ -68,6 +68,17 @@ fn rig_on(
     }
 }
 
+/// Every test ends with both sources drained: no call went unscripted and
+/// no reply was left unused.
+impl Drop for Rig {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.map.assert_drained();
+            self.terrain.assert_drained();
+        }
+    }
+}
+
 /// [`rig_on`] a memory store, without a region agent.
 fn rig() -> Rig {
     let store = mem_store();
@@ -491,16 +502,39 @@ async fn a_bundle_the_store_does_not_keep_is_still_served() {
 /// Freshness follows the production TTL against the store's written time.
 #[tokio::test(start_paused = true)]
 async fn a_stored_bundle_is_rebuilt_once_older_than_the_ttl() {
+    let recorder = MetricCounts::default();
+    let _guard = metrics::set_default_local_recorder(&recorder);
     let r = rig();
     let old = other_bundle();
     seed(&r.store, &old, r.config.bundle_ttl - Duration::from_secs(1));
     assert_eq!(r.service.get(bbox(), client(1)).await.unwrap(), old);
+    assert_eq!(bundle_counts(&recorder), vec![result("hit", 1)]);
+    assert_eq!((r.terrain.calls(), r.map.calls()), (0, 0));
     seed(&r.store, &old, r.config.bundle_ttl + Duration::from_secs(1));
     r.terrain.reply(Ok(Terrain::default()));
     r.map.reply(Ok(data()));
     let rebuilt = r.service.get(bbox(), client(1)).await.unwrap();
     assert_ne!(rebuilt, old);
     assert_eq!(stored(&r.store).await, Some(rebuilt));
+    assert_eq!(
+        bundle_counts(&recorder),
+        vec![result("built", 1), result("hit", 1)]
+    );
+}
+
+/// A failed build leaves no flight behind: the next request builds anew.
+#[tokio::test(start_paused = true)]
+async fn a_failed_build_is_removed_from_the_flights() {
+    let r = rig();
+    r.terrain.reply(Ok(Terrain::default()));
+    r.map
+        .reply(Err(ApiError::Upstream("map data failed".into())));
+    assert!(r.service.get(bbox(), client(1)).await.is_err());
+    assert!(r.service.in_flight.lock().unwrap().is_empty());
+    r.terrain.reply(Ok(Terrain::default()));
+    r.map.reply(Ok(data()));
+    assert!(r.service.get(bbox(), client(1)).await.is_ok());
+    assert_eq!((r.terrain.calls(), r.map.calls()), (2, 2));
 }
 
 /// Freshness is judged at the injected clock's time, not the wall clock's.
