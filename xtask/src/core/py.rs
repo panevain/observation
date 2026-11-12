@@ -417,6 +417,34 @@ pub fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
+/// `int(text)` as argparse's `type=int` reads an option: Python whitespace around, an optional
+/// sign, decimal digits with single `_` between them, at most 4,300 digits. Refused where Python
+/// reads it too: digits other than ASCII (Python takes any Unicode decimal digit) and values
+/// outside the `i128` range.
+pub fn int_arg(text: &str) -> Result<i128, String> {
+    let invalid = || format!("invalid int value: {}", repr_str(text));
+    let t = text.trim_matches(is_space);
+    let (negative, digits) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    if digits.is_empty()
+        || digits.starts_with('_')
+        || digits.ends_with('_')
+        || digits.contains("__")
+        || !digits.bytes().all(|b| b.is_ascii_digit() || b == b'_')
+    {
+        return Err(invalid());
+    }
+    let digits = digits.replace('_', "");
+    if digits.len() > 4300 {
+        return Err(invalid());
+    }
+    let value: i128 = digits.parse().map_err(|_| invalid())?;
+    Ok(if negative { -value } else { value })
+}
+
 /// `json.dumps()` of a string with the default `ensure_ascii`: `"` and `\` escaped, `\n`, `\r`,
 /// `\t`, `\b` and `\f` written short, and everything else outside space to `~` as `\uXXXX`
 /// (UTF-16 surrogate pairs beyond the BMP).

@@ -200,6 +200,22 @@ enum Command {
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
+    /// The size of a WebAssembly module per crate, from its `name` section (as
+    /// scripts/wasm-size-treemap.py measures it).
+    Treemap {
+        /// A module that still has its `name` section.
+        #[arg(long, value_name = "FILE")]
+        wasm: PathBuf,
+        /// Print the N largest crates and the totals (0: nothing).
+        #[arg(long, value_name = "N", default_value = "0", value_parser = table_arg)]
+        table: usize,
+        /// The raw size to print instead of the measured one (0: measured).
+        #[arg(long, value_name = "BYTES", allow_negative_numbers = true, value_parser = xtask::core::py::int_arg)]
+        shipped_raw: Option<i128>,
+        /// The gzip size to print instead of the measured one (0: measured).
+        #[arg(long, value_name = "BYTES", allow_negative_numbers = true, value_parser = xtask::core::py::int_arg)]
+        shipped_gzip: Option<i128>,
+    },
     /// Fail when a WebAssembly module in dist/ is over its size budget
     /// (.config/wasm-size-budget.toml).
     WasmBudget {
@@ -216,6 +232,16 @@ enum Command {
     /// Print xtask's version.
     #[command(hide = true)]
     Version,
+}
+
+/// `--table`: an int as the script's argparse read it, but not negative (the script printed all
+/// but the last N crates).
+fn table_arg(text: &str) -> Result<usize, String> {
+    let n = xtask::core::py::int_arg(text)?;
+    if n < 0 {
+        return Err(format!("{n} is negative"));
+    }
+    Ok(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 /// Writes a command's output. A closed stdout or stderr (`| head`) leaves nothing to report
@@ -461,6 +487,24 @@ fn main() -> ExitCode {
                     append(&path, &out.report)?;
                 }
                 Ok(out.failed)
+            })
+        }
+        Command::Treemap {
+            wasm,
+            table,
+            shipped_raw,
+            shipped_gzip,
+        } => {
+            let args = cmd::treemap::Args {
+                wasm,
+                table,
+                shipped_raw,
+                shipped_gzip,
+            };
+            cmd::treemap::run(&args).map(|out| {
+                emit(b"", out.stderr.as_bytes());
+                emit(out.stdout.as_bytes(), b"");
+                false
             })
         }
         Command::Version => {

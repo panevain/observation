@@ -8,3 +8,4 @@ pub mod py;
 pub mod report;
 pub mod time;
 pub mod version;
+pub mod wasm;
