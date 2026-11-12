@@ -15,6 +15,7 @@ mod icons;
 mod input;
 mod net;
 mod persist;
+mod platform;
 mod regions;
 mod state;
 mod theme;
@@ -30,14 +31,15 @@ mod catalog {
     include!(concat!(env!("OUT_DIR"), "/catalog_files.rs"));
 }
 
-/// The app's plugins, in the order they are built: the shared resources
-/// first, then one plugin per area of the app.
+/// The app's plugins, in the order they are built: the platform's ports and
+/// the shared resources first, then one plugin per area of the app.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClientPlugins;
 
 impl PluginGroup for ClientPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
+            .add(platform::PlatformPlugin)
             .add(ResourcesPlugin)
             .add(net::NetPlugin)
             .add(world::WorldPlugin)
@@ -53,7 +55,8 @@ impl PluginGroup for ClientPlugins {
 }
 
 /// Inserts the resources every other plugin shares: theme tokens, stored
-/// preferences, the camera catalog, the document and the UI state.
+/// preferences (read through the platform's ports), the camera catalog, the
+/// document and the UI state.
 struct ResourcesPlugin;
 
 impl Plugin for ResourcesPlugin {
@@ -66,12 +69,20 @@ impl Plugin for ResourcesPlugin {
                 Catalog::default()
             }
         };
-        app.insert_resource(theme::Tokens::from_environment())
-            .insert_resource(persist::load_font())
-            .insert_resource(persist::load_address_jump())
+        let platform = platform::Platform::of(app.world());
+        let tokens = theme::Tokens::from_environment(&*platform.scheme);
+        let font = persist::load_font(&*platform.local);
+        let address_jump = persist::load_address_jump(&*platform.local);
+        app.insert_resource(tokens)
+            .insert_resource(font)
+            .insert_resource(address_jump)
             .insert_resource(state::Models::new(catalog))
             .init_resource::<state::Scene>()
             .init_resource::<state::UiState>()
+            .init_resource::<state::Editor>()
+            .init_resource::<state::Panels>()
+            .init_resource::<state::Hover>()
+            .init_resource::<state::Toasts>()
             .init_resource::<state::UiLayout>();
     }
 }
@@ -81,17 +92,62 @@ struct LoaderPlugin;
 
 impl Plugin for LoaderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, hide_loader);
+        app.add_systems(Startup, platform::hide_loader);
     }
 }
 
-/// Removes the HTML loading screen once the app is running.
-fn hide_loader() {
-    #[cfg(target_arch = "wasm32")]
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("loader"))
-    {
-        el.remove();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
+    use observation_client_model::testing::{
+        FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore,
+    };
+    use std::sync::Arc;
+
+    /// The startup half of the app over fake ports: what it reads from the
+    /// page and what it asks the server for, with nothing rendered.
+    #[test]
+    fn startup_reads_preferences_and_the_server_config_through_the_ports() {
+        let http = Arc::new(FakeHttp::default());
+        let local = Arc::new(MemoryStore::default());
+        local.set("observation.font", "iosevka").expect("stored");
+        local
+            .set("observation.address-jump", "off")
+            .expect("stored");
+        let platform = Platform {
+            http: http.clone(),
+            local,
+            session: Arc::new(MemoryStore::default()),
+            files: Arc::new(FakeFiles::default()),
+            clock: Arc::new(FakeClock::at(0.0)),
+            scheme: Arc::new(FakeColorScheme::new(false)),
+        };
+        let mut app = App::new();
+        app.insert_resource(platform)
+            .add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .add_plugins((PlatformPlugin, ResourcesPlugin, net::NetPlugin));
+
+        let w = app.world();
+        assert_eq!(*w.resource::<theme::UiFont>(), theme::UiFont::Iosevka);
+        assert_eq!(
+            *w.resource::<state::AddressJump>(),
+            state::AddressJump(false)
+        );
+        assert!(
+            !w.resource::<theme::Tokens>().dark,
+            "light, as the scheme says"
+        );
+
+        app.update();
+        assert_eq!(http.pending_urls(), ["/api/config"]);
+        assert!(http.respond(
+            "/api/config",
+            Ok(br#"{"attribution": "Test tiles"}"#.to_vec())
+        ));
+        app.update();
+        let config = app.world().resource::<net::ServerConfig>();
+        assert_eq!(config.tile_attribution, "Test tiles");
     }
 }

@@ -1,0 +1,120 @@
+{
+  "format": "observation-scene",
+  "version": 2,
+  "area": {
+    "kind": "osm",
+    "bbox": {
+      "south": 51.5,
+      "west": -0.125,
+      "north": 51.5015,
+      "east": -0.1225
+    }
+  },
+  "origin": {
+    "lat": 51.50075,
+    "lon": -0.12375
+  },
+  "cameras": [
+    {
+      "id": 1,
+      "label": "Camera 1",
+      "model_id": "generic-bullet",
+      "position": [
+        12.5,
+        3.25,
+        -4.0
+      ],
+      "yaw_deg": 90.0,
+      "pitch_deg": -20.0,
+      "roll_deg": 0.0,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "label": "Doorbell",
+      "model_id": "custom-1-porch-cam",
+      "position": [
+        -3.0,
+        1.25,
+        7.5
+      ],
+      "yaw_deg": 180.0,
+      "pitch_deg": -20.0,
+      "roll_deg": 0.0,
+      "color": [
+        200,
+        40,
+        40
+      ],
+      "enabled": true,
+      "group": "Number 12"
+    },
+    {
+      "id": 3,
+      "label": "Camera 3",
+      "model_id": "generic-dome",
+      "position": [
+        0.0,
+        4.5,
+        0.0
+      ],
+      "yaw_deg": 270.5,
+      "pitch_deg": -20.0,
+      "roll_deg": 5.0,
+      "enabled": false,
+      "group": "Number 12"
+    }
+  ],
+  "custom_models": [
+    {
+      "id": "custom-1-porch-cam",
+      "vendor": "",
+      "name": "Porch cam",
+      "kind": "Doorbell",
+      "hfov_deg": 150.0,
+      "vfov_deg": 120.0,
+      "resolution": [
+        1536,
+        1536
+      ],
+      "ir_range_m": 5.0,
+      "source": "https://example.com/porch-cam",
+      "notes": "Bought 2025"
+    }
+  ],
+  "params": {
+    "dori": "Recognise",
+    "lighting": "Night",
+    "subject_height_m": 1.5,
+    "custom_ppm": 250.0
+  },
+  "region": {
+    "points": [
+      [
+        -20.0,
+        -20.0
+      ],
+      [
+        25.0,
+        -18.5
+      ],
+      [
+        22.0,
+        30.0
+      ],
+      [
+        -15.0,
+        28.0
+      ]
+    ],
+    "enabled": true
+  },
+  "provenance": {
+    "osm_data_as_of": "2026-10-31T19:43:02Z",
+    "bundle_built_at": "2026-10-31T20:43:02Z",
+    "osm_fingerprint": "00000000000000aa",
+    "app_version": "0.1.0",
+    "catalog_version": "0123456789abcdef",
+    "caveats_version": 1
+  }
+}

@@ -20,6 +20,7 @@ path = "src/bin/coverage_worker.rs"
 
 [dependencies]
 observation-core.workspace = true
+observation-client-model.workspace = true
 observation-tokens.workspace = true
 serde_json.workspace = true
 bevy = { workspace = true, features = [
@@ -103,6 +104,9 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bevy = { workspace = true, features = ["x11"] }
+
+[dev-dependencies]
+observation-client-model = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

@@ -8,7 +8,8 @@ use observation_core::regions::{
     ActionKind, CatalogEntry, RegionAction, RegionView, RegionsStatus,
 };
 
-use crate::state::UiState;
+use crate::platform::KeyValueStore;
+use observation_client_model::toasts::Toasts;
 
 /// `sessionStorage` key of the admin token (kept for the browser session only).
 const TOKEN_KEY: &str = "observation.admin-token";
@@ -87,15 +88,20 @@ impl Regions {
     }
 
     /// Loads the token remembered for this session.
-    pub fn restore_token(&mut self) {
-        if let Some(t) = session_get(TOKEN_KEY) {
+    pub fn restore_token(&mut self, session: &dyn KeyValueStore) {
+        if let Some(t) = session.get(TOKEN_KEY) {
             self.token = t;
         }
     }
 
-    /// Remembers the token for this session (best effort).
-    pub fn store_token(&self) {
-        session_set(TOKEN_KEY, &self.token);
+    /// Remembers the token for this session (best effort: a refused write
+    /// only means it is asked for again); an empty token is forgotten.
+    pub fn store_token(&self, session: &dyn KeyValueStore) {
+        if self.token.is_empty() {
+            session.remove(TOKEN_KEY);
+        } else {
+            let _ = session.set(TOKEN_KEY, &self.token);
+        }
     }
 
     /// Asks for the sizes of those of `ids` that are not known, not asked for
@@ -147,8 +153,11 @@ impl Regions {
         self.outbox.push(r);
     }
 
-    /// Takes in a new status and toasts imports that just finished.
-    pub fn update(&mut self, status: RegionsStatus, ui: &mut UiState) {
+    /// Takes in a new status; returns the imports it shows just ended, in
+    /// region order.
+    #[must_use]
+    pub fn update(&mut self, status: RegionsStatus) -> Vec<RegionEvent> {
+        let mut events = Vec::new();
         if let Some(old) = &self.status {
             for new in &status.snapshot.regions {
                 let Some(before) = old.snapshot.regions.iter().find(|r| r.id == new.id) else {
@@ -158,69 +167,53 @@ impl Regions {
                     continue;
                 }
                 match (&new.last_error, before.last_error == new.last_error) {
-                    (Some(e), false) => {
-                        ui.error_sticky(format!("Importing {} failed: {e}", new.name));
-                    }
+                    (Some(e), false) => events.push(RegionEvent::Failed {
+                        name: new.name.clone(),
+                        error: e.clone(),
+                    }),
                     (None, _) if new.ready && new.imported_unix != before.imported_unix => {
-                        ui.info(format!(
-                            "{} is ready: areas there now load from this server",
-                            new.name
-                        ));
+                        events.push(RegionEvent::Ready {
+                            name: new.name.clone(),
+                        });
                     }
                     _ => {}
                 }
             }
         }
         self.status = Some(status);
+        events
     }
 }
 
-/// Seconds since the Unix epoch by this computer's clock.
-pub fn now_unix() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        (js_sys::Date::now() / 1000.0) as u64
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-    }
+/// An import that a new status shows just ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegionEvent {
+    /// It failed, with a new error.
+    Failed { name: String, error: String },
+    /// It finished, and the region's data is in use.
+    Ready { name: String },
 }
 
-#[cfg(target_arch = "wasm32")]
-fn session_storage() -> Option<web_sys::Storage> {
-    web_sys::window()?.session_storage().ok().flatten()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn session_get(key: &str) -> Option<String> {
-    session_storage()?.get_item(key).ok().flatten()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn session_set(key: &str, value: &str) {
-    if let Some(s) = session_storage() {
-        let _ = if value.is_empty() {
-            s.remove_item(key)
-        } else {
-            s.set_item(key, value)
-        };
+/// Tells the user about `events`, in order: a failure stays until dismissed.
+pub fn announce(events: Vec<RegionEvent>, toasts: &mut Toasts) {
+    for event in events {
+        match event {
+            RegionEvent::Failed { name, error } => {
+                toasts.error_sticky(format!("Importing {name} failed: {error}"));
+            }
+            RegionEvent::Ready { name } => {
+                toasts.info(format!(
+                    "{name} is ready: areas there now load from this server"
+                ));
+            }
+        }
     }
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-fn session_get(_: &str) -> Option<String> {
-    None
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn session_set(_: &str, _: &str) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use observation_client_model::toasts::{INFO_SECS, ToastKind};
 
     fn asked(r: &Regions) -> Vec<Vec<String>> {
         r.outbox
@@ -230,6 +223,88 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// One region of a test status: id, name, importing, ready, imported at,
+    /// last error.
+    type Row<'a> = (&'a str, &'a str, bool, bool, Option<u64>, Option<&'a str>);
+
+    fn status(regions: &[Row<'_>]) -> RegionsStatus {
+        let regions = regions
+            .iter()
+            .map(|&(id, name, importing, ready, imported, error)| {
+                serde_json::json!({
+                    "id": id, "name": name, "ready": ready, "bbox": null,
+                    "data_timestamp": null, "imported_unix": imported, "disk_bytes": null,
+                    "job": importing.then(|| serde_json::json!(
+                        {"phase": "importing", "done": 0, "total": null, "since_unix": 0}
+                    )),
+                    "last_error": error,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(serde_json::json!({
+            "agent_online": true, "manageable": true,
+            "snapshot": {"version": 1, "regions": regions, "max_download_bytes": 0, "refresh_days": 0},
+        }))
+        .expect("a valid status")
+    }
+
+    #[test]
+    fn a_status_reports_the_imports_that_just_ended_in_region_order() {
+        let mut r = Regions::default();
+        let first = status(&[
+            ("a", "Alpha", true, false, None, None),
+            ("b", "Beta", true, true, Some(1), None),
+            ("c", "Gamma", true, false, None, Some("old")),
+            ("d", "Delta", false, false, None, Some("old")),
+        ]);
+        assert!(
+            r.update(first.clone()).is_empty(),
+            "nothing to compare with"
+        );
+        assert_eq!(r.status.as_ref(), Some(&first));
+        let events = r.update(status(&[
+            ("a", "Alpha", false, false, None, Some("disk full")),
+            ("b", "Beta", false, true, Some(2), None),
+            ("c", "Gamma", false, false, None, Some("old")),
+            ("d", "Delta", false, false, None, Some("new")),
+            ("e", "Epsilon", false, true, Some(3), None),
+        ]));
+        assert_eq!(
+            events,
+            [
+                RegionEvent::Failed {
+                    name: "Alpha".into(),
+                    error: "disk full".into()
+                },
+                RegionEvent::Ready {
+                    name: "Beta".into()
+                },
+            ],
+            "a repeated error, a region with no import running and a new region say nothing"
+        );
+        let mut toasts = Toasts::default();
+        announce(events, &mut toasts);
+        let shown: Vec<_> = toasts
+            .iter()
+            .map(|t| (t.text.as_str(), t.kind, t.ttl))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (
+                    "Importing Alpha failed: disk full",
+                    ToastKind::Error,
+                    f32::INFINITY
+                ),
+                (
+                    "Beta is ready: areas there now load from this server",
+                    ToastKind::Info,
+                    INFO_SECS
+                ),
+            ]
+        );
     }
 
     #[test]

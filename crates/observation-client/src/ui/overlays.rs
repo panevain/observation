@@ -6,7 +6,7 @@ use super::widgets::{hint, keycap, primary, secondary, swatch};
 use crate::addresses::address_label;
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{ToastAction, ToastKind, Tool, UiState};
+use crate::state::{Editor, Hover, Panels, ToastAction, ToastKind, Toasts, Tool};
 use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
 use observation_core::scene::AreaRef;
@@ -43,8 +43,8 @@ pub fn viewport_gate(ctx: &egui::Context, t: &Tokens, w: f32, h: f32) {
 /// with the coverage and camera colours; the rail and the cursor carry the
 /// mode too.
 pub fn mode_pill(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
-    let tool = d.ui.tool;
-    let selected = d.ui.selected.and_then(|id| d.scene.camera(id));
+    let tool = d.editor.tool;
+    let selected = d.editor.selected.and_then(|id| d.scene.camera(id));
     let max_width = vp.width() - 2.0 * t.space.md;
     egui::Area::new(Id::new("mode-pill"))
         .order(Order::Middle)
@@ -116,7 +116,9 @@ pub fn camera_toolbar(
                                 |k| format!("{} ({k})", a.label()),
                             );
                             let button = egui::Button::new(
-                                RichText::new(a.icon()).size(t.font.title).color(color),
+                                RichText::new(super::actions::icon(a))
+                                    .size(t.font.title)
+                                    .color(color),
                             )
                             .frame_when_inactive(false)
                             .min_size(vec2(t.layout.hit_target, t.layout.hit_target));
@@ -166,8 +168,14 @@ pub fn tool_cursor(ctx: &egui::Context, vp: egui::Rect, tool: Tool) {
 
 /// The Address tool's card by the pointer: the address under it, or that
 /// there is none.
-pub fn address_card(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, ui_state: &UiState) {
-    let (Tool::Address, Some(address)) = (ui_state.tool, &ui_state.hover_address) else {
+pub fn address_card(
+    ctx: &egui::Context,
+    t: &Tokens,
+    vp: egui::Rect,
+    hover: &Hover,
+    editor: &Editor,
+) {
+    let (Tool::Address, Some(address)) = (editor.tool, &hover.hover_address) else {
         return;
     };
     let Some(at) = ctx
@@ -213,22 +221,22 @@ fn selection_chip(
         .inner_margin(egui::Margin::symmetric(t.space.sm as i8, 0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if d.ui.tool == Tool::Place {
+                if d.editor.tool == Tool::Place {
                     let model = d
                         .models
-                        .get(&d.ui.place_model)
-                        .map_or_else(|| d.ui.place_model.clone(), |m| m.display_name());
+                        .get(&d.editor.place_model)
+                        .map_or_else(|| d.editor.place_model.clone(), |m| m.display_name());
                     ui.label(RichText::new(format!("New: {model}")).strong());
-                } else if d.ui.tool == Tool::Region {
-                    let n = d.ui.region_draft.len();
+                } else if d.editor.tool == Tool::Region {
+                    let n = d.editor.region_draft.len();
                     let text = match n {
                         0 => "No corners yet".to_owned(),
                         1 => "1 corner".to_owned(),
                         n => format!("{n} corners"),
                     };
                     ui.label(RichText::new(text).strong());
-                } else if d.ui.tool == Tool::Address {
-                    match d.ui.selected_address.as_ref().map(address_label) {
+                } else if d.editor.tool == Tool::Address {
+                    match d.editor.selected_address.as_ref().map(address_label) {
                         Some(a) => {
                             let cameras = match d.addresses.count_at(&a) {
                                 0 => "no cameras".to_owned(),
@@ -264,9 +272,9 @@ pub fn toasts(
     ctx: &egui::Context,
     t: &Tokens,
     vp: egui::Rect,
-    ui_state: &UiState,
+    toasts: &Toasts,
 ) -> Option<ToastEvent> {
-    if ui_state.toasts.is_empty() {
+    if toasts.is_empty() {
         return None;
     }
     let mut event = None;
@@ -275,8 +283,8 @@ pub fn toasts(
         .pivot(Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(vp.center().x, vp.max.y - t.space.lg))
         .show(ctx, |ui| {
-            let n = ui_state.toasts.len();
-            for (i, toast) in ui_state.toasts.iter().enumerate().rev().take(3) {
+            let n = toasts.len();
+            for (i, toast) in toasts.iter().enumerate().rev().take(3) {
                 let error = toast.kind == ToastKind::Error;
                 let (icon, accent) = if error {
                     (icons::WARNING_CIRCLE, t.danger)
@@ -399,7 +407,7 @@ pub fn loading(
     choice
 }
 
-pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {
+pub fn help(ctx: &egui::Context, t: &Tokens, panels: &mut Panels) {
     let mut open = true;
     egui::Window::new("Getting started")
         .collapsible(false)
@@ -448,10 +456,10 @@ pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {
             hint(ui, t, "Coverage is modelled from published field of view and resolution (DORI pixel density); real cameras vary with lens distortion, lighting and compression.");
             ui.add_space(t.space.sm);
             if ui.add(primary(t, "Got it")).clicked() {
-                ui_state.help_open = false;
+                panels.help_open = false;
             }
         });
     if !open {
-        ui_state.help_open = false;
+        panels.help_open = false;
     }
 }

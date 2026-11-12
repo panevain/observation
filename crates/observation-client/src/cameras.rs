@@ -1,7 +1,7 @@
 //! Camera bodies in the scene and their field-of-view outlines.
 
 use crate::coverage::cone_for;
-use crate::state::{Area, Models, Scene, UiState, terrain_of};
+use crate::state::{Area, Editor, Hover, Models, Panels, Scene, terrain_of};
 use crate::theme::{Tokens, from_rgb, to_bevy, to_rgb};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
@@ -90,12 +90,16 @@ fn setup_assets(
     });
 }
 
-/// Camera body transform: −Z of the body points along the optical axis.
+/// Camera body transform: −Z of the body points along the optical axis, and
+/// its +X and +Y are the view cone's right and up, so a positive roll turns
+/// the body as it turns the coverage (the image's right edge up).
 fn body_transform(c: &CameraPlacement) -> Transform {
     let fwd = c.forward();
     let mut t = Transform::from_translation(Vec3::from_array(c.position));
     t.look_to(fwd, Vec3::Y);
-    t.rotate_local_z(-c.roll_deg.to_radians());
+    // Local +Z points back from the lens, so turning about it by +roll is
+    // turning about the optical axis by −roll, as the cone does.
+    t.rotate_local_z(c.roll_deg.to_radians());
     t
 }
 
@@ -174,15 +178,17 @@ fn draw_frustums(
     mut gizmos: Gizmos,
     scene: Res<Scene>,
     models: Res<Models>,
-    ui: Res<UiState>,
+    panels: Res<Panels>,
+    hover: Res<Hover>,
+    editor: Res<Editor>,
     tokens: Res<Tokens>,
     area: Option<Res<Area>>,
 ) {
     let terrain = terrain_of(area.as_deref());
     for c in &scene.cameras {
-        let selected = ui.selected == Some(c.id);
-        let hovered = ui.hovered() == Some(c.id);
-        if !(ui.show_frustums || selected || hovered) {
+        let selected = editor.selected == Some(c.id);
+        let hovered = hover.hovered() == Some(c.id);
+        if !(panels.show_frustums || selected || hovered) {
             continue;
         }
         let Some(m) = models.get(&c.model_id) else {
@@ -236,5 +242,69 @@ fn draw_frustums(
                 gizmos.circle(flat(0.05), 0.08, aim);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use observation_core::frustum::ViewCone;
+
+    /// The body turns with the view cone the coverage is computed from: its
+    /// forward, right and up are the cone's, whatever the roll.
+    #[test]
+    fn the_body_rolls_the_same_way_as_the_view_cone() {
+        for yaw in [0.0, 90.0, 215.0] {
+            for pitch in [-20.0, 0.0, 35.0] {
+                for roll in [-90.0, -30.0, 0.0, 30.0, 90.0, 170.0] {
+                    let c = CameraPlacement {
+                        id: 1,
+                        label: String::new(),
+                        model_id: "m".to_owned(),
+                        position: [0.0, 3.0, 0.0],
+                        yaw_deg: yaw,
+                        pitch_deg: pitch,
+                        roll_deg: roll,
+                        color: None,
+                        enabled: true,
+                        group: None,
+                    };
+                    let cone = ViewCone::from_angles(c.eye(), yaw, pitch, roll, 90.0, 60.0, 20.0);
+                    let r = body_transform(&c).rotation;
+                    for (body, cone, axis) in [
+                        (r * Vec3::NEG_Z, cone.forward, "forward"),
+                        (r * Vec3::X, cone.right, "right"),
+                        (r * Vec3::Y, cone.up, "up"),
+                    ] {
+                        assert!(
+                            body.distance(cone) < 1e-4,
+                            "{axis} at yaw {yaw}, pitch {pitch}, roll {roll}: {body} vs {cone}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Looking north with a 30° roll, the image's right edge goes up.
+    #[test]
+    fn a_positive_roll_lifts_the_bodys_right_side() {
+        let c = CameraPlacement {
+            id: 1,
+            label: String::new(),
+            model_id: "m".to_owned(),
+            position: [0.0, 3.0, 0.0],
+            yaw_deg: 0.0,
+            pitch_deg: 0.0,
+            roll_deg: 30.0,
+            color: None,
+            enabled: true,
+            group: None,
+        };
+        let right = body_transform(&c).rotation * Vec3::X;
+        assert!(
+            (right - Vec3::new(0.866_025, 0.5, 0.0)).length() < 1e-4,
+            "{right}"
+        );
     }
 }
