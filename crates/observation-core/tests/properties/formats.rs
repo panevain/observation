@@ -312,50 +312,25 @@ fn response() -> impl Strategy<Value = JobResponse> {
     ]
 }
 
-/// The kinds of special value a strategy drew, by bit pattern.
-#[derive(Default, Debug)]
-struct Specials {
-    quiet_nan: u32,
-    signalling_nan: u32,
-    negative_nan: u32,
-    infinity: u32,
-    neg_infinity: u32,
-    neg_zero: u32,
-}
-
-impl Specials {
-    fn add(&mut self, bits: u64, sign: u64, exp: u64, quiet: u64) {
-        let mantissa = bits & !(sign | exp);
-        if bits & exp == exp && mantissa != 0 {
-            if mantissa & quiet != 0 {
-                self.quiet_nan += 1;
-            } else {
-                self.signalling_nan += 1;
-            }
-            if bits & sign != 0 {
-                self.negative_nan += 1;
-            }
-        } else if bits == exp {
-            self.infinity += 1;
-        } else if bits == sign | exp {
-            self.neg_infinity += 1;
-        } else if bits == sign {
-            self.neg_zero += 1;
-        }
+/// Which kind of special value `bits` is (quiet NaN, signalling NaN,
+/// negative NaN, +inf, -inf, -0), given the format's sign, exponent and quiet
+/// bits; a negative NaN counts twice.
+fn special_kinds(bits: u64, sign: u64, exp: u64, quiet: u64) -> Vec<usize> {
+    let nan = bits & exp == exp && bits & !(sign | exp) != 0;
+    let mut out = Vec::new();
+    if nan {
+        out.push(if bits & quiet != 0 { 0 } else { 1 });
     }
-
-    fn all_seen(&self) -> bool {
-        [
-            self.quiet_nan,
-            self.signalling_nan,
-            self.negative_nan,
-            self.infinity,
-            self.neg_infinity,
-            self.neg_zero,
-        ]
-        .iter()
-        .all(|&n| n > 0)
+    if nan && bits & sign != 0 {
+        out.push(2);
     }
+    out.extend(
+        [exp, sign | exp, sign]
+            .iter()
+            .position(|&s| s == bits)
+            .map(|i| i + 3),
+    );
+    out
 }
 
 /// The number strategies really draw every kind of special value, so the
@@ -366,92 +341,264 @@ fn number_strategies_draw_nan_payloads_and_both_infinities() {
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let mut runner = TestRunner::new(config(1));
-    let (mut f, mut d) = (Specials::default(), Specials::default());
+    let (mut f, mut d) = ([0u32; 6], [0u32; 6]);
     for _ in 0..2000 {
         let x = num().new_tree(&mut runner).unwrap().current();
-        f.add(u64::from(x.to_bits()), 1 << 31, 0x7f80_0000, 1 << 22);
+        for k in special_kinds(u64::from(x.to_bits()), 1 << 31, 0x7f80_0000, 1 << 22) {
+            f[k] += 1;
+        }
         let y = bits64().new_tree(&mut runner).unwrap().current();
-        d.add(y.to_bits(), 1 << 63, 0x7ff0_0000_0000_0000, 1 << 51);
+        for k in special_kinds(y.to_bits(), 1 << 63, 0x7ff0_0000_0000_0000, 1 << 51) {
+            d[k] += 1;
+        }
     }
-    assert!(f.all_seen(), "f32 specials drawn: {f:?}");
-    assert!(d.all_seen(), "f64 specials drawn: {d:?}");
+    assert!(f.iter().all(|&n| n > 0), "f32 specials drawn: {f:?}");
+    assert!(d.iter().all(|&n| n > 0), "f64 specials drawn: {d:?}");
 }
 
-/// A fixed message and bundle holding NaN payloads (quiet and signalling,
-/// both signs), both infinities and a negative zero re-encode byte for byte
-/// and decode to the same bit patterns.
+// ----- bit patterns ----------------------------------------------------------
+
+/// Every float a value holds, as bit patterns in a fixed order. Comparing a
+/// decoded value's with the generated value's pins both directions: value
+/// equality cannot see a NaN's payload, and re-encoded bytes cannot see an
+/// encoder that rewrites it (the first bytes are already rewritten).
+#[derive(Debug, Default, PartialEq)]
+struct Bits(Vec<u64>);
+
+impl Bits {
+    fn f(&mut self, v: &[f32]) -> &mut Self {
+        self.0.extend(v.iter().map(|x| u64::from(x.to_bits())));
+        self
+    }
+
+    fn d(&mut self, v: &[f64]) -> &mut Self {
+        self.0.extend(v.iter().map(|x| x.to_bits()));
+        self
+    }
+
+    fn footprint(&mut self, fp: &Footprint) -> &mut Self {
+        for ring in std::iter::once(&fp.outer).chain(&fp.holes) {
+            self.f(ring.as_flattened());
+        }
+        self.f(&[fp.min_height_m, fp.height_m, fp.base_m])
+    }
+
+    fn road(&mut self, r: &Road) -> &mut Self {
+        self.f(&[r.width_m]).f(r.points.as_flattened())
+    }
+
+    fn terrain(&mut self, t: &Terrain) -> &mut Self {
+        self.f(&t.min).f(&[t.cell_m, t.datum_m])
+    }
+
+    fn bundle(b: &AreaBundle) -> Self {
+        let mut out = Self::default();
+        let (bb, o) = (&b.bbox, &b.origin);
+        out.d(&[bb.south, bb.west, bb.north, bb.east, o.lat, o.lon]);
+        for building in &b.buildings {
+            out.footprint(&building.footprint);
+        }
+        for r in &b.roads {
+            out.road(r);
+        }
+        out.f(b.mesh.positions.as_flattened())
+            .f(b.mesh.normals.as_flattened());
+        for a in &b.addresses {
+            out.f(&a.position);
+        }
+        out.terrain(&b.terrain);
+        out
+    }
+
+    fn request(r: &JobRequest) -> Self {
+        let mut out = Self::default();
+        match r {
+            JobRequest::LoadArea { inputs, .. } => {
+                out.f(&inputs.grid.min.to_array()).f(&[inputs.grid.cell_m]);
+                for fp in &inputs.footprints {
+                    out.footprint(fp);
+                }
+                for road in &inputs.roads {
+                    out.road(road);
+                }
+                out.f(&[inputs.facade_cell_m]).terrain(&inputs.terrain);
+            }
+            JobRequest::Compute(job) => {
+                let c = &job.cone;
+                for v in [c.eye, c.forward, c.right, c.up] {
+                    out.f(&v.to_array());
+                }
+                out.f(&[c.tan_half_h, c.tan_half_v, c.range, job.subject_height_m]);
+            }
+        }
+        out
+    }
+
+    fn response(r: &JobResponse) -> Self {
+        let mut out = Self::default();
+        if let JobResponse::Done(done) = r {
+            let s = &done.sight;
+            out.f(&[s.range]).f(&s.ground_d2).f(&s.facade_d2);
+        }
+        out
+    }
+}
+
+/// NaN payloads (quiet and signalling, both signs), both infinities, a
+/// negative zero and a subnormal, in turn, without end.
+fn specials() -> impl Iterator<Item = f32> {
+    [
+        0x7fc0_0000,
+        0x7fc1_2345,
+        0x7f80_0001,
+        0xffbf_ffff,
+        0xffc0_0042,
+        0x7f80_0000,
+        0xff80_0000,
+        0x8000_0000,
+        0x0000_0001,
+    ]
+    .map(f32::from_bits)
+    .into_iter()
+    .cycle()
+}
+
+/// Fixed messages and a bundle with each special value in every float field:
+/// each re-encodes byte for byte and decodes to the same bit patterns, so a
+/// codec that rewrote a NaN on the way in or out fails here at any case count.
 #[test]
 fn special_floats_survive_the_codecs_bit_for_bit() {
-    let f32s = [
-        f32::from_bits(0x7fc0_0000),
-        f32::from_bits(0x7fc1_2345),
-        f32::from_bits(0x7f80_0001),
-        f32::from_bits(0xffbf_ffff),
-        f32::INFINITY,
-        f32::NEG_INFINITY,
-        -0.0,
-        f32::from_bits(1),
-    ];
-    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    let msg = JobResponse::Done(JobResult {
-        generation: 1,
-        camera_id: 2,
-        key: 3,
-        sight: Sight {
-            range: f32::NAN,
-            ground: (0..8).collect(),
-            ground_d2: f32s.to_vec(),
-            facade: vec![9],
-            facade_d2: vec![f32::NEG_INFINITY],
-        },
-    });
-    let bytes = msg.encode();
-    let Ok(JobResponse::Done(back)) = JobResponse::decode(&bytes) else {
-        panic!("special floats did not decode");
-    };
-    assert_eq!(bits(&back.sight.ground_d2), bits(&f32s));
-    assert_eq!(back.sight.range.to_bits(), f32::NAN.to_bits());
-    assert_eq!(JobResponse::Done(back).encode(), bytes);
+    // Every field gets every special value in one of the turns.
+    for offset in 0..9 {
+        let sp = std::cell::RefCell::new(specials().skip(offset));
+        let x = || sp.borrow_mut().next().unwrap_or(f32::NAN);
+        // The f64 counterparts, also in turn.
+        let d = |k: usize| {
+            f64::from_bits(
+                [
+                    0x7ff0_0000_0000_0001,
+                    0xfff8_0000_0000_0042,
+                    0x7ff8_0000_0000_0000,
+                    0x7ff0_0000_0000_0000,
+                    0xfff0_0000_0000_0000,
+                    0x8000_0000_0000_0000,
+                ][(k + offset) % 6],
+            )
+        };
+        let footprint = Footprint {
+            outer: vec![[x(), x()], [x(), x()], [x(), x()]],
+            holes: vec![vec![[x(), x()]]],
+            min_height_m: x(),
+            height_m: x(),
+            base_m: x(),
+        };
+        let road = Road {
+            osm_id: 1,
+            highway: String::new(),
+            name: None,
+            width_m: x(),
+            points: vec![[x(), x()], [x(), x()]],
+        };
+        let no_address = || Address {
+            housenumber: None,
+            street: None,
+            housename: None,
+            unit: None,
+        };
+        let b = AreaBundle {
+            bbox: BBox {
+                south: d(0),
+                west: d(1),
+                north: d(2),
+                east: d(3),
+            },
+            origin: LatLon::new(d(4), d(5)),
+            buildings: vec![Building {
+                osm_id: 1,
+                footprint: footprint.clone(),
+                index_range: [0, 0],
+                address: None,
+            }],
+            roads: vec![road.clone()],
+            mesh: MeshData {
+                positions: vec![[x(), x(), x()], [x(), x(), x()]],
+                normals: vec![[x(), x(), x()]],
+                indices: Vec::new(),
+            },
+            addresses: vec![AddressPoint {
+                address: no_address(),
+                position: [x(), x()],
+                building: None,
+            }],
+            // The decoder validates terrain, which must be finite.
+            terrain: Terrain::default(),
+            attribution: String::new(),
+            generated_unix: 0,
+            osm_base_unix: None,
+            osm_fingerprint: 0,
+        };
+        let bytes = b.encode();
+        let back = AreaBundle::decode(&bytes).expect("special floats decode");
+        assert_eq!(Bits::bundle(&back), Bits::bundle(&b));
+        assert_eq!(back.encode(), bytes);
 
-    let f64s = [
-        f64::from_bits(0x7ff8_0000_0000_0001),
-        f64::from_bits(0xfff0_0000_0000_0001),
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-    ];
-    let b = AreaBundle {
-        bbox: BBox {
-            south: f64s[0],
-            west: f64s[1],
-            north: f64s[2],
-            east: f64s[3],
-        },
-        origin: LatLon::new(-0.0, f64::NAN),
-        buildings: Vec::new(),
-        roads: Vec::new(),
-        mesh: MeshData {
-            positions: vec![[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]],
-            normals: Vec::new(),
-            indices: Vec::new(),
-        },
-        addresses: Vec::new(),
-        terrain: Terrain::default(),
-        attribution: String::new(),
-        generated_unix: 0,
-        osm_base_unix: None,
-        osm_fingerprint: 0,
-    };
-    let bytes = b.encode();
-    let back = AreaBundle::decode(&bytes).expect("special floats decode");
-    let got = [
-        back.bbox.south,
-        back.bbox.west,
-        back.bbox.north,
-        back.bbox.east,
-    ];
-    assert_eq!(got.map(f64::to_bits), f64s.map(f64::to_bits));
-    assert_eq!(back.origin.lat.to_bits(), (-0.0f64).to_bits());
-    assert_eq!(back.encode(), bytes);
+        let v3 = || Vec3::new(x(), x(), x());
+        let requests = [
+            JobRequest::LoadArea {
+                generation: 1,
+                inputs: LayerInputs {
+                    grid: GroundGrid {
+                        min: Vec2::new(x(), x()),
+                        cell_m: x(),
+                        w: 1,
+                        h: 1,
+                    },
+                    footprints: vec![footprint],
+                    roads: vec![road],
+                    facade_cell_m: x(),
+                    terrain: Terrain::default(),
+                },
+            },
+            JobRequest::Compute(Job {
+                generation: 1,
+                camera_id: 2,
+                key: 3,
+                cone: ViewCone {
+                    eye: v3(),
+                    forward: v3(),
+                    right: v3(),
+                    up: v3(),
+                    tan_half_h: x(),
+                    tan_half_v: x(),
+                    range: x(),
+                },
+                subject_height_m: x(),
+            }),
+        ];
+        for r in requests {
+            let bytes = r.encode();
+            let back = JobRequest::decode(&bytes).expect("special floats decode");
+            assert_eq!(Bits::request(&back), Bits::request(&r));
+            assert_eq!(back.encode(), bytes);
+        }
+
+        let msg = JobResponse::Done(JobResult {
+            generation: 1,
+            camera_id: 2,
+            key: 3,
+            sight: Sight {
+                range: x(),
+                ground: (0..9).collect(),
+                ground_d2: (0..9).map(|_| x()).collect(),
+                facade: vec![9, 10],
+                facade_d2: vec![x(), x()],
+            },
+        });
+        let bytes = msg.encode();
+        let back = JobResponse::decode(&bytes).expect("special floats decode");
+        assert_eq!(Bits::response(&back), Bits::response(&msg));
+        assert_eq!(back.encode(), bytes);
+    }
 }
 
 proptest! {
@@ -462,9 +609,10 @@ proptest! {
         let bytes = b.encode();
         let back = AreaBundle::decode(&bytes);
         prop_assert_eq!(back.as_ref().map(AreaBundle::encode), Ok(bytes));
-        // The bytes are compared above, so every bit pattern (NaN payloads
-        // included) is checked. NaN is not equal to itself, so values are
-        // compared as well only when there is none.
+        // Every float comes back with its bit pattern (NaN payloads
+        // included), whichever side of the codec might rewrite it. NaN is
+        // not equal to itself, so whole values are compared only without it.
+        prop_assert_eq!(back.as_ref().map(Bits::bundle), Ok(Bits::bundle(&b)));
         if b == b {
             prop_assert_eq!(back, Ok(b));
         }
@@ -475,6 +623,7 @@ proptest! {
         let bytes = r.encode();
         let back = JobRequest::decode(&bytes);
         prop_assert_eq!(back.as_ref().map(JobRequest::encode), Ok(bytes));
+        prop_assert_eq!(back.as_ref().map(Bits::request), Ok(Bits::request(&r)));
         if r == r {
             prop_assert_eq!(back, Ok(r));
         }
@@ -485,6 +634,7 @@ proptest! {
         let bytes = r.encode();
         let back = JobResponse::decode(&bytes);
         prop_assert_eq!(back.as_ref().map(JobResponse::encode), Ok(bytes));
+        prop_assert_eq!(back.as_ref().map(Bits::response), Ok(Bits::response(&r)));
         if r == r {
             prop_assert_eq!(back, Ok(r));
         }
