@@ -510,6 +510,12 @@ pub fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
+/// The whitespace `int()` and `float()` strip around a number: [`is_space`] without U+001C to
+/// U+001F, which is Unicode's White_Space.
+fn number_space(c: char) -> bool {
+    is_space(c) && !('\u{1c}'..='\u{1f}').contains(&c)
+}
+
 /// `int(text)` as argparse's `type=int` reads an option: [`argparse_value`]'s rule for a value
 /// that starts with `-`, then [`int`].
 pub fn int_arg(text: &str) -> Result<i128, String> {
@@ -523,7 +529,7 @@ pub fn int_arg(text: &str) -> Result<i128, String> {
 /// than ASCII (Python takes any Unicode decimal digit) and values outside the `i128` range.
 pub fn int(text: &str) -> Result<i128, String> {
     let invalid = || format!("invalid int value: {}", repr_str(text));
-    let t = text.trim_matches(|c| is_space(c) && !('\u{1c}'..='\u{1f}').contains(&c));
+    let t = text.trim_matches(number_space);
     let (negative, digits) = match t.as_bytes().first() {
         Some(b'-') => (true, &t[1..]),
         Some(b'+') => (false, &t[1..]),
@@ -609,13 +615,13 @@ pub fn argparse_value(text: &str) -> Result<String, String> {
     }
 }
 
-/// `float(text)` as argparse's `type=float` reads an option: Python whitespace around, `_`
-/// only between digits, `inf`, `infinity` and `nan` in any case. Refused where Python reads it
-/// too: digits other than ASCII.
+/// `float(text)` as argparse's `type=float` reads an option: Python whitespace around (but not
+/// U+001C to U+001F, as for [`int`]), an optional sign, `_` only between digits, `inf`,
+/// `infinity` and `nan` in any case. Refused where Python reads it too: digits other than ASCII.
 pub fn float_arg(text: &str) -> Result<f64, String> {
     argparse_value(text)?;
     let invalid = || format!("invalid float value: {}", repr_str(text));
-    let t = text.trim_matches(is_space);
+    let t = text.trim_matches(number_space);
     let b = t.as_bytes();
     let digit = |i: Option<usize>| i.and_then(|i| b.get(i)).is_some_and(u8::is_ascii_digit);
     let underscores_ok = (0..b.len())

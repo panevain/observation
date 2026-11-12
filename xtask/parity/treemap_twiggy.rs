@@ -203,6 +203,22 @@ fn cases() -> Vec<Case> {
             "\u{feff}Shallow Bytes,Item\n10,foo::a\n7,bar::b\n",
             &["--table", "5"],
         ),
+        // The script keeps the mark, so `\u{feff}item` is no known name: the item column is the
+        // last, and the sizes are drawn as function names.
+        case(
+            "byte order mark before Item",
+            "rule",
+            "\u{feff}Item,Shallow Bytes\ndata[0],5120\ncore::fmt::write,300\n",
+            &["--table", "5"],
+        ),
+        // str.strip() removes U+001F, which Rust's `trim` keeps; the columns are not in their
+        // default places, so a name left unstripped changes the reading.
+        case(
+            "header padded with U+001F",
+            "rule",
+            "\x1fitem\x1f,\x1fshallow bytes\x1f\ndata[0],10\ncore::fmt::write,20\n",
+            &["--table", "5"],
+        ),
         case("header only", "rule", HEADER, &["--table", "5"]),
         case("empty file", "rule", "", &["--table", "5"]),
         case(
