@@ -5,7 +5,7 @@
 //! distance for the street band. Each states the band it does not check.
 
 use crate::config;
-use crate::coverage::{Camera, House, camera, house, street};
+use crate::coverage::{Camera, House, Street, camera, house, street};
 use glam::{Vec2, Vec3};
 use observation_core::frustum::ViewCone;
 use observation_core::occlusion::Occluders;
@@ -319,9 +319,11 @@ fn ground_clear(terrain: &Terrain, a: D3, b: D3) -> bool {
     })
 }
 
-/// Half general cameras ([`camera`]) and half cameras inside the area tilted
-/// down at the ground with a wide view, so that most cases see ground cells.
-fn scan_camera() -> impl Strategy<Value = Camera> {
+/// A street, and a camera that is a general one ([`camera`]), one inside the
+/// area tilted down at the ground with a wide view (so that most cases see
+/// ground cells), or one 8 to 25 m from a house looking at it (so that many
+/// see façades).
+fn street_and_scan_camera() -> impl Strategy<Value = (Street, Camera)> {
     let down = (
         (-40.0..=40.0f32, -40.0..=40.0f32, 1.5..=6.0f32),
         (0.0..360.0f32, -50.0..=-15.0f32, -30.0..=30.0f32),
@@ -339,7 +341,35 @@ fn scan_camera() -> impl Strategy<Value = Camera> {
                 range,
             },
         );
-    prop_oneof![camera(), down]
+    street().prop_flat_map(move |s| {
+        let houses = s.houses.clone();
+        let facing = (
+            any::<prop::sample::Index>(),
+            (0.0..360.0f32, 8.0..=25.0f32, 1.5..=6.0f32),
+            (-20.0..=0.0f32, -30.0..=30.0f32),
+            (60.0..=120.0f32, 40.0..=90.0f32, 30.0..=40.0f32),
+        )
+            .prop_map(
+                move |(i, (bearing, dist, above), (pitch, roll), (hfov, vfov, range))| {
+                    // The house's centre (or the area's, if there is none).
+                    let c = houses
+                        .get(i.index(houses.len().max(1)))
+                        .map_or(Vec2::ZERO, |h| Vec2::new(h.x + h.w / 2.0, h.z + h.d / 2.0));
+                    let (sb, cb) = bearing.to_radians().sin_cos();
+                    Camera {
+                        at: c - Vec2::new(sb, -cb) * dist,
+                        above,
+                        yaw: bearing,
+                        pitch,
+                        roll,
+                        hfov,
+                        vfov,
+                        range,
+                    }
+                },
+            );
+        (Just(s), prop_oneof![camera(), down.clone(), facing])
+    })
 }
 
 /// A camera's sight lines, against a scan of every open ground cell and every
@@ -354,17 +384,19 @@ fn scan_camera() -> impl Strategy<Value = Camera> {
 /// Points the oracle cannot call (within 1 cm of the view's surface, 5 cm of
 /// a building, or 5 cm of the ground's blocking threshold) are not checked. Every other point must be listed, at the squared distance the
 /// oracle finds (to a relative 1e-5), or not listed. At least 60% of the
-/// cases must see some ground cell the oracle is sure of (about 80% do), and
+/// cases must see some ground cell the oracle is sure of (about 85% do), at
+/// least 20% some façade patch (about a third do: on tilted ground the
+/// houses are buried), and
 /// at most 2% of the points in or near the view may go unchecked (under 1%
 /// are).
 #[test]
 fn prop_sight_matches_an_independent_scan() {
-    let (cases, sees_ground) = (Cell::new(0u32), Cell::new(0u32));
+    let (cases, sees_ground, sees_facade) = (Cell::new(0u32), Cell::new(0u32), Cell::new(0u32));
     let (called, unsure) = (Cell::new(0u64), Cell::new(0u64));
     let mut runner = TestRunner::new(config(24));
     let result = runner.run(
-        &(street(), scan_camera(), 0.0..=2.0f32),
-        |(s, cam, subject)| {
+        &(street_and_scan_camera(), 0.0..=2.0f32),
+        |((s, cam), subject)| {
             let layers = s.layers();
             let terrain = layers.terrain();
             let eye = Vec3::new(cam.at.x, terrain.height_at(cam.at) + cam.above, cam.at.y);
@@ -398,7 +430,7 @@ fn prop_sight_matches_an_independent_scan() {
                 }
                 v
             };
-            let mut ground_seen = false;
+            let (mut ground_seen, mut facade_seen) = (false, false);
             // Checks point `i` of a list, `v` being the oracle's verdict and
             // `margin` its margin inside the view.
             let check = |listed: &[u32], listed_d2: &[f32], i: usize, v: Verdict, margin: f64| {
@@ -458,10 +490,12 @@ fn prop_sight_matches_an_independent_scan() {
                     Verdict::Seen(d2) => Verdict::Seen(d2.max(dot(to_eye, to_eye))),
                     v => v,
                 };
+                facade_seen |= matches!(v, Verdict::Seen(_));
                 check(&sight.facade, &sight.facade_d2, i, v, margin)?;
             }
             cases.set(cases.get() + 1);
             sees_ground.set(sees_ground.get() + u32::from(ground_seen));
+            sees_facade.set(sees_facade.get() + u32::from(facade_seen));
             Ok(())
         },
     );
@@ -479,8 +513,13 @@ fn prop_sight_matches_an_independent_scan() {
         "{u} of {} points in or near the view went unchecked",
         c + u
     );
+    let f = sees_facade.get();
+    assert!(
+        5 * f >= n,
+        "only {f} of {n} cases see a facade the oracle is sure of"
+    );
     eprintln!(
-        "sight scan: {g}/{n} cases see ground; {u} of {} points unchecked",
+        "sight scan: {g}/{n} cases see ground, {f}/{n} a facade; {u} of {} points unchecked",
         c + u
     );
 }
