@@ -14,6 +14,7 @@ use observation_client_model::commands::Tracked;
 use observation_client_model::document::{self, Document};
 use observation_client_model::editor;
 pub use observation_client_model::editor::{InspectorTab, OverlayMode, Tool, select};
+use observation_client_model::net::AreaRequests;
 use observation_client_model::toasts;
 pub use observation_client_model::toasts::{ToastAction, ToastKind};
 
@@ -226,12 +227,6 @@ impl UiLayout {
     }
 }
 
-/// Network/area loading progress shown in the UI.
-#[derive(Debug, Default, Resource)]
-pub struct Loading {
-    pub area: Option<AreaRef>,
-    /// The request in flight, for Retry.
-    pub request: Option<LoadArea>,
-    /// When it was sent, seconds since start-up.
-    pub started: f64,
-}
+/// The area request in flight, shown in the UI, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Loading(AreaRequests);

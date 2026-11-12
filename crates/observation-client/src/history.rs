@@ -96,7 +96,7 @@ pub fn record(
     let editing = mouse.get_pressed().next().is_some()
         || touches.iter().next().is_some()
         || wants.wants_any_keyboard_input()
-        || loading.area.is_some();
+        || loading.area().is_some();
     if !history.observe(&scene, &models, editing, &mut toasts) {
         commands.clear();
         return;

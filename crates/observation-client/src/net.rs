@@ -3,16 +3,15 @@
 //! Requests run on the browser's event loop (`fetch`, `EventSource`) and report
 //! back through a channel that a system drains every frame.
 
-use crate::platform::{Clock, HttpRequest, Platform, unix_secs};
+use crate::platform::{HttpRequest, Platform, unix_secs};
 use crate::regions::{CatalogState, RegionRequest, Regions};
 use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, Toasts};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
-use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use observation_client_model::net::{self, TileQueue, TileState};
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
-use observation_core::geo::{MAX_BBOX_SIDE_M, MIN_BBOX_SIDE_M};
 use observation_core::regions::{ActionKind, RegionAction, SizesRequest};
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
@@ -29,62 +28,9 @@ enum Request {
     RegionsSizes(Vec<String>),
 }
 
-/// Settings published by the server at `/api/config`. Until it answers, and
-/// for any field it leaves out or gets wrong, this build's own values apply.
-#[derive(Debug, Resource)]
-pub struct ServerConfig {
-    /// Attribution required by the configured tile provider.
-    pub tile_attribution: String,
-    /// Tile URL template with `{z}`, `{x}` and `{y}` placeholders.
-    pub tile_template: String,
-    /// Side limits of an area the server will load, metres (min < max).
-    pub min_bbox_side_m: f64,
-    pub max_bbox_side_m: f64,
-    /// The server has answered (or failed to): tiles may be requested.
-    answered: bool,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            tile_attribution: "© OpenStreetMap contributors".to_owned(),
-            tile_template: "/api/tiles/{z}/{x}/{y}.png".to_owned(),
-            min_bbox_side_m: MIN_BBOX_SIDE_M,
-            max_bbox_side_m: MAX_BBOX_SIDE_M,
-            answered: false,
-        }
-    }
-}
-
-impl ServerConfig {
-    /// Takes the fields of a `/api/config` body that are present and sane.
-    fn apply(&mut self, v: &serde_json::Value) {
-        let text = |k: &str| v.get(k).and_then(serde_json::Value::as_str);
-        if let Some(a) = text("attribution").filter(|a| !a.is_empty()) {
-            a.clone_into(&mut self.tile_attribution);
-        }
-        // A same-origin path with every placeholder. Browsers read `\` as `/`
-        // and drop tabs and newlines, so `/\host` would leave the origin.
-        if let Some(u) = text("tile_url").filter(|u| {
-            u.starts_with('/')
-                && !u.starts_with("//")
-                && !u
-                    .chars()
-                    .any(|c| c == '\\' || c.is_whitespace() || c.is_control())
-                && ["{z}", "{x}", "{y}"].iter().all(|p| u.contains(p))
-        }) {
-            u.clone_into(&mut self.tile_template);
-        }
-        // An older server publishes only the maximum.
-        let side = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
-        let min = side("min_bbox_side_m").unwrap_or(self.min_bbox_side_m);
-        let max = side("max_bbox_side_m").unwrap_or(self.max_bbox_side_m);
-        if min.is_finite() && max.is_finite() && 0.0 < min && min < max {
-            self.min_bbox_side_m = min;
-            self.max_bbox_side_m = max;
-        }
-    }
-}
+/// Settings published by the server at `/api/config`, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct ServerConfig(net::ServerConfig);
 
 type Reply = (Request, Result<Vec<u8>, String>);
 
@@ -151,75 +97,9 @@ pub fn area_url(area: &AreaRef) -> String {
     }
 }
 
-/// State of one map tile.
-#[derive(Debug, Clone)]
-pub enum TileState {
-    Pending,
-    Ready(Handle<Image>),
-    /// The request failed at this time (unix seconds); asked for again after
-    /// [`TILE_RETRY_SECS`].
-    Failed(u64),
-}
-
-/// Map tiles shared by the 3D ground and the 2D map picker.
-#[derive(Debug, Default, Resource)]
-pub struct Tiles {
-    tiles: HashMap<TileId, TileState>,
-    in_flight: usize,
-    queue: Vec<TileId>,
-    /// Tiles the 3D ground needs; the map picker never cancels these.
-    pinned: HashSet<TileId>,
-}
-
-/// Concurrent tile requests (the server limits upstream fetches too).
-const MAX_IN_FLIGHT: usize = 6;
-/// Soft cap on decoded tiles kept in memory.
-const MAX_TILES: usize = 400;
-/// Wait before asking again for a tile that failed (the server may be limiting
-/// this client), so failed tiles are neither blank for good nor re-requested every frame.
-const TILE_RETRY_SECS: u64 = 30;
-
-impl Tiles {
-    /// Returns the tile if loaded; queues it otherwise.
-    pub fn get(&mut self, t: TileId, clock: &dyn Clock) -> Option<Handle<Image>> {
-        let retry = match self.tiles.get(&t) {
-            None => true,
-            Some(TileState::Failed(at)) => unix_secs(clock) >= at + TILE_RETRY_SECS,
-            Some(_) => false,
-        };
-        if retry {
-            self.tiles.insert(t, TileState::Pending);
-            self.queue.push(t);
-        }
-        self.ready(t)
-    }
-
-    /// Marks the tiles the 3D ground shows, replacing the previous set.
-    pub fn pin(&mut self, tiles: impl IntoIterator<Item = TileId>) {
-        self.pinned = tiles.into_iter().collect();
-    }
-
-    /// Returns the tile if loaded, without requesting it.
-    pub fn ready(&self, t: TileId) -> Option<Handle<Image>> {
-        match self.tiles.get(&t) {
-            Some(TileState::Ready(h)) => Some(h.clone()),
-            _ => None,
-        }
-    }
-
-    /// Drops queued requests that are no longer wanted (e.g. after panning the
-    /// map), except pinned ones.
-    pub fn retain_queue(&mut self, keep: impl Fn(&TileId) -> bool) {
-        let (tiles, pinned) = (&mut self.tiles, &self.pinned);
-        self.queue.retain(|t| {
-            let k = pinned.contains(t) || keep(t);
-            if !k {
-                tiles.remove(t);
-            }
-            k
-        });
-    }
-}
+/// Map tiles shared by the 3D ground and the 2D map picker, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Tiles(TileQueue<Handle<Image>>);
 
 pub struct NetPlugin;
 
@@ -256,21 +136,17 @@ fn start_area_loads(
 ) {
     // Only the most recent request matters.
     if let Some(req) = reqs.read().last() {
-        loading.area = Some(req.area);
-        loading.request = Some(req.clone());
-        loading.started = time.elapsed_secs_f64();
+        loading.start((**req).clone(), time.elapsed_secs_f64());
         net.get(area_url(&req.area), Request::Area(req.clone()));
     }
 }
 
 fn pump_tiles(net: Res<Net>, mut tiles: ResMut<Tiles>, config: Res<ServerConfig>) {
     // Tiles are cached by id, not URL: wait for the server's template.
-    if !config.answered {
+    if !config.answered() {
         return;
     }
-    while tiles.in_flight < MAX_IN_FLIGHT {
-        let Some(t) = tiles.queue.pop() else { break };
-        tiles.in_flight += 1;
+    while let Some(t) = tiles.next_request() {
         net.get(t.url(&config.tile_template), Request::Tile(t));
     }
 }
@@ -340,16 +216,7 @@ fn drain_replies(
     for (req, res) in net.rx.try_iter() {
         match req {
             Request::Config => {
-                let v: Option<serde_json::Value> =
-                    res.ok().and_then(|b| serde_json::from_slice(&b).ok());
-                if let Some(v) = &v {
-                    config.apply(v);
-                }
-                config.answered = true;
-                let has_regions = v
-                    .as_ref()
-                    .and_then(|v| v.get("regions")?.as_bool())
-                    .unwrap_or(false);
+                let has_regions = config.answer(res.ok().as_deref());
                 if has_regions && !regions.enabled {
                     regions.enabled = true;
                     regions.restore_token(&*net.platform.session);
@@ -396,10 +263,7 @@ fn drain_replies(
                 }
             }
             Request::Area(request) => {
-                if loading.area == Some(request.area) {
-                    loading.area = None;
-                    loading.request = None;
-                } else {
+                if !loading.finish(request.area) {
                     continue; // superseded or cancelled
                 }
                 let result = res.and_then(|bytes| {
@@ -415,7 +279,6 @@ fn drain_replies(
                 loaded.write(AreaLoaded { request, result });
             }
             Request::Tile(t) => {
-                tiles.in_flight = tiles.in_flight.saturating_sub(1);
                 let state = res
                     .and_then(|bytes| {
                         Image::from_buffer(
@@ -431,80 +294,9 @@ fn drain_replies(
                     .map_or(TileState::Failed(unix_secs(&*net.platform.clock)), |img| {
                         TileState::Ready(images.add(img))
                     });
-                tiles.tiles.insert(t, state);
+                tiles.finish(t, state);
             }
         }
     }
-    if tiles.tiles.len() > MAX_TILES {
-        // Drop failed entries due for a retry; loaded tiles stay cached.
-        let now = unix_secs(&*net.platform.clock);
-        tiles.tiles.retain(|_, s| match s {
-            TileState::Failed(at) => now < *at + TILE_RETRY_SECS,
-            TileState::Ready(_) | TileState::Pending => true,
-        });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn applied(v: &serde_json::Value) -> ServerConfig {
-        let mut c = ServerConfig::default();
-        c.apply(v);
-        c
-    }
-
-    #[test]
-    fn takes_the_servers_limits_and_tile_url() {
-        let c = applied(&json!({
-            "attribution": "© Someone",
-            "tile_url": "/tiles/{z}/{y}/{x}.png",
-            "min_bbox_side_m": 50.0,
-            "max_bbox_side_m": 1000.0,
-        }));
-        assert_eq!(c.tile_attribution, "© Someone");
-        assert_eq!((c.min_bbox_side_m, c.max_bbox_side_m), (50.0, 1000.0));
-        let t = TileId::new(18, 130_000, 87_000).unwrap();
-        assert_eq!(t.url(&c.tile_template), "/tiles/18/87000/130000.png");
-        assert_eq!(
-            t.url(&ServerConfig::default().tile_template),
-            "/api/tiles/18/130000/87000.png"
-        );
-    }
-
-    #[test]
-    fn an_older_server_without_a_minimum_keeps_ours() {
-        let c = applied(&json!({ "max_bbox_side_m": 400.0 }));
-        assert_eq!(
-            (c.min_bbox_side_m, c.max_bbox_side_m),
-            (MIN_BBOX_SIDE_M, 400.0)
-        );
-    }
-
-    #[test]
-    fn ignores_values_that_make_no_sense() {
-        let d = ServerConfig::default();
-        for v in [
-            json!({ "min_bbox_side_m": 600.0, "max_bbox_side_m": 500.0 }),
-            json!({ "min_bbox_side_m": 0.0 }),
-            json!({ "max_bbox_side_m": -1.0 }),
-            json!({ "max_bbox_side_m": 10.0 }),
-            json!({ "min_bbox_side_m": 300.0, "max_bbox_side_m": 300.0 }),
-            json!({ "max_bbox_side_m": "500" }),
-            json!({ "tile_url": "https://elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "//elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "/\\elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "/\t/elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "/api/tiles/{z}/{x}.png" }),
-            json!({ "attribution": "" }),
-        ] {
-            let c = applied(&v);
-            assert_eq!(c.min_bbox_side_m, d.min_bbox_side_m, "{v}");
-            assert_eq!(c.max_bbox_side_m, d.max_bbox_side_m, "{v}");
-            assert_eq!(c.tile_template, d.tile_template, "{v}");
-            assert_eq!(c.tile_attribution, d.tile_attribution, "{v}");
-        }
-    }
+    tiles.evict(&*net.platform.clock);
 }

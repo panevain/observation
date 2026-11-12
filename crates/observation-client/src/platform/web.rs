@@ -125,24 +125,6 @@ pub fn hide_loader() {
 
 // Networking.
 
-/// What a failed HTTP reply means to the user: the server's own `error` text
-/// when it sent one, else a description of the status (proxies and the request
-/// timeout answer without one).
-fn http_failure(status: u16, body: &str) -> String {
-    let from_server = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
-        .filter(|m| !m.is_empty());
-    from_server.unwrap_or_else(|| match status {
-        404 => "the server does not have this (HTTP 404); the app may be out of date, so reload the page".to_owned(),
-        429 => "too many requests to the server (HTTP 429); wait a minute and try again".to_owned(),
-        408 | 504 => format!("the server took too long to answer (HTTP {status}); try again shortly"),
-        502 | 503 => format!("the server is unavailable right now (HTTP {status}); try again shortly"),
-        500..=599 => format!("the server had a problem (HTTP {status}); try again shortly"),
-        _ => format!("the server refused the request (HTTP {status})"),
-    })
-}
-
 /// The message of a JavaScript exception (`TypeError: Failed to fetch`, a
 /// `DOMException`, ...), or a placeholder when it carries none.
 pub fn js_cause(e: &wasm_bindgen::JsValue) -> String {
@@ -202,7 +184,10 @@ fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 's
                         .unwrap_or_default(),
                     Err(_) => String::new(),
                 };
-                return Err(http_failure(resp.status(), &body));
+                return Err(observation_client_model::net::http_failure(
+                    resp.status(),
+                    &body,
+                ));
             }
             let read_err = |e: wasm_bindgen::JsValue| {
                 format!(
