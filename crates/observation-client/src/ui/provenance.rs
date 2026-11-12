@@ -9,7 +9,7 @@
 //! anything else that prints figures says exactly the same.
 
 use crate::icons;
-use crate::state::UiState;
+use crate::state::DataChangeNotice;
 use crate::theme::Tokens;
 use bevy_egui::egui::{self, RichText};
 use observation_core::bundle::AreaBundle;
@@ -80,8 +80,8 @@ pub fn caveats(ui: &mut egui::Ui, t: &Tokens) {
 
 /// "Map data has changed since this scene was saved (…)", in the warning
 /// colour, with a button to dismiss it.
-pub fn data_change_notice(ui: &mut egui::Ui, t: &Tokens, state: &mut UiState) {
-    let Some(change) = &state.data_change else {
+pub fn data_change_notice(ui: &mut egui::Ui, t: &Tokens, notice: &mut DataChangeNotice) {
+    let Some(change) = &**notice else {
         return;
     };
     let mut dismiss = false;
@@ -103,6 +103,6 @@ pub fn data_change_notice(ui: &mut egui::Ui, t: &Tokens, state: &mut UiState) {
         });
     });
     if dismiss {
-        state.data_change = None;
+        **notice = None;
     }
 }

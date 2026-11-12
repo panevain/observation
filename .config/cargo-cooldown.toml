@@ -1,11 +1,13 @@
-# Crate cooldown, checked on every pull request by scripts/check-cargo-cooldown.py (the
+# Crate cooldown, checked on every pull request by `cargo xtask cooldown` (the
 # `cargo-cooldown` check in security.yml; locally `mise -E ci run cooldown`).
 #
 # A crate version that a pull request adds to Cargo.lock, fuzz/Cargo.lock or xtask/Cargo.lock,
-# directly used or pulled in by another crate, must have been on crates.io for at least `days`. This matches
-# Dependabot's cooldown (dependabot.yml), which only covers the crate it bumps. A version that
-# fixes a RustSec vulnerability its crate has at the base (it is in the advisory's patched
-# range) is exempt, as Dependabot's security updates are; other new releases of that crate wait.
+# directly used or pulled in by another crate, must have been on crates.io for at least `days`.
+# This matches Dependabot's cooldown (dependabot.yml), which only covers the crate it bumps. A
+# version that fixes a RustSec vulnerability its crate has at the base (it is in the advisory's
+# patched range) is exempt, as Dependabot's security updates are; other new releases of that
+# crate wait. `cargo xtask sync` checks that dependabot.yml's cooldowns, mise.toml's
+# minimum_release_age and scripts/bump-pins.py's COOLDOWN_DAYS are these same days.
 days = 7
 
 # Exemptions, each with a reason. `version` limits one to that version (otherwise every

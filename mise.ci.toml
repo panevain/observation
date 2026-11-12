@@ -9,10 +9,9 @@
 # with `mise upgrade --bump`, each once it is a week old (minimum_release_age in mise.toml).
 
 [settings]
-# Each job installs only the tools it uses (setup-mise's `tools`); `mise run` and `mise exec`
-# must not install the rest.
-task.run_auto_install = false
-exec_auto_install = false
+# Each job installs only the tools it uses (setup-mise's `tools`); nothing else may install a
+# tool on its own: not `mise run`, not `mise exec`, not a shim for a missing version.
+auto_install = false
 # cargo: tools (cargo-fuzz) are built with `cargo install --locked`, never taken from a prebuilt
 # binary (see cargo-fuzz below).
 cargo.binstall = false
@@ -101,10 +100,13 @@ run = [
   "cargo-audit audit --deny yanked --file xtask/Cargo.lock",
 ]
 
+# The check of this tree's xtask, for local use. security.yml's cargo-cooldown job runs the
+# base's check instead, so that a pull request's crates are never built or run before their
+# verdict (that job also reads no mise config of the pull request's tree).
 [tasks.cooldown]
-description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
+description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (`cargo xtask cooldown`)"
 usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
-run = 'python3 scripts/check-cargo-cooldown.py --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+run = 'cargo xtask cooldown --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
 
 [tasks.vet]
 description = "cargo-vet: every crate in the server side's tree is audited (supply-chain/audits.toml), covered by an imported audit, or exempted (supply-chain/README.md)"
@@ -164,7 +166,7 @@ description = "Run every fuzz target for SECONDS (default 30), from fuzz/corpus/
 dir = "{{config_root}}/fuzz"
 usage = '''
 arg "[seconds]" default="30" help="Seconds to fuzz each target"
-flag "--nightly" help="The nightly run's times: bbox_query 60 s, whose coverage stops growing within a minute (a small parser at ~250k execs/s), and coverage_geometry 900 s (a few hundred execs/s)"
+flag "--nightly" help="The nightly run's times: bbox_query 60 s, whose coverage stops growing within a minute (a small parser at ~250k execs/s), job_decode 120 s, whose coverage is 99% of a 3-minute run's after 10 s (~37k execs/s), and coverage_geometry 900 s (a few hundred execs/s); catalog_ron keeps SECONDS, as its coverage still grows after 3 minutes"
 '''
 run = '''
 secs="${usage_seconds}"
@@ -177,6 +179,7 @@ for t in $(cargo fuzz list); do
   if [ "${usage_nightly:-false}" = true ]; then
     case "${t}" in
       bbox_query) t_secs=60 ;;
+      job_decode) t_secs=120 ;;
       coverage_geometry) t_secs=900 ;;
     esac
   fi

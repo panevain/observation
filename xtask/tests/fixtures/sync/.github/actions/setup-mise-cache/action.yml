@@ -1,0 +1,6 @@
+name: Cache mise
+runs:
+  using: composite
+  steps:
+    - run: echo cache
+      shell: bash

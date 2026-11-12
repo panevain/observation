@@ -53,9 +53,21 @@
       // cancelled Ctrl/Cmd+C, X or V fires no copy, cut or paste event, which is
       // the only way egui's text fields get the clipboard. Keep those three
       // shortcuts away from Bevy so the browser handles them.
+      //
+      // The tool and panel shortcuts (V P A M R L, F, N, / and F1) do nothing
+      // while Ctrl, Cmd or Alt is held, so leave those keys to the browser:
+      // Ctrl+R reloads, Ctrl+P prints, Ctrl+F finds. Bevy still gets the key
+      // (and egui the text Alt types), but its preventDefault does nothing.
+      // Ctrl/Cmd+A stays with the app, where it selects a text field's text.
+      // The list must match the client's (a client test checks it).
+      const BROWSER_KEYS = ["KeyV", "KeyP", "KeyA", "KeyM", "KeyR", "KeyL", "KeyF", "KeyN", "Slash", "F1"];
       addEventListener("keydown", (e) => {
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && ["c", "x", "v"].includes(e.key.toLowerCase())) {
+        const ctrl = e.ctrlKey || e.metaKey;
+        if (ctrl && !e.altKey && ["c", "x", "v"].includes(e.key.toLowerCase())) {
           e.stopImmediatePropagation();
+        } else if ((ctrl || e.altKey) && BROWSER_KEYS.includes(e.code)
+            && !(ctrl && !e.altKey && e.code === "KeyA")) {
+          e.preventDefault = () => {};
         }
       }, { capture: true });
     </script>

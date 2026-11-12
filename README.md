@@ -37,6 +37,8 @@ mise run up                                  # the released images, signature-ch
 
 The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits default in [`compose.yaml`](compose.yaml) (override one from the environment, e.g. `OBS_PORT=9090 mise run up`). Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
 
+On a host that only runs the stack, `echo 'env = []' > .miserc.local.toml` (gitignored) keeps mise from loading `mise.dev.toml`, the development tasks, as `.miserc.toml` would; the host needs a mise at least as new as the `soft` value of `min_version` in `mise.toml` (the CI version; older releases ignore `.miserc.local.toml`).
+
 ### From source
 
 You need the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (with the `wasm32-unknown-unknown` target) and [trunk](https://trunkrs.dev) (the version pinned in [`mise.toml`](mise.toml)). [mise](https://mise.jdx.dev) installs both (Rust via rustup) and provides the tasks below:
@@ -80,7 +82,8 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate (`tokens.css` is generated) |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |
-| `scripts/` | `check-design-tokens.sh` (colour-literal guard run in CI); `wasm-size-report.sh` and `wasm-size-treemap.py` (regenerate the bundle-size treemap) |
+| `scripts/` | Shell and Python helpers that the workflows and mise tasks run: the release steps on the bot's paths, image smoke tests and verification, `wasm-size-report.sh` (regenerates the bundle-size treemap with `cargo xtask treemap`) and `wasm-size-treemap.py`, kept as the reference for that command's parity tests (see [Repository tooling](docs/design.md#repository-tooling)) |
+| `xtask/` | Repository tooling, run as `cargo xtask <command>` (its own workspace), such as the design-token check CI runs |
 | `.github/` | CI, security, CodeQL, Scorecard and release workflows; Dependabot config |
 
 ## Documentation

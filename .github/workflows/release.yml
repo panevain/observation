@@ -16,8 +16,8 @@ concurrency:
 
 permissions: {}
 
-# mise.ci.toml: cargo-deny, Trivy and cosign (pinned, checksum-verified through mise.ci.lock)
-# and the scan tasks.
+# cargo-deny (pinned in mise.toml, locked in mise.lock), Trivy and cosign (mise.ci.toml and
+# mise.ci.lock), each checksum-verified against its lockfile, and mise.ci.toml's scan tasks.
 env:
   MISE_ENV: ci
 
@@ -55,7 +55,7 @@ jobs:
             git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
             echo "${TAG}: version ${version}, on main"
           fi
-      # No cache: what this job runs is downloaded fresh and checked against mise.ci.lock.
+      # No cache: what this job runs is downloaded fresh and checked against mise.lock.
       - uses: $/.github/actions/setup-mise
         with:
           tools: cargo-deny

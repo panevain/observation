@@ -13,6 +13,14 @@ on:
     # Nightly checks, last: after Security (01:00), so a hotfix PR has its checks by morning.
     - cron: "0 2 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (the scan, summary and artifact only; no issue change and no hotfix started)
+        type: boolean
+        default: false
+
+# dry_run (manual runs only): the jobs that hold write tokens are skipped. A
+# scheduled run has no inputs, and an empty dry_run reads as false.
 
 concurrency:
   group: ${{ github.workflow }}
@@ -37,54 +45,48 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
+      # directories: without shims, nothing run in release/ resolves its own mise config.
+      # No cache: they are downloaded fresh and checked against mise.ci.lock.
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit trivy
+          cache: false
+          shims: false
+      # xtask is built here, with develop's toolchain, before setup-rust below installs the
+      # release's (and removes every other); no cache, as for anything that reads a release.
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
+        id: xtask
+      # Skips (go=false, the reason in the summary) without a release, while one waits for its
+      # tag, or while a hotfix is open; the state (latest, ...) becomes this step's outputs.
       - name: Release state
         id: state
-        run: |
-          set -euo pipefail
-          scripts/release-state.sh | tee -a "${GITHUB_OUTPUT}" > "${RUNNER_TEMP}/state"
-          # shellcheck disable=SC1091
-          . "${RUNNER_TEMP}/state"
-          go=true
-          if [ -z "${latest}" ]; then
-            msg="No release yet; nothing to watch."; go=false
-          elif [ "${pending}" = true ]; then
-            msg="main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."; go=false
-          elif [ "${hotfix}" = true ]; then
-            msg="A hotfix/* branch exists (a hotfix is in progress); skipping."; go=false
-          else
-            msg="Checking v${latest}."
-          fi
-          echo "${msg}" | tee -a "${GITHUB_STEP_SUMMARY}"
-          echo "go=${go}" >> "${GITHUB_OUTPUT}"
+        env:
+          XTASK: ${{ steps.xtask.outputs.path }}
+        run: '"${XTASK}" release gate watch --output "${GITHUB_OUTPUT}" --summary "${GITHUB_STEP_SUMMARY}"'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.state.outputs.go == 'true'
         with:
           ref: v${{ steps.state.outputs.latest }}
           path: release
           persist-credentials: false
-      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
-      # directories: without shims, nothing run in release/ resolves its own mise config.
-      # No cache: they are downloaded fresh and checked against mise.ci.lock.
-      - uses: $/.github/actions/setup-mise
-        if: steps.state.outputs.go == 'true'
-        with:
-          tools: cargo-audit trivy
-          cache: false
-          shims: false
       - uses: $/.github/actions/setup-rust
         if: steps.state.outputs.go == 'true'
         with:
           dir: release
       # Runs `cargo update` in the release checkout to see which advisories have a compatible
-      # fix; nothing is pushed from here.
+      # fix; nothing is pushed from here. (xtask's port of scripts/security-patch.py check: the
+      # script stays for hotfix.yml, which commits what it writes.)
       - name: Check
         id: check
         if: steps.state.outputs.go == 'true'
         env:
           VERSION: ${{ steps.state.outputs.latest }}
+          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
-          action="$(python3 scripts/security-patch.py check --repo release --version "${VERSION}" --out "${RUNNER_TEMP}/report")"
+          action="$("${XTASK}" security-patch check --repo release --version "${VERSION}" --out "${RUNNER_TEMP}/report")"
           echo "action=${action}" >> "${GITHUB_OUTPUT}"
           cat "${RUNNER_TEMP}/report/summary.md" >> "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -98,39 +100,62 @@ jobs:
   act:
     name: track and dispatch
     needs: scan
-    if: needs.scan.outputs.action != ''
+    if: needs.scan.outputs.action != '' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      contents: read # the hedge checkout below
       issues: write # the per-release tracking issue
       actions: write # start hotfix.yml
     steps:
+      # GitHub documents that a `$/` action needs no checkout. This sparse checkout (and the
+      # contents: read above) is a deliberate hedge until a run in this repository has shown the
+      # composite below resolving without one; then both can be dropped.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/upsert-issue
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-watch
           path: ${{ runner.temp }}/report
-      - name: Tracking issue
+      - name: Tracking issue text
+        id: issue
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          VERSION: ${{ needs.scan.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERSION: ${{ needs.scan.outputs.version }}
         run: |
           set -euo pipefail
-          title="Security: v${VERSION}"
-          body="${RUNNER_TEMP}/body.md"
-          { cat "${RUNNER_TEMP}/report/summary.md"; echo; echo "_Updated by [Release watch](${RUN_URL})._"; } > "${body}"
-          n="$(gh issue list --repo "${REPO}" --state open --search "in:title \"${title}\"" --json number,title \
-            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
-          if [ "$(jq -r .attention "${RUNNER_TEMP}/report/report.json")" = true ]; then
-            if [ -n "${n}" ]; then
-              gh issue edit "${n}" --repo "${REPO}" --body-file "${body}"
-            else
-              gh issue create --repo "${REPO}" --title "${title}" --body-file "${body}"
-            fi
-          elif [ -n "${n}" ]; then
-            gh issue close "${n}" --repo "${REPO}" --comment "Nothing left to report for v${VERSION} (${RUN_URL})."
-          fi
+          # scan compiles code (xtask), so what it hands over is checked before first use: the
+          # version before the issue steps below put it in a title, `attention` (the one field
+          # read from report.json) before the steps' `if:` compare it. (`action` is only
+          # compared: with '' in the job's `if:`, with 'hotfix' below.) summary.md is the issue
+          # body as it is, unchecked text, only through a body file and under GitHub's limit.
+          refuse() { echo "::error::$1"; exit 1; }
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || refuse "bad version '${VERSION}'"
+          summary="${RUNNER_TEMP}/report/summary.md"
+          [ -f "${summary}" ] && [ ! -L "${summary}" ] || refuse "summary.md is not a regular file"
+          [ "$(wc -c < "${summary}")" -le 60000 ] || refuse "summary.md is over 60000 bytes"
+          attention="$(jq -r .attention "${RUNNER_TEMP}/report/report.json")"
+          [[ "${attention}" = true || "${attention}" = false ]] || refuse "bad attention '${attention}'"
+          { cat "${summary}"; echo; echo "_Updated by [Release watch](${RUN_URL})._"; } > "${RUNNER_TEMP}/body.md"
+          echo "attention=${attention}" >> "${GITHUB_OUTPUT}"
+      - name: Open or update the tracking issue
+        if: steps.issue.outputs.attention == 'true'
+        uses: $/.github/actions/upsert-issue
+        with:
+          token: ${{ github.token }}
+          title: "Security: v${{ needs.scan.outputs.version }}"
+          body-file: ${{ runner.temp }}/body.md
+          existing: edit
+      - name: Close the tracking issue
+        if: steps.issue.outputs.attention != 'true'
+        uses: $/.github/actions/upsert-issue
+        with:
+          token: ${{ github.token }}
+          title: "Security: v${{ needs.scan.outputs.version }}"
+          body: "Nothing left to report for v${{ needs.scan.outputs.version }} (${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          close: true
       - name: Start the hotfix
         if: needs.scan.outputs.action == 'hotfix'
         env:

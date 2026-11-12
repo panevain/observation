@@ -11,18 +11,63 @@ clap = { version = "4.6", default-features = false, features = ["std", "derive",
 regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "1.1"
+toml = { version = "1.1", features = ["preserve_order"] }
 semver = "1.0"
+# Reads YAML (Dependabot's config, the workflows, compose.yaml) for sync's rules.
+yaml_serde = "0.10"
+# Measures the wasm modules' gzip size (wasm-budget): a bump of flate2 or miniz_oxide can move
+# those sizes, so check the headroom in the `wasm (trunk build)` job's output with it.
 flate2 = "1.1"
 
 [dev-dependencies]
 tempfile = "3.27"
 
+# The scripts against the built binary, while both exist (see the file). Outside tests/, whose
+# fixture trees hold .rs files that are data, not test targets.
+[[test]]
+name = "release_version"
+path = "parity/release_version.rs"
+
+# Each KIND of `release unexpected-files` on the command line, through the built binary.
+[[test]]
+name = "release_files"
+path = "parity/release_files.rs"
+
+# The digest checks in the bot jobs that commit an artifact (hotfix.yml, pins.yml), run with bash.
+[[test]]
+name = "workflow_artifacts"
+path = "parity/workflow_artifacts.rs"
+
+# scripts/security-patch.py check against `security-patch check`, with stub cargo and trivy.
+[[test]]
+name = "security_patch"
+path = "parity/security_patch.rs"
+
+# scripts/wasm-size-treemap.py's crate_of_symbol against the port's, symbol by symbol.
+[[test]]
+name = "treemap_symbols"
+path = "parity/treemap_symbols.rs"
+
+# `treemap` against scripts/wasm-size-treemap.py on built modules, through the built binary.
+[[test]]
+name = "treemap_modules"
+path = "parity/treemap_modules.rs"
+
+# The treemap's tiling, rounding and SVG against the script's own functions, on generated input.
+[[test]]
+name = "treemap_math"
+path = "parity/treemap_math.rs"
+
+# `treemap --twiggy-csv` against scripts/wasm-size-treemap.py on written CSVs, through the binary.
+[[test]]
+name = "treemap_twiggy"
+path = "parity/treemap_twiggy.rs"
+
 # Dependencies with no user yet: the commands that need them arrive in later changes. Remove in
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
 # the root workspace.
 [package.metadata.cargo-shear]
-ignored = ["regex", "serde", "serde_json", "toml", "semver", "flate2", "tempfile"]
+ignored = []
 
 [lints]
 workspace = true

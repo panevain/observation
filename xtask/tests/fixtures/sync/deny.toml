@@ -1,0 +1,9 @@
+[advisories]
+yanked = "deny"
+# Keep empty, e.g.
+#   { id = "RUSTSEC-0000-0000", reason = "no fix upstream" }
+ignore = [
+    # A reason may hold a ] without ending the list.
+    { id = "RUSTSEC-2026-0001", reason = "unreachable [see #1]" },
+    { id = "GHSA-abcd-efgh-ijkl", reason = "build only" },
+]
