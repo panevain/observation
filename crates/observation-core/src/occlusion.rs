@@ -272,15 +272,7 @@ impl Occluders {
 mod tests {
     use super::*;
 
-    fn boxfp(x0: f32, z0: f32, x1: f32, z1: f32, h: f32) -> Footprint {
-        Footprint {
-            outer: vec![[x0, z0], [x1, z0], [x1, z1], [x0, z1]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: h,
-            base_m: 0.0,
-        }
-    }
+    use crate::testing::box_footprint as boxfp;
 
     #[test]
     fn blocks_through_building_not_over_it() {

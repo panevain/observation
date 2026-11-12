@@ -911,16 +911,11 @@ impl CoverageStats {
 mod tests {
     use super::*;
     use crate::bundle::Road;
+    use crate::testing::box_footprint;
 
     fn layers() -> StaticLayers {
         // A 10×10 m, 6 m tall house centred at x=0, z=-20; a road along z=0.
-        let house = Footprint {
-            outer: vec![[-5.0, -25.0], [5.0, -25.0], [5.0, -15.0], [-5.0, -15.0]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.0,
-            base_m: 0.0,
-        };
+        let house = box_footprint(-5.0, -25.0, 5.0, -15.0, 6.0);
         let road = Road {
             osm_id: 1,
             highway: "residential".into(),
@@ -1257,13 +1252,7 @@ mod tests {
                 .map(|_| {
                     let (x, z) = (rng.range(-50.0, 45.0), rng.range(-50.0, 45.0));
                     let (w, d) = (rng.range(3.0, 15.0), rng.range(3.0, 15.0));
-                    Footprint {
-                        outer: vec![[x, z], [x + w, z], [x + w, z + d], [x, z + d]],
-                        holes: vec![],
-                        min_height_m: 0.0,
-                        height_m: rng.range(3.0, 15.0),
-                        base_m: 0.0,
-                    }
+                    box_footprint(x, z, x + w, z + d, rng.range(3.0, 15.0))
                 })
                 .collect();
             let refs: Vec<&Footprint> = boxes.iter().collect();
@@ -1417,13 +1406,7 @@ mod tests {
         // A long wall facing south (+z), seen almost edge-on from just in front
         // of its plane: the sample point 5 cm out from each patch is then
         // farther from the eye than the patch centre.
-        let wall = Footprint {
-            outer: vec![[0.0, -2.0], [60.0, -2.0], [60.0, 0.0], [0.0, 0.0]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 4.0,
-            base_m: 0.0,
-        };
+        let wall = box_footprint(0.0, -2.0, 60.0, 0.0, 4.0);
         let grid = GroundGrid::covering(Vec2::splat(-10.0), Vec2::new(70.0, 10.0), 1.0);
         let l = StaticLayers::from_parts(grid, &[&wall], &[], 1.0, Terrain::default());
         let eye = Vec3::new(-1.0, 2.0, 0.01);

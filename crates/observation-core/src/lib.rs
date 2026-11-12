@@ -20,6 +20,8 @@ pub mod provenance;
 pub mod regions;
 pub mod scene;
 pub mod terrain;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod tiles;
 
 pub use glam;

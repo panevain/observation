@@ -265,13 +265,7 @@ mod tests {
     }
 
     fn square(x: f32, z: f32, side: f32) -> Footprint {
-        Footprint {
-            outer: vec![[x, z], [x + side, z], [x + side, z + side], [x, z + side]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.0,
-            base_m: 0.0,
-        }
+        crate::testing::box_footprint(x, z, x + side, z + side, 6.0)
     }
 
     fn at<'a>(

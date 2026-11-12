@@ -450,19 +450,9 @@ pub fn terrain_from_dem(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    /// A plane rising 1 m per 10 m eastward, `y = x / 10`, over ±200 m.
-    pub(crate) fn slope() -> Terrain {
-        Terrain::sample_from(
-            Vec2::splat(-200.0),
-            Vec2::splat(200.0),
-            |p| Some(100.0 + p.x / 10.0),
-            "test",
-        )
-        .unwrap()
-    }
+    use crate::testing::slope;
 
     #[test]
     fn heights_interpolate_and_hold_at_the_edges() {

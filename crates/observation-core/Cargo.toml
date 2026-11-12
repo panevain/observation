@@ -16,5 +16,14 @@ thiserror.workspace = true
 earcut.workspace = true
 ron.workspace = true
 
+[features]
+# Fixture builders (`observation_core::testing`) for tests. Enable it only
+# from `[dev-dependencies]`, never from `[dependencies]`.
+testing = []
+
+[dev-dependencies]
+# This crate's own integration tests use the fixture builders.
+observation-core = { path = ".", features = ["testing"] }
+
 [lints]
 workspace = true
