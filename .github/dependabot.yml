@@ -15,10 +15,11 @@
 # person.
 version: 2
 updates:
-  # Both Cargo workspaces: the root one and the fuzz targets (fuzz/, its own lockfile; see
-  # fuzz/README.md). One entry, so a crate both use is bumped in one PR across both lockfiles.
+  # Every Cargo workspace: the root one, the fuzz targets (fuzz/, its own lockfile; see
+  # fuzz/README.md) and the tooling (xtask/, its own lockfile). One entry, so a crate several
+  # use is bumped in one PR across their lockfiles.
   - package-ecosystem: cargo
-    directories: ["/", "/fuzz"]
+    directories: ["/", "/fuzz", "/xtask"]
     schedule:
       interval: weekly
       day: monday

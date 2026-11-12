@@ -1,0 +1,4 @@
+# `cargo xtask <command>`: the repository's tooling (xtask/), a workspace of its own with its own
+# Cargo.lock. It builds with the root rust-toolchain.toml.
+[alias]
+xtask = "run --locked --quiet --manifest-path xtask/Cargo.toml --"

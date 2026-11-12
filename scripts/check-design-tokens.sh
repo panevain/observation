@@ -2,16 +2,19 @@
 # Design-token guard: the Bevy/egui client must take every colour from
 # crates/observation-client/src/theme.rs (which takes the UI colour roles
 # from crates/observation-tokens). Any other .rs file under
-# crates/observation-client/src/ that hard-codes a colour literal fails the
-# check. Prints file:line:match for each offence and exits 1.
+# crates/observation-client/src/ or crates/observation-client-model/src/
+# that hard-codes a colour literal fails the check. Prints file:line:match for
+# each offence and exits 1.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src_dir="${root}/crates/observation-client/src"
+model_dir="${root}/crates/observation-client-model/src"
 theme_file="${src_dir}/theme.rs"
 # find's failure inside the process substitution below would go unseen, and the check would pass
 # having checked nothing.
 [ -f "${theme_file}" ] || { echo "check-design-tokens: ${theme_file#"${root}"/} not found" >&2; exit 1; }
+[ -d "${model_dir}" ] || { echo "check-design-tokens: ${model_dir#"${root}"/} not found" >&2; exit 1; }
 
 # One ERE alternation; grep -E is POSIX (no PCRE needed).
 patterns=(
@@ -37,7 +40,7 @@ while IFS= read -r -d '' file; do
     done <<<"${hits}"
     status=1
   fi
-done < <(find "${src_dir}" -type f -name '*.rs' -print0 | sort -z)
+done < <(find "${src_dir}" "${model_dir}" -type f -name '*.rs' -print0 | sort -z)
 
 if [ "${status}" -ne 0 ]; then
   echo >&2

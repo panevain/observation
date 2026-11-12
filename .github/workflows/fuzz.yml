@@ -6,8 +6,8 @@ name: Fuzz
 on:
   pull_request:
     # The targets link observation-core and observation-server, plus their path dependencies,
-    # which inherit versions from the root Cargo.toml. Neither the client nor the region agent
-    # is among them.
+    # which inherit versions from the root Cargo.toml. Neither the client, its model nor the
+    # region agent is among them.
     paths:
       - .github/workflows/fuzz.yml
       - .github/actions/**
@@ -15,6 +15,7 @@ on:
       - Cargo.toml
       - crates/**
       - "!crates/observation-client/**"
+      - "!crates/observation-client-model/**"
       - "!crates/observation-regions/**"
   push:
     branches: [develop]

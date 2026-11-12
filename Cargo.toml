@@ -1,9 +1,21 @@
 [workspace]
 resolver = "3"
-members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-upstream", "crates/observation-tokens", "crates/observation-client"]
-default-members = ["crates/observation-core", "crates/observation-server", "crates/observation-regions", "crates/observation-upstream", "crates/observation-tokens"]
-# Fuzz targets are a separate nightly-only workspace (see fuzz/README.md).
-exclude = ["fuzz"]
+members = [
+    "crates/*",
+]
+default-members = [
+    "crates/observation-core",
+    "crates/observation-server",
+    "crates/observation-regions",
+    "crates/observation-regions-api",
+    "crates/observation-upstream",
+    "crates/observation-tokens",
+    "crates/observation-client-model",
+]
+# Separate workspaces, each with its own Cargo.lock: the fuzz targets (nightly only; see
+# fuzz/README.md) and the repository's tooling (`cargo xtask`, see xtask/Cargo.toml), whose
+# dependencies ship in no image and so stay out of this lockfile.
+exclude = ["fuzz", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,6 +28,8 @@ publish = false
 observation-core = { path = "crates/observation-core" }
 observation-upstream = { path = "crates/observation-upstream" }
 observation-tokens = { path = "crates/observation-tokens" }
+observation-client-model = { path = "crates/observation-client-model" }
+observation-regions-api = { path = "crates/observation-regions-api" }
 
 # shared
 glam = { version = "0.33", features = ["serde"] }
@@ -37,9 +51,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
+# tests (dev-dependencies only)
+proptest = { version = "1.12", default-features = false, features = ["std"] }
+
 # client
 bevy = { version = "0.20.1", default-features = false } # 0.20.1: ruzstd 0.9.1 (RUSTSEC-2026-0344)
 bevy_egui = { version = "0.43", default-features = false }
+
+# Workspace dependencies with no user yet: each arrives with the change that first needs it.
+# Remove in sweep (each entry goes once a member uses it). xtask/Cargo.toml has the same list
+# for its own workspace.
+[workspace.metadata.cargo-shear]
+ignored = ["observation-client-model", "observation-regions-api", "proptest"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

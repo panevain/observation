@@ -92,16 +92,17 @@ rustup toolchain list
 '''
 
 [tasks.audit]
-description = "cargo-audit on both lockfiles (the workspace's and fuzz/'s); yanked crates fail too. Ignores: .cargo/audit.toml"
+description = "cargo-audit on every lockfile (the workspace's, fuzz/'s and xtask/'s); yanked crates fail too. Ignores: .cargo/audit.toml"
 # cargo-deny covers only the root lockfile: the fuzz crate's licences are not on its allow-list,
-# and it ships nothing.
+# and neither fuzz/ nor xtask/ ships anything.
 run = [
   "cargo-audit audit --deny yanked --file Cargo.lock",
   "cargo-audit audit --deny yanked --file fuzz/Cargo.lock",
+  "cargo-audit audit --deny yanked --file xtask/Cargo.lock",
 ]
 
 [tasks.cooldown]
-description = "Crate versions added to either lockfile since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
+description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
 usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
 run = 'python3 scripts/check-cargo-cooldown.py --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
 

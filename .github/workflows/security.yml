@@ -71,8 +71,9 @@ jobs:
           sarif_file: zizmor.sarif
           category: zizmor
 
-  # Both lockfiles, including the fuzz workspace's (cargo-deny covers only the root one: the fuzz
-  # crate's licences are not on the allow-list, and it ships nothing). Ignores come from
+  # Every lockfile, including the fuzz and xtask workspaces' (cargo-deny covers only the
+  # root one: the fuzz crate's licences are not on the allow-list, and neither ships
+  # anything). Ignores come from
   # .cargo/audit.toml. Yanked crates fail the job, as they do in cargo-deny.
   cargo-audit:
     name: cargo-audit
@@ -109,10 +110,11 @@ jobs:
       - uses: $/.github/actions/setup-rust
       - run: mise run vet
 
-  # Every crate version a pull request adds to Cargo.lock or fuzz/Cargo.lock, used directly or
-  # pulled in by another crate, must be at least .config/cargo-cooldown.toml's `days` old:
-  # Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec vulnerabilities at
-  # the base are exempt (cargo-audit finds those). Skipped outside pull requests.
+  # Every crate version a pull request adds to Cargo.lock, fuzz/Cargo.lock or xtask/Cargo.lock,
+  # used directly or pulled in by another crate, must be at least .config/cargo-cooldown.toml's
+  # `days` old: Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec
+  # vulnerabilities at the base are exempt (cargo-audit finds those). Skipped outside pull
+  # requests.
   cargo-cooldown:
     name: cargo-cooldown
     if: github.event_name == 'pull_request'

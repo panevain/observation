@@ -3,9 +3,10 @@
 
 Dependabot's cooldown (dependabot.yml) delays only the crate it bumps; the crates that bump
 pulls in, and anything added by hand, arrive at whatever age they are. This check covers
-every crates.io package that is in a lockfile now but was not in it at BASE, in both
-workspaces (Cargo.lock and fuzz/Cargo.lock), directly used or not. Publication times come
-from the crates.io sparse index (`pubtime`), with the crates.io API as a fallback.
+every crates.io package that is in a lockfile now but was not in it at BASE, in every
+workspace (Cargo.lock, fuzz/Cargo.lock and xtask/Cargo.lock), directly used or not.
+Publication times come from the crates.io sparse index (`pubtime`), with the crates.io API as
+a fallback.
 
 A new version is accepted when it is at least `days` old (.config/cargo-cooldown.toml), when
 an exemption there names it, or when it fixes a RustSec vulnerability that the same crate has
@@ -34,7 +35,7 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG = ROOT / ".config" / "cargo-cooldown.toml"
-LOCKFILES = ["Cargo.lock", "fuzz/Cargo.lock"]
+LOCKFILES = ["Cargo.lock", "fuzz/Cargo.lock", "xtask/Cargo.lock"]
 CRATES_IO = {
     "registry+https://github.com/rust-lang/crates.io-index",
     "sparse+https://index.crates.io/",
