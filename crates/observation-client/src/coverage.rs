@@ -16,12 +16,11 @@ use crate::state::{
 };
 use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
-use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use observation_client_model::coverage;
 use observation_client_model::coverage::backend::{self, WorkerNote};
-use observation_client_model::coverage::{self, Rung, Scope, apply, key};
 use observation_core::camera::{CameraModel, CameraPlacement};
-use observation_core::coverage::{CoverageParams, RegionMask};
+use observation_core::coverage::CoverageParams;
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
 
@@ -109,127 +108,10 @@ fn update_coverage(
             WorkerNote::Failed(_) => warn!("{note}"),
         }
     }
-    if results.is_empty() && !scene.is_changed() && !models.is_changed() && !state.rungs.is_empty()
-    {
+    if results.is_empty() && !scene.is_changed() && !models.is_changed() && state.counted() {
         return;
     }
-    let state = &mut **state;
-    let params = scene.params;
-
-    // The region first: every count is limited to it.
-    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
-    let mut region_changed = false;
-    if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
-        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
-        region_changed = true;
-    }
-    let on = usable.is_some_and(|r| r.enabled);
-    if on != state.region_on {
-        state.region_on = on;
-        region_changed = true;
-    }
-    // Out of the state while it is borrowed below; put back at the end.
-    let region = state.region.take();
-    let scope = Scope {
-        layers,
-        region: region.as_ref().filter(|_| on).map(|(_, m)| m),
-    };
-
-    // One rung per ladder level, keeping those already counted.
-    let ladder = params.ladder();
-    let mut old = std::mem::take(&mut state.rungs);
-    state.rungs = ladder
-        .iter()
-        .map(
-            |&(level, _)| match old.iter().position(|r| r.level == level) {
-                Some(i) => {
-                    let mut r = old.swap_remove(i);
-                    if region_changed {
-                        r.tally.limit_to(layers, scope.region);
-                        r.changed = true;
-                    }
-                    r
-                }
-                None => Rung::new(level, scope),
-            },
-        )
-        .collect();
-    let selected = ladder
-        .iter()
-        .position(|(l, _)| *l == params.dori)
-        .unwrap_or(0);
-    let mut repaint = selected != state.selected;
-    state.selected = selected;
-
-    state.ranges.clear();
-    // Enabled cameras with a known model: their keys, how far their sight
-    // lines must reach (and how far to compute them when they fall short),
-    // and their range at each ladder level.
-    let mut current = Vec::new();
-    let mut keys = HashMap::new();
-    for c in scene.cameras.iter().filter(|c| c.enabled) {
-        let Some(m) = models.get(&c.model_id) else {
-            continue;
-        };
-        let ranges: Vec<f32> = ladder
-            .iter()
-            .map(|(_, ppm)| m.effective_range_m(*ppm, params.lighting))
-            .collect();
-        state.ranges.insert(c.id, ranges[selected]);
-        let k = key(c, m, params.subject_height_m);
-        keys.insert(c.id, k);
-        let reach = (params.sight_range_m(m), params.sight_compute_range_m(m));
-        current.push((c, m, k, reach, ranges));
-    }
-    let gone: Vec<u32> = state
-        .cams
-        .keys()
-        .filter(|id| !keys.contains_key(*id))
-        .copied()
-        .collect();
-    for id in gone {
-        state.forget(scope, id);
-    }
-    for r in results {
-        apply(state, scope, keys.get(&r.camera_id).copied(), r);
-    }
-    for (c, m, k, (needed, compute_to), _) in &current {
-        // One job per camera at a time: a camera dragged faster than its jobs
-        // finish gets its latest pose computed when the previous job is back.
-        let fresh = state
-            .cams
-            .get(&c.id)
-            .is_some_and(|(old, sight)| old == k && sight.covers(*needed));
-        if fresh || backend.busy(c.id) {
-            continue;
-        }
-        let cone = ViewCone::new(c, m, *compute_to);
-        if let Some(r) = backend.submit(c.id, *k, cone, params.subject_height_m, layers) {
-            apply(state, scope, Some(*k), r);
-        }
-    }
-    // Count each camera's cells at every level. While a camera's sight lines
-    // are being recomputed for a longer range, it counts what they reach.
-    for (c, _, _, _, ranges) in &current {
-        let Some((_, sight)) = state.cams.get(&c.id) else {
-            continue;
-        };
-        for (rung, &r) in state.rungs.iter_mut().zip(ranges) {
-            rung.count(scope, c.id, sight, r);
-        }
-    }
-    for (i, r) in state.rungs.iter_mut().enumerate() {
-        if r.changed {
-            r.stats = r.tally.stats(layers);
-            r.changed = false;
-            repaint |= i == selected;
-        }
-    }
-    state.region = region;
-    if repaint || state.painted_mode.is_none() {
-        state.stats = state.rungs[selected].stats;
-        state.paint = true;
-    }
+    coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
 }
 
 fn paint_overlay(
@@ -256,7 +138,7 @@ fn paint_overlay(
     }
     // A theme change can recolour either mode.
     if tokens.is_changed() {
-        state.paint = true;
+        state.repaint();
     }
     let mode = (panels.overlay, panels.show_facades);
     // Per-camera colours can change without any visibility changing; repaint
@@ -272,13 +154,12 @@ fn paint_overlay(
         }
         h.finish()
     } else {
-        state.painted_colors
+        state.painted_colors()
     };
-    let recolor = colors != state.painted_colors;
-    if !state.paint && !recolor && state.painted_mode == Some(mode) && !overlay.is_changed() {
+    if state.is_painted(mode, colors) && !overlay.is_changed() {
         return;
     }
-    let Some(counts) = state.rungs.get(state.selected).map(|r| &r.tally.counts) else {
+    let Some(counts) = state.selected_counts() else {
         return;
     };
     let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match panels.overlay {
@@ -327,9 +208,7 @@ fn paint_overlay(
         }
     }
     write_overlay(&overlay, &mut images, &mut meshes, &ground, &facade);
-    state.paint = false;
-    state.painted_mode = Some(mode);
-    state.painted_colors = colors;
+    state.mark_painted(mode, colors);
 }
 
 /// Height of the region outline above the ground, metres.
@@ -513,7 +392,9 @@ mod tests {
     use observation_client_model::testing::{FakeClock, LoopbackJobChannel};
     use observation_core::bundle::{OsmRoad, build_bundle};
     use observation_core::camera::{CameraKind, Catalog, DoriLevel, Lighting};
-    use observation_core::coverage::{CoverageCounts, CoverageStats, Region, StaticLayers};
+    use observation_core::coverage::{
+        CoverageCounts, CoverageStats, Region, RegionMask, StaticLayers,
+    };
     use observation_core::geo::{BBox, LatLon};
     use observation_core::scene::AreaRef;
     use observation_core::terrain::Terrain;
