@@ -47,12 +47,14 @@ jobs:
           cache: false
       - uses: $/.github/actions/setup-rust
       - uses: $/.github/actions/xtask
+        id: xtask
       - name: Tag matches the version and is on main (pre-releases on develop)
         env:
           TAG: ${{ github.ref_name }}
+          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
-          version="$("${RUNNER_TEMP}/xtask-target/debug/xtask" release version get)"
+          version="$("${XTASK}" release version get)"
           [ "v${version}" = "${TAG}" ] || { echo "::error::tag ${TAG} does not match the workspace version ${version}"; exit 1; }
           if [[ "${version}" == *-* ]]; then
             # Pre-releases stay off main, so that main is always the latest stable release.

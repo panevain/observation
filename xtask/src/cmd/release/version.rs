@@ -129,7 +129,8 @@ pub(crate) mod tests {
         /// Which cargo call fails (1 for the first; recorded runs only).
         pub cargo_fails: Option<usize>,
         /// Why the port's result differs from the script's, on purpose: `stricter` (the
-        /// script passed and the port fails) or `message` (both fail, with different output).
+        /// script passed and the port fails) or `message` (both fail, with different output or
+        /// exit status).
         pub differs: Option<String>,
     }
 
@@ -233,10 +234,10 @@ pub(crate) mod tests {
 
     /// Every case of release-version/cases.toml against what the scripts did with it
     /// (release-version/golden, captured from them with a stand-in cargo that records its
-    /// calls): where a script failed, the port fails, with the same output unless the case is
-    /// listed as `differs = "message"`; where it passed, the port gives the same stdout,
-    /// stderr, cargo calls and Cargo.toml, unless listed as `differs = "stricter"`, where it
-    /// fails.
+    /// calls): where a script failed, the port fails, with the same exit status and output
+    /// unless the case is listed as `differs = "message"`; where it passed, the port gives the
+    /// same stdout, stderr, cargo calls and Cargo.toml, unless listed as `differs = "stricter"`,
+    /// where it fails.
     #[test]
     fn matches_the_scripts_and_never_passes_where_they_failed() {
         let (cases, golden) = load();
@@ -255,7 +256,8 @@ pub(crate) mod tests {
                 continue;
             };
             let manifest = manifest.strip_suffix('\n').unwrap_or(&manifest);
-            let same = stdout == *sh_stdout
+            let same = *sh_code == format!("exit {code}")
+                && stdout == *sh_stdout
                 && stderr == *sh_stderr
                 && calls == *sh_calls
                 && manifest == sh_manifest;

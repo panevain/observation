@@ -57,6 +57,7 @@ jobs:
       # (and removes every other); no cache, as for anything that prepares a release.
       - uses: $/.github/actions/setup-rust
       - uses: $/.github/actions/xtask
+        id: xtask
       - name: Release state
         id: state
         run: |
@@ -82,6 +83,7 @@ jobs:
           LATEST: ${{ steps.state.outputs.latest }}
           NEXT: ${{ steps.state.outputs.next }}
           FORCE: ${{ inputs.force }}
+          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/hotfix"
@@ -92,7 +94,7 @@ jobs:
             exit 0
           fi
           python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
-          "${RUNNER_TEMP}/xtask-target/debug/xtask" --repo main release version set "${NEXT}"
+          "${XTASK}" --repo main release version set -- "${NEXT}"
           python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
           # A hotfix only moves versions and pins.
           unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
@@ -152,6 +154,10 @@ jobs:
           set -euo pipefail
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
           git apply --index "${RUNNER_TEMP}/hotfix/hotfix.patch"
+          # prepare compiles code (xtask), so the patch is checked again here, against the same
+          # list as there, before this token commits it.
+          unexpected="$(git diff --cached --name-only --no-renames | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
+          [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
           scripts/ci-git.sh identity "${BOT}"
           git switch -c "hotfix/${VERSION}"
           git -c core.hooksPath=/dev/null commit -m "hotfix: ${VERSION} (security updates)"

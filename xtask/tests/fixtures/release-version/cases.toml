@@ -369,6 +369,7 @@ command = "set"
 args = ["0.2.0"]
 template = "workspace"
 cargo_fails = 1
+differs = "message"
 
 [[case]]
 name = "set: fuzz cargo update fails"
@@ -376,6 +377,7 @@ command = "set"
 args = ["0.2.0"]
 template = "workspace"
 cargo_fails = 2
+differs = "message"
 
 [[case]]
 name = "set: not UTF-8 outside the version"
@@ -386,3 +388,63 @@ raw = true
 differs = "stricter"
 [case.files]
 "Cargo.toml" = "# ÿ\n[workspace]\nresolver = \"3\"\nmembers = [\"crates/*\"]\nexclude = [\"fuzz\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n"
+
+[[case]]
+name = "get: FILE --help after --"
+command = "get"
+args = ["--help"]
+template = "workspace"
+differs = "message"
+separator = true
+
+[[case]]
+name = "set: VERSION --help after --"
+command = "set"
+args = ["--help"]
+template = "workspace"
+separator = true
+
+[[case]]
+name = "get: FILE -h after --"
+command = "get"
+args = ["-h"]
+template = "workspace"
+differs = "message"
+separator = true
+
+[[case]]
+name = "set: VERSION -h after --"
+command = "set"
+args = ["-h"]
+template = "workspace"
+separator = true
+
+[[case]]
+name = "get: FILE -- after --"
+command = "get"
+args = ["--"]
+template = "workspace"
+differs = "message"
+separator = true
+
+[[case]]
+name = "set: VERSION -- after --"
+command = "set"
+args = ["--"]
+template = "workspace"
+separator = true
+
+[[case]]
+name = "get: FILE -V after --"
+command = "get"
+args = ["-V"]
+template = "workspace"
+differs = "message"
+separator = true
+
+[[case]]
+name = "set: VERSION -V after --"
+command = "set"
+args = ["-V"]
+template = "workspace"
+separator = true

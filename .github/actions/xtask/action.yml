@@ -1,14 +1,23 @@
 name: Build xtask
 description: >-
   Builds xtask (the binary behind `cargo xtask`) from this checkout's xtask/ with --locked and no
-  cache, into $RUNNER_TEMP/xtask-target (outside every checkout's target/); later steps run it as
-  "${RUNNER_TEMP}/xtask-target/debug/xtask". Runs after setup-rust for the workspace (the root
+  cache, into $RUNNER_TEMP/xtask-target (outside every checkout's target/); later steps run it by
+  the `path` output (passed through `env:`). Runs after setup-rust for the workspace (the root
   rust-toolchain.toml). It compiles and runs code from the checkout, so a job that holds or will
   mint a write token never uses it.
+
+outputs:
+  path:
+    description: The built binary
+    value: ${{ steps.build.outputs.path }}
 
 runs:
   using: composite
   steps:
     - name: Build xtask
+      id: build
       shell: bash
-      run: cargo build --locked --quiet --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask-target"
+      run: |
+        set -euo pipefail
+        cargo build --locked --quiet --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask-target"
+        echo "path=${RUNNER_TEMP}/xtask-target/debug/xtask" >> "${GITHUB_OUTPUT}"
