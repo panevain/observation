@@ -201,11 +201,15 @@ enum Command {
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
     /// Draw a WebAssembly module's size per crate as a treemap (SVG), from its `name` section
-    /// (as scripts/wasm-size-treemap.py draws it).
+    /// or from twiggy's CSV (as scripts/wasm-size-treemap.py draws it).
+    #[command(group(clap::ArgGroup::new("input").required(true).args(["wasm", "twiggy_csv"])))]
     Treemap {
         /// A module that still has its `name` section.
         #[arg(long, value_name = "FILE")]
-        wasm: PathBuf,
+        wasm: Option<PathBuf>,
+        /// The output of `twiggy top -n 1000000 --format csv` instead of a module.
+        #[arg(long, value_name = "FILE")]
+        twiggy_csv: Option<PathBuf>,
         /// Print the N largest crates and the totals (0: nothing).
         #[arg(long, value_name = "N", default_value = "0", allow_hyphen_values = true, value_parser = table_arg)]
         table: usize,
@@ -522,6 +526,7 @@ fn main() -> ExitCode {
         }
         Command::Treemap {
             wasm,
+            twiggy_csv,
             table,
             shipped_raw,
             shipped_gzip,
@@ -531,8 +536,13 @@ fn main() -> ExitCode {
             stage,
             threshold,
         } => {
+            // The group above makes exactly one of the two present.
+            let source = match (wasm, twiggy_csv) {
+                (Some(path), _) => cmd::treemap::Source::Wasm(path),
+                (None, path) => cmd::treemap::Source::TwiggyCsv(path.unwrap_or_default()),
+            };
             let args = cmd::treemap::Args {
-                wasm,
+                source,
                 table,
                 shipped_raw,
                 shipped_gzip,

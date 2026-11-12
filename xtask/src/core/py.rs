@@ -44,6 +44,99 @@ pub fn splitlines(s: &str) -> Vec<&str> {
     out
 }
 
+/// The longest field `csv.reader` takes (`csv.field_size_limit()`'s default), in characters.
+pub const CSV_FIELD_LIMIT: usize = 131_072;
+
+/// `list(csv.reader(lines))` with the default (excel) dialect: `,` between fields, `"` around a
+/// quoted field and `""` for a `"` inside one, and `strict=False`, so a `"` after a quoted field
+/// is kept as text. Each line comes without its line ending, as `str.splitlines()` gives them
+/// (so a CR or LF never reaches the reader); a line with no characters is an empty record, a
+/// quoted field still open at the end of a line goes on with the next line (without a line
+/// break), and one still open at the end of the input ends there. A field longer than
+/// [`CSV_FIELD_LIMIT`] is an error, as it is for the reader.
+pub fn csv_rows(lines: &[&str]) -> Result<Vec<Vec<String>>, String> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        StartRecord,
+        StartField,
+        InField,
+        InQuoted,
+        QuoteInQuoted,
+    }
+    struct Record {
+        fields: Vec<String>,
+        field: String,
+        chars: usize,
+    }
+    impl Record {
+        fn add(&mut self, c: char) -> Result<(), String> {
+            if self.chars >= CSV_FIELD_LIMIT {
+                return Err(format!("field larger than field limit ({CSV_FIELD_LIMIT})"));
+            }
+            self.field.push(c);
+            self.chars += 1;
+            Ok(())
+        }
+        fn save(&mut self) {
+            self.fields.push(std::mem::take(&mut self.field));
+            self.chars = 0;
+        }
+    }
+    let mut rows = Vec::new();
+    let mut rec = Record {
+        fields: Vec::new(),
+        field: String::new(),
+        chars: 0,
+    };
+    let mut state = State::StartRecord;
+    for line in lines {
+        // `None` is the end of the line.
+        for c in line.chars().map(Some).chain([None]) {
+            state = match (state, c) {
+                // An empty line: an empty record.
+                (State::StartRecord, None) => State::StartRecord,
+                (State::StartField | State::InField | State::QuoteInQuoted, None) => {
+                    rec.save();
+                    State::StartRecord
+                }
+                (State::StartRecord | State::StartField, Some('"')) => State::InQuoted,
+                (
+                    State::StartRecord | State::StartField | State::InField | State::QuoteInQuoted,
+                    Some(','),
+                ) => {
+                    rec.save();
+                    State::StartField
+                }
+                (State::InQuoted, None) => State::InQuoted,
+                (State::InQuoted, Some('"')) => State::QuoteInQuoted,
+                (State::QuoteInQuoted, Some('"')) => {
+                    rec.add('"')?;
+                    State::InQuoted
+                }
+                (State::InQuoted, Some(c)) => {
+                    rec.add(c)?;
+                    State::InQuoted
+                }
+                (
+                    State::StartRecord | State::StartField | State::InField | State::QuoteInQuoted,
+                    Some(c),
+                ) => {
+                    rec.add(c)?;
+                    State::InField
+                }
+            };
+        }
+        if state == State::StartRecord {
+            rows.push(std::mem::take(&mut rec.fields));
+        }
+    }
+    if state == State::InQuoted {
+        rec.save();
+        rows.push(rec.fields);
+    }
+    Ok(rows)
+}
+
 /// Python's truth value of what `json.loads` returned.
 pub fn json_truthy(v: &serde_json::Value) -> bool {
     use serde_json::Value;
@@ -417,14 +510,20 @@ pub fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
-/// `int(text)` as argparse's `type=int` reads an option: Python whitespace around, an optional
-/// sign, decimal digits with single `_` between them, at most 4,300 digits. Refused where Python
-/// reads it too: digits other than ASCII (Python takes any Unicode decimal digit) and values
-/// outside the `i128` range.
+/// `int(text)` as argparse's `type=int` reads an option: [`argparse_value`]'s rule for a value
+/// that starts with `-`, then [`int`].
 pub fn int_arg(text: &str) -> Result<i128, String> {
     argparse_value(text)?;
+    int(text)
+}
+
+/// `int(text)` of a str: Python whitespace around (but not U+001C to U+001F, which `int()` does
+/// not strip although `str.isspace()` is true for them), an optional sign, decimal digits with
+/// single `_` between them, at most 4,300 digits. Refused where Python reads it too: digits other
+/// than ASCII (Python takes any Unicode decimal digit) and values outside the `i128` range.
+pub fn int(text: &str) -> Result<i128, String> {
     let invalid = || format!("invalid int value: {}", repr_str(text));
-    let t = text.trim_matches(is_space);
+    let t = text.trim_matches(|c| is_space(c) && !('\u{1c}'..='\u{1f}').contains(&c));
     let (negative, digits) = match t.as_bytes().first() {
         Some(b'-') => (true, &t[1..]),
         Some(b'+') => (false, &t[1..]),

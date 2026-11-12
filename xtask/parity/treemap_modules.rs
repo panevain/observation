@@ -276,6 +276,19 @@ fn cases() -> Vec<Case> {
             Some(full.clone()),
         ),
         case("table +5", "same", &["--table", "+5"], Some(full.clone())),
+        // int() strips Python's whitespace except U+001C to U+001F.
+        case(
+            "table '\\x1f5'",
+            "usage",
+            &["--table", "\x1f5"],
+            Some(full.clone()),
+        ),
+        case(
+            "table '\\x855'",
+            "same",
+            &["--table", "\u{85}5"],
+            Some(full.clone()),
+        ),
         case("table =-3", "stricter", &["--table=-3"], Some(full.clone())),
         case(
             "table -3",

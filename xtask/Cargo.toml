@@ -58,6 +58,11 @@ path = "parity/treemap_modules.rs"
 name = "treemap_math"
 path = "parity/treemap_math.rs"
 
+# `treemap --twiggy-csv` against scripts/wasm-size-treemap.py on written CSVs, through the binary.
+[[test]]
+name = "treemap_twiggy"
+path = "parity/treemap_twiggy.rs"
+
 # Dependencies with no user yet: the commands that need them arrive in later changes. Remove in
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
 # the root workspace.

@@ -3,6 +3,7 @@
 //! symbol ([`crate::core::demangle`]), data segments and the rest of the module are items of
 //! their own ([`crate::core::wasm`]), and custom sections (names, debug info) are left out of
 //! the shipped size. `--table N` prints the N largest crates and the totals, as the script does.
+//! `--twiggy-csv` reads the items from `twiggy top --format csv` instead ([`twiggy_items`]).
 //!
 //! The gzip figure is measured in process (flate2's default backend at level 9, zlib framing as
 //! the script's `zlib.compress(…, 9)`), so it can differ from the script's by a little; pass
@@ -17,16 +18,31 @@ use flate2::write::ZlibEncoder;
 
 use crate::cmd::wasm_budget;
 use crate::core::demangle::{Refused, crate_of_symbol};
+use crate::core::py::{csv_rows, int, is_space, splitlines, universal_newlines};
 use crate::core::report::thousands;
 use crate::core::treemap::{self, Crash, Meta};
 use crate::core::wasm::{self, Item};
 use crate::{Error, Result};
 
+/// Where the items come from: exactly one of `--wasm` and `--twiggy-csv`.
+#[derive(Debug, Clone)]
+pub enum Source {
+    /// A module that still has its `name` section.
+    Wasm(PathBuf),
+    /// The output of `twiggy top -n 1000000 --format csv`.
+    TwiggyCsv(PathBuf),
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Self::Wasm(PathBuf::new())
+    }
+}
+
 /// The command line, as the script took it.
 #[derive(Debug, Clone, Default)]
 pub struct Args {
-    /// A module that still has its `name` section.
-    pub wasm: PathBuf,
+    pub source: Source,
     /// Print the N largest crates (0: no table).
     pub table: usize,
     /// The raw and gzip sizes to print instead of the measured ones (0 counts as not given).
@@ -54,7 +70,7 @@ pub struct Output {
 }
 
 /// Bytes per crate, with the script's names for what is not a function.
-pub fn per_crate(items: &[(Item, u128)]) -> Result<HashMap<String, i128>> {
+pub fn per_crate(items: &[(Item, i128)]) -> Result<HashMap<String, i128>> {
     let mut per_crate = HashMap::new();
     for (item, size) in items {
         let crate_ = match item {
@@ -67,8 +83,9 @@ pub fn per_crate(items: &[(Item, u128)]) -> Result<HashMap<String, i128>> {
                 })?
                 .unwrap_or_else(|| "other / unnamed".to_owned()),
         };
-        // At most 2^64 + the file's length each: a module has fewer items than bytes.
-        *per_crate.entry(crate_).or_default() += i128::try_from(*size).unwrap_or(i128::MAX);
+        // The sizes' magnitudes add up to at most 2^64 + the file's length for a module (it has
+        // fewer items than bytes), and to at most MAX_TWIGGY_BYTES from a CSV.
+        *per_crate.entry(crate_).or_default() += *size;
     }
     Ok(per_crate)
 }
@@ -110,25 +127,112 @@ fn zlib_size(module: &[u8]) -> Result<i128> {
     zlib(module).map(|v| i128::try_from(v.len()).unwrap_or(i128::MAX))
 }
 
-pub fn run(args: &Args) -> Result<Output> {
-    let bytes = std::fs::read(&args.wasm)
-        .map_err(|e| Error::new(format!("{}: {e}", args.wasm.display())))?;
-    let analysis = wasm::analyse(&bytes).map_err(|e| Error::new(e.to_string()))?;
-    let mut stderr = String::new();
-    if !analysis.has_names {
-        stderr.push_str("warning: no `name` section; functions cannot be attributed\n");
+/// The largest sum of the sizes' magnitudes `--twiggy-csv` takes: 2^53, the integers a float
+/// holds exactly. The script reads any size Python's `int()` reads, and its shares and
+/// coordinates then lose precision in float arithmetic; the port refuses such a file instead.
+pub const MAX_TWIGGY_BYTES: u128 = 1 << 53;
+
+/// The script's `parse_twiggy_csv`: the file as UTF-8 text with universal newlines, split by
+/// `str.splitlines()` and read by `csv.reader`. The header's first `Shallow Bytes` column gives
+/// the size (else column 0) and its `Item` column the item (else the last column), compared
+/// after stripping and lowercasing, the last of equal names winning. Rows too short for both
+/// columns are skipped. An item `data[…` is a data segment; a custom section, `.debug…` or
+/// `"name"` is skipped; a section header (`type`, `table`, `elem`, `export`, `import`, `global`,
+/// `memory`, `code`, `function`, `... and`, `wasm …`) is module structure; anything else is a
+/// function, credited by its name. Sizes are read by `int()` (negative ones included).
+pub fn twiggy_items(text: &str) -> Result<Vec<(Item, i128)>> {
+    let text = universal_newlines(text);
+    let lines = splitlines(&text);
+    let mut rows = csv_rows(&lines).map_err(Error::new)?.into_iter();
+    let header = rows
+        .next()
+        .ok_or_else(|| Error::new("the CSV has no header line"))?;
+    let mut col = HashMap::new();
+    for (i, h) in header.iter().enumerate() {
+        col.insert(h.trim_matches(is_space).to_lowercase(), i);
     }
-    // `args.shipped_raw or len(shipped)`: 0 is not given.
+    // Python indexes: the item column of an empty header is -1, the row's last field.
+    let size_col = col.get("shallow bytes").copied().unwrap_or(0);
+    let item_col = col.get("item").copied().or(header.len().checked_sub(1));
+    let mut items = Vec::new();
+    let mut magnitude: u128 = 0;
+    for (n, row) in rows.enumerate() {
+        if row.len() <= size_col.max(item_col.unwrap_or(0)) {
+            continue;
+        }
+        let item = &row[item_col.unwrap_or(row.len() - 1)];
+        let size = int(&row[size_col])
+            .map_err(|e| Error::new(format!("row {} of the CSV: {e}", n + 2)))?;
+        let kind = if item.starts_with("data[") {
+            Item::Data
+        } else if ["custom section", ".debug", "\"name\""]
+            .iter()
+            .any(|p| item.starts_with(p))
+        {
+            continue;
+        } else if META.iter().any(|p| item.starts_with(p)) || item.starts_with("wasm ") {
+            Item::Meta(item.split('[').next().unwrap_or_default().to_owned())
+        } else {
+            Item::Func(Some(item.clone()))
+        };
+        magnitude = magnitude.saturating_add(size.unsigned_abs());
+        if magnitude > MAX_TWIGGY_BYTES {
+            return Err(Error::new(format!(
+                "the CSV's sizes add up to more than 2^53 bytes (row {}), which the treemap's \
+                 float arithmetic cannot hold exactly",
+                n + 2
+            )));
+        }
+        items.push((kind, size));
+    }
+    Ok(items)
+}
+
+/// The prefixes of the section headers twiggy lists.
+const META: [&str; 10] = [
+    "type", "table", "elem", "export", "import", "global", "memory", "code", "function", "... and",
+];
+
+pub fn run(args: &Args) -> Result<Output> {
+    let mut stderr = String::new();
+    // The script's `raw` and `gz`: measured from a module, none from a CSV.
+    let (items, measured_raw, measured_gzip) = match &args.source {
+        Source::Wasm(path) => {
+            let bytes =
+                std::fs::read(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+            let analysis = wasm::analyse(&bytes).map_err(|e| Error::new(e.to_string()))?;
+            if !analysis.has_names {
+                stderr.push_str("warning: no `name` section; functions cannot be attributed\n");
+            }
+            let items = analysis
+                .items
+                .into_iter()
+                // At most 2^64 + the file's length (a section size is a u64 LEB128).
+                .map(|(item, size)| (item, i128::try_from(size).unwrap_or(i128::MAX)))
+                .collect();
+            let raw = i128::try_from(analysis.shipped.len()).unwrap_or(i128::MAX);
+            (items, Some(raw), Some(zlib_size(&analysis.shipped)?))
+        }
+        Source::TwiggyCsv(path) => {
+            let bytes =
+                std::fs::read(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|e| Error::new(format!("{}: not UTF-8: {e}", path.display())))?;
+            (twiggy_items(&text)?, None, None)
+        }
+    };
+    let per_crate = per_crate(&items)?;
+    let total: i128 = per_crate.values().sum();
+    // `args.shipped_raw or raw`, then `raw or total`; `args.shipped_gzip or gz`, then `or 0`:
+    // a given 0 counts as not given.
     let raw = match args.shipped_raw {
         Some(n) if n != 0 => n,
-        _ => i128::try_from(analysis.shipped.len()).unwrap_or(i128::MAX),
+        _ => measured_raw.filter(|&n| n != 0).unwrap_or(total),
     };
     let gzip = match args.shipped_gzip {
         Some(n) if n != 0 => n,
-        _ => zlib_size(&analysis.shipped)?,
+        _ => measured_gzip.unwrap_or(0),
     };
-    let per_crate = per_crate(&analysis.items)?;
-    let total: i128 = per_crate.values().sum();
     let families = treemap::aggregate(&per_crate, total, args.threshold);
     let meta = Meta {
         raw,
@@ -195,7 +299,7 @@ mod tests {
         let wasm = dir.path().join("m.wasm");
         ok(std::fs::write(&wasm, &module));
         let args = Args {
-            wasm,
+            source: Source::Wasm(wasm),
             table: 1,
             out: dir.path().join("m.svg"),
             threshold: 0.005,
