@@ -57,7 +57,9 @@ impl SceneFile {
         Ok(())
     }
 
-    /// A blank group means "by address"; an overlong one is cut short.
+    /// A blank group means "by address"; an overlong one is cut short, and
+    /// whitespace the cut leaves at its end is trimmed too, so the group
+    /// loads the same the next time.
     fn tidy_groups(&mut self) {
         for c in &mut self.cameras {
             c.group = c
@@ -65,7 +67,10 @@ impl SceneFile {
                 .as_deref()
                 .map(str::trim)
                 .filter(|g| !g.is_empty())
-                .map(|g| g.chars().take(MAX_GROUP_CHARS).collect());
+                .map(|g| {
+                    let cut: String = g.chars().take(MAX_GROUP_CHARS).collect();
+                    cut.trim_end().to_owned()
+                });
         }
     }
 
@@ -200,6 +205,15 @@ mod tests {
         assert!(s.check_header().is_ok());
         s.version = SCENE_VERSION + 1;
         assert!(matches!(s.check_header(), Err(SceneError::TooNew(v)) if v == SCENE_VERSION + 1));
+    }
+
+    #[test]
+    fn a_group_cut_before_whitespace_loses_it() {
+        let mut s = scene();
+        s.cameras[0].group = Some(format!("{} b", "a".repeat(79)));
+        let once = SceneFile::from_json(&s.to_json()).unwrap();
+        assert_eq!(once.cameras[0].group, Some("a".repeat(79)));
+        assert_eq!(SceneFile::from_json(&once.to_json()).unwrap(), once);
     }
 
     #[test]

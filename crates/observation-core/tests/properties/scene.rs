@@ -839,20 +839,14 @@ proptest! {
         let plain = Provenance::default();
         let prov = |f: &mut SceneFile| f.provenance.get_or_insert_with(|| plain.clone()).clone();
         let (mut pin, mut pwant) = (prov(&mut input), prov(&mut want));
-        // A cut group may end in whitespace. Loading keeps it, and the next
-        // load trims it: a confirmed bug, pinned by the ignored
-        // `prop_cut_groups_load_the_same_twice`. Until its fix lands either
-        // result is accepted here; the fix removes this allowance.
-        let mut also = None;
         match &r {
             Repair::Group(k, l, body, r) => {
                 let k = k % input.cameras.len();
                 input.cameras[k].group = Some(format!("{l}{}{r}", String::from_iter(body)));
+                // Trimmed, cut to 80 characters, and trimmed again where
+                // the cut leaves whitespace at the end.
                 let cut: String = body.iter().take(80).collect();
-                let mut alt = want.clone();
-                alt.cameras[k].group = Some(cut.trim_end().to_owned()).filter(|g| !g.is_empty());
-                want.cameras[k].group = Some(cut).filter(|g| !g.is_empty());
-                also = Some(alt);
+                want.cameras[k].group = Some(cut.trim_end().to_owned()).filter(|g| !g.is_empty());
             }
             Repair::Fingerprint(f, upper) => {
                 let lower = format!("{f:016x}");
@@ -877,12 +871,9 @@ proptest! {
         }
         input.provenance = Some(pin);
         want.provenance = Some(pwant.clone());
-        if let Some(alt) = &mut also {
-            alt.provenance = Some(pwant);
-        }
         let loaded = SceneFile::from_json(&input.to_json()).ok();
         prop_assert!(
-            loaded.as_ref() == Some(&want) || (also.is_some() && loaded == also),
+            loaded.as_ref() == Some(&want),
             "{:?}: loaded {:?}, want {:?}",
             r,
             loaded,
@@ -891,7 +882,7 @@ proptest! {
     }
 }
 
-// ----- known bugs ------------------------------------------------------------
+// ----- regressions -----------------------------------------------------------
 
 /// A group whose 80th character (after trimming) is whitespace: padding, 79
 /// visible characters, a whitespace character, more visible characters,
@@ -918,11 +909,10 @@ proptest! {
     #![proptest_config(config(32))]
 
     /// Loading a file with such a group, saving it and loading it again gives
-    /// the same scene. Today it does not: the first load cuts the group to
-    /// 80 characters ending in whitespace and the second trims that off
-    /// (`"a" × 79 + " b"` loads as 80 characters, then as 79).
+    /// the same scene. Before the fix the first load cut the group to 80
+    /// characters ending in whitespace and the second trimmed that off
+    /// (`"a" × 79 + " b"` loaded as 80 characters, then as 79).
     #[test]
-    #[ignore = "fixed in claude/fix-core-scene-group-trim"]
     fn prop_cut_groups_load_the_same_twice(group in group_cut_at_whitespace()) {
         let mut s = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
         s.cameras.push(CameraPlacement { group: Some(group), ..plain_camera(1) });
