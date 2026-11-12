@@ -240,3 +240,6 @@ impl BundleService {
         outcome.ok().flatten()
     }
 }
+
+#[cfg(test)]
+mod service_tests;
