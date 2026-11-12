@@ -7,8 +7,8 @@
 //! scripts/check-wasm-size.py, whose table, messages and exit status it keeps.
 //!
 //! gzip is measured in process (flate2 at level 9, gzip framing as Python's `gzip.compress`);
-//! its compressed sizes can differ slightly from zlib's. Each module's exact sizes and its
-//! headroom against the limits also go to stderr.
+//! on real wasm its default backend compresses 0.2% to 1.3% larger than zlib. Each module's
+//! exact sizes and its headroom against the limits also go to stderr.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -251,7 +251,8 @@ pub fn run(repo: &Path, dist: &Path, brotli: Option<&dyn Brotli>) -> Result<Outc
     let mut modules = Vec::new();
     let mut contents = Vec::new();
     for file in files {
-        let data = fs::read(dist.join(&file)).map_err(|e| Error::new(format!("{file}: {e}")))?;
+        let path = dist.join(&file);
+        let data = fs::read(&path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
         modules.push(Module {
             raw: data.len() as u64,
             gzip: gzip_len(&data)?,

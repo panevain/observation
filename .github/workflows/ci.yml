@@ -231,6 +231,8 @@ jobs:
       # the measured difference. Removed before the port merges.
       - name: gzip sizes, zlib and xtask (temporary)
         if: ${{ !cancelled() }}
+        # Informational only: it must never fail the required job.
+        continue-on-error: true
         run: |
           set -euo pipefail
           {
