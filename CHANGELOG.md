@@ -108,6 +108,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Clicks in the 3D view land under the pointer; they were offset by the tool rail and top bar.
 - Large dark patches no longer flicker across the ground while zooming (the plain ground and the map tiles were fighting in the depth buffer).
 - The map picker shows a stretched lower-zoom tile (or the finer tiles it has) while a tile loads, instead of an empty square.
+- Prepare release's summary, while there is no stable release yet and `[Unreleased]` has no entries (a pre-release, say), now reads *no CHANGELOG entries, but nothing released yet; first release, from Cargo.toml*. It used to read *…shipped files changed since v; first release…*, naming a version that does not exist.
 
 ### Security
 

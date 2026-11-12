@@ -14,7 +14,7 @@ exit 0
 version=0.1.0
 kind=patch
 latest=
-reason=no CHANGELOG entries, but shipped files changed since v; first release, from Cargo.toml
+reason=no CHANGELOG entries, but nothing released yet; first release, from Cargo.toml
 -- stderr
 -- CHANGELOG.md
 -- end
@@ -24,7 +24,7 @@ exit 0
 version=0.1.0-dev.1
 kind=dev
 latest=
-reason=no CHANGELOG entries, but shipped files changed since v; first release, from Cargo.toml
+reason=no CHANGELOG entries, but nothing released yet; first release, from Cargo.toml
 -- stderr
 -- CHANGELOG.md
 -- end
@@ -34,7 +34,7 @@ exit 0
 version=0.1.0-dev.4
 kind=dev
 latest=
-reason=no CHANGELOG entries, but shipped files changed since v; first release, from Cargo.toml
+reason=no CHANGELOG entries, but nothing released yet; first release, from Cargo.toml
 -- stderr
 -- CHANGELOG.md
 -- end
