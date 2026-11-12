@@ -20,8 +20,9 @@ gzip = 8_334_000
 
 [coverage-worker]
 # 48,722 raw and 22,190 gzip (zlib) on develop at 5a18361. The gzip limit was 32,000 against
-# zlib's gzip. When the check moved to flate2 it was raised by 1.33%, the largest difference
-# measured between flate2 and zlib on small real wasm files (this module is too small to
-# compare in the old check's MiB output): 32,426, rounded up.
+# zlib's gzip. When the check moved to flate2 it was raised by the most the two can differ on
+# this module: 1.334%, the largest difference measured between flate2 and zlib on small real
+# wasm files (this module is too small to compare in the old check's MiB output), of its
+# flate2 size of 23,420 is 313 B, so the limit rose to 32,313, rounded up.
 raw = 64_000
-gzip = 32_450
+gzip = 32_320
