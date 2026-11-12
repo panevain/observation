@@ -415,18 +415,27 @@ mod tests {
         let now = unix_secs(&clock);
         let mut q = TileQueue::<u8>::default();
         let n = MAX_TILES as u32;
-        for x in 0..n {
+        for x in 0..n - 1 {
             q.finish(tile(x), TileState::Ready(0));
         }
+        let due = TileState::Failed(now - TILE_RETRY_SECS);
+        q.finish(tile(n - 1), due.clone());
         q.evict(&clock);
         assert_eq!(q.tiles.len(), MAX_TILES, "at the cap nothing goes");
-        q.finish(tile(n), TileState::Failed(now - TILE_RETRY_SECS));
+        assert_eq!(
+            q.tiles.get(&tile(n - 1)),
+            Some(&due),
+            "not even a due retry"
+        );
+        q.finish(tile(n), due);
         q.finish(tile(n + 1), TileState::Failed(now - 1));
         q.finish(tile(n + 2), TileState::Pending);
         q.evict(&clock);
-        assert_eq!(q.tiles.len(), MAX_TILES + 2);
+        assert_eq!(q.tiles.len(), MAX_TILES + 1);
+        assert!(!q.tiles.contains_key(&tile(n - 1)));
         assert!(!q.tiles.contains_key(&tile(n)));
         assert_eq!(q.tiles.get(&tile(n + 1)), Some(&TileState::Failed(now - 1)));
+        assert_eq!(q.tiles.get(&tile(n + 2)), Some(&TileState::Pending));
     }
 
     #[test]
