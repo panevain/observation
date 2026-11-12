@@ -108,22 +108,28 @@ jobs:
             fi
           done
           # Each pull request is checked again here, from GitHub alone (no code from any tree),
-          # right before auto-merge goes on: opened by Dependabot, into develop, from this
-          # repository (not a fork), not a draft, not labelled hold, and still at the commit
-          # `find` judged. Anything else, or a check that cannot be read, is skipped.
-          recheck='if .author.login != "app/dependabot" or .author.is_bot != true then "not opened by Dependabot"
+          # right before auto-merge goes on: the number `find` gave, opened by Dependabot, into
+          # develop, from this repository (not a fork), not a draft, not labelled hold, and still
+          # at the commit `find` judged. Only a single "ok" from jq merges: anything else,
+          # including an empty or unreadable answer, is skipped.
+          recheck='if .number != $n then "not the pull request that was checked"
+            elif .author.login != "app/dependabot" or .author.is_bot != true then "not opened by Dependabot"
             elif .baseRefName != "develop" then "not into develop"
             elif .isCrossRepository != false then "from another repository"
             elif .isDraft != false then "a draft"
             elif (.labels | map(.name) | index("hold")) != null then "labelled hold"
             elif .headRefOid != $sha then "it has changed since it was checked"
-            else "" end'
+            else "ok" end'
           jq -r '.merge[] | "\(.number) \(.sha)"' <<<"${PRS}" | while read -r n sha; do
             why="could not check it again"
-            if view="$(gh pr view "${n}" --repo "${REPO}" --json author,baseRefName,isCrossRepository,isDraft,labels,headRefOid </dev/null)"; then
-              why="$(jq -r --arg sha "${sha}" "${recheck}" <<<"${view}")" || why="could not check it again"
+            if ! [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+              why="not a pull request number"
+            elif view="$(gh pr view "${n}" --repo "${REPO}" --json number,author,baseRefName,isCrossRepository,isDraft,labels,headRefOid </dev/null)"; then
+              why="$(jq -e -r --argjson n "${n}" --arg sha "${sha}" "${recheck}" <<<"${view}")" || why="could not check it again"
+              # One answer, one line: several JSON documents are not a check.
+              [[ -n "${why}" && "${why}" != *$'\n'* ]] || why="could not check it again"
             fi
-            if [ -n "${why}" ]; then
+            if [ "${why}" != ok ]; then
               echo "- #${n}: skipped, ${why}" >> "${GITHUB_STEP_SUMMARY}"
               echo "::warning::not enabling auto-merge on #${n}: ${why}"
               continue
