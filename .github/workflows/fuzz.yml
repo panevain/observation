@@ -1,8 +1,9 @@
 name: Fuzz
 
 # cargo-fuzz (libFuzzer) targets in fuzz/ for the parsers that handle
-# untrusted input: bundles, scene files, Overpass responses, bbox queries,
-# and the coverage geometry. Short smoke runs on PRs; longer runs nightly.
+# untrusted or hand-edited input: bundles, scene files, Overpass responses,
+# bbox queries, coverage-job messages, the camera catalogue's RON, and the
+# coverage geometry. Short smoke runs on PRs; longer runs nightly.
 on:
   pull_request:
     # The targets link observation-core and observation-server, plus their path dependencies,
@@ -20,7 +21,9 @@ on:
   push:
     branches: [develop]
   schedule:
-    # Nightly checks, first: Fuzz (about 50 min), then Security (01:00), Release watch (02:00).
+    # Nightly checks, first: Fuzz (58 min of fuzzing plus the build, so it overlaps the start of
+    # Security; they share no cache or concurrency group), then Security (01:00), Release watch
+    # (02:00).
     - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:

@@ -97,9 +97,16 @@ impl Plugin for WorldPlugin {
             Update,
             (
                 on_area_loaded.in_set(AreaLoadSet),
-                apply_ground_tiles,
+                // Before the frame's tile replies: a tile that arrives
+                // textures the ground from the next frame on.
+                apply_ground_tiles.before(crate::net::drain_replies),
                 follow_theme.run_if(resource_changed::<Tokens>),
-                highlight_address,
+                // After the frame's edits up to `record`, before the pointer:
+                // the highlight shows the address state a click is made
+                // against.
+                highlight_address
+                    .after(crate::history::record)
+                    .before(crate::input::PointerSet),
             )
                 .chain(),
         );

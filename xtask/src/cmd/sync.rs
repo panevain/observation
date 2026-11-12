@@ -1,7 +1,8 @@
 //! `cargo xtask sync`: pinned versions agree wherever they are repeated, nothing repeats what
 //! is pinned once, and the advisory ignore lists agree. Ported rule by rule from
 //! scripts/check-toolchain-sync.sh, matching what its grep, sed and awk lines matched,
-//! quirks included (each is noted where it is kept).
+//! quirks included (each is noted where it is kept). The rules in [`extra`] and [`mise`] are
+//! newer: the script never had them.
 //!
 //! Sources of truth: rust-toolchain.toml for Rust (mise.lock records it for mise),
 //! .github/actions/setup-mise for the mise that the workflows, the Dockerfile and mise.toml's
@@ -41,6 +42,18 @@ pub struct Snapshot {
     pub deny_toml: String,
     pub audit_toml: String,
     pub osv_scanner_toml: String,
+    /// .config/release.toml (empty when there is none).
+    pub release_toml: String,
+    /// The files only the rules in [`extra`] read, each empty when there is none:
+    /// .config/cargo-cooldown.toml, .github/dependabot.yml, scripts/bump-pins.py,
+    /// scripts/security-patch.py and compose.yaml.
+    pub cooldown_toml: String,
+    pub dependabot: String,
+    pub bump_pins: String,
+    pub security_patch: String,
+    pub compose: String,
+    /// mise.ci.lock (empty when there is none), which only [`mise`] reads.
+    pub mise_ci_lock: String,
     /// What `git grep` found for [`doc_pattern`] in the Markdown files (empty: nothing), or why
     /// it could not search.
     pub doc_pins: Result<String, String>,
@@ -73,6 +86,11 @@ pub enum Finding {
         task: String,
         name: String,
     },
+    /// hotfix.yml's inline `allowed=` list and .config/release.toml's `hotfix` list differ, or
+    /// one of them cannot be read.
+    HotfixList(String),
+    /// A rule the script did not have (see [`extra`]), written as it says.
+    Rule(String),
 }
 
 impl fmt::Display for Finding {
@@ -123,6 +141,8 @@ impl fmt::Display for Finding {
                 "stale exception in sync's GET_ENV_EXCEPTIONS: {file} task {task:?} no longer reads \
                  {name} with get_env without default=env.{name}; remove the entry"
             ),
+            Self::HotfixList(why) => writeln!(f, "mismatch: {why}"),
+            Self::Rule(text) => writeln!(f, "{text}"),
         }
     }
 }
@@ -183,9 +203,19 @@ regex!(IGNORE_END_ON_LINE, r"\][^\]]*$");
 regex!(IGNORE_END, r"^ *\]");
 regex!(COMMENT_LINE, r"^ *#");
 regex!(OSV_ID, r"^id *=");
+regex!(ALLOWED_LINE, r"^ *allowed='([^']*)'$");
+// The word `allowed` as a shell name: what the rule must account for on every line.
+regex!(ALLOWED_WORD, r"(^|[^A-Za-z0-9_-])allowed($|[^A-Za-z0-9_-])");
+// The one way the job may use it: an exact-line `grep -vxE` whose pattern ends in the group.
+regex!(ALLOWED_USE, r#"grep -vxE "[^"]*\(\$\{allowed\}\)" "#);
+// One path of that list, with `\.` for each dot and no other pattern syntax.
+regex!(ALLOWED_PATH, r"^(?:[A-Za-z0-9_/-]|\\\.)+$");
 // The globs `*.y*ml` and `action.y*ml`.
 regex!(WORKFLOW_NAME, r"^.*\.y.*ml$");
 regex!(ACTION_NAME, r"^action\.y.*ml$");
+
+pub mod extra;
+pub mod mise;
 
 /// A file's lines as grep, sed and awk read them: split at LF, the last one even without a
 /// final newline. A CR stays part of its line.
@@ -475,6 +505,9 @@ pub fn check(s: &Snapshot) -> Report {
         GET_ENV_EXCEPTIONS,
     ));
 
+    // hotfix.yml's open-pr job keeps its own copy of .config/release.toml's hotfix list.
+    findings.extend(hotfix_list(&s.workflows, &s.release_toml));
+
     // The docs never repeat a pinned version (CHANGELOG.md records history and is exempt).
     match &s.doc_pins {
         Err(why) => {
@@ -595,6 +628,73 @@ pub fn env_ignores_local(
     out
 }
 
+/// hotfix.yml's open-pr job checks the patch with an inline regex (`allowed='A\.b|C'`), since
+/// it compiles nothing; its set of paths must be .config/release.toml's `hotfix` list (order
+/// aside). Nothing is checked in a tree with neither file. So that nothing else can widen it,
+/// every line of hotfix.yml outside a comment that names `allowed` must be that one assignment
+/// or a use in `grep -vxE "…(${allowed})"`.
+pub fn hotfix_list(workflows: &[(String, String)], release_toml: &str) -> Vec<Finding> {
+    const WORKFLOW: &str = ".github/workflows/hotfix.yml";
+    let workflow = workflows.iter().find(|(p, _)| p == WORKFLOW);
+    if workflow.is_none() && release_toml.is_empty() {
+        return Vec::new();
+    }
+    let inline = workflow
+        .ok_or_else(|| format!("{WORKFLOW} is missing"))
+        .and_then(|(_, text)| {
+            let named = lines(text)
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .filter(|l| ALLOWED_WORD.is_match(l));
+            let mut lists = Vec::new();
+            for line in named {
+                if let Some(list) = ALLOWED_LINE.captures(line).and_then(|c| c.get(1)) {
+                    lists.push(list.as_str());
+                } else if !ALLOWED_USE.is_match(line) {
+                    return Err(format!(
+                        "{WORKFLOW} names allowed other than in its one allowed='...' line and \
+                         grep -vxE \"...(${{allowed}})\": {}",
+                        line.trim()
+                    ));
+                }
+            }
+            let [list] = lists[..] else {
+                return Err(format!(
+                    "{WORKFLOW} has {} allowed='...' lines, expected one",
+                    lists.len()
+                ));
+            };
+            list.split('|')
+                .map(|p| {
+                    if ALLOWED_PATH.is_match(p) {
+                        Ok(p.replace("\\.", "."))
+                    } else {
+                        Err(format!("{WORKFLOW}'s allowed list has {p:?}, not a path"))
+                    }
+                })
+                .collect::<std::result::Result<BTreeSet<String>, String>>()
+        });
+    let listed = if release_toml.is_empty() {
+        Err(format!("{} is missing", super::release::files::CONFIG))
+    } else {
+        super::release::files::Config::parse(release_toml, super::release::files::CONFIG)
+            .map(|c| c.allowed_files.hotfix.into_iter().collect::<BTreeSet<_>>())
+            .map_err(|e| e.to_string())
+    };
+    match (inline, listed) {
+        (Err(why), _) | (_, Err(why)) => vec![Finding::HotfixList(why)],
+        (Ok(inline), Ok(listed)) if inline != listed => {
+            let show = |s: &BTreeSet<String>| s.iter().cloned().collect::<Vec<_>>().join(" ");
+            vec![Finding::HotfixList(format!(
+                "{WORKFLOW}'s allowed list has '{}', expected '{}' ({}'s hotfix list)",
+                show(&inline),
+                show(&listed),
+                super::release::files::CONFIG
+            ))]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// The check's output: what goes to stdout and stderr, and whether it failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
@@ -654,8 +754,39 @@ fn files(repo: &Path, paths: Vec<String>) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// Reads the repository at `repo` and runs the check; `git` searches its docs.
+/// The file read at `path` in `repo`, or empty when there is none.
+fn optional(repo: &Path, path: &str) -> Result<String> {
+    if repo.join(path).exists() {
+        read(repo, path)
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// Reads the repository at `repo` and runs every rule: the script's ([`check`]), then the
+/// newer ones ([`extra`], [`mise`]); `git` searches the docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
+    Ok(all(&snapshot(repo, git)?).outcome())
+}
+
+/// Every rule on `s`: the script's ([`check`]), then the newer ones ([`extra`], [`mise`]).
+pub fn all(s: &Snapshot) -> Report {
+    let mut report = check(s);
+    report.findings.extend(extra::check(s));
+    report.findings.extend(mise::check(s));
+    // A file several rules read (a workflow that is not YAML) is reported once.
+    let mut unique = Vec::new();
+    for f in std::mem::take(&mut report.findings) {
+        if !unique.contains(&f) {
+            unique.push(f);
+        }
+    }
+    report.findings = unique;
+    report
+}
+
+/// Reads what the rules read from the repository at `repo`; `git` searches its docs.
+pub fn snapshot(repo: &Path, git: &dyn Git) -> Result<Snapshot> {
     let mut manifests = vec!["Cargo.toml".to_owned()];
     // Each glob expands to whole paths sorted as the shell sorts them, so
     // crates/observation-client-model/Cargo.toml comes before crates/observation-client/...
@@ -694,6 +825,13 @@ pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
         deny_toml: read(repo, "deny.toml")?,
         audit_toml: read(repo, ".cargo/audit.toml")?,
         osv_scanner_toml: read(repo, "osv-scanner.toml")?,
+        release_toml: optional(repo, super::release::files::CONFIG)?,
+        cooldown_toml: optional(repo, extra::COOLDOWN)?,
+        dependabot: optional(repo, extra::DEPENDABOT)?,
+        bump_pins: optional(repo, extra::BUMP_PINS)?,
+        security_patch: optional(repo, extra::SECURITY_PATCH)?,
+        compose: optional(repo, extra::COMPOSE)?,
+        mise_ci_lock: optional(repo, "mise.ci.lock")?,
         doc_pins: Ok(String::new()),
     };
     let pattern = doc_pattern(&s.mise_toml, &s.mise_ci_toml);
@@ -702,7 +840,7 @@ pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
         .grep(&flags, &pattern, &["*.md", ":!CHANGELOG.md"])
         .map(Option::unwrap_or_default)
         .map_err(|e| e.to_string());
-    Ok(check(&s).outcome())
+    Ok(s)
 }
 
 #[cfg(test)]
@@ -792,7 +930,8 @@ mod tests {
             .iter()
             .map(|&(k, v)| (k.into(), v.into()))
             .collect();
-        let out = ok(run(&tree, &git));
+        // The script's rules only: the golden is what the script printed.
+        let out = check(&ok(snapshot(&tree, &git))).outcome();
         format!(
             "== {}\nexit {}\n-- stdout\n{}-- stderr\n{}",
             case.name,
@@ -933,5 +1072,101 @@ mod tests {
         assert_eq!(tools_pin(ci, "x"), "2");
         assert_eq!(tools_pin(ci, "y"), "y = 3");
         assert_eq!(ignores("ignore = [\"A\"] # x ]y\n"), ["\"A\"] # x "]);
+    }
+
+    #[test]
+    fn hotfix_list_matches_the_inline_regex() {
+        let wf = |line: &str| {
+            vec![(
+                ".github/workflows/hotfix.yml".to_owned(),
+                format!("jobs:\n  open-pr:\n    steps:\n      - run: |\n          {line}\n"),
+            )]
+        };
+        let toml = "[allowed-files]\nhotfix = [\"Cargo.toml\", \"fuzz/Cargo.lock\", \"Dockerfile\"]\nprerelease = [\"Cargo.toml\"]\n";
+        let check = |w: &[(String, String)], t: &str| {
+            hotfix_list(w, t)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        };
+        let good = wf(r"allowed='Cargo\.toml|fuzz/Cargo\.lock|Dockerfile'");
+        assert_eq!(check(&good, toml), Vec::<String>::new());
+        // The order of the alternation does not matter.
+        let reordered = wf(r"allowed='Dockerfile|Cargo\.toml|fuzz/Cargo\.lock'");
+        assert_eq!(check(&reordered, toml), Vec::<String>::new());
+        // Neither file: nothing to compare.
+        assert_eq!(check(&[], ""), Vec::<String>::new());
+        assert_eq!(
+            check(&wf(r"allowed='Cargo\.toml|Dockerfile'"), toml),
+            [
+                "mismatch: .github/workflows/hotfix.yml's allowed list has 'Cargo.toml Dockerfile', \
+              expected 'Cargo.toml Dockerfile fuzz/Cargo.lock' (.config/release.toml's hotfix \
+              list)\n"
+            ]
+        );
+        for (w, t, want) in [
+            (good.clone(), "", ".config/release.toml is missing"),
+            (vec![], toml, ".github/workflows/hotfix.yml is missing"),
+            (wf("x=1"), toml, "has 0 allowed='...' lines"),
+            (
+                wf(r"allowed='Cargo.toml|fuzz/Cargo\.lock|Dockerfile'"),
+                toml,
+                "\"Cargo.toml\", not a path",
+            ),
+            (
+                wf(r"allowed='Cargo\.toml|fuzz/Cargo\.lock|Docker.*'"),
+                toml,
+                "not a path",
+            ),
+            (
+                wf(r"allowed='Cargo\.toml||Dockerfile'"),
+                toml,
+                "\"\", not a path",
+            ),
+            (
+                good.clone(),
+                "[allowed-files]\nhotfix = []\nprerelease = [\"a\"]\n",
+                "hotfix is empty",
+            ),
+        ] {
+            let found = check(&w, t);
+            assert!(
+                found.len() == 1 && found[0].contains(want),
+                "{want}: {found:?}"
+            );
+        }
+        // Nothing else may assign or use it; an inline list larger than the toml list fails.
+        for extra in [
+            "allowed+='|.*'",
+            "allowed=\".*\"",
+            "allowed='.*'",
+            "export allowed",
+            "read -r allowed <<<x",
+            "bad=\"$(grep -vE \"(${allowed})\" <<<x)\"",
+            "bad=\"$(grep -vxE \"${allowed}\" <<<x)\"",
+        ] {
+            let mut w = good.clone();
+            w[0].1.push_str(&format!("          {extra}\n"));
+            let found = check(&w, toml);
+            assert!(found.len() == 1, "{extra}: {found:?}");
+        }
+        let mut used = good.clone();
+        used[0].1.push_str(
+            "          bad=\"$(grep -vxE \"M\t(${allowed})\" <<<x || true)\"\n          # allowed+='|.*' in a comment\n",
+        );
+        assert_eq!(check(&used, toml), Vec::<String>::new());
+        assert_eq!(
+            check(
+                &wf(r"allowed='Cargo\.toml|fuzz/Cargo\.lock|Dockerfile|README\.md'"),
+                toml
+            )
+            .len(),
+            1
+        );
+        let twice = vec![(
+            ".github/workflows/hotfix.yml".to_owned(),
+            "  allowed='Cargo\\.toml'\n  allowed='Cargo\\.toml'\n".to_owned(),
+        )];
+        assert!(check(&twice, toml)[0].contains("has 2 allowed='...' lines"));
     }
 }

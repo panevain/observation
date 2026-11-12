@@ -44,6 +44,99 @@ pub fn splitlines(s: &str) -> Vec<&str> {
     out
 }
 
+/// The longest field `csv.reader` takes (`csv.field_size_limit()`'s default), in characters.
+pub const CSV_FIELD_LIMIT: usize = 131_072;
+
+/// `list(csv.reader(lines))` with the default (excel) dialect: `,` between fields, `"` around a
+/// quoted field and `""` for a `"` inside one, and `strict=False`, so a `"` after a quoted field
+/// is kept as text. Each line comes without its line ending, as `str.splitlines()` gives them
+/// (so a CR or LF never reaches the reader); a line with no characters is an empty record, a
+/// quoted field still open at the end of a line goes on with the next line (without a line
+/// break), and one still open at the end of the input ends there. A field longer than
+/// [`CSV_FIELD_LIMIT`] is an error, as it is for the reader.
+pub fn csv_rows(lines: &[&str]) -> Result<Vec<Vec<String>>, String> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        StartRecord,
+        StartField,
+        InField,
+        InQuoted,
+        QuoteInQuoted,
+    }
+    struct Record {
+        fields: Vec<String>,
+        field: String,
+        chars: usize,
+    }
+    impl Record {
+        fn add(&mut self, c: char) -> Result<(), String> {
+            if self.chars >= CSV_FIELD_LIMIT {
+                return Err(format!("field larger than field limit ({CSV_FIELD_LIMIT})"));
+            }
+            self.field.push(c);
+            self.chars += 1;
+            Ok(())
+        }
+        fn save(&mut self) {
+            self.fields.push(std::mem::take(&mut self.field));
+            self.chars = 0;
+        }
+    }
+    let mut rows = Vec::new();
+    let mut rec = Record {
+        fields: Vec::new(),
+        field: String::new(),
+        chars: 0,
+    };
+    let mut state = State::StartRecord;
+    for line in lines {
+        // `None` is the end of the line.
+        for c in line.chars().map(Some).chain([None]) {
+            state = match (state, c) {
+                // An empty line: an empty record.
+                (State::StartRecord, None) => State::StartRecord,
+                (State::StartField | State::InField | State::QuoteInQuoted, None) => {
+                    rec.save();
+                    State::StartRecord
+                }
+                (State::StartRecord | State::StartField, Some('"')) => State::InQuoted,
+                (
+                    State::StartRecord | State::StartField | State::InField | State::QuoteInQuoted,
+                    Some(','),
+                ) => {
+                    rec.save();
+                    State::StartField
+                }
+                (State::InQuoted, None) => State::InQuoted,
+                (State::InQuoted, Some('"')) => State::QuoteInQuoted,
+                (State::QuoteInQuoted, Some('"')) => {
+                    rec.add('"')?;
+                    State::InQuoted
+                }
+                (State::InQuoted, Some(c)) => {
+                    rec.add(c)?;
+                    State::InQuoted
+                }
+                (
+                    State::StartRecord | State::StartField | State::InField | State::QuoteInQuoted,
+                    Some(c),
+                ) => {
+                    rec.add(c)?;
+                    State::InField
+                }
+            };
+        }
+        if state == State::StartRecord {
+            rows.push(std::mem::take(&mut rec.fields));
+        }
+    }
+    if state == State::InQuoted {
+        rec.save();
+        rows.push(rec.fields);
+    }
+    Ok(rows)
+}
+
 /// Python's truth value of what `json.loads` returned.
 pub fn json_truthy(v: &serde_json::Value) -> bool {
     use serde_json::Value;
@@ -415,6 +508,129 @@ fn toml_1_0_syntax(text: &str) -> std::result::Result<(), String> {
 /// `re`: Unicode's White_Space plus the information separators U+001C to U+001F.
 pub fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// The whitespace `int()` and `float()` strip around a number: [`is_space`] without U+001C to
+/// U+001F, which is Unicode's White_Space.
+fn number_space(c: char) -> bool {
+    is_space(c) && !('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// `int(text)` as argparse's `type=int` reads an option: [`argparse_value`]'s rule for a value
+/// that starts with `-`, then [`int`].
+pub fn int_arg(text: &str) -> Result<i128, String> {
+    argparse_value(text)?;
+    int(text)
+}
+
+/// `int(text)` of a str: Python whitespace around (but not U+001C to U+001F, which `int()` does
+/// not strip although `str.isspace()` is true for them), an optional sign, decimal digits with
+/// single `_` between them, at most 4,300 digits. Refused where Python reads it too: digits other
+/// than ASCII (Python takes any Unicode decimal digit) and values outside the `i128` range.
+pub fn int(text: &str) -> Result<i128, String> {
+    let invalid = || format!("invalid int value: {}", repr_str(text));
+    let t = text.trim_matches(number_space);
+    let (negative, digits) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    if digits.is_empty()
+        || digits.starts_with('_')
+        || digits.ends_with('_')
+        || digits.contains("__")
+        || !digits.bytes().all(|b| b.is_ascii_digit() || b == b'_')
+    {
+        return Err(invalid());
+    }
+    let digits = digits.replace('_', "");
+    if digits.len() > 4300 {
+        return Err(invalid());
+    }
+    let sign = if negative { "-" } else { "" };
+    format!("{sign}{digits}").parse().map_err(|_| invalid())
+}
+
+/// The option strings of scripts/wasm-size-treemap.py's parser, the only one whose values
+/// [`argparse_value`] reads.
+const SCRIPT_OPTIONS: [&str; 12] = [
+    "-h",
+    "--help",
+    "--wasm",
+    "--twiggy-csv",
+    "--out",
+    "--shipped-raw",
+    "--shipped-gzip",
+    "--commit",
+    "--date",
+    "--stage",
+    "--threshold",
+    "--table",
+];
+
+/// What argparse (3.11 to 3.13, `_parse_optional`) takes as an option's separate value rather
+/// than as an option, for the script's options: anything not starting with `-`; `-` alone; and
+/// a string starting with `-` that is not an option (exactly, before an `=`, or as an
+/// abbreviation: `--da=x`, `-hx`) and either looks like a negative number (`^-\d+$|^-\d*\.\d+$`,
+/// where `$` also matches before a final newline) or contains a space. Refused where argparse
+/// took it: a negative number with digits other than ASCII (`-١`, `\d` being Unicode), a value
+/// starting with `-=` that has a space (Python 3.11 and 3.12 take it, 3.13 does not), and any
+/// value given as `--opt=-x`.
+pub fn argparse_value(text: &str) -> Result<String, String> {
+    let refuse = || {
+        Err(format!(
+            "{} starts with `-` and argparse would read it as an option",
+            repr_str(text)
+        ))
+    };
+    let Some(rest) = text.strip_prefix('-') else {
+        return Ok(text.to_owned());
+    };
+    if rest.is_empty() {
+        return Ok(text.to_owned());
+    }
+    let prefix = text.split_once('=').map_or(text, |(p, _)| p);
+    let option = if rest.starts_with('-') {
+        SCRIPT_OPTIONS.iter().any(|o| o.starts_with(prefix))
+    } else {
+        // A short option and what follows it (`-hx`), or (3.13) every option for `-=…`.
+        text.starts_with("-h") || prefix == "-"
+    };
+    if option || SCRIPT_OPTIONS.contains(&text) {
+        return refuse();
+    }
+    let number = rest.strip_suffix('\n').unwrap_or(rest);
+    let (int, frac) = number
+        .split_once('.')
+        .map_or((number, None), |(i, f)| (i, Some(f)));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let negative_number = match frac {
+        None => digits(int),
+        Some(frac) => (int.is_empty() || digits(int)) && digits(frac),
+    };
+    if negative_number || text.contains(' ') {
+        Ok(text.to_owned())
+    } else {
+        refuse()
+    }
+}
+
+/// `float(text)` as argparse's `type=float` reads an option: Python whitespace around (but not
+/// U+001C to U+001F, as for [`int`]), an optional sign, `_` only between digits, `inf`,
+/// `infinity` and `nan` in any case. Refused where Python reads it too: digits other than ASCII.
+pub fn float_arg(text: &str) -> Result<f64, String> {
+    argparse_value(text)?;
+    let invalid = || format!("invalid float value: {}", repr_str(text));
+    let t = text.trim_matches(number_space);
+    let b = t.as_bytes();
+    let digit = |i: Option<usize>| i.and_then(|i| b.get(i)).is_some_and(u8::is_ascii_digit);
+    let underscores_ok = (0..b.len())
+        .filter(|&i| b[i] == b'_')
+        .all(|i| digit(i.checked_sub(1)) && digit(Some(i + 1)));
+    if !t.is_ascii() || !underscores_ok {
+        return Err(invalid());
+    }
+    t.replace('_', "").parse().map_err(|_| invalid())
 }
 
 /// `json.dumps()` of a string with the default `ensure_ascii`: `"` and `\` escaped, `\n`, `\r`,

@@ -10,11 +10,12 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
+use tokio::time::Instant;
 
 use crate::AppState;
 use crate::error::ApiError;
@@ -292,6 +293,98 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::net::Ipv4Addr;
+
+    /// A block holds exactly the addresses whose first `prefix` bits are
+    /// its own, in plain and in v4-mapped form; a v4-mapped block is the v4
+    /// block; a prefix past the address length is refused.
+    #[test]
+    fn blocks_hold_exactly_the_addresses_sharing_their_prefix() {
+        let mut rng = crate::test_rng::Rng::new(7);
+        for _ in 0..4000 {
+            let net = rng.u64() as u32;
+            let shared = rng.below(33) as u32;
+            let ip = match shared {
+                32 => net,
+                k => {
+                    let flip = 1u32 << (31 - k);
+                    net ^ (flip | (rng.u64() as u32 & (flip - 1)))
+                }
+            };
+            let (net, ip) = (Ipv4Addr::from(net), Ipv4Addr::from(ip));
+            let prefix = rng.below(33) as u32;
+            let block = Cidr::parse(&format!("{net}/{prefix}")).unwrap();
+            let inside = shared >= prefix;
+            assert_eq!(
+                block.contains(IpAddr::V4(ip)),
+                inside,
+                "{net}/{prefix} {ip}"
+            );
+            assert_eq!(
+                block.contains(IpAddr::V6(ip.to_ipv6_mapped())),
+                inside,
+                "{net}/{prefix} {ip}"
+            );
+            let mapped = Cidr::parse(&format!("::ffff:{net}/{}", 96 + prefix));
+            assert_eq!(mapped, Some(block));
+            let short = format!("::ffff:{net}/{}", prefix * 3 % 96);
+            assert_eq!(Cidr::parse(&short), None, "{short}");
+            assert_eq!(Cidr::parse(&format!("{net}/{}", 33 + rng.below(200))), None);
+        }
+        for _ in 0..4000 {
+            let net = rng.u128();
+            let shared = rng.below(129) as u32;
+            let ip = match shared {
+                128 => net,
+                k => {
+                    let flip = 1u128 << (127 - k);
+                    net ^ (flip | (rng.u128() & (flip - 1)))
+                }
+            };
+            let (net, ip) = (Ipv6Addr::from(net), Ipv6Addr::from(ip));
+            if net.to_ipv4_mapped().is_some() {
+                continue;
+            }
+            let prefix = rng.below(129) as u32;
+            let block = Cidr::parse(&format!("{net}/{prefix}")).unwrap();
+            let inside = shared >= prefix && ip.to_ipv4_mapped().is_none();
+            assert_eq!(
+                block.contains(IpAddr::V6(ip)),
+                inside,
+                "{net}/{prefix} {ip}"
+            );
+            assert_eq!(
+                Cidr::parse(&format!("{net}/{}", 129 + rng.below(100))),
+                None
+            );
+        }
+    }
+
+    /// A client is its IPv4 address (also v4-mapped) or its IPv6 /64.
+    #[test]
+    fn client_keys_are_the_v4_address_or_the_v6_slash_64() {
+        let mut rng = crate::test_rng::Rng::new(11);
+        for _ in 0..4000 {
+            let v4 = Ipv4Addr::from(rng.u64() as u32);
+            let key = ClientKey::from_ip(IpAddr::V4(v4));
+            assert_eq!(key, ClientKey(Some(IpAddr::V4(v4))));
+            assert_eq!(ClientKey::from_ip(IpAddr::V6(v4.to_ipv6_mapped())), key);
+
+            let a = rng.u128();
+            let shared = rng.below(129) as u32;
+            let b = match shared {
+                128 => a,
+                k => a ^ (1u128 << (127 - k)) ^ (rng.u128() & ((1u128 << (127 - k)) - 1)),
+            };
+            let (a, b) = (Ipv6Addr::from(a), Ipv6Addr::from(b));
+            if a.to_ipv4_mapped().is_some() || b.to_ipv4_mapped().is_some() {
+                continue;
+            }
+            let same = ClientKey::from_ip(IpAddr::V6(a)) == ClientKey::from_ip(IpAddr::V6(b));
+            assert_eq!(same, shared >= 64, "{a} {b}");
+        }
+    }
     use axum::http::HeaderValue;
 
     fn ip(s: &str) -> IpAddr {
@@ -394,6 +487,29 @@ mod tests {
         per_minute: 60,
         burst: 3,
     };
+
+    #[tokio::test(start_paused = true)]
+    async fn check_refills_on_tokio_time() {
+        let l = RateLimiter::new(
+            "test",
+            Rate {
+                per_minute: 60,
+                burst: 1,
+            },
+        );
+        let a = key("192.0.2.1");
+        assert!(l.check(a).is_ok());
+        assert!(matches!(
+            l.check(a),
+            Err(ApiError::TooManyRequests {
+                retry_after_secs: 1
+            })
+        ));
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(l.check(a).is_err());
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(l.check(a).is_ok());
+    }
 
     #[test]
     fn buckets_allow_a_burst_then_refill() {
