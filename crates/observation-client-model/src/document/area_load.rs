@@ -286,8 +286,14 @@ mod tests {
 
     #[test]
     fn a_fresh_osm_area_starts_empty() {
-        let a = load(before(AreaRef::Demo), osm(), false, &street());
+        let old = before(AreaRef::Demo);
+        let revision = old.0.revision;
+        let a = load(old, osm(), false, &street());
         assert!(a.doc.cameras.is_empty());
+        assert!(
+            a.doc.revision > revision,
+            "a new revision for undo and the addresses"
+        );
         assert_eq!(a.doc.region, None);
         assert_eq!(a.doc.area, Some(osm()));
         assert_eq!(a.toasts, [LOADED]);
@@ -298,7 +304,9 @@ mod tests {
         let bundle = street_on(raised());
         let old = before(osm());
         let (cameras, region) = (old.0.cameras.clone(), old.0.region.clone());
+        let revision = old.0.revision;
         let a = load(old, osm(), true, &bundle);
+        assert!(a.doc.revision > revision);
         let mut lifted = cameras.clone();
         lift_onto_terrain(&mut lifted, &bundle.terrain);
         assert_ne!(lifted, cameras, "the ground is raised");
@@ -313,8 +321,28 @@ mod tests {
         // Cameras already on the terrain stay where they are.
         let mut old = before(osm());
         old.0.on_flat_ground = false;
+        let revision = old.0.revision;
         let a = load(old, osm(), true, &bundle);
         assert_eq!(a.doc.cameras, cameras);
+        assert!(
+            a.doc.revision > revision,
+            "a new revision though nothing moved"
+        );
+    }
+
+    #[test]
+    fn a_restored_demo_scene_keeps_its_cameras_and_gets_no_examples() {
+        let mut old = before(AreaRef::Demo);
+        old.0.on_flat_ground = false;
+        let (cameras, region) = (old.0.cameras.clone(), old.0.region.clone());
+        let revision = old.0.revision;
+        let a = load(old, AreaRef::Demo, true, &street());
+        assert_eq!(a.doc.cameras, cameras, "no example cameras added");
+        assert_eq!(a.doc.region, region);
+        assert_eq!(a.editor.region_draft, [[1.0, 1.0]]);
+        assert!(a.editor.selected.is_some());
+        assert!(a.doc.revision > revision);
+        assert_eq!(a.toasts, [LOADED]);
     }
 
     #[test]
