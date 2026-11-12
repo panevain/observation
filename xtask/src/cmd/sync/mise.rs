@@ -10,8 +10,9 @@
 //! - Layering: each job that uses setup-mise (directly or through a composite action) runs
 //!   with `MISE_ENV: ci` from its own or the workflow's `env:`, so that mise.ci.toml applies;
 //!   a job, step or workflow that sets `MISE_ENV: ci` sets mise up. Workflows are read as YAML.
-//! - `check`: every `mise run TASK` in ci.yml and security.yml is a step of mise.toml's `check`
-//!   task, or is listed in [`NOT_IN_CHECK`] with the reason.
+//! - `check`: every job of a workflow that runs on `pull_request` is covered by mise.toml's
+//!   `check` task (each of its `run:` steps is only `mise run TASK` of tasks `check` runs), or is
+//!   listed in [`JOBS_NOT_IN_CHECK`] with the reason.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
@@ -21,7 +22,7 @@ use toml::{Table, Value};
 use yaml_serde::Value as YValue;
 
 use super::extra::{entries, finding, parse, scalar, yaml};
-use super::{Finding, Snapshot, lines, re};
+use super::{Finding, Snapshot, re};
 
 regex!(MISE_RUN, r"(?:^|[\s;&|(`'\x22])mise\s+run\s+");
 regex!(TASK_NAME, r"^[A-Za-z0-9:_-]+$");
@@ -74,29 +75,88 @@ fn mise_run_tasks(code: &str) -> Vec<String> {
     out
 }
 
-/// The tasks ci.yml and security.yml run that `mise run check` leaves out, and why. An entry
-/// that neither file runs any more, or that `check` now runs, is a finding.
-pub const NOT_IN_CHECK: &[(&str, &str)] = &[
+/// The jobs of the `pull_request` workflows that `mise run check` does not cover, and why: a job
+/// is covered when each of its `run:` steps is only `mise run TASK` of tasks `check` runs. An
+/// entry whose job is gone, or is covered, is a finding.
+pub const JOBS_NOT_IN_CHECK: &[(&str, &str, &str)] = &[
     (
-        "build",
-        "the trunk build of the client; `check` leaves the build out",
-    ),
-    ("build:budget", "measures the build's dist/"),
-    (
+        CI,
         "coverage",
-        "needs cargo-llvm-cov, a CI-only tool (mise.ci.toml)",
+        "line coverage with cargo-llvm-cov, a CI-only tool (mise.ci.toml); pushes only",
     ),
     (
-        "coverage:check",
-        "needs cargo-llvm-cov, a CI-only tool (mise.ci.toml)",
+        CI,
+        "coverage-floor",
+        "coverage:check needs cargo-llvm-cov, a CI-only tool (mise.ci.toml)",
     ),
-    ("zizmor", "zizmor, a CI-only tool (mise.ci.toml)"),
-    ("audit", "cargo-audit, a CI-only tool (mise.ci.toml)"),
-    ("vet", "cargo-vet, a CI-only tool (mise.ci.toml)"),
-    ("scan:repo", "Trivy, a CI-only tool (mise.ci.toml)"),
-    ("scan:image", "Trivy and a Docker image"),
-    ("scan:crates", "Trivy and a Docker image"),
+    (
+        CI,
+        "wasm",
+        "the trunk release build of the client, its dist/ and size budget; `check` leaves the \
+         build out",
+    ),
+    (
+        CI,
+        "docker",
+        "builds the images with Docker and smoke-tests them",
+    ),
+    (
+        CI,
+        "browser",
+        "smoke-tests the built client in headless Chrome inside the app image (Docker, and the \
+         wasm job's dist/)",
+    ),
+    (SECURITY, "zizmor", "zizmor, a CI-only tool (mise.ci.toml)"),
+    (
+        SECURITY,
+        "cargo-audit",
+        "cargo-audit, a CI-only tool (mise.ci.toml)",
+    ),
+    (
+        SECURITY,
+        "cargo-vet",
+        "cargo-vet, a CI-only tool (mise.ci.toml)",
+    ),
+    (
+        SECURITY,
+        "cargo-cooldown",
+        "judges the pull request's new crate versions with the base branch's check, against the \
+         crates.io index",
+    ),
+    (
+        SECURITY,
+        "trivy",
+        "Trivy, a CI-only tool (mise.ci.toml), on the repository and a Docker image",
+    ),
+    (
+        ".github/workflows/fuzz.yml",
+        "fuzz",
+        "cargo-fuzz (mise.ci.toml) on fuzz/'s nightly toolchain",
+    ),
+    (
+        ".github/workflows/fuzz.yml",
+        "report",
+        "files the nightly crash issue; scheduled runs only",
+    ),
+    (
+        ".github/workflows/codeql.yml",
+        "analyze",
+        "CodeQL's analysis, which runs on GitHub",
+    ),
+    (
+        ".github/workflows/branch-policy.yml",
+        "policy",
+        "checks the pull request's head and base branches, which exist only on GitHub",
+    ),
+    (
+        ".github/workflows/image-full.yml",
+        "image",
+        "builds the full image with Docker and smoke-tests it",
+    ),
 ];
+
+const CI: &str = ".github/workflows/ci.yml";
+const SECURITY: &str = ".github/workflows/security.yml";
 
 /// The versions a pin names: `"1.2"`, `{ version = "1.2", ... }`, or a list of those. `None`
 /// when the shape is none of these.
@@ -307,45 +367,104 @@ fn check_tasks(mise_toml: &str) -> Result<BTreeSet<String>, Finding> {
     Ok(out)
 }
 
-pub fn check_covers_ci(s: &Snapshot, exceptions: &[(&str, &str)]) -> Vec<Finding> {
+/// The events a workflow runs on (`on:` as a name, a list or a mapping).
+fn triggers(doc: &YValue) -> Vec<String> {
+    // YAML 1.1 reads a bare `on` key as true.
+    let on = doc
+        .as_mapping()
+        .into_iter()
+        .flatten()
+        .find(|(k, _)| matches!(scalar(k).as_deref(), Some("on" | "true")))
+        .map(|(_, v)| v);
+    match on {
+        Some(YValue::Sequence(list)) => list.iter().filter_map(scalar).collect(),
+        Some(YValue::Mapping(m)) => m.keys().filter_map(scalar).collect(),
+        Some(v) => scalar(v).into_iter().collect(),
+        None => vec![],
+    }
+}
+
+/// Why a job is not covered by `check`, one entry per step that is not `mise run` of a check
+/// task (empty: covered).
+fn uncovered(def: &YValue, check: &BTreeSet<String>) -> Vec<String> {
+    let mut why = Vec::new();
+    let mut runs = 0;
+    for step in steps(def) {
+        let Some(script) = step.get("run").and_then(scalar) else {
+            continue;
+        };
+        runs += 1;
+        for line in script.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let tasks = mise_run_tasks(line);
+            let plain = line.starts_with("mise run ")
+                && !line.contains([';', '&', '|', '`', '>', '<'])
+                && !line.contains("$(");
+            match tasks.first() {
+                Some(task) if plain && !check.contains(task) => {
+                    why.push(format!(
+                        "runs `mise run {task}`, which `mise run check` does not"
+                    ));
+                }
+                Some(_) if plain => {}
+                _ => why.push(format!(
+                    "has a step that is not `mise run` of a check task (`{line}`)"
+                )),
+            }
+        }
+    }
+    if runs == 0 {
+        why.push("has no `run:` step that `mise run check` covers".to_owned());
+    }
+    why
+}
+
+pub fn check_covers_ci(s: &Snapshot, exceptions: &[(&str, &str, &str)]) -> Vec<Finding> {
     let check = match check_tasks(&s.mise_toml) {
         Ok(c) => c,
         Err(f) => return vec![f],
     };
     let mut out = Vec::new();
-    let mut run = BTreeSet::new();
-    for path in [".github/workflows/ci.yml", ".github/workflows/security.yml"] {
-        let Some((_, text)) = s.workflows.iter().find(|(p, _)| p == path) else {
-            out.push(finding(format!("{path} is missing")));
+    // (workflow, job, covered) of every job of a pull_request workflow.
+    let mut jobs = Vec::new();
+    for (path, text) in &s.workflows {
+        if !path.starts_with(".github/workflows/") {
             continue;
+        }
+        let Ok(doc) = yaml(path, text) else {
+            continue; // layering reports it
         };
-        for line in lines(text).filter(|l| !l.trim_start().starts_with('#')) {
-            // A trailing comment (` # ...`) runs nothing.
-            let code = line.split(" #").next().unwrap_or(line);
-            for task in mise_run_tasks(code) {
-                if !check.contains(&task)
-                    && !exceptions.iter().any(|(t, _)| *t == task)
-                    && run.insert(task.clone())
-                {
+        if !triggers(&doc).iter().any(|t| t == "pull_request") {
+            continue;
+        }
+        for (job, def) in entries(&doc, "jobs") {
+            let job = scalar(job).unwrap_or_default();
+            let why = uncovered(def, &check);
+            let listed = exceptions.iter().any(|(p, j, _)| p == path && *j == job);
+            if !listed {
+                for w in &why {
                     out.push(finding(format!(
-                        "{path} runs `mise run {task}`, which `mise run check` does not: add it to \
-                         check, or to sync's NOT_IN_CHECK with the reason"
+                        "{path}: job {job} {w}: make it a task of check, or add the job to sync's \
+                         JOBS_NOT_IN_CHECK with the reason"
                     )));
                 }
-                run.insert(task);
             }
+            jobs.push((path.clone(), job, why.is_empty()));
         }
     }
-    for (task, _) in exceptions {
-        if check.contains(*task) {
-            out.push(finding(format!(
-                "stale entry in sync's NOT_IN_CHECK: `mise run check` runs {task}; remove it"
-            )));
-        } else if !run.contains(*task) {
-            out.push(finding(format!(
-                "stale entry in sync's NOT_IN_CHECK: neither ci.yml nor security.yml runs \
-                 `mise run {task}`; remove it"
-            )));
+    for (path, job, _) in exceptions {
+        match jobs.iter().find(|(p, j, _)| p == path && j == job) {
+            None => out.push(finding(format!(
+                "stale entry in sync's JOBS_NOT_IN_CHECK: {path} has no job {job} in a \
+                 pull_request workflow; remove it"
+            ))),
+            Some((_, _, true)) => out.push(finding(format!(
+                "stale entry in sync's JOBS_NOT_IN_CHECK: `mise run check` covers {path} job \
+                 {job}; remove it"
+            ))),
+            Some(_) => {}
         }
     }
     out
@@ -355,7 +474,7 @@ pub fn check_covers_ci(s: &Snapshot, exceptions: &[(&str, &str)]) -> Vec<Finding
 pub fn check(s: &Snapshot) -> Vec<Finding> {
     let mut out = locks(s);
     out.extend(layering(s));
-    out.extend(check_covers_ci(s, NOT_IN_CHECK));
+    out.extend(check_covers_ci(s, JOBS_NOT_IN_CHECK));
     out
 }
 
@@ -371,10 +490,11 @@ mod tests {
     const LOCK: &str = "[[tools.cargo-nextest]]\nversion = \"0.9.150\"\nbackend = \"x\"\n\n\
         [[tools.fnox]]\nversion = \"1.46.0\"\n\n[[tools.trunk]]\nversion = \"0.22.1\"\n\n\
         [[tools.uv]]\nversion = \"0.13.5\"\n";
-    const CI_YML: &str = "env:\n  MISE_ENV: ci\njobs:\n  a:\n    steps:\n\
+    const CI_YML: &str = "on: [push, pull_request]\nenv:\n  MISE_ENV: ci\njobs:\n  a:\n    steps:\n\
         \x20     - uses: $/.github/actions/setup-ci\n      - run: mise run fmt\n\
-        \x20     - run: |\n          mise run test && mise run coverage\n      - run: mise run build\n";
-    const SECURITY_YML: &str = "env:\n  MISE_ENV: \"ci\"\njobs:\n  a:\n    steps:\n\
+        \x20     - run: mise run test\n  b:\n    steps:\n      - run: |\n\
+        \x20         mise run coverage && mise run build\n";
+    const SECURITY_YML: &str = "on:\n  pull_request:\nenv:\n  MISE_ENV: \"ci\"\njobs:\n  a:\n    steps:\n\
         \x20     - uses: $/.github/actions/setup-mise\n      - run: mise run sync\n";
 
     fn base() -> Snapshot {
@@ -433,10 +553,10 @@ mod tests {
     }
 
     /// Each row `FIELD | FIND | REPLACE | WANT && ...`, as in the tests of `extra` (`\n` is a
-    /// newline, an empty FIND appends, `*` replaces the whole text), with [`NOT_IN_CHECK`]
-    /// replaced by the base's two exceptions.
+    /// newline, an empty FIND appends, `*` replaces the whole text), with [`JOBS_NOT_IN_CHECK`]
+    /// replaced by the base's one exception (ci.yml's job b).
     fn rows(table: &str) {
-        let exceptions = [("coverage", "CI only"), ("build", "a build")];
+        let exceptions = [(".github/workflows/ci.yml", "b", "CI only")];
         for row in table.lines().map(str::trim).filter(|r| !r.is_empty()) {
             let cols: Vec<String> = row
                 .split('|')
@@ -505,7 +625,7 @@ mod tests {
             workflows/release-tag.yml | steps: [] | steps:\n      - uses: ./.github/actions/setup-ci | release-tag.yml: job a sets mise up but
             workflows/release-tag.yml | | env:\n  MISE_ENV: ci,dev\n | 
             actions/setup-ci/action.yml | setup-mise | setup-rust | ci.yml sets MISE_ENV: ci but no job of it sets mise up
-            workflows/ci.yml | env:\n  MISE_ENV: ci\njobs:\n  a:\n    steps:\n | jobs:\n  a:\n    steps:\n      - env:\n          MISE_ENV: ci\n        run: "true"\n | ci.yml: job a sets mise up but
+            workflows/ci.yml | env:\n  MISE_ENV: ci\njobs:\n  a:\n    steps:\n | jobs:\n  a:\n    steps:\n      - env:\n          MISE_ENV: ci\n        run: mise run fmt\n | ci.yml: job a sets mise up but
             workflows/ci.yml | env:\n  MISE_ENV: ci\njobs:\n  a:\n | jobs:\n  a:\n    env:\n      MISE_ENV: dev\n | ci.yml: job a sets mise up but
             workflows/ci.yml | jobs:\n  a:\n | jobs:\n  a:\n    env:\n      MISE_ENV: dev\n | ci.yml: job a sets mise up but
             workflows/release-tag.yml | * | jobs:\n  a:\n    env:\n      MISE_ENV: ci\n    steps:\n      - uses: $/.github/actions/setup-mise\n  b:\n    steps:\n      - uses: ./.github/actions/setup-mise/\n | release-tag.yml: job b sets mise up but
@@ -522,20 +642,52 @@ mod tests {
     fn check_covers_what_ci_runs() {
         rows(
             r#"
-            workflows/ci.yml | mise run fmt | mise run fmt\n      - run: mise run clippy-wasm --x\n      - run: mise run clippy-wasm | ci.yml runs `mise run clippy-wasm`, which `mise run check` does not
-            workflows/security.yml | mise run sync | mise run audit | security.yml runs `mise run audit`
-            workflows/security.yml | mise run sync | true # mise run audit later | 
-            workflows/ci.yml | mise run coverage | true | neither ci.yml nor security.yml runs `mise run coverage`
-            mise | { task = "test" }, | { task = "test" },\n  { task = "coverage" }, | `mise run check` runs coverage; remove it
+            workflows/ci.yml | mise run fmt | mise run clippy-wasm --x\n      - run: mise run clippy-wasm | ci.yml: job a runs `mise run clippy-wasm`, which `mise run check` does not && job a runs `mise run clippy-wasm`
+            workflows/security.yml | mise run sync | mise run audit | security.yml: job a runs `mise run audit`
+            workflows/security.yml | mise run sync | true # mise run audit later | security.yml: job a has a step that is not `mise run` of a check task (`true`)
+            workflows/ci.yml | mise run fmt | mise run x\n      - run: mise run y | job a runs `mise run x` && job a runs `mise run y`
+            workflows/ci.yml | mise run fmt | mise run --output prefix -j 2 fmt | 
+            workflows/ci.yml | mise run fmt | mise run -o prefix --force clippy-wasm | job a runs `mise run clippy-wasm`
+            workflows/ci.yml | mise run fmt | mise run --output=prefix fmt; true | job a has a step that is not
+            workflows/ci.yml | mise run fmt | mise -E ci run fmt | job a has a step that is not
+            workflows/ci.yml | mise run fmt | echo mise run fmt | job a has a step that is not
+            workflows/ci.yml | mise run fmt | mise run fmt $(cat args) | job a has a step that is not
+            workflows/ci.yml | mise run fmt | echo "a #b"; mise run fmt | job a has a step that is not
+            workflows/ci.yml | mise run coverage && mise run build | mise run fmt | `mise run check` covers .github/workflows/ci.yml job b; remove it
+            workflows/ci.yml | b:\n    steps: | c:\n    steps: | ci.yml: job c has a step that is not && has no job b in a pull_request workflow; remove it
+            workflows/ci.yml | jobs: | jobs:\n  c:\n    steps:\n      - uses: $/.github/actions/setup-ci\n | ci.yml: job c has no `run:` step that `mise run check` covers
+            workflows/release-tag.yml | * | on: pull_request\njobs:\n  x:\n    steps:\n      - run: mise run fmt\n      - run: cargo xtask cooldown\n | release-tag.yml: job x has a step that is not `mise run` of a check task (`cargo xtask cooldown`)
+            workflows/release-tag.yml | * | on:\n  pull_request:\n    paths: [x]\njobs:\n  x:\n    uses: ./.github/workflows/y.yml\n | release-tag.yml: job x has no `run:` step
+            workflows/release-tag.yml | * | on: [push]\njobs:\n  x:\n    steps:\n      - run: cargo xtask cooldown\n | 
             mise | { task = "test" }, | { run = "x" }, | check has a step sync cannot read
             mise | { task = "test" }, | { task = "test" },\n  "echo done", | 
-            workflows/ci.yml | mise run fmt | mise run x\n      - run: mise run y | runs `mise run x` && runs `mise run y`
-            workflows/ci.yml | mise run fmt | mise run --output prefix -j 2 fmt | 
-            workflows/ci.yml | mise run fmt | mise run -o prefix --force clippy-wasm | runs `mise run clippy-wasm`
-            workflows/ci.yml | mise run fmt | mise run --output=prefix clippy-wasm; true | runs `mise run clippy-wasm`
             mise | [tasks.check] | [tasks.checks] | mise.toml has no [tasks.check] run
-            ci.yml | * | | ci.yml is missing && runs `mise run coverage`; remove it && runs `mise run build`; remove it
+            ci.yml | * | | has no job b in a pull_request workflow; remove it
         "#,
+        );
+    }
+
+    /// Comment and empty lines of a script run nothing; any other line must be `mise run TASK`.
+    #[test]
+    fn scripts_are_read_line_by_line() {
+        let check = BTreeSet::from(["fmt".to_owned(), "test".to_owned()]);
+        let job = |script: &str| {
+            let def: YValue = yaml_serde::from_str("steps: [{run: x}]").unwrap_or(YValue::Null);
+            let mut def = def;
+            if let Some(step) = def
+                .get_mut("steps")
+                .and_then(|s| s.get_mut(0))
+                .and_then(|s| s.get_mut("run"))
+            {
+                *step = YValue::String(script.to_owned());
+            }
+            uncovered(&def, &check)
+        };
+        assert!(job("# first\n\nmise run fmt\nmise run test\n").is_empty());
+        assert_eq!(job("mise run fmt\nmise run x\nls").len(), 2);
+        assert_eq!(
+            mise_run_tasks("mise run -C dir --timeout 5 test && mise run fmt"),
+            ["test", "fmt"]
         );
     }
 
@@ -569,9 +721,9 @@ mod tests {
     #[test]
     fn every_exception_has_a_reason() {
         assert!(
-            NOT_IN_CHECK
+            JOBS_NOT_IN_CHECK
                 .iter()
-                .all(|(t, why)| !t.is_empty() && !why.is_empty())
+                .all(|(p, j, why)| p.ends_with(".yml") && !j.is_empty() && !why.is_empty())
         );
     }
 }

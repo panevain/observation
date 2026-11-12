@@ -152,7 +152,7 @@ raw_args = true
 run = "cargo xtask tokens"
 
 [tasks.sync]
-description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, the advisory ignore lists agree, every get_env falls back to [env] (mise.local.toml), every package named to cargo is a crate of the workspace (server_package is the Dockerfile's server build), a crate's testing feature is enabled only from [dev-dependencies], the image lists of release.yml, prune-images.yml and security-patch agree (and compose.yaml, mise.toml and build-image name released images and stages), the cooldown days agree with .config/cargo-cooldown.toml, every tool pin is in the lockfile beside it, the workflows that set mise up set MISE_ENV=ci, and every task ci.yml and security.yml run is in check or listed as CI-only"
+description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, the advisory ignore lists agree, every get_env falls back to [env] (mise.local.toml), every package named to cargo is a crate of the workspace (server_package is the Dockerfile's server build), a crate's testing feature is enabled only from [dev-dependencies], the image lists of release.yml, prune-images.yml and security-patch agree (and compose.yaml, mise.toml and build-image name released images and stages), the cooldown days agree with .config/cargo-cooldown.toml, every tool pin is in the lockfile beside it, the workflows that set mise up set MISE_ENV=ci, and every job of a pull_request workflow runs only check's tasks or is listed with the reason"
 raw_args = true
 run = "cargo xtask sync"
 
@@ -281,8 +281,8 @@ description = "fmt, clippy, tests, spelling, unused dependencies, cargo-deny, de
 # Steps in order, not `depends` (which would start every check at once): the checks that take
 # seconds run first, together, so they fail first; the cargo builds, which share target/ and
 # would only queue for its lock, run one at a time; each step starts once the one before
-# has passed. `mise run sync` fails when ci.yml or security.yml runs a task that is neither a step
-# here nor in sync's list of CI-only tasks (xtask/src/cmd/sync/mise.rs).
+# has passed. `mise run sync` fails when a job of a pull_request workflow runs anything but
+# `mise run` of these tasks and is not in sync's JOBS_NOT_IN_CHECK (xtask/src/cmd/sync/mise.rs).
 run = [
   { tasks = ["fmt", "typos", "tokens", "sync", "tasks:validate"] },
   { task = "clippy-native" },
