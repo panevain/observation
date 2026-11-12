@@ -10,8 +10,8 @@
 //!   or back-reference; a readable path's ` as `), each one a Python frame in the script, and at
 //!   most [`V0_STEPS`] v0 steps in all. Past either it gives up: on a v0 symbol it takes the
 //!   script's own fallback for a symbol it cannot decode, on a readable path it fails. The
-//!   script crashes on deeper symbols (Python's recursion limit: from about 990 nested steps,
-//!   which is 330 levels of generic arguments or 495 back-references in a chain, a
+//!   script crashes on deeper symbols (Python's recursion limit: from about 995 nested steps,
+//!   which is 331 levels of generic arguments or 497 back-references in a chain, a
 //!   back-reference that leads back to itself, see [`V0`]) and runs without end on symbols
 //!   whose back-references fan out; between [`MAX_NESTING`] and its limit it still decodes, and
 //!   gets a crate the port does not. Real symbols are far below both: the 51,334 v0 names of a
