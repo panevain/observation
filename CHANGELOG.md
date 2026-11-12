@@ -92,6 +92,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- A rolled camera's body now tilts the same way as its coverage and view cone. It used to tilt the opposite way, so a camera rolled to the right looked rolled to the left. The coverage figures and saved scenes are unchanged.
 - The tool and panel shortcut keys (V, P, A, M, R, L, F, N, / and F1) no longer act while Ctrl, Cmd or Alt is held, and are left to the browser: on a QWERTY layout, Ctrl/Cmd+R reloads the page again instead of switching to the Region tool. Ctrl/Cmd+A still selects a text field's text, undo and redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl+Y) work as before, and so do the shortcuts with Shift.
 - Deleting the selected camera with Delete or Backspace while the Aim or Move tool is on goes back to the Select tool, as the camera list's **Delete** does. The tool used to stay on with no camera to work on.
 - While the Region tool is on, the edge of the loaded area is drawn in red and the map beyond it is tinted and hatched. Corners clicked out there move to the edge, which used to look like part of the map refused corners for no reason (#71).
