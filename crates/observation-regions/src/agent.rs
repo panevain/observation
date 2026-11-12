@@ -36,7 +36,7 @@ pub enum StartError {
     #[error(transparent)]
     State(#[from] registry::OpenError),
     #[error("could not build the HTTP client: {0}")]
-    Client(#[from] reqwest::Error),
+    Client(#[from] observation_upstream::BuildError),
 }
 
 /// What the agent talks to: see [`Agent::from_parts`].

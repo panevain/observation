@@ -19,8 +19,6 @@ observation-regions-api.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
-# `form` is needed to POST a query to the region agent as `application/x-www-form-urlencoded`.
-reqwest = { workspace = true, features = ["form"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

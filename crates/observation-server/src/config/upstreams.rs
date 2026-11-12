@@ -39,7 +39,7 @@ pub(super) fn check_template(
         .replace("{x}", MARK)
         .replace("{y}", MARK)
         .replace("{z}", MARK);
-    let in_host = match reqwest::Url::parse(&marked) {
+    let in_host = match observation_upstream::Url::parse(&marked) {
         Ok(u) => u.host_str().is_some_and(|h| h.contains(MARK)),
         // E.g. `{x}.0.0.1`: a numeric last label makes the host an invalid IPv4
         // address once the marker is in. Fall back to the text before the path.

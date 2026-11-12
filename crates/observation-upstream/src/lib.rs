@@ -32,8 +32,10 @@ pub use crate::http::{
     TransportError, TransportErrorKind,
 };
 pub use body::read_capped;
-pub use guarded::{GuardedHttp, GuardedHttpBuilder};
+pub use guarded::{BuildError, GuardedHttp, GuardedHttpBuilder};
 pub use queue::{BoundedQueue, QueueError};
+/// URLs as the HTTP client parses them, for checking configured addresses.
+pub use reqwest::Url;
 pub use stream::{ByteStream, StreamingResponse, status_error};
 
 use std::io;

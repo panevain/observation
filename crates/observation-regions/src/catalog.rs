@@ -118,7 +118,7 @@ pub fn parse_index(json: &[u8], index_url: &str) -> Result<Vec<Extract>, Catalog
 
 /// `scheme://host[:port]` of an http(s) URL.
 fn origin(url: &str) -> Option<String> {
-    let u = reqwest::Url::parse(url).ok()?;
+    let u = observation_upstream::Url::parse(url).ok()?;
     matches!(u.scheme(), "http" | "https").then(|| u.origin().ascii_serialization())
 }
 

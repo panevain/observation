@@ -255,7 +255,7 @@ impl Config {
         };
         let regions_url = get("OBS_REGIONS_URL")
             .map(|u| {
-                let ok = reqwest::Url::parse(&u)
+                let ok = observation_upstream::Url::parse(&u)
                     .is_ok_and(|p| matches!(p.scheme(), "http" | "https") && p.host().is_some());
                 if ok {
                     Ok(u.trim_end_matches('/').to_owned())

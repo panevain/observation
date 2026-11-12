@@ -61,7 +61,7 @@ pub enum StateError {
     #[error(transparent)]
     Config(#[from] config::ConfigError),
     #[error("could not build HTTP client: {0}")]
-    Client(#[from] reqwest::Error),
+    Client(#[from] observation_upstream::BuildError),
 }
 
 /// Shared, cheaply cloneable application state.

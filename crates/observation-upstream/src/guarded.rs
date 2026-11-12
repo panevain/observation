@@ -1,6 +1,7 @@
 //! [`GuardedHttp`]: the production [`HttpClient`], a reqwest client built
 //! with the guards of [`client_builder`](crate::client_builder).
 
+use std::fmt;
 use std::time::Duration;
 
 use futures_util::FutureExt;
@@ -87,10 +88,22 @@ impl GuardedHttpBuilder {
         Self(self.0.connect_timeout(timeout))
     }
 
-    pub fn build(self) -> Result<GuardedHttp, reqwest::Error> {
+    pub fn build(self) -> Result<GuardedHttp, BuildError> {
         Ok(GuardedHttp {
             client: self.0.build()?,
         })
+    }
+}
+
+/// A [`GuardedHttp`] could not be built (the TLS backend failed to start).
+/// It reads, and debug-prints, as reqwest's error.
+#[derive(thiserror::Error)]
+#[error(transparent)]
+pub struct BuildError(#[from] reqwest::Error);
+
+impl fmt::Debug for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
     }
 }
 
@@ -135,4 +148,26 @@ pub(crate) fn transport_error(e: reqwest::Error) -> TransportError {
         TransportErrorKind::Other
     };
     TransportError::new(kind, e.without_url().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A build failure reads and debug-prints as reqwest's own error, so
+    /// the server's and the agent's start-up errors are worded as before.
+    #[test]
+    fn build_errors_read_as_reqwest_words_them() {
+        let ours = GuardedHttp::builder(false, Redirects::None)
+            .user_agent("bad\nagent")
+            .build()
+            .unwrap_err();
+        let theirs = reqwest::Client::builder()
+            .user_agent("bad\nagent")
+            .build()
+            .unwrap_err();
+        assert_eq!(ours.to_string(), theirs.to_string());
+        assert_eq!(format!("{ours:?}"), format!("{theirs:?}"));
+        assert!(!ours.to_string().is_empty());
+    }
 }
