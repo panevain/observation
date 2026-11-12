@@ -134,6 +134,31 @@ mod tests {
         );
     }
 
+    /// The truth table the Python `matches` gave for 702 pairs (tests/fixtures/version-matches.tsv,
+    /// generated as the cooldown port's pull request describes).
+    #[test]
+    fn matches_the_python_on_every_recorded_pair() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/version-matches.tsv"
+        );
+        let table = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}"));
+        for line in table.lines() {
+            let mut f = line.split('\t');
+            let (v, r, want) = (
+                f.next().unwrap_or(""),
+                f.next().unwrap_or(""),
+                f.next().unwrap_or(""),
+            );
+            let got = match matches(v, r) {
+                Ok(true) => "true",
+                Ok(false) => "false",
+                Err(_) => "error",
+            };
+            assert_eq!(got, want, "{v:?} against {r:?}");
+        }
+    }
+
     #[test]
     fn requirements() {
         let table = [
