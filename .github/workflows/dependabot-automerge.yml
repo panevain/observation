@@ -13,7 +13,8 @@ name: Dependabot auto-merge
 # The checker that decides is built from the commit this run is on (develop on schedule; a
 # dispatched branch reaches only the dry part, since `bot` admits develop, main and v* only),
 # never from a pull request: no pull request's code is checked out. It is built uncached in the
-# `find` job, whose token can only read, and the bot job receives only its JSON.
+# `find` job, whose token can only read, and the bot job receives only its JSON. The bot job
+# checks each pull request in that JSON again with gh and jq before turning auto-merge on.
 on:
   schedule:
     # Every 4 hours; the 06:00 run follows the 05:00-05:30 update window (Dependabot, Pins).
@@ -106,8 +107,28 @@ jobs:
               echo "::warning::could not disable auto-merge on #${n}"
             fi
           done
+          # Each pull request is checked again here, from GitHub alone (no code from any tree),
+          # right before auto-merge goes on: opened by Dependabot, into develop, from this
+          # repository (not a fork), not a draft, not labelled hold, and still at the commit
+          # `find` judged. Anything else, or a check that cannot be read, is skipped.
+          recheck='if .author.login != "app/dependabot" or .author.is_bot != true then "not opened by Dependabot"
+            elif .baseRefName != "develop" then "not into develop"
+            elif .isCrossRepository != false then "from another repository"
+            elif .isDraft != false then "a draft"
+            elif (.labels | map(.name) | index("hold")) != null then "labelled hold"
+            elif .headRefOid != $sha then "it has changed since it was checked"
+            else "" end'
           jq -r '.merge[] | "\(.number) \(.sha)"' <<<"${PRS}" | while read -r n sha; do
-            # --match-head-commit: nothing pushed since the check above is merged unchecked.
+            why="could not check it again"
+            if view="$(gh pr view "${n}" --repo "${REPO}" --json author,baseRefName,isCrossRepository,isDraft,labels,headRefOid </dev/null)"; then
+              why="$(jq -r --arg sha "${sha}" "${recheck}" <<<"${view}")" || why="could not check it again"
+            fi
+            if [ -n "${why}" ]; then
+              echo "- #${n}: skipped, ${why}" >> "${GITHUB_STEP_SUMMARY}"
+              echo "::warning::not enabling auto-merge on #${n}: ${why}"
+              continue
+            fi
+            # --match-head-commit: nothing pushed since the checks above is merged unchecked.
             if gh pr merge "${n}" --repo "${REPO}" --auto --squash --match-head-commit "${sha}"; then
               echo "- #${n}: auto-merge enabled" >> "${GITHUB_STEP_SUMMARY}"
             else
