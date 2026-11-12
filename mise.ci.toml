@@ -101,7 +101,8 @@ run = [
 ]
 
 # The check of this tree's xtask, for local use. security.yml's cargo-cooldown job runs the
-# base's check instead, so that a pull request is never judged by code it brings in.
+# base's check instead, so that a pull request's crates are never built or run before their
+# verdict (that job also reads no mise config of the pull request's tree).
 [tasks.cooldown]
 description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (`cargo xtask cooldown`)"
 usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'

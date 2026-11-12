@@ -22,6 +22,18 @@ inputs:
       release's), where the shims would resolve that checkout's mise config
     required: false
     default: "true"
+  dir:
+    description: >-
+      Directory mise runs in, whose mise config applies (mise-action's working_directory).
+      Empty for the workspace
+    required: false
+    default: ""
+  env:
+    description: >-
+      Export mise's environment ([env], and PATH entries) to later steps. false where nothing
+      a later step runs may come from that config except what it asks for by path
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -40,3 +52,6 @@ runs:
         # repository's cache quota and evict develop's entries.
         cache_save: ${{ inputs.cache == 'true' && github.ref == 'refs/heads/develop' }}
         add_shims_to_path: ${{ inputs.shims }}
+        working_directory: ${{ inputs.dir }}
+        env: ${{ inputs.env }}
+        export_path: ${{ inputs.env }}
