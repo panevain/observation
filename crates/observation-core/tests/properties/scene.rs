@@ -839,8 +839,10 @@ proptest! {
         let plain = Provenance::default();
         let prov = |f: &mut SceneFile| f.provenance.get_or_insert_with(|| plain.clone()).clone();
         let (mut pin, mut pwant) = (prov(&mut input), prov(&mut want));
-        // A cut group may end in whitespace; whether it is trimmed again
-        // is not documented, so either is accepted.
+        // A cut group may end in whitespace. Loading keeps it, and the next
+        // load trims it: a confirmed bug, pinned by the ignored
+        // `prop_cut_groups_load_the_same_twice`. Until its fix lands either
+        // result is accepted here; the fix removes this allowance.
         let mut also = None;
         match &r {
             Repair::Group(k, l, body, r) => {
@@ -886,5 +888,72 @@ proptest! {
             loaded,
             want
         );
+    }
+}
+
+// ----- known bugs ------------------------------------------------------------
+
+/// A group whose 80th character (after trimming) is whitespace: padding, 79
+/// visible characters, a whitespace character, more visible characters,
+/// padding.
+fn group_cut_at_whitespace() -> impl Strategy<Value = String> {
+    let visible = || any::<char>().prop_filter("not whitespace", |c| !c.is_whitespace());
+    (
+        pad(),
+        prop::collection::vec(visible(), 79),
+        prop::sample::select(vec![' ', '\t', '\u{3000}']),
+        prop::collection::vec(visible(), 1..20),
+        pad(),
+    )
+        .prop_map(|(l, head, ws, tail, r)| {
+            format!(
+                "{l}{}{ws}{}{r}",
+                String::from_iter(head),
+                String::from_iter(tail)
+            )
+        })
+}
+
+proptest! {
+    #![proptest_config(config(32))]
+
+    /// Loading a file with such a group, saving it and loading it again gives
+    /// the same scene. Today it does not: the first load cuts the group to
+    /// 80 characters ending in whitespace and the second trims that off
+    /// (`"a" × 79 + " b"` loads as 80 characters, then as 79).
+    #[test]
+    #[ignore = "fixed in claude/fix-core-scene-group-trim"]
+    fn prop_cut_groups_load_the_same_twice(group in group_cut_at_whitespace()) {
+        let mut s = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
+        s.cameras.push(CameraPlacement { group: Some(group), ..plain_camera(1) });
+        let once = SceneFile::from_json(&s.to_json()).expect("the file loads");
+        let twice = SceneFile::from_json(&once.to_json()).expect("its export loads");
+        prop_assert_eq!(twice, once);
+    }
+}
+
+/// Two custom models that need fresh ids and slug alike, while the first
+/// fresh id is already taken: each gets its own id, so a fresh id must be
+/// reserved once given. The cameras follow the first.
+#[test]
+fn renamed_models_never_share_a_fresh_id() {
+    let mut s = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
+    let model = |id: &str, name: &str| CameraModel {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        ..plain_model(0)
+    };
+    s.custom_models = vec![
+        model("acme", "Mine"),
+        model("acme", "mine"),
+        model("custom-mine-1", "Other"),
+    ];
+    s.cameras = vec![CameraPlacement {
+        model_id: "acme".to_owned(),
+        ..plain_camera(1)
+    }];
+    let loaded = SceneFile::from_json(&s.to_json()).expect("the file loads");
+    if let Err(e) = is_clean(&s, &loaded) {
+        panic!("{e}");
     }
 }
