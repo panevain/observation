@@ -40,10 +40,28 @@ jobs:
       version: ${{ steps.state.outputs.next }}
       ready: ${{ steps.ready.outputs.ready }}
     steps:
-      # The scripts and xtask come from this workflow's ref (develop); they work on a checkout
-      # of main.
+      # The scripts come from this workflow's ref (develop); they work on a checkout of main.
+      # This job builds nothing: what it writes into main/ becomes a pull request that merges
+      # itself without review, so it is written by the tree's own scripts (and cargo update,
+      # which resolves and runs no build script), never by code this job compiles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - name: Release state
+        id: state
+        run: |
+          set -euo pipefail
+          scripts/release-state.sh | tee -a "${GITHUB_OUTPUT}" > "${RUNNER_TEMP}/state"
+          # shellcheck disable=SC1091
+          . "${RUNNER_TEMP}/state"
+          [ -n "${latest}" ] || { echo "::error::no release yet; nothing to patch"; exit 1; }
+          [ "${pending}" = false ] || { echo "::error::main is at ${main}, which is not tagged yet; tag or finish that release first"; exit 1; }
+          [ "${hotfix}" = false ] || { echo "::error::a hotfix/* branch already exists"; exit 1; }
+          [ "${main}" = "${latest}" ] || { echo "::error::main is at ${main} but the latest release is ${latest}"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main
           persist-credentials: false
       # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
       # directories: without shims, nothing run in main/ resolves its own mise config.
@@ -53,23 +71,6 @@ jobs:
           tools: cargo-audit trivy
           cache: false
           shims: false
-      # xtask is built here, with develop's toolchain, before setup-rust below installs main's
-      # (and removes every other); no cache, as for anything that prepares a release.
-      - uses: $/.github/actions/setup-rust
-      - uses: $/.github/actions/xtask
-        id: xtask
-      # Fails unless main is the latest release and no release or hotfix is open; the state
-      # (latest, next, ...) becomes this step's outputs.
-      - name: Release state
-        id: state
-        env:
-          XTASK: ${{ steps.xtask.outputs.path }}
-        run: '"${XTASK}" release gate hotfix --output "${GITHUB_OUTPUT}"'
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          path: main
-          persist-credentials: false
       - uses: $/.github/actions/setup-rust
         with:
           dir: main
@@ -79,7 +80,6 @@ jobs:
           LATEST: ${{ steps.state.outputs.latest }}
           NEXT: ${{ steps.state.outputs.next }}
           FORCE: ${{ inputs.force }}
-          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/hotfix"
@@ -90,11 +90,11 @@ jobs:
             exit 0
           fi
           python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
-          "${XTASK}" --repo main release version set -- "${NEXT}"
+          (cd main && ../scripts/set-version.sh "${NEXT}")
           python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
-          # A hotfix only moves versions and pins: .config/release.toml's hotfix list, read from
-          # this workflow's checkout (develop), never from main/.
-          unexpected="$(git -C main diff --name-only | "${XTASK}" --repo . release unexpected-files hotfix)"
+          # A hotfix only moves versions and pins (.config/release.toml's hotfix list; open-pr
+          # checks the patch again before it commits it).
+          unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
           [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
           git -C main diff --binary > "${out}/hotfix.patch"
           {
@@ -150,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
-          # prepare compiles code (xtask), so its patch is checked here, with git alone, before
+          # prepare builds nothing, but its patch is still checked here, with git alone, before
           # this token commits it: every entry must change the text of an existing regular file
           # on the same list as there. No file added, deleted, renamed or copied, no mode or type
           # change (a symlink or gitlink), no binary patch; anything else fails. What the allowed
@@ -165,6 +165,9 @@ jobs:
           tr -d '\000' < "${patch}" | cmp -s - "${patch}" || refuse "the patch holds a NUL byte"
           # Before applying: one "added<TAB>deleted<TAB>path" line per entry and no summary line
           # (create, delete, rename, copy, mode change, rewrite); "-" counts mean a binary entry.
+          # A `diff --git` header whose a/ and b/ paths differ, without rename lines, shows here
+          # as a plain change of the b/ path; the check after `git apply` refuses it (the a/ path
+          # is staged as a deletion).
           stat="$(git apply --numstat --summary "${patch}")"
           bad="$(grep -vxE "[0-9]+${tab}[0-9]+${tab}(${allowed})" <<<"${stat}" || true)"
           [ -n "${stat}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"

@@ -475,6 +475,79 @@ mod tests {
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
+    /// How release-plan/golden was captured, run here on scripts/release-plan.py as it is in the
+    /// tree: in-process, with the clock fixed at the golden's instant, an exception written as
+    /// its last line. Arguments: the script, the repository, then the script's own arguments.
+    const PY_RUN: &str = r#"
+import contextlib, datetime as real_dt, importlib.util, io, sys
+class FakeDatetime(real_dt.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return real_dt.datetime(2026, 1, 5, 23, 30, 0, tzinfo=real_dt.UTC)
+class FakeModule:
+    datetime = FakeDatetime
+    UTC = real_dt.UTC
+script, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+spec = importlib.util.spec_from_file_location("release_plan", script)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.datetime = FakeModule
+sys.argv = ["release-plan.py", args[0], "--repo", repo, *args[1:]]
+so, se, code = io.StringIO(), io.StringIO(), 0
+try:
+    with contextlib.redirect_stdout(so), contextlib.redirect_stderr(se):
+        mod.main()
+except SystemExit as e:
+    if e.code is None: code = 0
+    elif isinstance(e.code, int): code = e.code
+    else: se.write(f"{e.code}\n"); code = 1
+except Exception as e:
+    se.write(f"{type(e).__name__}: {e}\n"); code = 1
+sys.stdout.write(f"exit {code}\n-- stdout\n{so.getvalue()}-- stderr\n{se.getvalue().replace(repo, '$REPO')}")
+"#;
+
+    /// scripts/release-plan.py still gives release-plan/golden on every case. prepare runs its
+    /// `changelog` on the token path, and the port is tested against that golden, so this keeps
+    /// the script in production and the tested port in step.
+    #[test]
+    fn the_script_in_the_tree_still_gives_the_golden() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/release-plan");
+        let cases: Cases = ok(toml::from_str(&ok(fs::read_to_string(
+            dir.join("cases.toml"),
+        ))));
+        let want = sections(&ok(fs::read_to_string(dir.join("golden"))));
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/release-plan.py");
+        let mut problems = Vec::new();
+        for case in &cases.case {
+            let tmp = ok(tempfile::tempdir());
+            let repo = tmp.path().join("repo");
+            ok(fs::create_dir(&repo));
+            build(&repo, case);
+            let out = ok(Command::new("python3")
+                .args(["-I", "-c", PY_RUN])
+                .arg(&script)
+                .arg(&repo)
+                .arg(&case.command)
+                .args(&case.args)
+                .envs(ENV)
+                .output());
+            let mut got = String::from_utf8_lossy(&out.stdout).into_owned();
+            got.push_str("-- CHANGELOG.md\n");
+            if case.command == "changelog" {
+                got.push_str(&fs::read_to_string(repo.join("CHANGELOG.md")).unwrap_or_default());
+            }
+            let [code, stdout, stderr, after] = &want[&case.name];
+            let expected =
+                format!("{code}\n-- stdout\n{stdout}-- stderr\n{stderr}-- CHANGELOG.md\n{after}");
+            if got != expected {
+                problems.push(format!(
+                    "{}:\n  script now: {got:?}\n  golden:     {expected:?}",
+                    case.name
+                ));
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
     /// The steps of release-prep.yml's bot jobs (prepare, then pretag) that check plan's outputs
     /// in plain shell before using them: each `run` text named `name`, with the KIND it sets.
     fn bot_job_steps(name: &str) -> Vec<(String, String)> {
