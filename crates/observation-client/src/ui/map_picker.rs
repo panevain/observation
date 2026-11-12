@@ -388,7 +388,7 @@ pub fn window(
                 }
                 let draw_label = if p.draw_mode { "Drawing: on" } else { "Draw area" };
                 if ui.add(secondary(t, draw_label)).on_hover_text("Drag on the map to draw a box (Shift)").clicked() {
-                    p.draw_mode = !p.draw_mode;
+                    p.draw_mode.toggle();
                 }
                 if ui.add(secondary(t, "Square here")).on_hover_text(format!("A {square:.0} m box at the map centre")).clicked() {
                     p.selection = Some(BBox::around(p.center, square));

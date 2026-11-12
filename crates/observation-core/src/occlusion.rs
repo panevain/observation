@@ -22,7 +22,7 @@ impl Prism {
         let mut inside = false;
         for ring in &self.rings {
             if point_in_ring(p, ring) {
-                inside = !inside;
+                inside.toggle();
             }
         }
         inside

@@ -178,11 +178,11 @@ pub(crate) mod tests {
             );
             let (name, rest) = block.split_once('\n').unwrap_or((&block, ""));
             let (code, rest) = rest.split_once('\n').unwrap_or((rest, ""));
-            let rest = rest.strip_prefix("-- stdout\n").unwrap_or(rest);
+            let rest = rest.trim_prefix("-- stdout\n");
             let (stdout, rest) = rest.split_once("-- stderr\n").unwrap_or((rest, ""));
             let (stderr, rest) = rest.split_once("-- cargo\n").unwrap_or((rest, ""));
             let (cargo, manifest) = rest.split_once("-- Cargo.toml\n").unwrap_or((rest, ""));
-            let manifest = manifest.strip_suffix('\n').unwrap_or(manifest);
+            let manifest = manifest.trim_suffix('\n');
             let owned = [code, stdout, stderr, cargo, manifest].map(str::to_owned);
             out.insert(name.to_owned(), owned);
         }
@@ -255,7 +255,7 @@ pub(crate) mod tests {
                 problems.push(format!("{}: not in the golden", case.name));
                 continue;
             };
-            let manifest = manifest.strip_suffix('\n').unwrap_or(&manifest);
+            let manifest = manifest.trim_suffix('\n');
             let same = *sh_code == format!("exit {code}")
                 && stdout == *sh_stdout
                 && stderr == *sh_stderr

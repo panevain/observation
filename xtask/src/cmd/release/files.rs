@@ -81,7 +81,7 @@ pub fn unexpected(input: &[u8], allowed: &[String]) -> Result<String> {
     if text.contains('\0') {
         return Err(Error::new("the paths hold a NUL byte"));
     }
-    let body = text.strip_suffix('\n').unwrap_or(text);
+    let body = text.trim_suffix('\n');
     if text.is_empty() {
         return Ok(String::new());
     }

@@ -103,7 +103,7 @@ fn commands(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     for line in lines(text) {
-        let line = line.strip_suffix('\r').unwrap_or(line);
+        let line = line.trim_suffix('\r');
         if line.trim_start().starts_with('#') || (!cur.is_empty() && line.trim().is_empty()) {
             continue;
         }

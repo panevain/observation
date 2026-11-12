@@ -589,7 +589,7 @@ fn special_floats_survive_the_codecs_bit_for_bit() {
             sight: Sight {
                 range: x(),
                 ground: (0..9).collect(),
-                ground_d2: (0..9).map(|_| x()).collect(),
+                ground_d2: Vec::from_fn(9, |_| x()),
                 facade: vec![9, 10],
                 facade_d2: vec![x(), x()],
             },

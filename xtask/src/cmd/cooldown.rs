@@ -1110,7 +1110,7 @@ mod tests {
         for block in golden.split("== ").filter(|b| !b.is_empty()) {
             let (name, rest) = block.split_once('\n').unwrap_or((block, ""));
             let (code, rest) = rest.split_once('\n').unwrap_or((rest, ""));
-            let rest = rest.strip_prefix("-- stdout\n").unwrap_or(rest);
+            let rest = rest.trim_prefix("-- stdout\n");
             let (stdout, stderr) = rest.split_once("-- stderr\n").unwrap_or((rest, ""));
             want.insert(
                 name.to_owned(),

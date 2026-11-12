@@ -1,5 +1,6 @@
 //! A concurrency limit with a bounded number of waiters.
 
+use std::mem::DropGuard;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
@@ -26,15 +27,6 @@ pub enum QueueError {
     Closed(#[from] AcquireError),
 }
 
-/// Decrements the waiting counter when dropped.
-struct WaitGuard<'a>(&'a AtomicUsize);
-
-impl Drop for WaitGuard<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 impl BoundedQueue {
     /// `concurrency` permits; at most `max_waiting` callers may wait for one
     /// (0 refuses everyone, see [`BoundedQueue::enter`]).
@@ -51,7 +43,10 @@ impl BoundedQueue {
     /// from this call until it holds a permit or its future is dropped, even
     /// when a permit is free at once, so a `max_waiting` of 0 refuses everyone.
     pub async fn enter(&self) -> Result<SemaphorePermit<'_>, QueueError> {
-        let guard = WaitGuard(&self.waiting);
+        // Leaves the waiting count when dropped: on return, or if this future is dropped.
+        let guard = DropGuard::new(&self.waiting, |w| {
+            w.fetch_sub(1, Ordering::SeqCst);
+        });
         if self.waiting.fetch_add(1, Ordering::SeqCst) >= self.max_waiting {
             return Err(QueueError::Full);
         }

@@ -286,7 +286,7 @@ fn point_in_ring(p: LatLon, ring: &[LatLon]) -> bool {
         if (a.lat > p.lat) != (b.lat > p.lat)
             && p.lon < (b.lon - a.lon) * (p.lat - a.lat) / (b.lat - a.lat) + a.lon
         {
-            inside = !inside;
+            inside.toggle();
         }
         j = i;
     }
@@ -337,8 +337,8 @@ mod tests {
             assert_eq!(key(&got[0]), key(&got[n]), "closed");
             // From where `got` starts in `ring`, forward or backward.
             let start = want.iter().position(|p| *p == key(&got[0])).unwrap();
-            let forward: Vec<_> = (0..n).map(|i| want[(start + i) % n]).collect();
-            let backward: Vec<_> = (0..n).map(|i| want[(start + n - i) % n]).collect();
+            let forward = Vec::from_fn(n, |i| want[(start + i) % n]);
+            let backward = Vec::from_fn(n, |i| want[(start + n - i) % n]);
             let points: Vec<_> = got[..n].iter().map(key).collect();
             assert!(points == forward || points == backward, "{pieces:?}");
 

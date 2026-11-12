@@ -65,7 +65,7 @@ pub fn top_bar(
                 None => "Local map data: regions this server answers itself",
             };
             if ui.add(secondary(&t, &text)).on_hover_text(tip).clicked() {
-                d.panels.regions_open = !d.panels.regions_open;
+                d.panels.regions_open.toggle();
             }
             if progress.is_some() {
                 ui.spinner();
@@ -92,7 +92,7 @@ pub fn top_bar(
                 .on_hover_text("Help and shortcuts (?)")
                 .clicked()
             {
-                d.panels.help_open = !d.panels.help_open;
+                d.panels.help_open.toggle();
             }
             settings_menu(ui, d);
             if ui

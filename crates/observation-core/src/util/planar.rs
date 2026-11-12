@@ -11,7 +11,7 @@ pub fn point_in_ring<P: Copy + Into<Vec2>>(p: Vec2, ring: &[P]) -> bool {
     for i in 0..n {
         let (a, b): (Vec2, Vec2) = (ring[i].into(), ring[j].into());
         if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
-            inside = !inside;
+            inside.toggle();
         }
         j = i;
     }

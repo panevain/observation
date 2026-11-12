@@ -27,7 +27,7 @@ pub fn is_version(version: &str) -> bool {
 fn ranged_lines(text: &str) -> impl Iterator<Item = (&str, &str, bool)> {
     let mut in_range = false;
     text.split_inclusive('\n').map(move |line| {
-        let body = line.strip_suffix('\n').unwrap_or(line);
+        let body = line.trim_suffix('\n');
         let end = &line[body.len()..];
         let ranged = if in_range {
             // The closing empty line still belongs to the range.

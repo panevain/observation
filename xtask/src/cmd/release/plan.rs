@@ -366,10 +366,10 @@ mod tests {
     fn sections(golden: &str) -> BTreeMap<String, [String; 4]> {
         let mut out = BTreeMap::new();
         for block in golden.split("-- end\n").filter(|b| !b.is_empty()) {
-            let block = block.strip_prefix("== ").unwrap_or(block);
+            let block = block.trim_prefix("== ");
             let (name, rest) = block.split_once('\n').unwrap_or((block, ""));
             let (code, rest) = rest.split_once('\n').unwrap_or((rest, ""));
-            let rest = rest.strip_prefix("-- stdout\n").unwrap_or(rest);
+            let rest = rest.trim_prefix("-- stdout\n");
             let (stdout, rest) = rest.split_once("-- stderr\n").unwrap_or((rest, ""));
             let (stderr, after) = rest.split_once("-- CHANGELOG.md\n").unwrap_or((rest, ""));
             out.insert(
@@ -1025,7 +1025,7 @@ sys.stdout.write(f"exit {code}\n-- stdout\n{so.getvalue()}-- stderr\n{se.getvalu
         let used: std::collections::BTreeSet<String> = job_steps("pretag")
             .iter()
             .flatten()
-            .filter_map(|l| l.strip_prefix("- ").unwrap_or(l).strip_prefix("uses:"))
+            .filter_map(|l| l.trim_prefix("- ").strip_prefix("uses:"))
             .map(|u| {
                 let u = u.trim().trim_matches(['"', '\'']);
                 u.split('@').next().unwrap_or(u).to_owned()

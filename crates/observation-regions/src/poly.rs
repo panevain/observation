@@ -142,7 +142,7 @@ fn point_in_ring(p: LatLon, ring: &[LatLon]) -> bool {
         if (a.lat > p.lat) != (b.lat > p.lat)
             && p.lon < (b.lon - a.lon) * (p.lat - a.lat) / (b.lat - a.lat) + a.lon
         {
-            inside = !inside;
+            inside.toggle();
         }
     }
     inside

@@ -125,7 +125,7 @@ async fn snapshots_catalog_and_sizes_arrive_as_the_agent_sent_them() {
         serde_json::from_slice(&server.catalog_sizes(&sizes).await.unwrap()).unwrap();
     assert_eq!(sizes, serde_json::json!({"monaco": 1234}));
     let too_many = SizesRequest {
-        ids: (0..41).map(|i| format!("r{i}")).collect(),
+        ids: Vec::from_fn(41, |i| format!("r{i}")),
     };
     assert_eq!(
         server.catalog_sizes(&too_many).await.unwrap_err(),

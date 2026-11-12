@@ -316,7 +316,7 @@ fn headless_app() -> App {
 }
 
 fn client_name(name: &str) -> Option<String> {
-    let name = name.strip_prefix('<').unwrap_or(name);
+    let name = name.trim_prefix('<');
     name.strip_prefix(CRATE).map(str::to_owned)
 }
 

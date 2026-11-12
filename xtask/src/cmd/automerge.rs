@@ -562,10 +562,10 @@ mod tests {
             let block = block.as_str();
             let (name, rest) = block.split_once('\n').unwrap_or((block, ""));
             let (code, rest) = rest.split_once('\n').unwrap_or((rest, ""));
-            let rest = rest.strip_prefix("-- stdout\n").unwrap_or(rest);
+            let rest = rest.trim_prefix("-- stdout\n");
             let (stdout, rest) = rest.split_once("-- stderr\n").unwrap_or((rest, ""));
             let (stderr, summary) = rest.split_once("-- summary\n").unwrap_or((rest, ""));
-            let summary = summary.strip_suffix('\n').unwrap_or(summary);
+            let summary = summary.trim_suffix('\n');
             let owned = [code, stdout, stderr, summary].map(str::to_owned);
             want.insert(name.to_owned(), owned);
         }
@@ -582,7 +582,7 @@ mod tests {
                 continue;
             };
             // The golden's sections end in a newline of the format, not of the summary.
-            let summary = summary.strip_suffix('\n').unwrap_or(&summary).to_owned();
+            let summary = summary.trim_suffix('\n').to_owned();
             let same = stdout == *py_stdout && stderr == *py_stderr && summary == *py_summary;
             let stricter = STRICTER.contains(&case.name.as_str());
             if XTASK_HELD.contains(&case.name.as_str()) {

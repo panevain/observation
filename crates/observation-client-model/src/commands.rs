@@ -165,7 +165,7 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: boo
         }
     }
     if pressed(Key::Help) {
-        ctx.panels.help_open = !ctx.panels.help_open;
+        ctx.panels.help_open.toggle();
     }
     if pressed(Key::Overlay) {
         ctx.panels.overlay = match ctx.panels.overlay {
@@ -389,7 +389,7 @@ pub fn camera_action(ctx: &mut EditCtx, terrain: &Terrain, id: u32, action: Came
         }
         CameraAction::ToggleEnabled => {
             if let Some(c) = ctx.doc.get_mut().camera_mut(id) {
-                c.enabled = !c.enabled;
+                c.enabled.toggle();
             }
         }
         CameraAction::Delete => {

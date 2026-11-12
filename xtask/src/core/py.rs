@@ -599,7 +599,7 @@ pub fn argparse_value(text: &str) -> Result<String, String> {
     if option || SCRIPT_OPTIONS.contains(&text) {
         return refuse();
     }
-    let number = rest.strip_suffix('\n').unwrap_or(rest);
+    let number = rest.trim_suffix('\n');
     let (int, frac) = number
         .split_once('.')
         .map_or((number, None), |(i, f)| (i, Some(f)));
