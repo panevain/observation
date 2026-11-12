@@ -21,7 +21,11 @@ pub const MOUNT_OFFSET_M: f32 = 0.15;
 /// A plain [`Document`] is its own `Tracked`, for callers that track
 /// nothing or have already taken write access.
 pub trait Tracked<T> {
+    /// Read access; never marks anything changed.
     fn get(&self) -> &T;
+    /// Write access. In the client, calling it marks the resource changed
+    /// whether or not anything is then written, so call it only on a path
+    /// that writes.
     fn get_mut(&mut self) -> &mut T;
 }
 
@@ -649,5 +653,53 @@ mod tests {
         press(&mut f, &mut doc, &[Key::Escape]);
         press(&mut f, &mut doc, &[Key::Erase]);
         assert_eq!((doc.writes, doc.doc.cameras.len()), (2, 0));
+    }
+
+    #[test]
+    fn keys_write_nothing_without_a_selection_or_outside_the_region_tool() {
+        let mut f = Fixture::default().with_camera();
+        f.editor.selected = None;
+        f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
+        let mut doc = Counting {
+            doc: std::mem::take(&mut f.doc),
+            writes: 0,
+        };
+        for tool in [Tool::Select, Tool::Aim, Tool::Move] {
+            f.editor.tool = tool;
+            let mut ctx = EditCtx {
+                doc: &mut doc,
+                editor: &mut f.editor,
+                panels: &mut f.panels,
+                toasts: &mut f.toasts,
+            };
+            super::keys(&mut ctx, &|k| [Key::Erase, Key::Finish].contains(&k));
+        }
+        assert_eq!(doc.writes, 0);
+        assert_eq!(doc.doc.cameras.len(), 1);
+        assert_eq!(f.editor.region_draft.len(), 3);
+        assert!(doc.doc.region.is_none() && f.toasts.is_empty());
+    }
+
+    #[test]
+    fn a_click_exactly_the_snap_distance_away_closes_the_region() {
+        let mut f = Fixture::default();
+        f.editor.tool = Tool::Region;
+        f.editor.region_snap_m = 1.0;
+        f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
+        region_click(&mut f.ctx(), [0.0, 1.01]);
+        assert_eq!(f.editor.region_draft.len(), 4);
+        f.editor.region_draft.pop();
+        region_click(&mut f.ctx(), [0.0, 1.0]);
+        assert!(f.doc.region.is_some());
+        assert!(f.editor.region_draft.is_empty());
+    }
+
+    #[test]
+    fn of_two_tool_keys_in_one_frame_the_later_in_the_rail_wins() {
+        let mut f = Fixture::default();
+        f.press(&[Key::Tool(Tool::Address), Key::Tool(Tool::Select)]);
+        assert_eq!(f.editor.tool, Tool::Address);
+        f.press(&[Key::Tool(Tool::Region), Key::Tool(Tool::Place)]);
+        assert_eq!(f.editor.tool, Tool::Region);
     }
 }
