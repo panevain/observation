@@ -239,6 +239,47 @@ mod tests {
     }
 
     #[test]
+    fn the_ladder_names_the_clamped_custom_density() {
+        let mut p = params(DoriLevel::Custom, Lighting::Day);
+        p.custom_ppm = 100_000.0;
+        let b = stats(52.0);
+        let rungs = ladder(&p, [(DoriLevel::Custom, &b)].into_iter());
+        assert_eq!(
+            (rungs[0].text.as_str(), rungs[0].tip.as_str()),
+            (
+                "Custom 2000 px/m 26%",
+                "The figures above are at Custom 2000 px/m"
+            ),
+            "the density coverage is computed at, not the value as typed"
+        );
+    }
+
+    #[test]
+    fn the_rung_and_area_figures_round_not_truncate() {
+        let mut coverage = CoverageState::default();
+        coverage.stats = CoverageStats {
+            open_ground_seen_m2: 12.6,
+            ..stats(101.8)
+        };
+        let mut doc = Document::default();
+        doc.add_camera(camera());
+        let figures = CoverageSummaryVm::new(&doc, &coverage)
+            .figures
+            .expect("a camera");
+        assert_eq!(
+            figures.areas, "102 m² of 200 m² street surface · 13 m² open ground seen",
+            "101.8 and 12.6 round up"
+        );
+        let p = params(DoriLevel::Detect, Lighting::Day);
+        let rungs = ladder(&p, [(DoriLevel::Detect, &coverage.stats)].into_iter());
+        assert_eq!(
+            rungs[0].text,
+            format!("{} 51%", DoriLevel::Detect.label()),
+            "50.9% rounds up"
+        );
+    }
+
+    #[test]
     fn the_ladder_marks_the_selected_level() {
         let (a, b) = (stats(150.0), stats(52.0));
         let p = params(DoriLevel::Custom, Lighting::Day);
