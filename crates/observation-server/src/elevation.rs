@@ -163,3 +163,6 @@ pub(crate) mod tests {
         assert!(decode_tile(id, &small).is_err());
     }
 }
+
+#[cfg(test)]
+mod terrain_tests;
