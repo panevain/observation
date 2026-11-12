@@ -1,7 +1,7 @@
 //! Sampling the grid from Terrarium DEM tiles.
 
 use super::{TERRAIN_MARGIN_M, Terrain};
-use crate::geo::{BBox, LatLon, Projection};
+use crate::geo::{BBox, Projection};
 use crate::tiles::{TileId, lat_to_y, lon_to_x, tiles_covering};
 use glam::Vec2;
 
@@ -20,12 +20,8 @@ pub const DEM_TILE_PX: u32 = 256;
 /// World `[x, z]` rectangle a bbox's terrain covers: the bbox plus
 /// [`TERRAIN_MARGIN_M`] on every side.
 pub fn terrain_extent(bbox: &BBox) -> (Vec2, Vec2) {
-    let proj = Projection::new(bbox.center());
-    let corner =
-        |lat, lon| Vec2::from_array(proj.to_world(LatLon::new(lat, lon)).map(|v| v as f32));
-    let nw = corner(bbox.north, bbox.west);
-    let se = corner(bbox.south, bbox.east);
-    (nw.min(se) - TERRAIN_MARGIN_M, nw.max(se) + TERRAIN_MARGIN_M)
+    let (min, max) = Projection::new(bbox.center()).world_extent(bbox);
+    (min - TERRAIN_MARGIN_M, max + TERRAIN_MARGIN_M)
 }
 
 /// The lat/lon box of [`terrain_extent`].
@@ -127,12 +123,29 @@ pub fn terrain_from_dem(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geo::LatLon;
 
     #[test]
     fn terrarium_decoding() {
         assert_eq!(terrarium_m(128, 0, 0), 0.0);
         assert_eq!(terrarium_m(128, 100, 128), 100.5);
         assert_eq!(terrarium_m(127, 255, 0), -1.0);
+    }
+
+    #[test]
+    fn terrain_extent_is_the_bbox_plus_the_margin() {
+        let bbox = BBox::around(LatLon::new(47.7086, -122.206), 300.0);
+        let (min, max) = terrain_extent(&bbox);
+        let size = max - min;
+        let want = 300.0 + 2.0 * TERRAIN_MARGIN_M;
+        assert!(
+            (size.x - want).abs() < 0.01 && (size.y - want).abs() < 0.01,
+            "{size}"
+        );
+        assert!(
+            ((min + max) / 2.0).length() < 0.01,
+            "centred on the bbox centre"
+        );
     }
 
     #[test]

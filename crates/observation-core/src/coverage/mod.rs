@@ -20,7 +20,7 @@ mod tally;
 pub use crate::util::planar::closest_on_segment;
 pub use facade::{FacadeCell, facade_cells};
 pub use grid::GroundGrid;
-pub use layers::StaticLayers;
+pub use layers::{AreaGeometry, StaticLayers};
 pub use params::CoverageParams;
 pub use region::{MAX_REGION_POINTS, Region, RegionMask, RegionProblem};
 pub use sight::{Sight, Visibility};

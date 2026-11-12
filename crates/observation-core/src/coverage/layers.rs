@@ -5,9 +5,36 @@ use super::{FacadeCell, GroundGrid};
 use crate::building::Footprint;
 use crate::bundle::AreaBundle;
 use crate::occlusion::Occluders;
+use crate::road::Road;
 use crate::terrain::Terrain;
 use crate::util::planar::dist_to_segment;
 use glam::{Vec2, Vec3};
+
+/// The geometry the analysis layers are built from: an [`AreaBundle`], or
+/// the [`LayerInputs`](crate::coverage_job::LayerInputs) the coverage worker
+/// receives.
+pub trait AreaGeometry {
+    /// Building footprints. Their order numbers the façade cells, so it must
+    /// be the same wherever an area's layers are built.
+    fn footprints(&self) -> impl Iterator<Item = &Footprint>;
+    fn roads(&self) -> &[Road];
+    fn terrain(&self) -> &Terrain;
+}
+
+impl AreaGeometry for AreaBundle {
+    /// In bundle order ([`AreaBundle::footprints`]).
+    fn footprints(&self) -> impl Iterator<Item = &Footprint> {
+        AreaBundle::footprints(self)
+    }
+
+    fn roads(&self) -> &[Road] {
+        &self.roads
+    }
+
+    fn terrain(&self) -> &Terrain {
+        &self.terrain
+    }
+}
 
 /// Pre-computed, camera-independent analysis layers for a loaded area.
 #[derive(Debug, Clone)]
@@ -27,34 +54,32 @@ pub struct StaticLayers {
 
 impl StaticLayers {
     pub fn new(bundle: &AreaBundle, ground_cell_m: f32, facade_cell_m: f32) -> Self {
-        let footprints: Vec<&Footprint> = bundle.footprints().collect();
-        Self::from_parts(
-            Self::grid_for(bundle, ground_cell_m),
-            &footprints,
-            &bundle.roads,
-            facade_cell_m,
-            bundle.terrain.clone(),
-        )
+        Self::from_area(Self::grid_for(bundle, ground_cell_m), bundle, facade_cell_m)
     }
 
     /// The ground grid covering a bundle's bounding box.
     pub fn grid_for(bundle: &AreaBundle, ground_cell_m: f32) -> GroundGrid {
-        let proj = bundle.projection();
-        let corner = |lat, lon| {
-            Vec2::from_array(
-                proj.to_world(crate::geo::LatLon::new(lat, lon))
-                    .map(|v| v as f32),
-            )
-        };
-        let nw = corner(bundle.bbox.north, bundle.bbox.west);
-        let se = corner(bundle.bbox.south, bundle.bbox.east);
-        GroundGrid::covering(nw.min(se), nw.max(se), ground_cell_m)
+        let (min, max) = bundle.projection().world_extent(&bundle.bbox);
+        GroundGrid::covering(min, max, ground_cell_m)
+    }
+
+    /// The layers of an area's geometry on `grid`: [`Self::from_parts`] with
+    /// the area's footprints (in its order), roads and terrain.
+    pub fn from_area(grid: GroundGrid, area: &impl AreaGeometry, facade_cell_m: f32) -> Self {
+        let footprints: Vec<&Footprint> = area.footprints().collect();
+        Self::from_parts(
+            grid,
+            &footprints,
+            area.roads(),
+            facade_cell_m,
+            area.terrain().clone(),
+        )
     }
 
     pub fn from_parts(
         grid: GroundGrid,
         footprints: &[&Footprint],
-        roads: &[crate::road::Road],
+        roads: &[Road],
         facade_cell_m: f32,
         terrain: Terrain,
     ) -> Self {

@@ -9,7 +9,7 @@
 
 use crate::building::Footprint;
 use crate::bundle::AreaBundle;
-use crate::coverage::{GroundGrid, Sight, StaticLayers};
+use crate::coverage::{AreaGeometry, GroundGrid, Sight, StaticLayers};
 use crate::frustum::ViewCone;
 use crate::road::Road;
 use crate::terrain::Terrain;
@@ -31,10 +31,10 @@ pub enum JobRequest {
     Compute(Job),
 }
 
-/// What [`StaticLayers::new`] takes from a bundle: the arguments of
-/// [`StaticLayers::from_parts`], without the render mesh and addresses the
-/// layers do not use. The worker builds its layers from these with the same
-/// function, so they match the client's.
+/// What [`StaticLayers::new`] takes from a bundle: its grid and
+/// [`AreaGeometry`], without the render mesh and addresses the layers do not
+/// use. The worker builds its layers from these with
+/// [`StaticLayers::from_area`], as the client does, so they match.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayerInputs {
     pub grid: GroundGrid,
@@ -56,14 +56,21 @@ impl LayerInputs {
     }
 
     pub fn build(&self) -> StaticLayers {
-        let footprints: Vec<&Footprint> = self.footprints.iter().collect();
-        StaticLayers::from_parts(
-            self.grid,
-            &footprints,
-            &self.roads,
-            self.facade_cell_m,
-            self.terrain.clone(),
-        )
+        StaticLayers::from_area(self.grid, self, self.facade_cell_m)
+    }
+}
+
+impl AreaGeometry for LayerInputs {
+    fn footprints(&self) -> impl Iterator<Item = &Footprint> {
+        self.footprints.iter()
+    }
+
+    fn roads(&self) -> &[Road] {
+        &self.roads
+    }
+
+    fn terrain(&self) -> &Terrain {
+        &self.terrain
     }
 }
 
