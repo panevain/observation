@@ -9,12 +9,16 @@ use observation_core::geo::BBox;
 use observation_upstream::testing::{FakeHttp, FakeReply};
 use observation_upstream::{HttpRequest, RequestBody, TransportErrorKind};
 
-use super::{CALL_TIMEOUT, HttpRegionAgent, MAX_JSON_BYTES, MAX_RESULT_BYTES, QUERY_ERROR_BYTES};
+use super::{CALL_TIMEOUT, HttpRegionAgent};
 use crate::{
     ActionKind, AgentError, QueryResult, RegionAction, RegionAgent, RegionsSnapshot, SizesRequest,
 };
 
 const BASE: &str = "http://agent.example:8090";
+/// The caps, as literals so that changing one fails a test.
+const MIB_4: usize = 4 * 1024 * 1024;
+const MIB_32: usize = 32 * 1024 * 1024;
+const KIB_4: usize = 4096;
 
 fn agent(token: Option<&str>) -> (HttpRegionAgent, FakeHttp) {
     let fake = FakeHttp::new();
@@ -69,7 +73,7 @@ async fn snapshots_are_long_polled_with_the_token() {
         assert!(req.headers()[AUTHORIZATION].is_sensitive());
         assert_eq!(req.body, RequestBody::None);
         assert_eq!(req.timeout, Some(Duration::from_secs(40)));
-        assert_eq!(req.max_bytes, MAX_JSON_BYTES);
+        assert_eq!(req.max_bytes, MIB_4);
         assert_eq!(
             req.error_max_bytes, 0,
             "an error status's body is never read"
@@ -83,6 +87,10 @@ async fn snapshots_are_long_polled_with_the_token() {
 #[tokio::test(start_paused = true)]
 async fn snapshot_failures_are_described() {
     let bad_json = serde_json::from_slice::<RegionsSnapshot>(b"<html>")
+        .unwrap_err()
+        .to_string();
+    // At the cap the body is read (and is no snapshot); one byte over, not.
+    let blank = serde_json::from_slice::<RegionsSnapshot>(&vec![b' '; MIB_4])
         .unwrap_err()
         .to_string();
     for (reply, want) in [
@@ -99,9 +107,10 @@ async fn snapshot_failures_are_described() {
             "HTTP status server error (503 Service Unavailable)".to_owned(),
         ),
         (
-            FakeReply::ok(vec![b' '; MAX_JSON_BYTES + 1]),
+            FakeReply::ok(vec![b' '; MIB_4 + 1]),
             "the snapshot is too large".to_owned(),
         ),
+        (FakeReply::ok(vec![b' '; MIB_4]), blank),
         (FakeReply::ok("<html>"), bad_json),
     ] {
         let (agent, fake) = agent(None);
@@ -114,8 +123,13 @@ async fn snapshot_failures_are_described() {
         &url("/regions"),
         FakeReply::error(TransportErrorKind::Connect),
     );
-    let message = agent.snapshot(None).await.unwrap_err();
-    assert!(!message.is_empty() && !message.contains(BASE), "{message}");
+    // The transport's text as it is (GuardedHttp's is reqwest's, without
+    // the URL).
+    assert_eq!(
+        agent.snapshot(None).await.unwrap_err(),
+        "FakeHttp: scripted Connect"
+    );
+    fake.assert_drained();
 }
 
 #[tokio::test(start_paused = true)]
@@ -153,16 +167,32 @@ async fn queries_post_the_form_to_the_interpreter_with_the_box() {
         Some("Bearer s3cret")
     );
     assert_eq!(req.timeout, Some(Duration::from_secs(15)), "the caller's");
-    assert_eq!(req.max_bytes, MAX_RESULT_BYTES);
-    assert_eq!(req.error_max_bytes, QUERY_ERROR_BYTES);
+    assert_eq!(req.max_bytes, MIB_32);
+    assert_eq!(req.error_max_bytes, KIB_4);
+    assert_eq!(
+        req.body_skipped_for,
+        Some(StatusCode::NOT_FOUND),
+        "a 404's body is never read"
+    );
+    fake.assert_drained();
 }
 
 #[tokio::test(start_paused = true)]
 async fn query_outcomes_are_mapped() {
-    let long = "x".repeat(QUERY_ERROR_BYTES + 1);
+    let long = "x".repeat(KIB_4 + 1);
+    let at_cap = "x".repeat(KIB_4);
+    let at_cap_text = format!("agent answered 503 Service Unavailable: {at_cap}");
     let at = url("/interpreter?bbox=47.6000000,-122.3400000,47.6010000,-122.3390000");
-    let cases: [(FakeReply, Result<Option<QueryResult>, &str>); 6] = [
+    let cases: [(FakeReply, Result<Option<QueryResult>, &str>); 13] = [
         (status(404), Ok(None)),
+        // Never read: neither its content nor its failure counts.
+        (status(404).body(r#"{"error":"no region"}"#), Ok(None)),
+        (
+            status(404)
+                .body("x")
+                .body_fails(TransportErrorKind::BodyTimeout),
+            Ok(None),
+        ),
         (
             FakeReply::ok("{}"),
             Ok(Some(QueryResult {
@@ -185,9 +215,33 @@ async fn query_outcomes_are_mapped() {
             status(502).body(long),
             Err("agent answered 502 Bad Gateway: "),
         ),
+        (status(503).body(at_cap), Err(&at_cap_text)),
         (
-            FakeReply::ok(vec![b' '; MAX_RESULT_BYTES + 1]),
+            FakeReply::ok(vec![b' '; MIB_32 + 1]),
             Err("the result is too large"),
+        ),
+        (
+            FakeReply::ok(vec![b' '; MIB_32]),
+            Ok(Some(QueryResult {
+                body: vec![b' '; MIB_32].into(),
+                osm_base_unix: None,
+            })),
+        ),
+        // A body that breaks off: an error status is logged without it,
+        // a success gives the transport's text.
+        (
+            status(500)
+                .body("boom")
+                .body_fails(TransportErrorKind::Body),
+            Err("agent answered 500 Internal Server Error: "),
+        ),
+        (
+            FakeReply::ok("{").body_fails(TransportErrorKind::Body),
+            Err("FakeHttp: scripted Body in the body"),
+        ),
+        (
+            FakeReply::error(TransportErrorKind::Connect),
+            Err("FakeHttp: scripted Connect"),
         ),
     ];
     for (i, (reply, want)) in cases.into_iter().enumerate() {
@@ -195,6 +249,7 @@ async fn query_outcomes_are_mapped() {
         fake.on(Method::POST, &at, reply);
         let got = agent.query(&bbox(), "q", Duration::from_secs(15)).await;
         assert_eq!(got, want.map_err(str::to_owned), "case {i}");
+        fake.assert_drained();
     }
 }
 
@@ -214,17 +269,13 @@ async fn catalog_requests_and_actions_send_json_with_the_token() {
         refresh_days: Some(None),
     };
     let kinds = [
-        ActionKind::Import,
-        ActionKind::Cancel,
-        ActionKind::Delete,
-        ActionKind::Settings,
+        (ActionKind::Import, "/regions/import"),
+        (ActionKind::Cancel, "/regions/cancel"),
+        (ActionKind::Delete, "/regions/delete"),
+        (ActionKind::Settings, "/regions/settings"),
     ];
-    for kind in kinds {
-        fake.on(
-            Method::POST,
-            &url(&format!("/regions/{}", kind.path())),
-            FakeReply::ok("{\"version\":1}"),
-        );
+    for (kind, path) in kinds {
+        fake.on(Method::POST, &url(path), FakeReply::ok("{\"version\":1}"));
         assert_eq!(agent.act(kind, &action).await.unwrap(), "{\"version\":1}");
     }
     let requests = fake.requests();
@@ -232,22 +283,21 @@ async fn catalog_requests_and_actions_send_json_with_the_token() {
     assert_eq!(requests[0].body, RequestBody::None);
     assert_eq!(
         requests[1].body,
-        RequestBody::Json(serde_json::to_vec(&sizes).unwrap().into())
+        RequestBody::Json(r#"{"ids":["europe/monaco"]}"#.into())
     );
     for req in &requests[2..] {
         assert_eq!(
             req.body,
-            RequestBody::Json(serde_json::to_vec(&action).unwrap().into())
+            RequestBody::Json(
+                r#"{"id":"europe/monaco","auto_refresh":false,"refresh_days":null}"#.into()
+            )
         );
     }
     for req in &requests {
         assert_eq!(header(req, AUTHORIZATION).as_deref(), Some("Bearer s3cret"));
         assert_eq!(req.timeout, Some(CALL_TIMEOUT));
         assert_eq!(req.timeout, Some(Duration::from_secs(45)));
-        assert_eq!(
-            (req.max_bytes, req.error_max_bytes),
-            (MAX_JSON_BYTES, MAX_JSON_BYTES)
-        );
+        assert_eq!((req.max_bytes, req.error_max_bytes), (MIB_4, MIB_4));
     }
     for req in &requests[1..] {
         assert_eq!(req.wire_parts().0[CONTENT_TYPE], "application/json");
@@ -258,8 +308,16 @@ async fn catalog_requests_and_actions_send_json_with_the_token() {
 /// How an answer to a catalog request or an action maps to [`AgentError`].
 #[tokio::test(start_paused = true)]
 async fn answers_map_to_agent_errors() {
-    let too_large = || vec![b' '; MAX_JSON_BYTES + 1];
-    let cases: [(FakeReply, Result<&str, AgentError>); 12] = [
+    let too_large = || vec![b' '; MIB_4 + 1];
+    let at_cap = " ".repeat(MIB_4);
+    let cases: [(FakeReply, Result<&str, AgentError>); 14] = [
+        (FakeReply::ok(at_cap.clone()), Ok(&at_cap)),
+        (
+            status(500).body(at_cap.clone()),
+            Err(AgentError::Other(
+                "the region agent answered HTTP 500".into(),
+            )),
+        ),
         (FakeReply::ok("[1]"), Ok("[1]")),
         (
             FakeReply::status(StatusCode::CREATED).body("[2]"),
@@ -320,7 +378,23 @@ async fn answers_map_to_agent_errors() {
             None,
             "case {i}"
         );
+        fake.assert_drained();
     }
+}
+
+/// Neither the token nor credentials in the base URL show in `Debug`.
+#[test]
+fn debug_output_hides_the_token() {
+    let agent = HttpRegionAgent::new(
+        Arc::new(FakeHttp::new()),
+        "http://user:pw@agent.example:8090".to_owned(),
+        Some("s3cret".to_owned()),
+    );
+    let shown = format!("{agent:?}");
+    assert!(!shown.contains("s3cret"), "{shown}");
+    assert!(!shown.contains("pw"), "{shown}");
+    assert!(shown.contains("agent.example:8090"), "{shown}");
+    assert!(shown.contains("<redacted>"), "{shown}");
 }
 
 /// A token that cannot be a header value fails every request before it is
