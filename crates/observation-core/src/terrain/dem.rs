@@ -139,6 +139,12 @@ impl<'a> DemMosaic<'a> {
     pub fn elevation_at(&self, p: LatLon) -> Option<f32> {
         let gx = lon_to_x(p.lon, DEM_ZOOM) * PX - 0.5;
         let gy = lat_to_y(p.lat, DEM_ZOOM) * PX - 0.5;
+        self.bilinear(gx, gy)
+    }
+
+    /// [`Self::elevation_at`] at global pixel coordinates measured from the
+    /// pixel centres (pixel `(c, r)`'s centre is at `(c, r)`).
+    fn bilinear(&self, gx: f64, gy: f64) -> Option<f32> {
         let (fx, fy) = (gx.floor(), gy.floor());
         let (tx, ty) = ((gx - fx) as f32, (gy - fy) as f32);
         let top = self.pixel(fx, fy)? * (1.0 - tx) + self.pixel(fx + 1.0, fy)? * tx;
@@ -243,6 +249,78 @@ mod tests {
         let mut short = tiles.clone();
         short[0].elevations.pop();
         assert!(DemMosaic::new(&bbox, &short).is_none());
+    }
+
+    #[test]
+    fn mosaic_samples_are_pinned_to_the_bit() {
+        // A noisy, non-planar DEM over a box that straddles a tile seam. The
+        // expected values are the exact f32 bits the sampling gives today,
+        // which are the same bits the closures in `terrain_from_dem` gave
+        // before they moved into DemMosaic. They pin the pixel and bilinear
+        // arithmetic token for token, so a rewrite that moves results by a
+        // few ULP fails here. They may only change with a deliberate,
+        // documented change to how terrain is sampled.
+        let bbox = BBox::around(LatLon::new(-33.8688, 151.2093), 450.0);
+        let need = dem_tiles_for(&bbox);
+        assert!(need.len() > 1, "the box must straddle a seam: {need:?}");
+        let tiles: Vec<DemTile> = need
+            .iter()
+            .map(|&id| {
+                let mut seed = u64::from(id.x) * 1_000_003 + u64::from(id.y);
+                let elevations = (0..DEM_TILE_PX * DEM_TILE_PX)
+                    .map(|_| {
+                        seed = seed
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                        ((seed >> 33) % 100_000) as f32 / 37.0 - 500.0
+                    })
+                    .collect();
+                DemTile { id, elevations }
+            })
+            .collect();
+        let mosaic = DemMosaic::new(&bbox, &tiles).unwrap();
+        // Sampled at pixel coordinates rather than lat/lon, so that no
+        // platform-dependent transcendental function feeds the pinned bits.
+        let (x0, y0) = (f64::from(need[0].x) * PX, f64::from(need[0].y) * PX);
+        let last = need[need.len() - 1];
+        let (x1, y1) = (f64::from(last.x + 1) * PX, f64::from(last.y + 1) * PX);
+        let seam_x = f64::from(need[0].x + 1) * PX;
+        let points = [
+            ("interior", (x0 + 100.3, y0 + 57.8)),
+            ("x seam", (seam_x - 0.4, y0 + 20.6)),
+            ("north-west, clamped", (x0 - 40.25, y0 - 7.5)),
+            ("south-east, clamped", (x1 + 12.75, y1 + 30.125)),
+            ("past the east edge", (x1 + 3.2, (y0 + y1) / 2.0 + 0.7)),
+        ];
+        let bits: Vec<(&str, Option<u32>)> = points
+            .iter()
+            .map(|&(name, (gx, gy))| (name, mosaic.bilinear(gx, gy).map(f32::to_bits)))
+            .collect();
+        assert_eq!(
+            bits,
+            [
+                ("interior", Some(0x4414_8fea)),
+                ("x seam", Some(0x441b_2a8d)),
+                ("north-west, clamped", Some(0x431c_b3e4)),
+                ("south-east, clamped", Some(0x41ab_3e40)),
+                ("past the east edge", Some(0x44c5_d532)),
+            ]
+        );
+        // And every point of a 61 × 61 lattice over the mosaic and past its
+        // edges, folded into one FNV-1a hash of their bits (single points can
+        // agree by chance).
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for i in 0..=60 {
+            for j in 0..=60 {
+                let gx = x0 - 5.0 + (x1 - x0 + 10.0) * f64::from(j) / 60.0 + 0.137;
+                let gy = y0 - 5.0 + (y1 - y0 + 10.0) * f64::from(i) / 60.0 + 0.291;
+                let v = mosaic.bilinear(gx, gy).map_or(u32::MAX, f32::to_bits);
+                for b in v.to_le_bytes() {
+                    hash = (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+                }
+            }
+        }
+        assert_eq!(hash, 0xf92b_aa9a_6760_427e);
     }
 
     #[test]
