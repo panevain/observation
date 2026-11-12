@@ -385,15 +385,22 @@ fn street_and_scan_camera() -> impl Strategy<Value = (Street, Camera)> {
 /// a building, or 5 cm of the ground's blocking threshold) are not checked. Every other point must be listed, at the squared distance the
 /// oracle finds (to a relative 1e-5), or not listed. At least 60% of the
 /// cases must see some ground cell the oracle is sure of (about 85% do), at
-/// least 20% some façade patch (about a third do: on tilted ground the
-/// houses are buried), and
-/// at most 2% of the points in or near the view may go unchecked (under 1%
-/// are).
+/// least 15% some façade patch (about a third do: on tilted ground the
+/// houses are buried), and at most 5% of the points in or near the view may
+/// go unchecked (about 0.5% are); see `SCAN_CASES` for the margins.
 #[test]
 fn prop_sight_matches_an_independent_scan() {
+    // The floors below are counted over this many cases. Measured over 300
+    // seeds at 96 cases: ground seen in 84.5% of cases (sd 3.8 points), a
+    // façade in 33.5% (sd 5.1, binomial), and 0.54% of points unchecked (sd
+    // 0.22, at most 1.9%). At 128 cases a floor of 60% for ground is 7.7 sd
+    // under its mean and 15% for façades 4.4 sd, so a false alarm at any seed
+    // is under 1 in 100,000; the 5% cap on unchecked points is over twice the
+    // largest share seen.
+    const SCAN_CASES: u32 = 128;
     let (cases, sees_ground, sees_facade) = (Cell::new(0u32), Cell::new(0u32), Cell::new(0u32));
     let (called, unsure) = (Cell::new(0u64), Cell::new(0u64));
-    let mut runner = TestRunner::new(config(24));
+    let mut runner = TestRunner::new(config(SCAN_CASES));
     let result = runner.run(
         &(street_and_scan_camera(), 0.0..=2.0f32),
         |((s, cam), subject)| {
@@ -509,13 +516,13 @@ fn prop_sight_matches_an_independent_scan() {
     );
     let (c, u) = (called.get(), unsure.get());
     assert!(
-        50 * u <= c + u,
+        20 * u <= c + u,
         "{u} of {} points in or near the view went unchecked",
         c + u
     );
     let f = sees_facade.get();
     assert!(
-        5 * f >= n,
+        20 * f >= 3 * n,
         "only {f} of {n} cases see a facade the oracle is sure of"
     );
     eprintln!(
