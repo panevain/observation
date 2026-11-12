@@ -4,8 +4,8 @@ use axum::http::{Method, StatusCode, header};
 use observation_server::testing::TestApp;
 use observation_upstream::testing::{FakeHttp, FakeReply};
 
+use crate::common::PNG;
 use crate::harness::{get_uri, json, tile_png, tile_url};
-use crate::mocks::PNG;
 
 #[tokio::test(start_paused = true)]
 async fn invalid_tiles_are_404_without_upstream_calls() {

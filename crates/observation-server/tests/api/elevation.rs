@@ -6,8 +6,8 @@ use observation_core::bundle::AreaBundle;
 use observation_server::testing::TestApp;
 use observation_upstream::testing::{FakeHttp, FakeReply};
 
+use crate::common::PNG;
 use crate::harness::{OVERPASS, area_uri, flat_app, get_uri, hits, json, overpass_ok};
-use crate::mocks::PNG;
 
 /// Where the production configuration fetches elevation tiles.
 const DEM_PREFIX: &str = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/";

@@ -7,10 +7,10 @@ use observation_server::ratelimit::{Cidr, Rate};
 use observation_server::testing::TestApp;
 use observation_upstream::testing::FakeHttp;
 
+use crate::common::PNG;
 use crate::harness::{
     OVERPASS, area_uri, flat_app, json, overpass_ok, overpass_status, send, tile_png, tile_url,
 };
-use crate::mocks::PNG;
 
 /// Overpass answering `replies` in order.
 fn overpass(

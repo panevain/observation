@@ -1,17 +1,19 @@
 //! The production adapters over real sockets, through the real
-//! `AppState::new`: what fakes cannot show, for Overpass and for tiles (the
-//! User-Agent on the wire, a redirect not followed, a body cut off while
-//! streaming, the disk cache's files). Everything else is tested on
-//! `TestApp` in `tests/api`.
+//! `AppState::new`: what fakes cannot show, for Overpass, for tiles and for
+//! the region agent (the User-Agent and the agent's token on the wire, the
+//! agent long-polled by the spawned poller, a redirect not followed, a body
+//! cut off while streaming, the disk cache's files). Everything else is
+//! tested on `TestApp` in `tests/api`.
 #![allow(clippy::unwrap_used)] // integration-test helpers live outside `#[test]` fns
 
-#[path = "api/harness.rs"]
-#[allow(dead_code)]
+#[path = "common/mod.rs"]
+mod common;
+#[path = "adapters/harness.rs"]
 mod harness;
-#[path = "api/mocks.rs"]
-#[allow(dead_code)]
+#[path = "adapters/mocks.rs"]
 mod mocks;
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -21,8 +23,9 @@ use axum::http::{Request, StatusCode, header};
 use axum::routing::{get, post};
 use observation_core::bundle::{AreaBundle, BUNDLE_CONTENT_TYPE};
 
-use crate::harness::{BBOX, area_uri, get_uri, harness, json, send};
-use crate::mocks::{PNG, spawn, spawn_overpass, spawn_tiles};
+use crate::common::{BBOX, PNG, area_uri, get_uri, json, send};
+use crate::harness::{Harness, harness, harness_with};
+use crate::mocks::{MockAgent, MockOverpass, spawn, spawn_agent, spawn_overpass, spawn_tiles};
 
 #[tokio::test]
 async fn area_fetches_once_then_serves_from_cache() {
@@ -210,4 +213,65 @@ async fn endless_tile_bodies_are_cut_off() {
     .expect("oversized body is rejected while streaming");
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(!h.cache.path().join("tiles").exists());
+}
+
+/// A harness with a mock Overpass and a mock region agent; `admin` sets OBS_ADMIN_TOKEN.
+async fn region_harness(admin: Option<&str>) -> (Harness, Arc<MockOverpass>, Arc<MockAgent>) {
+    let (overpass, overpass_url) = spawn_overpass().await;
+    let (agent, agent_url) = spawn_agent().await;
+    let admin = admin.map(str::to_owned);
+    let h = harness_with(
+        &overpass_url,
+        "http://127.0.0.1:9/{z}/{x}/{y}.png",
+        tempfile::tempdir().unwrap(),
+        move |c| {
+            c.regions_url = Some(agent_url);
+            c.regions_token = Some("agent-secret".into());
+            c.admin_token = admin;
+        },
+    );
+    (h, overpass, agent)
+}
+
+/// Waits until the server's copy of the agent snapshot has `version`.
+async fn wait_for_version(app: &Router, version: u64) -> serde_json::Value {
+    for _ in 0..200 {
+        let (status, _, body) = get_uri(app, "/api/regions").await;
+        assert_eq!(status, StatusCode::OK);
+        let v = json(&body);
+        if v["agent_online"] == true && v["snapshot"]["version"] == version {
+            return v;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the server never saw snapshot version {version}");
+}
+
+#[tokio::test]
+async fn areas_inside_a_ready_region_come_from_the_agent() {
+    let (h, overpass, agent) = region_harness(None).await;
+    agent.set_ready("wa", 1);
+    wait_for_version(&h.app, 1).await;
+    let (_, _, body) = get_uri(&h.app, "/api/config").await;
+    assert_eq!(json(&body)["regions"], true);
+
+    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(AreaBundle::decode(&body).is_ok());
+    assert_eq!(agent.interpreter_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        overpass.hits.load(Ordering::SeqCst),
+        0,
+        "public Overpass untouched"
+    );
+    assert!(agent.bboxes.lock().unwrap()[0].contains(','));
+    assert!(
+        agent
+            .auth
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|a| a == "Bearer agent-secret"),
+        "every agent request carries OBS_REGIONS_TOKEN"
+    );
 }
