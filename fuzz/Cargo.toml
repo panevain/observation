@@ -57,3 +57,17 @@ path = "fuzz_targets/coverage_geometry.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "job_decode"
+path = "fuzz_targets/job_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "catalog_ron"
+path = "fuzz_targets/catalog_ron.rs"
+test = false
+doc = false
+bench = false
