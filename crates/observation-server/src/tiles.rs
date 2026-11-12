@@ -19,6 +19,7 @@ use tokio::sync::Semaphore;
 use crate::cache::{Cache, TileMeta, TileSet};
 use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
+use crate::domain::freshness::tile_is_fresh;
 use crate::error::ApiError;
 use crate::ports::TileStore;
 use crate::ratelimit::{ClientKey, RateLimiter};
@@ -120,7 +121,7 @@ impl TileProxy {
     ) -> Result<Tile, ApiError> {
         let cached = TileStore::get(&*self.cache, self.set, id).await;
         if let Some(c) = &cached
-            && c.meta.expires_unix > unix_secs(self.clock.now())
+            && tile_is_fresh(&c.meta, self.clock.now())
         {
             self.count("hit");
             return Ok(Tile::fresh(c.bytes.clone()));
@@ -450,12 +451,7 @@ mod tests {
             tile_bytes: 1 << 20,
             dem_bytes: 1 << 20,
         };
-        let cache = Arc::new(Cache::open_with_clock(
-            dir.path(),
-            Duration::ZERO,
-            caps,
-            clock.clone(),
-        ));
+        let cache = Arc::new(Cache::open_with_clock(dir.path(), caps, clock.clone()));
         let id = TileId::new(3, 2, 1).unwrap();
         let meta = TileMeta {
             expires_unix: 1_700_000_100,

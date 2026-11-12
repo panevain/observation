@@ -11,6 +11,7 @@ pub mod cache;
 pub mod clock;
 pub mod config;
 pub mod demo;
+pub mod domain;
 pub mod elevation;
 pub mod error;
 pub mod metrics;
@@ -106,7 +107,6 @@ impl AppState {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let cache = Arc::new(Cache::open_with_clock(
             &config.cache_dir,
-            config.bundle_ttl,
             CacheCaps {
                 bundle_bytes: config.bundle_cache_cap_bytes,
                 tile_bytes: config.tile_cache_cap_bytes,
@@ -155,6 +155,7 @@ impl AppState {
             config.attribution.clone(),
             RateLimiter::new("area", config.area_rate),
             Arc::clone(&clock),
+            config.bundle_ttl,
         ));
         let now = unix_secs(clock.now());
         let tiles = TileProxy::new(tile_client, &config, cache, clock);

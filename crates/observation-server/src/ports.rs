@@ -1,8 +1,8 @@
 //! The server's storage ports: where bundles and proxied tiles are kept.
 //!
 //! A store only keeps bytes and says when they were written; whether a
-//! stored bundle or tile is still good is for the callers to decide. The
-//! production implementation of both is
+//! stored bundle or tile is still good is decided by the callers with
+//! [`crate::domain::freshness`]. The production implementation of both is
 //! the disk [`Cache`](crate::cache::Cache); tests can use the in-memory
 //! fakes in `testing` (behind the `testing` feature).
 
