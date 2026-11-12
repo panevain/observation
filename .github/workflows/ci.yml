@@ -24,7 +24,7 @@ env:
   # mise.ci.toml on top of mise.toml: CI's tools, environment (cargo and nextest settings) and
   # tasks. setup-mise (.github/actions/, which pins the mise version) exports that environment
   # to the later steps, so it runs before setup-rust, whose rust-cache key includes the CARGO_*
-  # and RUST* variables.
+  # and RUST* variables; setup-ci runs the two in that order.
   MISE_ENV: ci
 
 jobs:
@@ -38,8 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-mise
-      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-ci
       - run: mise run fmt
 
   clippy-native:
@@ -52,10 +51,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-mise
-      - uses: $/.github/actions/setup-rust
+      # xtask/ is a second workspace, which the task lints too: its target/ is cached with the
+      # root one.
+      - uses: $/.github/actions/setup-ci
         with:
           cache-key: native
+          cache-workspaces: |
+            . -> target
+            xtask -> target
       - run: mise run clippy-native
 
   clippy-wasm:
@@ -68,8 +71,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-mise
-      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-ci
         with:
           cache-key: wasm-clippy
       - run: mise run clippy-wasm
@@ -84,12 +86,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-mise
+      # The task tests xtask/ too, a second workspace: its target/ is cached with the root one.
+      # The coverage jobs restore this cache, so they name the same workspaces.
+      - uses: $/.github/actions/setup-ci
         with:
           tools: cargo-nextest
-      - uses: $/.github/actions/setup-rust
-        with:
           cache-key: test
+          cache-workspaces: |
+            . -> target
+            xtask -> target
       # NEXTEST_PROFILE=ci (mise.ci.toml): .config/nextest.toml's profile for CI.
       - run: mise run test
 
@@ -106,22 +111,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-mise
-        with:
-          tools: cargo-llvm-cov
       # Restores the test job's cache (registry and dependencies) and never saves one of its
       # own: an instrumented build for an informational job is not worth ~1 GB of cache quota.
-      - uses: $/.github/actions/setup-rust
+      # Same workspaces as the test job, or rust-cache would not find its cache.
+      - uses: $/.github/actions/setup-ci
         with:
+          tools: cargo-llvm-cov
           components: llvm-tools-preview
           cache-key: test
+          cache-workspaces: |
+            . -> target
+            xtask -> target
           cache-save: false
       - name: Coverage
         run: |
           set -euo pipefail
           mise run coverage
           {
-            echo "### Coverage (observation-core + observation-server)"
+            echo "### Line coverage (the workspace except the wasm client)"
             echo
             echo '```'
             cargo llvm-cov report --summary-only
@@ -134,17 +141,49 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  tokens:
-    name: design tokens
+  # Each crate's line coverage against its floor in .config/coverage.toml (a crate below its
+  # floor fails; one with no floor warns). Not a required check. Pull requests only, as the
+  # informational job above runs on pushes; same packages (mise.toml's coverage_excludes).
+  coverage-floor:
+    name: coverage (per-crate floor)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-mise
+      # The test job's cache, restored and never saved (as the informational job does).
+      - uses: $/.github/actions/setup-ci
+        with:
+          tools: cargo-llvm-cov
+          components: llvm-tools-preview
+          cache-key: test
+          cache-workspaces: |
+            . -> target
+            xtask -> target
+          cache-save: false
+      - run: mise run coverage:check
+
+  tokens:
+    name: design tokens
+    runs-on: ubuntu-24.04
+    # A cold run installs the toolchain and builds xtask (under a minute); with the cache,
+    # seconds.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The token check is an xtask command; only xtask's own workspace is built and cached.
+      - uses: $/.github/actions/setup-ci
+        with:
+          cache-key: xtask
+          cache-workspaces: xtask -> target
       - run: mise run tokens
       - run: mise run sync
       - run: mise run tasks:validate
@@ -180,12 +219,14 @@ jobs:
         with:
           persist-credentials: false
       # trunk comes from mise.toml, checksum-verified via mise.lock.
-      - uses: $/.github/actions/setup-mise
+      # The size budget is an xtask command: xtask/'s target/ is cached with the root one.
+      - uses: $/.github/actions/setup-ci
         with:
           tools: trunk
-      - uses: $/.github/actions/setup-rust
-        with:
           cache-key: wasm-release
+          cache-workspaces: |
+            . -> target
+            xtask -> target
           # trunk's wasm-bindgen and wasm-opt downloads (versions follow Cargo.lock and trunk).
           cache-directories: ~/.cache/trunk
       # The brotli sizes (about a minute of brotli -q 11) are reported on pushes only, to keep

@@ -1,7 +1,7 @@
 //! Design tokens: the single source of colours, spacing, radii and type scale.
 //!
 //! No other module may contain colour literals (enforced in CI by
-//! `scripts/check-design-tokens.sh`). The scales, the minimum viewport and
+//! `cargo xtask tokens`). The scales, the minimum viewport and
 //! the UI colour roles come from `observation-tokens`, which also writes them
 //! as the CSS of the loading screen and the small-viewport gate in
 //! `web/index.html`.

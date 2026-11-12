@@ -1,5 +1,6 @@
 //! Crate versions and the Cargo-style requirements RustSec writes for patched and unaffected
-//! ranges, ported as is from `scripts/check-cargo-cooldown.py` (`version_key`, `matches`).
+//! ranges, ported as is from `scripts/check-cargo-cooldown.py` (since removed): `version_key`
+//! and `matches`.
 //!
 //! This is deliberately not full semver: a pre-release sorts before its release, and two
 //! pre-releases compare as plain strings, as the script did. Digits are ASCII only, and
@@ -132,6 +133,31 @@ mod tests {
             version_key("v1"),
             Err(VersionError::NotAVersion("v1".into()))
         );
+    }
+
+    /// The truth table the Python `matches` gave for 702 pairs (tests/fixtures/version-matches.tsv,
+    /// generated as the cooldown port's pull request describes).
+    #[test]
+    fn matches_the_python_on_every_recorded_pair() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/version-matches.tsv"
+        );
+        let table = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}"));
+        for line in table.lines() {
+            let mut f = line.split('\t');
+            let (v, r, want) = (
+                f.next().unwrap_or(""),
+                f.next().unwrap_or(""),
+                f.next().unwrap_or(""),
+            );
+            let got = match matches(v, r) {
+                Ok(true) => "true",
+                Ok(false) => "false",
+                Err(_) => "error",
+            };
+            assert_eq!(got, want, "{v:?} against {r:?}");
+        }
     }
 
     #[test]

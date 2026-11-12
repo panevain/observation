@@ -1,0 +1,68 @@
+name: Open, update or close a tracking issue
+description: >-
+  Finds the open issue whose title is exactly `title` and opens, updates or closes it. Used by
+  jobs whose only write permission is `issues: write`; it runs nothing but gh.
+
+inputs:
+  token:
+    description: A token that can write issues
+    required: true
+  title:
+    description: The issue's exact title (the issue is found by it)
+    required: true
+  body:
+    description: >-
+      The text: the new issue's body, the comment (existing: comment), the issue's new body
+      (existing: edit), or the closing comment (close)
+    required: false
+    default: ""
+  body-file:
+    description: A file with that text, instead of body
+    required: false
+    default: ""
+  existing:
+    description: What to do with an open issue of that title, when there is one (comment or edit)
+    required: false
+    default: comment
+  close:
+    description: >-
+      true to close the open issue of that title, if any, with `body` (not body-file) as the
+      closing comment, instead of opening or updating it
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        BODY_FILE: ${{ inputs.body-file }}
+        EXISTING: ${{ inputs.existing }}
+        CLOSE: ${{ inputs.close }}
+      run: |
+        set -euo pipefail
+        case "${EXISTING}" in
+          comment | edit) ;;
+          *) echo "::error::existing must be comment or edit, not '${EXISTING}'"; exit 1 ;;
+        esac
+        if [ -n "${BODY_FILE}" ]; then
+          body=(--body-file "${BODY_FILE}")
+        else
+          body=(--body "${BODY}")
+        fi
+        # The title reaches jq as a variable, not as part of its program.
+        n="$(gh issue list --repo "${REPO}" --state open --search "in:title \"${TITLE}\"" --json number,title \
+          | jq -r --arg title "${TITLE}" 'map(select(.title == $title)) | .[0].number // empty')"
+        if [ "${CLOSE}" = true ]; then
+          if [ -n "${n}" ]; then
+            gh issue close "${n}" --repo "${REPO}" --comment "${BODY}"
+          fi
+        elif [ -n "${n}" ]; then
+          gh issue "${EXISTING}" "${n}" --repo "${REPO}" "${body[@]}"
+        else
+          gh issue create --repo "${REPO}" --title "${TITLE}" "${body[@]}"
+        fi

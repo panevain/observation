@@ -367,7 +367,7 @@ The shipped module is about 26.1 MB raw and 7.8 MB gzip. Bevy is half of it (abo
 
 The figure is measured on the `wasm-release` profile after `wasm-bindgen` and `wasm-opt -Os`, with symbol names kept (`strip = false`, `--debuginfo`) and then excluded from the sizes; the result is within 0.03% of the module `trunk build` ships. Prepare release regenerates it on every release branch, so each release ships its own chart (the Treemap workflow does the same on `develop` by hand). To regenerate it by hand after a dependency or feature change, run `mise run treemap` or `scripts/wasm-size-report.sh` (a fat-LTO build, 15 to 20 minutes on four cores; `--no-build` reuses the last build). It needs only `cargo`, `python3`, and the `wasm-bindgen` and `wasm-opt` binaries that trunk caches, prints a top-15 table, and rewrites `docs/images/wasm-bundle-treemap.svg` through `scripts/wasm-size-treemap.py`, which is stdlib-only and also accepts `twiggy top --format csv` output.
 
-**Size budget.** Every release build in CI checks each module against `.config/wasm-size-budget.toml` (raw and gzip level 9, a few percent above the current sizes; `scripts/check-wasm-size.py`, `mise run build:budget`), so an unplanned jump fails the wasm job. A change that grows the bundle on purpose raises the limit in the same pull request and says why.
+**Size budget.** Every release build in CI checks each module against `.config/wasm-size-budget.toml` (raw and gzip level 9, a few percent above the current sizes; `cargo xtask wasm-budget`, `mise run build:budget`), so an unplanned jump fails the wasm job. A change that grows the bundle on purpose raises the limit in the same pull request and says why.
 
 ## Coverage algorithm
 
@@ -422,7 +422,7 @@ The UI font is Inter (with tabular digits frozen in, since egui cannot switch Op
 
 The scales, the minimum viewport and the UI colour roles are plain data in `crates/observation-tokens`, which `theme.rs` builds its `Tokens` from (world colours, camera colours and the overlap ramp stay in `theme.rs`). The same crate writes them as CSS for the loading screen and the small-screen gate: `--obs-*` custom properties, with the colours swapped under `@media (prefers-color-scheme: dark)`, and the small-viewport media query. A trunk `pre_build` hook (`Trunk.toml`) runs its `token-css` binary before every build to write `web/tokens.css` (gitignored), and `web/index.html` inlines it with `<link data-trunk rel="inline">`, so the page cannot drift from the app. The crate has no dependencies, so the hook compiles in seconds and needs no native Bevy build, locally or in the Docker image.
 
-`scripts/check-design-tokens.sh` runs in CI. It scans every `.rs` file under the client's `src/` except `theme.rs` and fails on colour constructors (`Color32::from_rgb`, `Color::srgb(...)`, `Srgba::new(...)`, named `Color32::` constants and similar) or hex colour strings, so colours cannot drift away from the tokens.
+`cargo xtask tokens` runs in CI (`.config/design-tokens.toml`). It scans every `.rs` file under the client's and the client model's `src/` except `theme.rs` and fails on colour constructors (`Color32::from_rgb`, `Color::srgb(...)`, `Srgba::new(...)`, named `Color32::` constants and similar) or hex colour strings, so colours cannot drift away from the tokens.
 
 ## Viewport gate
 

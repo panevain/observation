@@ -13,6 +13,14 @@ on:
     # Monday update window, after Dependabot's runs (05:00-05:15).
     - cron: "30 5 * * 1"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (the checks, summary and artifacts only; no branch, pull request or tag)
+        type: boolean
+        default: false
+
+# dry_run (manual runs only): the jobs that hold the bot's token or write are skipped. A
+# scheduled run has no inputs, and an empty dry_run reads as false.
 
 concurrency:
   group: ${{ github.workflow }}
@@ -42,6 +50,16 @@ jobs:
       - uses: $/.github/actions/setup-mise
         with:
           cache: false
+      # The sync check after the bump is an xtask command. xtask is built first, with the
+      # toolchain pinned before the bump (which may move it), and uncached like the rest of
+      # this job.
+      - uses: $/.github/actions/setup-rust
+      - name: Build xtask
+        id: xtask
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask"
+          echo "bin=${RUNNER_TEMP}/xtask/debug/xtask" >> "${GITHUB_OUTPUT}"
       - name: Bump
         id: bump
         env:
@@ -58,7 +76,6 @@ jobs:
             exit 0
           fi
           mise run lock
-          mise run sync
           git diff --binary > "${out}/pins.patch"
           {
             echo "Pins that Dependabot does not cover, bumped by the Pins workflow (scripts/bump-pins.py):"
@@ -76,6 +93,13 @@ jobs:
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
           echo "changed=true" >> "${GITHUB_OUTPUT}"
           echo "automerge=$(cat "${out}/automerge")" >> "${GITHUB_OUTPUT}"
+      # The bumped pins agree wherever they are repeated (mise run sync). Its own step, with no
+      # token in its environment; a failure fails the job before the patch is uploaded.
+      - name: Versions agree
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          XTASK: ${{ steps.xtask.outputs.bin }}
+        run: '"${XTASK}" sync --repo .'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.bump.outputs.changed == 'true'
         with:
@@ -89,7 +113,7 @@ jobs:
   pr:
     name: open pins PR
     needs: bump
-    if: needs.bump.outputs.changed == 'true'
+    if: needs.bump.outputs.changed == 'true' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: bot
@@ -112,32 +136,28 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Open or update the pull request
+      - name: Commit
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           BOT: ${{ steps.bot.outputs.app-slug }}
-          AUTOMERGE: ${{ needs.bump.outputs.automerge }}
         run: |
           set -euo pipefail
-          branch="chore/pin-bumps"
-          git switch -c "${branch}"
+          git switch -c chore/pin-bumps
           git apply --index "${RUNNER_TEMP}/pins/pins.patch"
           scripts/ci-git.sh identity "${BOT}"
           git -c core.hooksPath=/dev/null commit -m "Bump pinned tools" -m "$(sed -n '3,$p' "${RUNNER_TEMP}/pins/body.md")"
-          # The branch is this workflow's own, so each run replaces it.
-          scripts/ci-git.sh push-force "${branch}"
-          if ! gh pr create --base develop --head "${branch}" --title "Bump pinned tools" \
-            --body-file "${RUNNER_TEMP}/pins/body.md"; then
-            gh pr edit "${branch}" --body-file "${RUNNER_TEMP}/pins/body.md"
-          fi
-          # Patch updates only merge themselves, and not when labelled hold. Auto-merge outlives
-          # the force-push above, so it is switched off again when this week's bumps need a person.
-          # --match-head-commit: only the commit pushed above is merged.
-          state="$(gh pr view "${branch}" --json autoMergeRequest,labels)"
-          if [ "${AUTOMERGE}" = true ] && ! jq -e '.labels | any(.name == "hold")' <<<"${state}" >/dev/null; then
-            gh pr merge "${branch}" --auto --squash --match-head-commit "$(git rev-parse HEAD)"
-            echo "Auto-merge enabled." >> "${GITHUB_STEP_SUMMARY}"
-          elif jq -e '.autoMergeRequest' <<<"${state}" >/dev/null; then
-            gh pr merge "${branch}" --disable-auto
-            echo "Auto-merge disabled: not every bump is a patch update, or the PR is labelled hold." >> "${GITHUB_STEP_SUMMARY}"
-          fi
+      # The branch is this workflow's own, so each run replaces it. Patch updates only merge
+      # themselves, and not when labelled hold.
+      - name: Open or update the pull request
+        uses: $/.github/actions/open-pr
+        with:
+          token: ${{ steps.bot.outputs.token }}
+          branch: chore/pin-bumps
+          base: develop
+          title: Bump pinned tools
+          body-file: ${{ runner.temp }}/pins/body.md
+          force-push: true
+          if-exists: edit
+          auto-merge: squash-unless-hold
+          auto-merge-allowed: ${{ needs.bump.outputs.automerge }}
+          auto-merge-disabled-note: "Auto-merge disabled: not every bump is a patch update, or the PR is labelled hold."

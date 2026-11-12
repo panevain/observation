@@ -22,6 +22,18 @@ inputs:
       release's), where the shims would resolve that checkout's mise config
     required: false
     default: "true"
+  dir:
+    description: >-
+      Directory mise runs in, whose mise config applies (mise-action's working_directory).
+      Empty for the workspace
+    required: false
+    default: ""
+  env:
+    description: >-
+      Export mise's environment ([env], and PATH entries) to later steps. false where nothing
+      a later step runs may come from that config except what it asks for by path
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -30,10 +42,16 @@ runs:
       with:
         version: 2026.10.25
         install: ${{ inputs.tools != '' }}
-        install_args: ${{ inputs.tools }}
+        # Only the locked release assets (mise.lock, mise.ci.lock). The action would add
+        # --locked itself on seeing a lockfile; written out, the strict install does not depend
+        # on that detection. The cache key ignores arguments starting with `-`.
+        install_args: --locked ${{ inputs.tools }}
         cache: ${{ inputs.cache }}
         # Caches are written only by develop (the default branch). Pull requests and the other
         # branches restore develop's caches; writes from anywhere else would only use up the
         # repository's cache quota and evict develop's entries.
         cache_save: ${{ inputs.cache == 'true' && github.ref == 'refs/heads/develop' }}
         add_shims_to_path: ${{ inputs.shims }}
+        working_directory: ${{ inputs.dir }}
+        env: ${{ inputs.env }}
+        export_path: ${{ inputs.env }}

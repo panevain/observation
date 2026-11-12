@@ -12,7 +12,7 @@
 # Patch and minor updates come in separate groups: Dependabot auto-merge
 # (dependabot-automerge.yml) merges patch updates, base image digest refreshes and the fuzz
 # nightly once their checks pass, so a patch group never waits on a minor update that needs a
-# person.
+# person. An update that changes xtask/ (which builds that check) always waits for a person.
 version: 2
 updates:
   # Every Cargo workspace: the root one, the fuzz targets (fuzz/, its own lockfile; see

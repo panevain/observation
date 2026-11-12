@@ -1,4 +1,4 @@
-# Crate cooldown, checked on every pull request by scripts/check-cargo-cooldown.py (the
+# Crate cooldown, checked on every pull request by `cargo xtask cooldown` (the
 # `cargo-cooldown` check in security.yml; locally `mise -E ci run cooldown`).
 #
 # A crate version that a pull request adds to Cargo.lock, fuzz/Cargo.lock or xtask/Cargo.lock,

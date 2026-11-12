@@ -1,0 +1,151 @@
+{"toml": "a = {\n b = 1 }", "ok": false, "repr": null}
+{"toml": "a = { b = 1, }", "ok": false, "repr": null}
+{"toml": "a = {b=1,\n}", "ok": false, "repr": null}
+{"toml": "a = { b = [\n1,\n2] }", "ok": true, "repr": "{'a': {'b': [1, 2]}}"}
+{"toml": "a = { b = 1 # c\n}", "ok": false, "repr": null}
+{"toml": "a = \"\\x41\"", "ok": false, "repr": null}
+{"toml": "a = \"\\e\"", "ok": false, "repr": null}
+{"toml": "a = \"\"\"\\x41\"\"\"", "ok": false, "repr": null}
+{"toml": "a = \"\"\"\\e\"\"\"", "ok": false, "repr": null}
+{"toml": "a = '\\x41'", "ok": true, "repr": "{'a': '\\\\x41'}"}
+{"toml": "a = '''\\e'''", "ok": true, "repr": "{'a': '\\\\e'}"}
+{"toml": "a = \"A\\U0001F600\"", "ok": true, "repr": "{'a': 'A\ud83d\ude00'}"}
+{"toml": "a = \"\\\\x41\"", "ok": true, "repr": "{'a': '\\\\x41'}"}
+{"toml": "a = \"\"\"\\\\e\"\"\"", "ok": true, "repr": "{'a': '\\\\e'}"}
+{"toml": "a = 10:00", "ok": false, "repr": null}
+{"toml": "a = 10:00:00", "ok": true, "repr": "{'a': datetime.time(10, 0)}"}
+{"toml": "a = 2026-01-01T10:00", "ok": false, "repr": null}
+{"toml": "a = 2026-01-01T10:00Z", "ok": false, "repr": null}
+{"toml": "a = 2026-01-01T10:00+05:00", "ok": false, "repr": null}
+{"toml": "a = 2026-01-01 10:00:00", "ok": true, "repr": "{'a': datetime.datetime(2026, 1, 1, 10, 0)}"}
+{"toml": "a = 10:00:00.1234567", "ok": true, "repr": "{'a': datetime.time(10, 0, 0, 123456)}"}
+{"toml": "a = 2026-01-01T10:00:60", "ok": false, "repr": null}
+{"toml": "a = 2026-01-01T10:00:60Z", "ok": false, "repr": null}
+{"toml": "a = 23:59:60", "ok": false, "repr": null}
+{"toml": "a = 2026-02-30", "ok": false, "repr": null}
+{"toml": "a = 2026-01-01T25:00:00", "ok": false, "repr": null}
+{"toml": "a = 1979-05-27T00:32:00.999999-07:00", "ok": true, "repr": "{'a': datetime.datetime(1979, 5, 27, 0, 32, 0, 999999, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=61200)))}"}
+{"toml": "a = 1979-05-27t07:32:00", "ok": true, "repr": "{'a': datetime.datetime(1979, 5, 27, 7, 32)}"}
+{"toml": "a = 1979-05-27 07:32:00Z", "ok": true, "repr": "{'a': datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc)}"}
+{"toml": "a = 1979-05-27T07:32:00z", "ok": true, "repr": "{'a': datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc)}"}
+{"toml": "a = 2026-01-01T10:00:00+24:00", "ok": false, "repr": null}
+{"toml": "a = 2026-01-01T10:00:00+23:59", "ok": true, "repr": "{'a': datetime.datetime(2026, 1, 1, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=86340)))}"}
+{"toml": "a = 2026-01-01T10:00:00-00:00", "ok": true, "repr": "{'a': datetime.datetime(2026, 1, 1, 10, 0, tzinfo=datetime.timezone.utc)}"}
+{"toml": "a = 0001-01-01", "ok": true, "repr": "{'a': datetime.date(1, 1, 1)}"}
+{"toml": "a = 0000-01-01", "ok": false, "repr": null}
+{"toml": "\u00e9 = 1", "ok": false, "repr": null}
+{"toml": "\u043a\u043b\u044e\u0447 = 1", "ok": false, "repr": null}
+{"toml": "\"\u00e9\" = 1", "ok": true, "repr": "{'\u00e9': 1}"}
+{"toml": "a = 1\na = 2", "ok": false, "repr": null}
+{"toml": "a.b = 1\n[a]\nc = 2", "ok": false, "repr": null}
+{"toml": "[a]\nb = 1\n[a]", "ok": false, "repr": null}
+{"toml": "[a.b]\n[a]", "ok": true, "repr": "{'a': {'b': {}}}"}
+{"toml": "a = {}\n[a.b]", "ok": false, "repr": null}
+{"toml": "[[a]]\n[a]", "ok": false, "repr": null}
+{"toml": "a = []\n[[a]]", "ok": false, "repr": null}
+{"toml": "a = 0x1F", "ok": true, "repr": "{'a': 31}"}
+{"toml": "a = 1_000", "ok": true, "repr": "{'a': 1000}"}
+{"toml": "a = 1__0", "ok": false, "repr": null}
+{"toml": "a = 01", "ok": false, "repr": null}
+{"toml": "a = +0x1", "ok": false, "repr": null}
+{"toml": "a = 1e1_0", "ok": true, "repr": "{'a': 10000000000.0}"}
+{"toml": "a = inf", "ok": true, "repr": "{'a': inf}"}
+{"toml": "a = -nan", "ok": true, "repr": "{'a': nan}"}
+{"toml": "a = +inf", "ok": true, "repr": "{'a': inf}"}
+{"toml": "a = 9223372036854775807", "ok": true, "repr": "{'a': 9223372036854775807}"}
+{"toml": "a = 9223372036854775808", "ok": true, "repr": "{'a': 9223372036854775808}"}
+{"toml": "a = -9223372036854775808", "ok": true, "repr": "{'a': -9223372036854775808}"}
+{"toml": "a = 1.", "ok": false, "repr": null}
+{"toml": "a = .5", "ok": false, "repr": null}
+{"toml": "a = 1e400", "ok": true, "repr": "{'a': inf}"}
+{"toml": "a = 0.1", "ok": true, "repr": "{'a': 0.1}"}
+{"toml": "a = 1e16", "ok": true, "repr": "{'a': 1e+16}"}
+{"toml": "a = 1e15", "ok": true, "repr": "{'a': 1000000000000000.0}"}
+{"toml": "a = 0.0001", "ok": true, "repr": "{'a': 0.0001}"}
+{"toml": "a = 0.00001", "ok": true, "repr": "{'a': 1e-05}"}
+{"toml": "a = -0.0", "ok": true, "repr": "{'a': -0.0}"}
+{"toml": "a = 1.5e-7", "ok": true, "repr": "{'a': 1.5e-07}"}
+{"toml": "a = 123456789012345678.0", "ok": true, "repr": "{'a': 1.2345678901234568e+17}"}
+{"toml": "a = \"\"\"\nline\\\n   cont\"\"\"", "ok": true, "repr": "{'a': 'linecont'}"}
+{"toml": "a = \"\"\"a\"\"\"\"", "ok": true, "repr": "{'a': 'a\"'}"}
+{"toml": "a = \"\"\"a\"\"\"\"\"", "ok": true, "repr": "{'a': 'a\"\"'}"}
+{"toml": "a = \"\"\"a\"\"\"\"\"\"", "ok": false, "repr": null}
+{"toml": "a = '''a''''", "ok": true, "repr": "{'a': \"a'\"}"}
+{"toml": "a\t=\t1", "ok": true, "repr": "{'a': 1}"}
+{"toml": "a = [1, 'x', 2.5, true, 2026-01-01]", "ok": true, "repr": "{'a': [1, 'x', 2.5, True, datetime.date(2026, 1, 1)]}"}
+{"toml": "a = \"line\nbreak\"", "ok": false, "repr": null}
+{"toml": "a = 1 # comment", "ok": true, "repr": "{'a': 1}"}
+{"toml": "a = 1 b = 2", "ok": false, "repr": null}
+{"toml": "[a] b = 1", "ok": false, "repr": null}
+{"toml": "[ a ]\nb = 1", "ok": true, "repr": "{'a': {'b': 1}}"}
+{"toml": "[a.'b c']\nd = 1", "ok": true, "repr": "{'a': {'b c': {'d': 1}}}"}
+{"toml": "a = { b = 1, b = 2 }", "ok": false, "repr": null}
+{"toml": "a = {b.c = 1}", "ok": true, "repr": "{'a': {'b': {'c': 1}}}"}
+{"toml": "a = {b.c = 1, b = 2}", "ok": false, "repr": null}
+{"toml": "a = {b=1}\n[a.c]", "ok": false, "repr": null}
+{"toml": "'' = 1", "ok": true, "repr": "{'': 1}"}
+{"toml": "\"\" = 1", "ok": true, "repr": "{'': 1}"}
+{"toml": "a . b = 1", "ok": true, "repr": "{'a': {'b': 1}}"}
+{"toml": "a = 'it''s'", "ok": false, "repr": null}
+{"toml": "a = \"it's\"", "ok": true, "repr": "{'a': \"it's\"}"}
+{"toml": "a = 'say \"hi\"'", "ok": true, "repr": "{'a': 'say \"hi\"'}"}
+{"toml": "a = \"tab\\there\"", "ok": true, "repr": "{'a': 'tab\\there'}"}
+{"toml": "a = \"nl\\nhere\"", "ok": true, "repr": "{'a': 'nl\\nhere'}"}
+{"toml": "a = \"both ' and \\\"\"", "ok": true, "repr": "{'a': 'both \\' and \"'}"}
+{"toml": "a = \"\\\\back\"", "ok": true, "repr": "{'a': '\\\\back'}"}
+{"toml": "a = [\"x\", [1, [2]], {}]", "ok": true, "repr": "{'a': ['x', [1, [2]], {}]}"}
+{"toml": "a = {x = {y = [1, {z = 2}]}}", "ok": true, "repr": "{'a': {'x': {'y': [1, {'z': 2}]}}}"}
+{"toml": "[[p]]\nname = \"x\"\n[[p]]\nname = \"y\"", "ok": true, "repr": "{'p': [{'name': 'x'}, {'name': 'y'}]}"}
+{"toml": "[x]\ny.z = 1\n[x.w]\nv = 2", "ok": true, "repr": "{'x': {'y': {'z': 1}, 'w': {'v': 2}}}"}
+{"toml": "a = true\nb = false\nc = \"s\"", "ok": true, "repr": "{'a': True, 'b': False, 'c': 's'}"}
+{"toml": "a = 2026-01-01T10:00:00.5Z", "ok": true, "repr": "{'a': datetime.datetime(2026, 1, 1, 10, 0, 0, 500000, tzinfo=datetime.timezone.utc)}"}
+{"toml": "a = 2026-01-01T10:00:00.000001+05:30", "ok": true, "repr": "{'a': datetime.datetime(2026, 1, 1, 10, 0, 0, 1, tzinfo=datetime.timezone(datetime.timedelta(seconds=19800)))}"}
+{"toml": "a = 2026-01-01T10:00:00-05:00", "ok": true, "repr": "{'a': datetime.datetime(2026, 1, 1, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400)))}"}
+{"toml": "a = 10:00:00.5", "ok": true, "repr": "{'a': datetime.time(10, 0, 0, 500000)}"}
+{"toml": "a = 1979-05-27T07:32:00.1234567", "ok": true, "repr": "{'a': datetime.datetime(1979, 5, 27, 7, 32, 0, 123456)}"}
+{"toml": "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0000000000000000000000000000000000000000000000000000000000000000\"\ndependencies = [\n \"serde_derive\",\n]", "ok": true, "repr": "{'version': 4, 'package': [{'name': 'serde', 'version': '1.0.0', 'source': 'registry+https://github.com/rust-lang/crates.io-index', 'checksum': '0000000000000000000000000000000000000000000000000000000000000000', 'dependencies': ['serde_derive']}]}"}
+{"toml": "days = 7\n\n[[exempt]]\nname = \"ex\"\nversion = \"1.0.0\"\nreason = \"needed for a fix\"\nuntil = 2026-12-01", "ok": true, "repr": "{'days': 7, 'exempt': [{'name': 'ex', 'version': '1.0.0', 'reason': 'needed for a fix', 'until': datetime.date(2026, 12, 1)}]}"}
+{"toml": "a = { b = \"x,}\" }", "ok": true, "repr": "{'a': {'b': 'x,}'}}"}
+{"toml": "a = { \"c#d\" = 1 }", "ok": true, "repr": "{'a': {'c#d': 1}}"}
+{"toml": "a = [\"#\", \"{\", '}', \"\"\"]\"\"\", ''']''']", "ok": true, "repr": "{'a': ['#', '{', '}', ']', ']']}"}
+{"toml": "a = \"\\\\x\"", "ok": true, "repr": "{'a': '\\\\x'}"}
+{"toml": "a = \"\"\"\\\\e\"\"\"", "ok": true, "repr": "{'a': '\\\\e'}"}
+{"toml": "a = \"\"\"x\\\n   \\x41\"\"\"", "ok": false, "repr": null}
+{"toml": "[a.\"b{\"]\nc = 1", "ok": true, "repr": "{'a': {'b{': {'c': 1}}}"}
+{"toml": "a = { b = { c = 1 }, d = [ {e = 1}, ] }", "ok": true, "repr": "{'a': {'b': {'c': 1}, 'd': [{'e': 1}]}}"}
+{"toml": "a = {b = 1,c = 2}", "ok": true, "repr": "{'a': {'b': 1, 'c': 2}}"}
+{"toml": "a = { b = 1 , }", "ok": false, "repr": null}
+{"toml": "a = \"\u00e9\"", "ok": true, "repr": "{'a': '\u00e9'}"}
+{"toml": "# \u00e9 comment\na = 1", "ok": true, "repr": "{'a': 1}"}
+{"toml": "a = 'x' # \u00e9", "ok": true, "repr": "{'a': 'x'}"}
+{"toml": "\"a\u00e9\" = 1", "ok": true, "repr": "{'a\u00e9': 1}"}
+{"toml": "a = [\n  1, # one\n  2,\n]", "ok": true, "repr": "{'a': [1, 2]}"}
+{"toml": "a = { b = [ 1,\n  2 ] }", "ok": true, "repr": "{'a': {'b': [1, 2]}}"}
+{"toml": "a = { b = \"\"\"x\"\"\" }", "ok": true, "repr": "{'a': {'b': 'x'}}"}
+{"toml": "a = { b = \"\"\"x\ny\"\"\" }", "ok": true, "repr": "{'a': {'b': 'x\\ny'}}"}
+{"toml": "a = \"\\\"{\\\"\"", "ok": true, "repr": "{'a': '\"{\"'}"}
+{"toml": "a = '\\'", "ok": true, "repr": "{'a': '\\\\'}"}
+{"toml": "[[a]]\nb = { c = 2026-01-01T10:00:00Z }\n", "ok": true, "repr": "{'a': [{'b': {'c': datetime.datetime(2026, 1, 1, 10, 0, tzinfo=datetime.timezone.utc)}}]}"}
+{"toml": "\ufeffa = 1\n", "ok": false, "repr": null}
+{"toml": "# a\u0001b\na = 1\n", "ok": false, "repr": null}
+{"toml": "# a\u007fb\na = 1\n", "ok": false, "repr": null}
+{"toml": "# a\u0000b\na = 1\n", "ok": false, "repr": null}
+{"toml": "# a\tb\na = 1\n", "ok": true, "repr": "{'a': 1}"}
+{"toml": "# \u0085 \u2028\na = 1\n", "ok": true, "repr": "{'a': 1}"}
+{"toml": "a = \"\u007f\"\n", "ok": false, "repr": null}
+{"toml": "a = '\u007f'\n", "ok": false, "repr": null}
+{"toml": "a = \"\u0001\"\n", "ok": false, "repr": null}
+{"toml": "a = '''\u0001'''\n", "ok": false, "repr": null}
+{"toml": "a = \"\"\"\u007f\"\"\"\n", "ok": false, "repr": null}
+{"toml": "a = 1\u000b\n", "ok": false, "repr": null}
+{"toml": "a = 1\f\n", "ok": false, "repr": null}
+{"toml": "\u00a0a = 1\n", "ok": false, "repr": null}
+{"toml": "a = 1\n\u0000", "ok": false, "repr": null}
+{"toml": "", "ok": true, "repr": "{}"}
+{"toml": "# only a comment\n", "ok": true, "repr": "{}"}
+{"toml": "\n\n\n", "ok": true, "repr": "{}"}
+{"toml": "a = '\u2028'\n", "ok": true, "repr": "{'a': '\\u2028'}"}
+{"toml": "a = \"\u0085\"\n", "ok": true, "repr": "{'a': '\\x85'}"}
+{"toml": "a = '\u00e9\u200b'\n", "ok": true, "repr": "{'a': '\u00e9\\u200b'}"}
+{"toml": "a = 1\r\n", "ok": true, "repr": "{'a': 1}"}
+{"toml": "a = '''x\r\ny'''\n", "ok": true, "repr": "{'a': 'x\\ny'}"}

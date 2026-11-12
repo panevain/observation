@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::SystemTime;
 
-use super::{AuditOutput, Brotli, Cargo, Clock, Git, Http, Response};
+use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, Http, Response};
 use crate::core::time::Timestamp;
 use crate::{Error, Result};
 
@@ -144,10 +144,14 @@ pub struct Curl {
 }
 
 /// curl's arguments for a GET of `url`. `--disable` must come first to keep `.curlrc` out. The
-/// timeouts are urllib's `timeout=30`: 30 s to connect, and no 30 s without data.
+/// timeouts are urllib's `timeout=30`: 30 s to connect, and no 30 s without data. The URL is
+/// requested as written, as urllib did: `--globoff` keeps `[]` and `{}` from being expanded
+/// into other URLs, and `--path-as-is` keeps `/../` and `/./` in the path.
 fn curl_args<'a>(user_agent: &'a str, url: &'a str) -> Vec<&'a str> {
     vec![
         "--disable",
+        "--globoff",
+        "--path-as-is",
         "--silent",
         "--show-error",
         "--location",
@@ -264,6 +268,43 @@ impl Brotli for BrotliCli {
     }
 }
 
+/// `gh`, found on `PATH`, with the caller's environment (its token included). Unlike the other
+/// adapters it adds no timeout and no `--` before positional values, as the script did not:
+/// the job's timeout bounds it, and its only positional value from data is a pull request
+/// number from GitHub's own listing.
+#[derive(Debug)]
+pub struct GhCli {
+    pub program: PathBuf,
+}
+
+impl Default for GhCli {
+    fn default() -> Self {
+        Self {
+            program: PathBuf::from("gh"),
+        }
+    }
+}
+
+impl GitHub for GhCli {
+    /// Output read as `subprocess.run(text=True)` read it: strict UTF-8, universal newlines.
+    fn gh(&self, args: &[String]) -> Result<GhOutput> {
+        use std::os::unix::process::ExitStatusExt as _;
+        let mut cmd = Command::new(&self.program);
+        cmd.args(args);
+        let out = run(&mut cmd, None).map_err(|e| spawn_error(&cmd, &e))?;
+        let code = out
+            .status
+            .code()
+            .or_else(|| out.status.signal().map(|s| -s))
+            .unwrap_or(-1);
+        Ok(GhOutput {
+            code,
+            stdout: crate::core::py::universal_newlines(&utf8(&cmd, out.stdout)?),
+            stderr: crate::core::py::universal_newlines(&utf8(&cmd, out.stderr)?),
+        })
+    }
+}
+
 /// The system clock.
 #[derive(Debug, Clone, Default)]
 pub struct SystemClock;
@@ -294,6 +335,14 @@ mod tests {
         let args = curl_args("ua", "-o/tmp/x");
         assert_eq!(args[0], "--disable");
         assert_eq!(&args[args.len() - 2..], ["--", "-o/tmp/x"]);
+    }
+
+    /// `[]` and `{}` in a URL are not curl globs, and dot segments are sent as written.
+    #[test]
+    fn curl_requests_the_url_as_written() {
+        let args = curl_args("ua", "https://example.com/se/rd/serd[e-e]");
+        assert!(args.contains(&"--globoff"));
+        assert!(args.contains(&"--path-as-is"));
     }
 
     fn ok<T>(r: Result<T>) -> T {
