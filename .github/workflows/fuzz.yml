@@ -116,10 +116,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: read # the checkout of the upsert-issue action
+      contents: read # the hedge checkout below
       issues: write # open or comment on the crash issue
     steps:
-      # Only for the composite action below (local actions come from a checkout).
+      # GitHub documents that a `$/` action needs no checkout. This sparse checkout (and the
+      # contents: read above) is a deliberate hedge until a run in this repository has shown the
+      # composite below resolving without one; then both can be dropped.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

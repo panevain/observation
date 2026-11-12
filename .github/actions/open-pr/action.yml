@@ -1,6 +1,6 @@
 name: Open a bot pull request
 description: >-
-  Pushes the current HEAD to a branch with scripts/ci-git.sh and opens a pull request from it,
+  Pushes the local branch `branch` to origin with scripts/ci-git.sh and opens a pull request from it,
   then optionally turns on auto-merge. Runs in the bot jobs only, after the workflow has made
   its commit: it compiles and runs nothing from the tree but scripts/ci-git.sh, as each job's
   own steps did before. The flows differ where the workflows did (push or force-push, what
@@ -12,7 +12,9 @@ inputs:
     description: The bot's token (contents and pull-requests write)
     required: true
   branch:
-    description: The branch to push HEAD to and open the pull request from
+    description: >-
+      The local branch to push (it must exist; the workflow commits on it) and open the pull
+      request from
     required: true
   base:
     description: The pull request's base branch
@@ -31,7 +33,8 @@ inputs:
   force-push:
     description: >-
       true to replace the branch (for a branch that is the workflow's own, rebuilt by every
-      run); false to push it as new, which fails if it exists
+      run); false for a plain push, which fails if the remote branch exists and cannot be
+      fast-forwarded to it (it succeeds when it can)
     required: false
     default: "false"
   if-exists:
@@ -43,7 +46,9 @@ inputs:
   delete-branch-on-failure:
     description: >-
       true to delete the pushed branch when the pull request cannot be opened (so that a re-run
-      can push it again where rulesets forbid force-pushes); the step still fails
+      can push it again where rulesets forbid force-pushes); the step still fails. No caller
+      yet: kept for release-prep's bot job, which deletes its branch on failure today and moves
+      to this action in the release-prep split
     required: false
     default: "false"
   summary:
