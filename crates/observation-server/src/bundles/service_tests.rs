@@ -33,6 +33,7 @@ struct Rig {
     map: FakeMapData,
     terrain: FakeTerrain,
     store: Arc<MemBundleStore>,
+    clock: Arc<ManualClock>,
     config: Config,
 }
 
@@ -46,6 +47,7 @@ fn rig_on(
     let config = Config::from_lookup(|_| None).unwrap();
     let map = FakeMapData::new();
     let terrain = FakeTerrain::new();
+    let clock = Arc::new(ManualClock::at_unix(T));
     let service = Arc::new(BundleService::new(
         store,
         Arc::new(map.clone()),
@@ -53,7 +55,7 @@ fn rig_on(
         Arc::new(terrain.clone()),
         config.attribution.clone(),
         RateLimiter::new("area", config.area_rate),
-        Arc::new(ManualClock::at_unix(T)),
+        clock.clone(),
         config.bundle_ttl,
     ));
     Rig {
@@ -61,6 +63,7 @@ fn rig_on(
         map,
         terrain,
         store: mem,
+        clock,
         config,
     }
 }
@@ -498,4 +501,66 @@ async fn a_stored_bundle_is_rebuilt_once_older_than_the_ttl() {
     let rebuilt = r.service.get(bbox(), client(1)).await.unwrap();
     assert_ne!(rebuilt, old);
     assert_eq!(stored(&r.store).await, Some(rebuilt));
+}
+
+/// Freshness is judged at the injected clock's time, not the wall clock's.
+#[tokio::test(start_paused = true)]
+async fn freshness_is_judged_by_the_injected_clock() {
+    let recorder = MetricCounts::default();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    let r = rig();
+    let old = other_bundle();
+    seed(&r.store, &old, Duration::ZERO);
+    r.clock
+        .advance(r.config.bundle_ttl - Duration::from_secs(1));
+    assert_eq!(r.service.get(bbox(), client(1)).await.unwrap(), old);
+    assert_eq!(bundle_counts(&recorder), vec![result("hit", 1)]);
+    r.clock.advance(Duration::from_secs(1));
+    r.terrain.reply(Ok(Terrain::default()));
+    r.map.reply(Ok(data()));
+    let rebuilt = r.service.get(bbox(), client(1)).await.unwrap();
+    assert_ne!(rebuilt, old, "expired exactly at the TTL");
+    assert_eq!(
+        bundle_counts(&recorder),
+        vec![result("built", 1), result("hit", 1)]
+    );
+    r.map.assert_drained();
+    r.terrain.assert_drained();
+}
+
+/// A stored file that is not a bundle of the current version is never
+/// served, though freshly written: the upstream's error is returned and
+/// counted as `error` (not `stale_served`), and a working upstream
+/// rebuilds and replaces it.
+#[tokio::test(start_paused = true)]
+async fn a_stored_file_that_is_not_a_current_bundle_is_never_served() {
+    let mut old_version = observation_core::bundle::BUNDLE_MAGIC.to_vec();
+    old_version.extend_from_slice(&(observation_core::bundle::BUNDLE_VERSION - 1).to_le_bytes());
+    old_version.extend_from_slice(&[0; 32]);
+    for bad in [Bytes::from_static(b"<html>"), Bytes::from(old_version)] {
+        let recorder = MetricCounts::default();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let r = rig();
+        seed(&r.store, &bad, Duration::ZERO);
+        r.terrain.reply(Ok(Terrain::default()));
+        r.map
+            .reply(Err(ApiError::Upstream("map data failed".into())));
+        let got = r.service.get(bbox(), client(1)).await;
+        assert!(
+            matches!(&got, Err(ApiError::Upstream(m)) if m == "map data failed"),
+            "{got:?}"
+        );
+        assert_eq!(bundle_counts(&recorder), vec![result("error", 1)]);
+        r.terrain.reply(Ok(Terrain::default()));
+        r.map.reply(Ok(data()));
+        let rebuilt = r.service.get(bbox(), client(1)).await.unwrap();
+        assert!(AreaBundle::decode(&rebuilt).is_ok());
+        assert_eq!(stored(&r.store).await, Some(rebuilt));
+        assert_eq!(
+            bundle_counts(&recorder),
+            vec![result("built", 1), result("error", 1)]
+        );
+        r.map.assert_drained();
+        r.terrain.assert_drained();
+    }
 }
