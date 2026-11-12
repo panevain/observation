@@ -3,7 +3,7 @@
 //! Layout under the cache root:
 //!
 //! ```text
-//! bundles/<cache_key>.obsb          (freshness = file mtime + TTL)
+//! bundles/<cache_key>.obsb          (written = file mtime; freshness in domain::freshness)
 //! tiles/<z>/<x>/<y>.png             (+ <y>.json with [`TileMeta`])
 //! dem/<z>/<x>/<y>.png               (elevation tiles, laid out as `tiles/`)
 //! ```

@@ -239,7 +239,7 @@ pub async fn bundle_store_contract(store: &dyn BundleStore) {
 }
 
 /// Checks a [`BundleStore`] that declines `bytes`: `put` answers `Ok(false)`
-/// and nothing, not even an earlier bundle, is lost or replaced.
+/// and keeps nothing.
 pub async fn bundle_store_declines(store: &dyn BundleStore, bytes: &[u8]) {
     assert!(!store.put("7.5", bytes).await.expect("the store answers"));
     assert_eq!(store.get("7.5").await, None);
@@ -248,7 +248,7 @@ pub async fn bundle_store_declines(store: &dyn BundleStore, bytes: &[u8]) {
 /// Checks what every [`TileStore`] must do. `store` must start empty and
 /// accept small writes.
 pub async fn tile_store_contract(store: &dyn TileStore) {
-    let id = TileId::new(5, 3, 7).expect("the store answers");
+    let id = TileId::new(5, 3, 7).expect("valid tile id");
     let meta = |etag: &str, expires_unix| TileMeta {
         etag: Some(etag.into()),
         last_modified: None,
@@ -282,10 +282,7 @@ pub async fn tile_store_contract(store: &dyn TileStore) {
     );
     assert!(
         store
-            .get(
-                TileSet::Map,
-                TileId::new(5, 3, 6).expect("the store answers")
-            )
+            .get(TileSet::Map, TileId::new(5, 3, 6).expect("valid tile id"))
             .await
             .is_none()
     );
@@ -324,7 +321,7 @@ pub async fn tile_store_contract(store: &dyn TileStore) {
 /// Checks a [`TileStore`] that declines `png`: `put` answers `Ok(false)` and
 /// keeps nothing.
 pub async fn tile_store_declines(store: &dyn TileStore, png: &[u8]) {
-    let id = TileId::new(6, 1, 1).expect("the store answers");
+    let id = TileId::new(6, 1, 1).expect("valid tile id");
     assert!(
         !store
             .put(TileSet::Map, id, png, &TileMeta::default())
