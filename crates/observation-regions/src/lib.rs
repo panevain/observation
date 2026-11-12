@@ -26,7 +26,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::Bytes;
 use axum::extract::{Form, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
@@ -37,11 +36,11 @@ use observation_core::geo::BBox;
 use observation_core::regions::{
     RegionAction, RegionsSnapshot, SizesRequest, bearer_matches, is_valid_region_id,
 };
+use observation_upstream::{BoundedQueue, QueueError};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::sync::Semaphore;
 
 use crate::catalog::Catalog;
 use crate::config::Config;
@@ -57,23 +56,7 @@ const MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
 /// Queries allowed to wait for a free slot.
 const MAX_WAITING_QUERIES: usize = 32;
 
-/// Reads a response body, giving up past `max` bytes (`Ok(None)`).
-pub async fn read_capped(
-    mut resp: reqwest::Response,
-    max: usize,
-) -> Result<Option<Bytes>, reqwest::Error> {
-    if resp.content_length().is_some_and(|n| n > max as u64) {
-        return Ok(None);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
-        if body.len() + chunk.len() > max {
-            return Ok(None);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(Some(Bytes::from(body)))
-}
+pub use observation_upstream::read_capped;
 
 /// Writes `bytes` to a temporary file next to `path`, then renames it over.
 pub async fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -115,8 +98,7 @@ pub struct Agent {
     pub catalog: Catalog,
     pub tools: Tools,
     token: Option<String>,
-    queries: Semaphore,
-    waiting: std::sync::atomic::AtomicUsize,
+    queries: BoundedQueue,
     query_timeout: Duration,
     /// Flipped when shutting down, to end long polls.
     shutdown: tokio::sync::watch::Sender<bool>,
@@ -164,8 +146,7 @@ impl Agent {
             },
             registry,
             token: config.token.clone(),
-            queries: Semaphore::new(config.query_concurrency),
-            waiting: std::sync::atomic::AtomicUsize::new(0),
+            queries: BoundedQueue::new(config.query_concurrency, MAX_WAITING_QUERIES),
             query_timeout: config.query_timeout,
             shutdown: tokio::sync::watch::Sender::new(false),
         }))
@@ -430,15 +411,6 @@ struct QueryForm {
     data: String,
 }
 
-/// Decrements the waiting counter when dropped.
-struct WaitGuard<'a>(&'a std::sync::atomic::AtomicUsize);
-
-impl Drop for WaitGuard<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
 async fn interpreter(
     State(agent): State<Arc<Agent>>,
     Query(p): Query<BBoxParam>,
@@ -456,23 +428,10 @@ async fn interpreter(
         .registry
         .covering(&bbox)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no imported region holds this area"))?;
-    let guard = WaitGuard(&agent.waiting);
-    if agent
-        .waiting
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-        >= MAX_WAITING_QUERIES
-    {
-        return Err(err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "too many queries waiting",
-        ));
-    }
-    let _permit = agent
-        .queries
-        .acquire()
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    drop(guard);
+    let _permit = agent.queries.enter().await.map_err(|e| match e {
+        QueueError::Full => err(StatusCode::SERVICE_UNAVAILABLE, "too many queries waiting"),
+        QueueError::Closed(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    })?;
     let started = std::time::Instant::now();
     let out = tokio::time::timeout(
         agent.query_timeout,

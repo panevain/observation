@@ -11,6 +11,15 @@
 //!
 //! `allow_private` turns the address filter off for operators whose upstream
 //! lives on a private network.
+//!
+//! [`read_capped`] and [`BoundedQueue`] are the shared pieces of talking to an
+//! upstream: a size cap on what it sends back and a bound on who waits for it.
+
+mod body;
+mod queue;
+
+pub use body::read_capped;
+pub use queue::{BoundedQueue, QueueError};
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
