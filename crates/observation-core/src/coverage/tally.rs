@@ -13,15 +13,15 @@ pub struct CoverageCounts {
     pub ground: Vec<u8>,
     pub facade: Vec<u8>,
     /// Cameras beyond the 255 shown, for each ground cell that has any.
-    over_ground: HashMap<usize, u16>,
+    over_ground: HashMap<usize, u32>,
     /// The same for façade patches.
-    over_facade: HashMap<usize, u16>,
+    over_facade: HashMap<usize, u32>,
 }
 
 /// One camera more (`UP`) or fewer on cell `i`; returns its shown count
 /// before and after. Only a cell already showing 255 touches `over`.
 #[inline]
-fn bump<const UP: bool>(shown: &mut [u8], over: &mut HashMap<usize, u16>, i: usize) -> (u8, u8) {
+fn bump<const UP: bool>(shown: &mut [u8], over: &mut HashMap<usize, u32>, i: usize) -> (u8, u8) {
     let before = shown[i];
     if before == u8::MAX && beyond_255::<UP>(over, i) {
         return (before, before);
@@ -39,7 +39,7 @@ fn bump<const UP: bool>(shown: &mut [u8], over: &mut HashMap<usize, u16>, i: usi
 /// when adding; when removing, only if there were any).
 #[cold]
 #[inline(never)]
-fn beyond_255<const UP: bool>(over: &mut HashMap<usize, u16>, i: usize) -> bool {
+fn beyond_255<const UP: bool>(over: &mut HashMap<usize, u32>, i: usize) -> bool {
     if UP {
         let n = over.entry(i).or_insert(0);
         *n = n.saturating_add(1);
@@ -282,7 +282,24 @@ mod tests {
         );
         let sight = l.sight(&cone, 1.0);
         let vis = sight.within(cone.range);
-        let (g, f) = (vis.ground[0] as usize, vis.facade[0] as usize);
+        let west = RegionMask::new(
+            &l,
+            &Region {
+                points: vec![[-50.0, -30.0], [0.0, -30.0], [0.0, 30.0], [-50.0, 30.0]],
+                enabled: true,
+            },
+        );
+        // A ground cell and a façade patch the camera sees inside the
+        // region, and one of each outside it.
+        let pick = |seen: &[u32], inside: &[bool], want: bool| {
+            seen.iter()
+                .map(|&i| i as usize)
+                .find(|&i| inside[i] == want)
+                .expect("the camera sees cells on both sides of the region's edge")
+        };
+        let ground = [true, false].map(|w| pick(&vis.ground, &west.ground, w));
+        let facade = [true, false].map(|w| pick(&vis.facade, &west.facade, w));
+        let shown = |c: &CoverageCounts| (ground.map(|i| c.ground[i]), facade.map(|i| c.facade[i]));
         for cameras in [255usize, 256, 300] {
             let mut counts = CoverageCounts::new(&l);
             let mut tally = Tally::new(&l, None);
@@ -290,32 +307,33 @@ mod tests {
                 counts.add(&vis);
                 tally.add_within(&l, None, &sight, cone.range);
             }
-            assert_eq!(
-                (counts.ground[g], counts.facade[f]),
-                (255, 255),
-                "{cameras}"
-            );
+            assert_eq!(shown(&counts), ([255; 2], [255; 2]), "{cameras}");
+            assert_eq!(tally.counts(), &counts, "{cameras}");
+            // A new region recounts the figures but keeps every count, the
+            // cameras beyond 255 included, inside the region and outside it.
+            tally.limit_to(&l, Some(&west));
             assert_eq!(tally.counts(), &counts, "{cameras}");
             // Take away all but one: the cells are still seen, by one camera.
             for left in (1..cameras).rev() {
                 counts.remove(&vis);
-                tally.remove_within(&l, None, &sight, cone.range);
-                let shown = left.min(255) as u8;
+                tally.remove_within(&l, Some(&west), &sight, cone.range);
+                let n = left.min(255) as u8;
+                assert_eq!(shown(&counts), ([n; 2], [n; 2]), "{cameras} -> {left}");
                 assert_eq!(
-                    (counts.ground[g], counts.facade[f]),
-                    (shown, shown),
+                    shown(tally.counts()),
+                    ([n; 2], [n; 2]),
                     "{cameras} -> {left}"
                 );
             }
             assert_eq!(tally.counts(), &counts, "{cameras}");
             assert_eq!(
                 tally.stats(&l),
-                CoverageStats::compute(&l, &counts),
+                CoverageStats::compute_in(&l, &counts, Some(&west)),
                 "{cameras}"
             );
             assert!(tally.stats(&l).open_ground_seen_m2 > 0.0, "{cameras}");
             counts.remove(&vis);
-            assert_eq!((counts.ground[g], counts.facade[f]), (0, 0), "{cameras}");
+            assert_eq!(shown(&counts), ([0; 2], [0; 2]), "{cameras}");
         }
     }
 

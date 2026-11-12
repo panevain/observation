@@ -418,31 +418,28 @@ proptest! {
     /// saw those cells; removed 255 times, 0, though one camera did.
     #[test]
     fn prop_tally_counts_more_than_255_cameras(
-        cam in road_camera(0.0),
+        (s, cams) in street_with_cameras(),
         region in region(),
         extra in 0..40usize,
-        removed in 1..=255usize,
+        left in 0..=300usize,
     ) {
-        let layers = Street {
-            houses: vec![],
-            road_z: 0.0,
-            road_x: (-50.0, 50.0),
-            tilt: None,
-        }.layers();
-        let sight = layers.sight(&cam.cone(&layers), 1.0);
+        let layers = s.layers();
+        let sight = layers.sight(&cams[0].cone(&layers), 1.0);
         prop_assume!(!sight.ground.is_empty());
         let mask = region.as_ref().map(|r| RegionMask::new(&layers, r));
         let mut tally = Tally::new(&layers, mask.as_ref());
         let added = 256 + extra;
+        let left = left.min(added);
         for _ in 0..added {
             tally.add_within(&layers, mask.as_ref(), &sight, sight.range);
         }
-        for _ in 0..removed {
+        for _ in left..added {
             tally.remove_within(&layers, mask.as_ref(), &sight, sight.range);
         }
-        let active = vec![(0, sight.range); added - removed];
-        let (ground, _) = true_counts(&layers, std::slice::from_ref(&sight), &active);
+        let active = vec![(0, sight.range); left];
+        let (ground, facade) = true_counts(&layers, std::slice::from_ref(&sight), &active);
         prop_assert_eq!(first_difference(&tally.counts().ground, &ground), None);
+        prop_assert_eq!(first_difference(&tally.counts().facade, &facade), None);
         same_figures(
             tally.stats(&layers),
             CoverageStats::compute_in(&layers, tally.counts(), mask.as_ref()),
