@@ -37,14 +37,34 @@ pub struct CoverageBackend {
 }
 
 /// What happened to the worker during a [`CoverageBackend::drain`], for the
-/// log, in order.
+/// log, in order; `Display` gives the logged text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerNote {
-    /// It said it is listening; the requests held until now were posted.
+    /// It said it is listening; the requests held until now were posted
+    /// (logged as information).
     Ready,
     /// It can no longer be used, for this reason; coverage is computed
-    /// inline from now on.
+    /// inline from now on (logged as a warning).
     Failed(String),
+}
+
+impl std::fmt::Display for WorkerNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ready => f.write_str("coverage worker ready"),
+            Self::Failed(e) => {
+                write!(
+                    f,
+                    "coverage worker failed ({e}); computing coverage on the main thread"
+                )
+            }
+        }
+    }
+}
+
+/// The warning logged when the worker cannot be started, for `cause`.
+pub fn not_started(cause: &str) -> String {
+    format!("could not start the coverage worker ({cause}); computing coverage on the main thread")
 }
 
 impl CoverageBackend {
@@ -370,8 +390,9 @@ mod tests {
 
     #[test]
     fn the_area_goes_to_the_worker_only_when_there_is_one() {
-        // Without a worker `load_area` builds no layer inputs; with one it
-        // sends them, under the next generation each time.
+        // With a worker `load_area` sends the layer inputs, under the next
+        // generation each time. (Without one it builds none, by reading: that
+        // cannot be seen from here.)
         let (mut b, channel, _) = scripted();
         channel.answer(&JobResponse::Ready);
         b.drain(&layers());
@@ -480,8 +501,17 @@ mod tests {
             let (j, k) = (job(1, 7, 3), job(1, 8, 4));
             submit(&mut b, j, &layers);
             submit(&mut b, k, &layers);
-            // Answered, but dropped with the rest of the pass: computed again.
-            channel.answer(&done(j, &layers));
+            // Answered (with sight lines told apart from the inline ones), but
+            // dropped with the rest of the pass: computed again.
+            let answered = JobResponse::Done(
+                Job {
+                    cone: cone(50.0),
+                    ..j
+                }
+                .run(&layers),
+            );
+            assert_ne!(answered, done(j, &layers));
+            channel.answer(&answered);
             channel.queue(failure);
             channel.answer(&done(k, &layers));
             gave_up(&mut b, &layers, why, &[j, k]);
@@ -504,6 +534,15 @@ mod tests {
         );
         clock.set(READY_WITHIN_MS + 1.0);
         gave_up(&mut b, &layers, "it did not start within 10 s", &[j]);
+
+        // A Ready drained after the 10 s mark still counts: the time is
+        // checked after the messages are taken.
+        let (mut b, channel, clock) = scripted();
+        b.load_area(&bundle(), GROUND, FACADE);
+        clock.set(READY_WITHIN_MS + 1.0);
+        channel.answer(&JobResponse::Ready);
+        assert_eq!(b.drain(&layers), (vec![], vec![WorkerNote::Ready]));
+        assert_eq!(channel.posted().len(), 1, "the held area went out");
 
         // Once ready, the clock no longer matters.
         let (mut b, channel, clock) = scripted();
@@ -576,5 +615,18 @@ mod tests {
         assert_eq!(worker.drain(&layers), (vec![], vec![WorkerNote::Ready]));
         assert_eq!(worker.drain(&layers), (expected, vec![]));
         assert_eq!(worker.submitted(), inline.submitted());
+    }
+
+    #[test]
+    fn the_worker_is_logged_in_the_words_it_always_was() {
+        assert_eq!(WorkerNote::Ready.to_string(), "coverage worker ready");
+        assert_eq!(
+            WorkerNote::Failed("boom".into()).to_string(),
+            "coverage worker failed (boom); computing coverage on the main thread"
+        );
+        assert_eq!(
+            not_started("no workers"),
+            "could not start the coverage worker (no workers); computing coverage on the main thread"
+        );
     }
 }

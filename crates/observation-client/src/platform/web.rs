@@ -8,6 +8,7 @@ use super::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, Platform, SaveFailure,
 };
 use bevy::log::warn;
+use observation_client_model::coverage::backend::not_started;
 use observation_client_model::platform::{JobChannel, Reply};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -441,10 +442,7 @@ impl WorkerLink {
         let worker = match Worker::new_with_options(LOADER_URL, &options) {
             Ok(w) => w,
             Err(e) => {
-                warn!(
-                    "could not start the coverage worker ({}); computing coverage on the main thread",
-                    js_cause(&e)
-                );
+                warn!("{}", not_started(&js_cause(&e)));
                 return None;
             }
         };

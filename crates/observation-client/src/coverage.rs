@@ -105,10 +105,8 @@ fn update_coverage(
     let (results, notes) = backend.drain(layers);
     for note in notes {
         match note {
-            WorkerNote::Ready => info!("coverage worker ready"),
-            WorkerNote::Failed(e) => {
-                warn!("coverage worker failed ({e}); computing coverage on the main thread");
-            }
+            WorkerNote::Ready => info!("{note}"),
+            WorkerNote::Failed(_) => warn!("{note}"),
         }
     }
     if results.is_empty() && !scene.is_changed() && !models.is_changed() && !state.rungs.is_empty()
@@ -511,6 +509,7 @@ mod tests {
     use super::*;
 
     use crate::state::Models;
+    use observation_client_model::document::Document;
     use observation_client_model::testing::{FakeClock, LoopbackJobChannel};
     use observation_core::bundle::{OsmRoad, build_bundle};
     use observation_core::camera::{CameraKind, Catalog, DoriLevel, Lighting};
@@ -610,7 +609,11 @@ mod tests {
     }
 
     fn set(app: &mut App, f: impl FnOnce(&mut CoverageParams)) {
-        f(&mut app.world_mut().resource_mut::<Scene>().params);
+        edit(app, |doc| f(&mut doc.params));
+    }
+
+    fn edit(app: &mut App, f: impl FnOnce(&mut Document)) {
+        f(&mut app.world_mut().resource_mut::<Scene>());
         app.update();
     }
 
@@ -714,23 +717,33 @@ mod tests {
         assert_eq!(stats(&app), stats(&inline));
         assert_eq!(stats(&app), direct(&app));
 
-        let edits: [fn(&mut CoverageParams); 3] = [
-            |p| p.dori = DoriLevel::Identify,
-            |p| {
-                p.dori = DoriLevel::Custom;
-                p.custom_ppm = 10.0;
+        let edits: [fn(&mut Document); 6] = [
+            |d| d.params.dori = DoriLevel::Identify,
+            |d| {
+                d.params.dori = DoriLevel::Custom;
+                d.params.custom_ppm = 10.0;
             },
-            |p| p.subject_height_m = 1.6,
+            |d| d.params.subject_height_m = 1.6,
+            // Move a camera, add one, remove one.
+            |d| d.cameras[0].position[0] += 10.0,
+            |d| {
+                // The fixture's cameras were not added through `add_camera`,
+                // so this one gets its id here.
+                let mut c = d.cameras[0].clone();
+                (c.id, c.position[0]) = (3, 0.0);
+                d.cameras.push(c);
+            },
+            |d| d.cameras.retain(|c| c.id != 2),
         ];
-        for edit in edits {
-            set(&mut inline, edit);
-            set(&mut app, edit);
+        for change in edits {
+            edit(&mut inline, change);
+            edit(&mut app, change);
             app.update();
             assert_eq!(submitted(&app), submitted(&inline));
             assert_eq!(stats(&app), stats(&inline));
             assert_eq!(stats(&app), direct(&app));
         }
-        assert_eq!(submitted(&app), 6);
+        assert_eq!(submitted(&app), 8);
     }
 
     fn lines(inner: Rect, outer: Rect, spacing: f32) -> Vec<(Vec2, Vec2)> {
