@@ -62,7 +62,7 @@ bevy_egui = { version = "0.43", default-features = false }
 # Remove in sweep (each entry goes once a member uses it). xtask/Cargo.toml has the same list
 # for its own workspace.
 [workspace.metadata.cargo-shear]
-ignored = ["observation-client-model"]
+ignored = []
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

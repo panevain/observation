@@ -1,0 +1,37 @@
+{
+  "format": "observation-scene",
+  "version": 1,
+  "area": {
+    "kind": "demo"
+  },
+  "origin": {
+    "lat": 0.0,
+    "lon": 0.0
+  },
+  "cameras": [
+    {
+      "id": 1,
+      "label": "Camera 1",
+      "model_id": "generic-bullet",
+      "position": [4.0, 3.0, -2.0],
+      "yaw_deg": 45.0,
+      "pitch_deg": -15.0,
+      "color_index": 2,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "label": "Garage",
+      "model_id": "generic-dome",
+      "position": [-6.0, 2.5, 1.0],
+      "yaw_deg": 200.0,
+      "pitch_deg": -30.0,
+      "enabled": false
+    }
+  ],
+  "params": {
+    "dori": "Detect",
+    "lighting": "Day",
+    "subject_height_m": 1.0
+  }
+}

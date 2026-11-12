@@ -2,13 +2,14 @@
 
 use super::UiData;
 use super::widgets::{RailKind, hint, keycap, rail_button, secondary};
-use crate::history::HistoryOp;
+use crate::history::{HistoryCommand, HistoryOp};
 use crate::icons;
 use crate::persist::PersistAction;
-use crate::state::{LoadArea, SaveState, Tool};
+use crate::state::{LoadArea, Tool};
 use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
+use observation_client_model::persist::SaveState;
 use observation_core::scene::AreaRef;
 use observation_core::terrain::{TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL};
 
@@ -42,7 +43,7 @@ pub fn top_bar(
         {
             d.picker
                 .open_at(d.scene.origin, d.area.as_ref().map(|a| a.bundle.bbox));
-            d.ui.map_open = true;
+            d.panels.map_open = true;
         }
         if ui
             .add(secondary(&t, "Demo street"))
@@ -65,7 +66,7 @@ pub fn top_bar(
                 None => "Local map data: regions this server answers itself",
             };
             if ui.add(secondary(&t, &text)).on_hover_text(tip).clicked() {
-                d.ui.regions_open = !d.ui.regions_open;
+                d.panels.regions_open = !d.panels.regions_open;
             }
             if progress.is_some() {
                 ui.spinner();
@@ -102,7 +103,7 @@ pub fn top_bar(
                 .on_disabled_hover_text(&tip)
                 .clicked()
             {
-                d.ui.history_request = Some(op);
+                d.history_commands.write(HistoryCommand(op));
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -111,7 +112,7 @@ pub fn top_bar(
                 .on_hover_text("Help and shortcuts (?)")
                 .clicked()
             {
-                d.ui.help_open = !d.ui.help_open;
+                d.panels.help_open = !d.panels.help_open;
             }
             settings_menu(ui, d);
             if ui
@@ -142,8 +143,8 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         ui.spacing_mut().item_spacing.y = t.space.xs;
         ui.spacing_mut().button_padding = vec2(t.space.xs, t.space.xs);
         for tool in Tool::ALL {
-            let on = d.ui.tool == tool;
-            let disabled = tool.needs_selection() && d.ui.selected.is_none();
+            let on = d.editor.tool == tool;
+            let disabled = tool.needs_selection() && d.editor.selected.is_none();
             // The active tool is the one accent-filled button, with the filled
             // icon, so the mode never depends on hue alone.
             let glyph = icons::tool(tool);
@@ -174,25 +175,25 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
             )
             .on_hover_text(tip);
             if resp.clicked() {
-                d.ui.tool = tool;
+                d.editor.tool = tool;
             }
         }
         ui.add_space(t.space.md);
         ui.separator();
         ui.add_space(t.space.md);
-        let ui_state = &mut *d.ui;
+        let panels = &mut **d.panels;
         let toggles: [(&str, &str, &str, &mut bool); 2] = [
             (
                 icons::TRIANGLE_DASHED,
                 "Cones",
                 "Show every camera's view cone (the selected one always shows)",
-                &mut ui_state.show_frustums,
+                &mut panels.show_frustums,
             ),
             (
                 icons::WALL,
                 "Walls",
                 "Show coverage on building walls",
-                &mut ui_state.show_facades,
+                &mut panels.show_facades,
             ),
         ];
         for (glyph, label, tip, value) in toggles {
@@ -282,7 +283,7 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
             }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = t.space.xs;
-                for (key, what) in d.ui.tool.keymap() {
+                for (key, what) in d.editor.tool.keymap() {
                     // Drop the rest rather than run into the figures.
                     if ui.available_width() < 140.0 {
                         break;
@@ -303,7 +304,7 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
 /// Whether the scene is safely in this browser's storage.
 fn save_status(ui: &mut egui::Ui, d: &UiData) {
     let t = *d.tokens;
-    let (icon, text, color, tip) = match d.ui.save {
+    let (icon, text, color, tip) = match d.save.status() {
         SaveState::Saved(at) => {
             let ago = (d.ui.now - at).max(0.0);
             let when = if ago < 60.0 {

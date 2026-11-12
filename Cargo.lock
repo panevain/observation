@@ -4724,6 +4724,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.4.3",
  "js-sys",
+ "observation-client-model",
  "observation-core",
  "observation-tokens",
  "serde_json",
@@ -4735,6 +4736,10 @@ dependencies = [
 [[package]]
 name = "observation-client-model"
 version = "0.1.0"
+dependencies = [
+ "observation-core",
+ "serde_json",
+]
 
 [[package]]
 name = "observation-core"
