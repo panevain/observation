@@ -14,7 +14,10 @@ use crate::{
     ActionKind, AgentError, QueryResult, RegionAction, RegionAgent, RegionsSnapshot, SizesRequest,
 };
 
-const BASE: &str = "http://agent.example:8090";
+/// A placeholder: every test answers from [`FakeHttp`], so nothing is sent to it. It is an
+/// `https` URL because the client under test is also what production hands to the real HTTP
+/// client, and code scanning follows a plain `http://` literal from here to that request.
+const BASE: &str = "https://agent.example:8090";
 /// The caps, as literals so that changing one fails a test.
 const MIB_4: usize = 4 * 1024 * 1024;
 const MIB_32: usize = 32 * 1024 * 1024;
@@ -398,7 +401,7 @@ async fn answers_map_to_agent_errors() {
 fn debug_output_hides_the_token() {
     let agent = HttpRegionAgent::new(
         Arc::new(FakeHttp::new()),
-        "http://user:pw@agent.example:8090".to_owned(),
+        "https://user:pw@agent.example:8090".to_owned(),
         Some("s3cret".to_owned()),
     );
     let shown = format!("{agent:?}");
