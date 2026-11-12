@@ -3,6 +3,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use observation_server::config::Config;
 use observation_server::{AppState, app};
+use observation_upstream::testing::{FakeHttp, FakeReply};
 use tower::ServiceExt;
 
 pub(crate) const BBOX: &str = include_str!("../../fixtures/demo-bbox.txt");
@@ -66,4 +67,38 @@ pub(crate) fn json(body: &[u8]) -> serde_json::Value {
 
 pub(crate) fn area_uri() -> String {
     format!("/api/area?bbox={}", BBOX.trim())
+}
+
+/// The Overpass endpoint of the production configuration, which a
+/// [`TestApp`](observation_server::testing::TestApp) keeps unless a test adds
+/// others.
+pub(crate) const OVERPASS: &str = observation_server::config::DEFAULT_OVERPASS_URL;
+
+/// Overpass answering the demo fixture.
+pub(crate) fn overpass_ok() -> FakeReply {
+    FakeReply::ok(crate::mocks::FIXTURE)
+}
+
+/// Overpass answering `code`, with a body as an interpreter might send.
+pub(crate) fn overpass_status(code: u16) -> FakeReply {
+    FakeReply::status(StatusCode::from_u16(code).unwrap()).body("upstream says no")
+}
+
+/// How many requests `fake` received for `url`.
+pub(crate) fn hits(fake: &FakeHttp, url: &str) -> usize {
+    fake.requests().iter().filter(|r| r.url == url).count()
+}
+
+/// A [`TestApp`](observation_server::testing::TestApp) on the production
+/// configuration without elevation (`OBS_DEM_URL=off`), so that areas need
+/// no terrain tiles, and with `tweak`.
+pub(crate) fn flat_app(
+    overpass: FakeHttp,
+    tweak: impl FnOnce(&mut Config) + 'static,
+) -> observation_server::testing::TestApp {
+    observation_server::testing::TestApp::builder()
+        .overpass(overpass)
+        .config(|c| c.dem_url = None)
+        .config(tweak)
+        .build()
 }

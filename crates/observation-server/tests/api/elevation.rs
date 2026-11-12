@@ -1,25 +1,16 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use axum::Router;
-use axum::body::Body;
-use axum::extract::{Path, State};
-use axum::http::{Response, StatusCode, header};
-use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::http::{Method, StatusCode};
 use observation_core::bundle::AreaBundle;
+use observation_server::testing::TestApp;
+use observation_upstream::testing::{FakeHttp, FakeReply};
 
-use crate::harness::{area_uri, get_uri, harness, harness_with, json};
-use crate::mocks::{PNG, spawn, spawn_overpass};
+use crate::harness::{OVERPASS, area_uri, flat_app, get_uri, hits, json, overpass_ok};
+use crate::mocks::PNG;
 
-#[derive(Default)]
-struct MockDem {
-    hits: AtomicUsize,
-    fail: AtomicBool,
-    /// Answer with a 1 x 1 PNG instead of a tile.
-    tiny: AtomicBool,
-    paths: Mutex<Vec<String>>,
-}
+/// Where the production configuration fetches elevation tiles.
+const DEM_PREFIX: &str = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/";
 
 /// A Terrarium tile 100 m up that rises 1 m every 8 pixel rows southward
 /// (counted across tiles, so the mosaic is seamless).
@@ -41,51 +32,55 @@ fn dem_png(y: u32) -> Vec<u8> {
     out
 }
 
-async fn dem_handler(
-    State(m): State<Arc<MockDem>>,
-    Path((z, x, y)): Path<(String, String, String)>,
-) -> Response<Body> {
-    m.hits.fetch_add(1, Ordering::SeqCst);
-    m.paths.lock().unwrap().push(format!("{z}/{x}/{y}"));
-    if m.fail.load(Ordering::SeqCst) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response();
-    }
-    if m.tiny.load(Ordering::SeqCst) {
-        return ([(header::CONTENT_TYPE, "image/png")], PNG).into_response();
-    }
-    let y: u32 = y.trim_end_matches(".png").parse().unwrap();
-    Response::builder()
-        .header(header::CONTENT_TYPE, "image/png")
-        .body(Body::from(dem_png(y)))
-        .unwrap()
+/// How the elevation server answers.
+const TILES: u8 = 0;
+const FAIL: u8 = 1;
+/// A 1 x 1 PNG instead of a tile.
+const TINY: u8 = 2;
+
+/// An elevation server answering every tile as `mode` says.
+fn dem(mode: &Arc<AtomicU8>) -> FakeHttp {
+    let mode = Arc::clone(mode);
+    FakeHttp::from_fn(move |req| {
+        let path = req.url.strip_prefix(DEM_PREFIX).unwrap();
+        match mode.load(Ordering::SeqCst) {
+            FAIL => FakeReply::status(StatusCode::INTERNAL_SERVER_ERROR).body("boom"),
+            TINY => FakeReply::ok(PNG),
+            _ => {
+                let y: u32 = path
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .trim_end_matches(".png")
+                    .parse()
+                    .unwrap();
+                FakeReply::ok(dem_png(y))
+            }
+        }
+    })
 }
 
-async fn spawn_dem() -> (Arc<MockDem>, String) {
-    let mock = Arc::new(MockDem::default());
-    let router = Router::new()
-        .route("/terrarium/{z}/{x}/{y}", get(dem_handler))
-        .with_state(Arc::clone(&mock));
-    let addr = spawn(router).await;
-    (
-        mock,
-        format!("http://{addr}/terrarium/{{z}}/{{x}}/{{y}}.png"),
-    )
+/// The `z/x/y.png` paths asked of the elevation server.
+fn paths(fake: &FakeHttp) -> Vec<String> {
+    fake.requests()
+        .into_iter()
+        .map(|r| r.url.strip_prefix(DEM_PREFIX).unwrap().to_owned())
+        .collect()
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn areas_are_built_on_the_terrain() {
-    let (overpass, url) = spawn_overpass().await;
-    let (dem, dem_url) = spawn_dem().await;
-    let h = harness_with(
-        &url,
-        "http://127.0.0.1:9/{z}/{x}/{y}.png",
-        tempfile::tempdir().unwrap(),
-        |c| {
-            c.dem_url = Some(dem_url);
-            c.dem_attribution = "Elevation: mock".into();
-        },
-    );
-    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    let cache = tempfile::tempdir().unwrap();
+    let overpass = FakeHttp::new();
+    overpass.on(Method::POST, OVERPASS, overpass_ok());
+    let tiles = dem(&Arc::new(AtomicU8::new(TILES)));
+    let app = TestApp::builder()
+        .overpass(overpass.clone())
+        .tiles(tiles.clone())
+        .disk_cache(cache.path())
+        .config(|c| c.dem_attribution = "Elevation: mock".into())
+        .build();
+    let (status, _, body) = get_uri(&app.router, &area_uri()).await;
     assert_eq!(status, StatusCode::OK);
     let b = AreaBundle::decode(&body).unwrap();
     let t = &b.terrain;
@@ -101,36 +96,28 @@ async fn areas_are_built_on_the_terrain() {
     );
     let bases: Vec<f32> = b.buildings.iter().map(|b| b.footprint.base_m).collect();
     assert!(bases.iter().any(|&y| y > 1.0) && bases.iter().any(|&y| y < -1.0));
-    let fetched = dem.hits.load(Ordering::SeqCst);
-    assert_eq!(fetched, 2, "{:?}", dem.paths.lock().unwrap());
-    assert!(
-        dem.paths
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|p| p.starts_with("15/"))
-    );
+    let fetched = tiles.requests().len();
+    assert_eq!(fetched, 2, "{:?}", paths(&tiles));
+    assert!(paths(&tiles).iter().all(|p| p.starts_with("15/")));
 
     // The bundle is cached, and so are the tiles under dem/.
-    let (_, _, again) = get_uri(&h.app, &area_uri()).await;
+    let (_, _, again) = get_uri(&app.router, &area_uri()).await;
     assert_eq!(again, body);
-    assert_eq!(dem.hits.load(Ordering::SeqCst), fetched);
-    assert_eq!(overpass.hits.load(Ordering::SeqCst), 1);
-    assert!(h.cache.path().join("dem/15").is_dir());
+    assert_eq!(tiles.requests().len(), fetched);
+    assert_eq!(hits(&overpass, OVERPASS), 1);
+    assert!(cache.path().join("dem/15").is_dir());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn elevation_failures_fail_the_area() {
-    let (overpass, url) = spawn_overpass().await;
-    let (dem, dem_url) = spawn_dem().await;
-    dem.fail.store(true, Ordering::SeqCst);
-    let h = harness_with(
-        &url,
-        "http://127.0.0.1:9/{z}/{x}/{y}.png",
-        tempfile::tempdir().unwrap(),
-        |c| c.dem_url = Some(dem_url),
-    );
-    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    let overpass = FakeHttp::new();
+    overpass.on(Method::POST, OVERPASS, overpass_ok());
+    let mode = Arc::new(AtomicU8::new(FAIL));
+    let app = TestApp::builder()
+        .overpass(overpass.clone())
+        .tiles(dem(&mode))
+        .build();
+    let (status, _, body) = get_uri(&app.router, &area_uri()).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(
         json(&body)["error"]
@@ -141,30 +128,30 @@ async fn elevation_failures_fail_the_area() {
         String::from_utf8_lossy(&body)
     );
     // Elevation comes first, so Overpass was not asked for data to throw away.
-    assert_eq!(overpass.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(hits(&overpass, OVERPASS), 0);
     // A tile that is a PNG but not a 256 x 256 Terrarium tile is not cached either.
-    dem.fail.store(false, Ordering::SeqCst);
-    dem.tiny.store(true, Ordering::SeqCst);
-    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    mode.store(TINY, Ordering::SeqCst);
+    let (status, _, body) = get_uri(&app.router, &area_uri()).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(String::from_utf8_lossy(&body).contains("unusable"));
     // Nothing was cached: the next request tries again.
-    dem.tiny.store(false, Ordering::SeqCst);
-    let (status, _, _) = get_uri(&h.app, &area_uri()).await;
+    mode.store(TILES, Ordering::SeqCst);
+    let (status, _, _) = get_uri(&app.router, &area_uri()).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(overpass.hits.load(Ordering::SeqCst), 1);
+    assert_eq!(hits(&overpass, OVERPASS), 1);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn without_elevation_areas_are_flat() {
-    let (_, url) = spawn_overpass().await;
-    let h = harness(&url, "http://127.0.0.1:9/{z}/{x}/{y}.png");
-    let (status, _, body) = get_uri(&h.app, &area_uri()).await;
+    let overpass = FakeHttp::new();
+    overpass.on(Method::POST, OVERPASS, overpass_ok());
+    let app = flat_app(overpass, |_| {});
+    let (status, _, body) = get_uri(&app.router, &area_uri()).await;
     assert_eq!(status, StatusCode::OK);
     let b = AreaBundle::decode(&body).unwrap();
     assert!(b.terrain.is_flat() && b.terrain.attribution.is_empty());
     assert!(b.buildings.iter().all(|b| b.footprint.base_m == 0.0));
     // The demo keeps its recorded terrain either way.
-    let (_, _, demo) = get_uri(&h.app, "/api/demo").await;
+    let (_, _, demo) = get_uri(&app.router, "/api/demo").await;
     assert!(!AreaBundle::decode(&demo).unwrap().terrain.is_flat());
 }

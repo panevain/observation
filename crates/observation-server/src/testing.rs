@@ -4,10 +4,11 @@
 //! tests and, with the `testing` feature, for tests elsewhere.
 //!
 //! The memory stores never evict: size caps, estimates and eviction are
-//! properties of the disk [`Cache`](crate::cache::Cache) and are tested on it.
+//! properties of the disk [`Cache`] and are tested on it.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -25,6 +26,7 @@ use observation_regions_api::RegionAgent;
 use observation_regions_api::testing::FakeRegionAgent;
 use observation_upstream::testing::FakeHttp;
 
+use crate::cache::{Cache, CacheCaps};
 use crate::clock::Clock;
 pub use crate::clock::ManualClock;
 use crate::config::Config;
@@ -567,8 +569,10 @@ impl metrics::Recorder for MetricCounts {
 /// The whole application over fakes: [`AppState::from_ports`] with
 /// [`FakeHttp`] for Overpass and for tiles, an optional [`FakeRegionAgent`],
 /// memory stores and a [`ManualClock`], on the production configuration
-/// unless [`TestAppBuilder::config`] changes it. Nothing is spawned: a test
-/// polls the agent itself (`state.regions()`).
+/// unless [`TestAppBuilder::config`] changes it. The fakes time out as the
+/// production clients do when a request sets no timeout (the Overpass
+/// timeout, 20 s for tiles). Nothing is spawned: a test polls the agent
+/// itself (`state.regions()`).
 ///
 /// It leaves out what only the production adapters do: real sockets, TLS,
 /// the address filter and proxy handling, the redirect policy, the
@@ -586,8 +590,9 @@ pub struct TestApp {
     pub overpass: FakeHttp,
     pub tiles: FakeHttp,
     pub agent: Option<FakeRegionAgent>,
-    pub bundle_store: Arc<MemBundleStore>,
-    pub tile_store: Arc<MemTileStore>,
+    /// The memory stores; `None` with [`TestAppBuilder::disk_cache`].
+    pub bundle_store: Option<Arc<MemBundleStore>>,
+    pub tile_store: Option<Arc<MemTileStore>>,
     pub clock: Arc<ManualClock>,
 }
 
@@ -625,6 +630,7 @@ pub struct TestAppBuilder {
     overpass: Option<FakeHttp>,
     tiles: Option<FakeHttp>,
     agent: Option<FakeRegionAgent>,
+    disk_cache: Option<PathBuf>,
     tweaks: Vec<ConfigTweak>,
 }
 
@@ -635,6 +641,7 @@ impl std::fmt::Debug for TestAppBuilder {
             .field("overpass", &self.overpass)
             .field("tiles", &self.tiles)
             .field("agent", &self.agent)
+            .field("disk_cache", &self.disk_cache)
             .field("tweaks", &self.tweaks.len())
             .finish()
     }
@@ -662,6 +669,13 @@ impl TestAppBuilder {
         self
     }
 
+    /// Stores bundles and tiles in the disk cache at `root` (with the
+    /// configured caps and the test's clock) instead of in memory.
+    pub fn disk_cache(mut self, root: impl Into<PathBuf>) -> Self {
+        self.disk_cache = Some(root.into());
+        self
+    }
+
     /// Changes the production configuration; applied in order.
     pub fn config(mut self, tweak: impl FnOnce(&mut Config) + 'static) -> Self {
         self.tweaks.push(Box::new(tweak));
@@ -679,10 +693,38 @@ impl TestAppBuilder {
         let clock = self
             .clock
             .unwrap_or_else(|| Arc::new(ManualClock::at_unix(1_700_000_000)));
-        let overpass = self.overpass.unwrap_or_default();
-        let tiles = self.tiles.unwrap_or_default();
-        let bundle_store = Arc::new(MemBundleStore::new(clock.clone()));
-        let tile_store = Arc::new(MemTileStore::new());
+        let overpass = self
+            .overpass
+            .unwrap_or_default()
+            .with_timeout(config.overpass_timeout);
+        let tiles = self
+            .tiles
+            .unwrap_or_default()
+            .with_timeout(crate::wiring::TILE_TIMEOUT);
+        let (bundle_store, tile_store, bundle_port, tile_port): (
+            _,
+            _,
+            Arc<dyn BundleStore>,
+            Arc<dyn TileStore>,
+        ) = match &self.disk_cache {
+            Some(root) => {
+                let cache = Arc::new(Cache::open_with_clock(
+                    root,
+                    CacheCaps {
+                        bundle_bytes: config.bundle_cache_cap_bytes,
+                        tile_bytes: config.tile_cache_cap_bytes,
+                        dem_bytes: config.dem_cache_cap_bytes,
+                    },
+                    clock.clone(),
+                ));
+                (None, None, cache.clone(), cache)
+            }
+            None => {
+                let bundles = Arc::new(MemBundleStore::new(clock.clone()));
+                let tiles = Arc::new(MemTileStore::new());
+                (Some(bundles.clone()), Some(tiles.clone()), bundles, tiles)
+            }
+        };
         let state = AppState::from_ports(
             config,
             Ports {
@@ -692,8 +734,8 @@ impl TestAppBuilder {
                     .agent
                     .clone()
                     .map(|a| Arc::new(a) as Arc<dyn RegionAgent>),
-                bundle_store: bundle_store.clone(),
-                tile_store: tile_store.clone(),
+                bundle_store: bundle_port,
+                tile_store: tile_port,
                 clock: clock.clone(),
             },
         );

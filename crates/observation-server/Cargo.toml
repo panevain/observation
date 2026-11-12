@@ -34,6 +34,8 @@ httpdate = "1.0"
 png = "0.18"
 
 [dev-dependencies]
+# The integration tests build the app over fakes (`testing::TestApp`).
+observation-server = { path = ".", features = ["testing"] }
 observation-regions-api = { workspace = true, features = ["testing"] }
 observation-upstream = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
