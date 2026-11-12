@@ -183,6 +183,21 @@ async fn the_agent_is_asked_only_when_online_with_a_region_that_may_hold_the_box
             timeout: Duration::from_secs(15),
         })
     );
+
+    // Gone offline: its last snapshot still holds the region, but it is not
+    // asked.
+    agent.snapshot_reply(Err("down".into()));
+    assert_eq!(regions.poll_once().await, Err("down".to_owned()));
+    let status = regions.status();
+    assert!(!status.agent_online);
+    assert_eq!(status.snapshot, snapshot(4, vec![region()]), "kept");
+    assert_eq!(ask().await, Ok(None), "offline with a region");
+    let queries = agent
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, AgentCall::Query { .. }))
+        .count();
+    assert_eq!(queries, 1, "only while online");
     agent.assert_drained();
 }
 
@@ -344,6 +359,12 @@ async fn actions_need_management_and_publish_only_newer_snapshots() {
     let status = regions.act(ActionKind::Delete, &action).await.unwrap();
     assert_eq!(status.snapshot.version, 5);
     assert!(status.agent_online && status.manageable);
+    // So is one at the same version, though its content differs.
+    agent.answer(Ok(serde_json::to_vec(&snapshot(5, vec![region()]))
+        .unwrap()
+        .into()));
+    let status = regions.act(ActionKind::Settings, &action).await.unwrap();
+    assert_eq!(status.snapshot, snapshot(5, vec![]));
     agent.answer(Ok(snapshot_json(6)));
     let status = regions.act(ActionKind::Cancel, &action).await.unwrap();
     assert_eq!(status.snapshot.version, 6);
@@ -359,6 +380,7 @@ async fn actions_need_management_and_publish_only_newer_snapshots() {
         agent.calls()[1..],
         [
             AgentCall::Act(ActionKind::Delete, action.clone()),
+            AgentCall::Act(ActionKind::Settings, action.clone()),
             AgentCall::Act(ActionKind::Cancel, action.clone()),
             AgentCall::Act(ActionKind::Import, action),
         ]

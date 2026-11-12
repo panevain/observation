@@ -602,6 +602,14 @@ async fn a_stored_file_that_is_not_a_current_bundle_is_never_served() {
 /// A rig whose agent is online with a ready region holding the test box,
 /// imported at `imported_unix`.
 async fn rig_with_region(imported_unix: u64) -> (Rig, FakeRegionAgent) {
+    let (regions, agent) = regions_with_region(imported_unix).await;
+    let store = mem_store();
+    (rig_on(store.clone(), store, Some(regions)), agent)
+}
+
+/// An agent online with a ready region holding the test box, imported at
+/// `imported_unix`, and the server's view of it.
+async fn regions_with_region(imported_unix: u64) -> (Arc<Regions>, FakeRegionAgent) {
     let agent = FakeRegionAgent::new();
     let regions = Arc::new(Regions::new(Arc::new(agent.clone()), false));
     let region = RegionView {
@@ -626,8 +634,7 @@ async fn rig_with_region(imported_unix: u64) -> (Rig, FakeRegionAgent) {
         ..RegionsSnapshot::default()
     }));
     regions.poll_once().await.unwrap();
-    let store = mem_store();
-    (rig_on(store.clone(), store, Some(regions)), agent)
+    (regions, agent)
 }
 
 /// Overpass JSON as a region answers it, dated 2023-11-14T22:00:00Z.
@@ -704,6 +711,38 @@ async fn a_local_region_that_fails_or_has_nothing_leaves_overpass_charged() {
     assert_eq!(r.map.calls(), 0);
     assert!(recorder.counters(REGION_QUERY).is_empty());
     assert_eq!(tokens_left(&r.service, client(1)), 9);
+    agent.assert_drained();
+    r.map.assert_drained();
+    r.terrain.assert_drained();
+}
+
+/// An agent that went offline is not asked, though its last snapshot holds
+/// a region for the box: the bundle comes from Overpass, charged, and the
+/// query counts as `not_covered`.
+#[tokio::test(start_paused = true)]
+async fn an_agent_gone_offline_is_not_asked_though_its_region_holds_the_box() {
+    let recorder = MetricCounts::default();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    let (regions, agent) = regions_with_region(T - 86_400).await;
+    agent.snapshot_reply(Err("down".into()));
+    assert!(regions.poll_once().await.is_err());
+    assert!(!regions.status().agent_online);
+    assert_eq!(regions.status().snapshot.regions.len(), 1, "kept");
+    let store = mem_store();
+    let r = rig_on(store.clone(), store, Some(regions));
+    r.terrain.reply(Ok(Terrain::default()));
+    r.map.reply(Ok(data()));
+    let bytes = r.service.get(bbox(), client(1)).await.unwrap();
+    assert!(AreaBundle::decode(&bytes).is_ok());
+    assert_eq!(r.map.calls(), 1);
+    assert_eq!(
+        recorder.counters(REGION_QUERY),
+        vec![("outcome=not_covered".to_owned(), 1)]
+    );
+    assert_eq!(bundle_counts(&recorder), vec![result("built", 1)]);
+    assert_eq!(tokens_left(&r.service, client(1)), 9);
+    assert_eq!(agent.calls().len(), 2, "the two snapshots, no query");
+    agent.assert_drained();
 }
 
 /// A bundle stored before the region holding its box was imported is
