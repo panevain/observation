@@ -3,9 +3,10 @@ name: Dependabot auto-merge
 # Enables auto-merge (squash) on Dependabot pull requests that only bring semver patch updates,
 # base image digest refreshes or the fuzz targets' nightly (`cargo xtask automerge list`);
 # they merge once the required checks pass, and the weekly Prepare release ships them. Minor and
-# major updates still need a person. To hold one, label it `hold`: it is skipped, and auto-merge
-# is switched off if it was already on. The Pins PR's auto-merge is pins.yml's to set, but a
-# `hold` on it is honoured here too.
+# major updates still need a person, and so does any update that changes xtask/ (the checker's
+# own workspace: auto-merge is switched off if it is on). To hold one, label it `hold`: it is
+# skipped, and auto-merge is switched off if it was already on. The Pins PR's auto-merge is
+# pins.yml's to set, but a `hold` on it is honoured here too.
 # A sweep on a schedule rather than a pull_request workflow: the bot app enables auto-merge,
 # so the merge into develop starts its push workflows (one enabled with GITHUB_TOKEN would
 # not), and the app's key is only available to runs on develop.

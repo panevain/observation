@@ -982,3 +982,197 @@ exit 0
 | PR | Title | Auto-merge |
 | --- | --- | --- |
 | #62 | Bump serde from 1.0.1 to 1.0.2 (#62) | enable auto-merge |
+== xtask patch update
+exit 0
+-- stdout
+{"merge":[{"number":70,"sha":"0000000000000000000000000000000000000046"}],"hold":[]}
+-- stderr
+#70 Bump serde from 1.0.1 to 1.0.2 (#70): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #70 | Bump serde from 1.0.1 to 1.0.2 (#70) | enable auto-merge |
+== xtask patch update, dry run
+exit 0
+-- stdout
+{"merge":[{"number":70,"sha":"0000000000000000000000000000000000000046"}],"hold":[]}
+-- stderr
+#70 Bump serde from 1.0.1 to 1.0.2 (#70): would enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests (dry run: nothing changed)
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #70 | Bump serde from 1.0.1 to 1.0.2 (#70) | would enable auto-merge |
+== xtask and root patch update
+exit 0
+-- stdout
+{"merge":[{"number":71,"sha":"0000000000000000000000000000000000000047"}],"hold":[]}
+-- stderr
+#71 Bump serde from 1.0.1 to 1.0.2 (#71): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #71 | Bump serde from 1.0.1 to 1.0.2 (#71) | enable auto-merge |
+== xtask manifest only
+exit 0
+-- stdout
+{"merge":[{"number":72,"sha":"0000000000000000000000000000000000000048"}],"hold":[]}
+-- stderr
+#72 Bump serde from 1.0.1 to 1.0.2 (#72): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #72 | Bump serde from 1.0.1 to 1.0.2 (#72) | enable auto-merge |
+== xtask branch, root files
+exit 0
+-- stdout
+{"merge":[{"number":73,"sha":"0000000000000000000000000000000000000049"}],"hold":[]}
+-- stderr
+#73 Bump serde from 1.0.1 to 1.0.2 (#73): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #73 | Bump serde from 1.0.1 to 1.0.2 (#73) | enable auto-merge |
+== more files than listed
+exit 0
+-- stdout
+{"merge":[{"number":74,"sha":"000000000000000000000000000000000000004a"}],"hold":[]}
+-- stderr
+#74 Bump serde from 1.0.1 to 1.0.2 (#74): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #74 | Bump serde from 1.0.1 to 1.0.2 (#74) | enable auto-merge |
+== xtask with auto-merge on
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#75 Bump serde from 1.0.1 to 1.0.2 (#75): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #75 | Bump serde from 1.0.1 to 1.0.2 (#75) | left alone: draft, already set to auto-merge, or not into develop |
+== xtask with auto-merge on, dry run
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#75 Bump serde from 1.0.1 to 1.0.2 (#75): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests (dry run: nothing changed)
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #75 | Bump serde from 1.0.1 to 1.0.2 (#75) | left alone: draft, already set to auto-merge, or not into develop |
+== xtask draft
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#76 Bump serde from 1.0.1 to 1.0.2 (#76): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #76 | Bump serde from 1.0.1 to 1.0.2 (#76) | left alone: draft, already set to auto-merge, or not into develop |
+== xtask minor update
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#77 Bump serde from 1.0.1 to 1.0.2 (#77): left alone: serde is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #77 | Bump serde from 1.0.1 to 1.0.2 (#77) | left alone: serde is version-update:semver-minor |
+== xtask and root, mixed
+exit 0
+-- stdout
+{"merge":[{"number":78,"sha":"000000000000000000000000000000000000004e"},{"number":79,"sha":"000000000000000000000000000000000000004f"}],"hold":[]}
+-- stderr
+#78 Bump serde from 1.0.1 to 1.0.2 (#78): enable auto-merge
+#79 Bump serde from 1.0.1 to 1.0.2 (#79): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #78 | Bump serde from 1.0.1 to 1.0.2 (#78) | enable auto-merge |
+| #79 | Bump serde from 1.0.1 to 1.0.2 (#79) | enable auto-merge |
+== xtask-like paths
+exit 0
+-- stdout
+{"merge":[{"number":80,"sha":"0000000000000000000000000000000000000050"}],"hold":[]}
+-- stderr
+#80 Bump serde from 1.0.1 to 1.0.2 (#80): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #80 | Bump serde from 1.0.1 to 1.0.2 (#80) | enable auto-merge |
+== files not a list
+exit 0
+-- stdout
+{"merge":[{"number":81,"sha":"0000000000000000000000000000000000000051"}],"hold":[]}
+-- stderr
+#81 Bump serde from 1.0.1 to 1.0.2 (#81): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #81 | Bump serde from 1.0.1 to 1.0.2 (#81) | enable auto-merge |
+== files path not a string
+exit 0
+-- stdout
+{"merge":[{"number":82,"sha":"0000000000000000000000000000000000000052"}],"hold":[]}
+-- stderr
+#82 Bump serde from 1.0.1 to 1.0.2 (#82): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #82 | Bump serde from 1.0.1 to 1.0.2 (#82) | enable auto-merge |
+== changedFiles missing
+exit 0
+-- stdout
+{"merge":[{"number":83,"sha":"0000000000000000000000000000000000000053"}],"hold":[]}
+-- stderr
+#83 Bump serde from 1.0.1 to 1.0.2 (#83): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #83 | Bump serde from 1.0.1 to 1.0.2 (#83) | enable auto-merge |
+== files query fails
+exit 0
+-- stdout
+{"merge":[{"number":84,"sha":"0000000000000000000000000000000000000054"}],"hold":[]}
+-- stderr
+#84 Bump serde from 1.0.1 to 1.0.2 (#84): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #84 | Bump serde from 1.0.1 to 1.0.2 (#84) | enable auto-merge |

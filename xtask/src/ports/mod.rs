@@ -55,7 +55,6 @@ pub trait Brotli {
     fn compressed_len(&self, data: &[u8]) -> Result<usize>;
 }
 
-/// The current time.
 /// What a `gh` command printed, and its exit status (negative: the signal that ended it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GhOutput {
@@ -70,6 +69,7 @@ pub trait GitHub {
     fn gh(&self, args: &[String]) -> Result<GhOutput>;
 }
 
+/// The current time.
 pub trait Clock {
     fn now(&self) -> Timestamp;
 }

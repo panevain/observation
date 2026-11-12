@@ -268,7 +268,10 @@ impl Brotli for BrotliCli {
     }
 }
 
-/// `gh`, found on `PATH`, with the caller's environment (its token included).
+/// `gh`, found on `PATH`, with the caller's environment (its token included). Unlike the other
+/// adapters it adds no timeout and no `--` before positional values, as the script did not:
+/// the job's timeout bounds it, and its only positional value from data is a pull request
+/// number from GitHub's own listing.
 #[derive(Debug)]
 pub struct GhCli {
     pub program: PathBuf,

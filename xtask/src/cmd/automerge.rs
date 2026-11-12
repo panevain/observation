@@ -10,7 +10,14 @@
 //!   Docker base image digest refresh, or the fuzz targets' dated nightly (the last two carry
 //!   no update type).
 //! - hold: each of them, or the Pins pull request, labelled `hold` with auto-merge on, to switch
-//!   it off.
+//!   it off; and each Dependabot pull request with auto-merge on that changes `xtask/`.
+//!
+//! Unlike the script, a pull request that changes anything under `xtask/` (dependabot.yml's
+//! `/xtask` cargo directory) never merges itself: xtask builds this very check, so an update to
+//! its dependencies always gets a person's review. Such a pull request is left alone, or put on
+//! hold if auto-merge is on. Which files it changes is read from GitHub (`files`,
+//! `changedFiles`), never from its title; when GitHub lists fewer files than it counts, the
+//! pull request is treated as changing `xtask/`.
 //!
 //! It reads pull request metadata through `gh` only, and checks out nothing. Pull request data
 //! is read on Python's terms where the script read it: where the script raised on a shape (a
@@ -38,6 +45,14 @@ pub const PATCH: &str = "version-update:semver-patch";
 /// the fuzz targets' nightly (its `rust-toolchain` entry for /fuzz, which builds only the fuzz
 /// runs).
 pub const UNTYPED: [&str; 2] = ["dependabot/docker/", "dependabot/rust_toolchain/fuzz/"];
+/// The tooling workspace, which this check is built from (dependabot.yml's `/xtask`).
+pub const XTASK: &str = "xtask/";
+/// The branch prefix of Dependabot updates for XTASK alone.
+pub const XTASK_BRANCH: &str = "dependabot/cargo/xtask/";
+/// Why a pull request that changes XTASK does not merge itself.
+pub const XTASK_WHY: &str = "changes xtask/, which builds this check: needs a review";
+/// The fields read to tell whether a pull request changes XTASK.
+pub const FILE_FIELDS: &str = "files,changedFiles";
 /// The fields read from each pull request.
 pub const FIELDS: &str =
     "number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits";
@@ -225,6 +240,53 @@ fn gh(port: &dyn GitHub, args: &[&str], diagnostics: &mut String) -> Result<Valu
         .map_err(|e| Error::new(format!("gh {}: not JSON: {e}", args.join(" "))))
 }
 
+/// Whether pull request `number` changes XTASK: its branch is a Dependabot `/xtask` branch, a
+/// file it changes is under `xtask/`, or GitHub lists fewer files than the pull request
+/// changes (so the rest cannot be checked). A shape other than a list of files with string
+/// paths and a count is an error.
+fn changes_xtask(
+    port: &dyn GitHub,
+    repo: &str,
+    number: i64,
+    pr: &Map<String, Value>,
+    diagnostics: &mut String,
+) -> Result<bool> {
+    if pr
+        .get("headRefName")
+        .and_then(Value::as_str)
+        .is_some_and(|h| h.starts_with(XTASK_BRANCH))
+    {
+        return Ok(true);
+    }
+    let number = number.to_string();
+    let answer = gh(
+        port,
+        &["pr", "view", &number, "--repo", repo, "--json", FILE_FIELDS],
+        diagnostics,
+    )?;
+    let answer = object(&answer, "`gh pr view --json files`'s answer")?;
+    let Some(Value::Array(files)) = answer.get("files") else {
+        return Err(shape("`files` is not a list"));
+    };
+    let count = answer
+        .get("changedFiles")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| shape("`changedFiles` is not a count"))?;
+    if usize::try_from(count).ok() != Some(files.len()) {
+        return Ok(true);
+    }
+    let mut changes = false;
+    for file in files {
+        match object(file, "a file")?.get("path") {
+            Some(Value::String(path)) => {
+                changes |= path.starts_with(XTASK) || path == XTASK.trim_end_matches('/');
+            }
+            _ => return Err(shape("a file's `path` is not a string")),
+        }
+    }
+    Ok(changes)
+}
+
 /// Lists the pull requests and decides. `diagnostics` receives what goes to stderr: one line
 /// per pull request, or gh's stderr before an error.
 pub fn run(args: &Args, port: &dyn GitHub, diagnostics: &mut String) -> Result<Outcome> {
@@ -297,7 +359,16 @@ pub fn run(args: &Args, port: &dyn GitHub, diagnostics: &mut String) -> Result<O
         } else if key(pr, "headRefName")?.as_str() == Some(PINS) {
             "left alone: the Pins PR, whose auto-merge pins.yml sets".to_owned()
         } else if let Some(why) = eligible(pr)? {
-            format!("left alone: {why}")
+            if py::json_truthy(key(pr, "autoMergeRequest")?)
+                && changes_xtask(port, repo, number, pr, diagnostics)?
+            {
+                hold.push(item);
+                format!("{XTASK_WHY}: {would}disable auto-merge")
+            } else {
+                format!("left alone: {why}")
+            }
+        } else if changes_xtask(port, repo, number, pr, diagnostics)? {
+            format!("left alone: {XTASK_WHY}")
         } else {
             merge.push(item);
             format!("{would}enable auto-merge")
@@ -433,7 +504,39 @@ mod tests {
     /// The cases on which the port fails although the script passed, on purpose: a pull
     /// request `number` that is not an integer, or a `headRefOid` that is not a string, which
     /// the script copied into its JSON as they were.
-    const STRICTER: &[&str] = &["number string in view", "headRefOid int"];
+    ///
+    /// Also the answers to the question only the port asks (`files,changedFiles`) when they are
+    /// not a list of files with string paths and a count, or the call fails.
+    const STRICTER: &[&str] = &[
+        "number string in view",
+        "headRefOid int",
+        "files not a list",
+        "files path not a string",
+        "changedFiles missing",
+        "files query fails",
+    ];
+
+    /// The cases where the script merged, or left auto-merge on, a pull request that changes
+    /// `xtask/`, and the port does not: it leaves that pull request alone, or puts it on hold
+    /// if auto-merge is on. Everything else in the output is the script's.
+    const XTASK_HELD: &[&str] = &[
+        "xtask patch update",
+        "xtask patch update, dry run",
+        "xtask and root patch update",
+        "xtask manifest only",
+        "xtask branch, root files",
+        "more files than listed",
+        "xtask with auto-merge on",
+        "xtask with auto-merge on, dry run",
+        "xtask and root, mixed",
+    ];
+
+    /// The `merge` and `hold` items of a stdout line.
+    fn lists(stdout: &str) -> (Vec<Value>, Vec<Value>) {
+        let v: Value = ok(serde_json::from_str(stdout));
+        let items = |k: &str| v[k].as_array().cloned().unwrap_or_default();
+        (items("merge"), items("hold"))
+    }
 
     /// Every case of automerge/cases.toml against what the script did with it
     /// (automerge/golden, captured from the script with the same recorded gh answers): where
@@ -480,6 +583,24 @@ mod tests {
             let summary = summary.strip_suffix('\n').unwrap_or(&summary).to_owned();
             let same = stdout == *py_stdout && stderr == *py_stderr && summary == *py_summary;
             let stricter = STRICTER.contains(&case.name.as_str());
+            if XTASK_HELD.contains(&case.name.as_str()) {
+                // Merges a subset of what the script merged, holds a superset, and says why.
+                let held = py_code == "exit 0" && code == 0 && {
+                    let ((sm, sh), (pm, ph)) = (lists(py_stdout), lists(&stdout));
+                    pm.iter().all(|i| sm.contains(i))
+                        && sh.iter().all(|i| ph.contains(i))
+                        && (pm.len() < sm.len() || ph.len() > sh.len())
+                        && stderr.contains(XTASK_WHY)
+                        && summary.contains(XTASK_WHY)
+                };
+                if !held {
+                    problems.push(format!(
+                        "{}: listed as held for xtask/, but\n  script: {py_code} {py_stdout:?}\n  port: exit {code} {stdout:?} {stderr:?}",
+                        case.name
+                    ));
+                }
+                continue;
+            }
             let problem = match (py_code.as_str(), code) {
                 ("exit 0", 0) if stricter => "passes, but is listed as stricter",
                 ("exit 0", 0) if !same => "passes with different output",
@@ -502,6 +623,35 @@ mod tests {
             }
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    /// What the port prints for an `xtask/` update: no merge, and a hold when auto-merge is on.
+    #[test]
+    fn never_merges_an_xtask_update() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/automerge");
+        let cases: Cases = ok(toml::from_str(&ok(fs::read_to_string(
+            dir.join("cases.toml"),
+        ))));
+        let get = |name: &str| ok(cases.case.iter().find(|c| c.name == name).ok_or(name));
+        let (code, stdout, stderr, _) = run_case(get("xtask and root patch update"));
+        assert_eq!((code, stdout.as_str()), (0, "{\"merge\":[],\"hold\":[]}\n"));
+        assert_eq!(
+            stderr,
+            format!("#71 Bump serde from 1.0.1 to 1.0.2 (#71): left alone: {XTASK_WHY}\n")
+        );
+        let (code, stdout, stderr, _) = run_case(get("xtask with auto-merge on"));
+        let sha = format!("{:040x}", 75);
+        assert_eq!(
+            (code, stdout),
+            (
+                0,
+                format!("{{\"merge\":[],\"hold\":[{{\"number\":75,\"sha\":\"{sha}\"}}]}}\n")
+            )
+        );
+        assert!(stderr.ends_with(&format!("{XTASK_WHY}: disable auto-merge\n")));
+        // A root-workspace patch update still merges.
+        let (code, stdout, _, _) = run_case(get("patch update"));
+        assert_eq!((code, lists(&stdout).0.len()), (0, 1));
     }
 
     #[test]
@@ -536,27 +686,61 @@ mod tests {
             open_pr.contains(&format!(r#"any(.name == "{HOLD}")"#)),
             "open-pr's hold label"
         );
-        // Dependabot: no target-branch (so the default branch, develop), a docker entry and a
-        // rust-toolchain entry for /fuzz, whose branches are UNTYPED's prefixes.
+        // Dependabot: no target-branch, so every update goes to the default branch, which the
+        // file names and the develop ruleset protects.
         let dependabot = repo_file(".github/dependabot.yml");
         let config: Vec<&str> = dependabot
             .lines()
             .filter(|l| !l.trim_start().starts_with('#'))
             .collect();
         assert!(!config.iter().any(|l| l.contains("target-branch")));
-        assert_eq!(BASE, "develop");
-        assert!(config.contains(&"  - package-ecosystem: docker"));
-        let toolchain = config
-            .iter()
-            .position(|l| *l == "  - package-ecosystem: rust-toolchain");
+        assert!(dependabot.contains(&format!(
+            "# Every update targets {BASE}, the default branch."
+        )));
+        let ruleset = repo_file(".github/rulesets/develop.json");
+        assert!(ruleset.contains(&format!(r#""refs/heads/{BASE}""#)));
+        // Each entry's ecosystem and directories, as Dependabot names its branches after them:
+        // dependabot/<ecosystem, `-` as `_`>/<directory, unless the root>/...
+        let mut entries: Vec<(String, Vec<String>)> = Vec::new();
+        for line in &config {
+            if let Some(eco) = line.strip_prefix("  - package-ecosystem: ") {
+                entries.push((eco.replace('-', "_"), Vec::new()));
+                continue;
+            }
+            let dirs = line
+                .strip_prefix("    directory: ")
+                .or_else(|| line.strip_prefix("    directories: "));
+            if let (Some(dirs), Some(e)) = (dirs, entries.last_mut()) {
+                let dirs = dirs.trim_matches(|c| c == '[' || c == ']');
+                e.1.extend(dirs.split(", ").map(|d| d.trim_matches('"').to_owned()));
+            }
+        }
+        let branch = |eco: &str, dir: &str| {
+            let dir = dir.trim_matches('/');
+            let dir = if dir.is_empty() {
+                String::new()
+            } else {
+                format!("{dir}/")
+            };
+            entries
+                .iter()
+                .any(|(e, dirs)| {
+                    e == eco
+                        && dirs
+                            .iter()
+                            .any(|d| d.trim_matches('/') == dir.trim_end_matches('/'))
+                })
+                .then(|| format!("dependabot/{eco}/{dir}"))
+        };
+        // The base images (the docker entry, at the root) and the fuzz nightly (the
+        // rust-toolchain entry for /fuzz).
         assert_eq!(
-            toolchain.and_then(|i| config.get(i + 1)).copied(),
-            Some("    directory: /fuzz")
+            [branch("docker", "/"), branch("rust_toolchain", "/fuzz")],
+            UNTYPED.map(|p| Some(p.to_owned()))
         );
-        assert_eq!(
-            UNTYPED,
-            ["dependabot/docker/", "dependabot/rust_toolchain/fuzz/"]
-        );
+        // The tooling workspace is one of the cargo directories.
+        assert_eq!(branch("cargo", "/xtask").as_deref(), Some(XTASK_BRANCH));
+        assert_eq!(XTASK_BRANCH, format!("dependabot/cargo/{XTASK}"));
         // The workflow reads the JSON's keys and has_work.
         let workflow = repo_file(".github/workflows/dependabot-automerge.yml");
         for needle in [
