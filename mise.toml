@@ -230,9 +230,11 @@ fi
 # The release to run, for this task only (so `mise run serve` is unaffected): `latest`, or a
 # version such as 0.1.0 (both images use the same one). The script verifies it, so it needs the
 # value here; the other Compose settings (port, log format, region limits) default in
-# compose.yaml. A variable already set wins, e.g. `OBS_VERSION=0.1.0 OBS_PORT=9090 mise run up`.
+# compose.yaml. Precedence: a variable exported in the shell (`OBS_VERSION=0.1.0 mise run up`),
+# then OBS_VERSION under [env] in mise.local.toml, then `latest`. (get_env sees only the
+# environment mise started with; env.OBS_VERSION is mise's own [env], mise.local.toml included.)
 [tasks.up.env]
-OBS_VERSION = "{{ get_env(name='OBS_VERSION', default='latest') }}"
+OBS_VERSION = "{{ get_env(name='OBS_VERSION', default=env.OBS_VERSION | default(value='latest')) }}"
 
 [tasks.down]
 description = "Stop and remove the Docker Compose stack; keeps the regions and cache volumes (`mise run down -v` deletes them too)"

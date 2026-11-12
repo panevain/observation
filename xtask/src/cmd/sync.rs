@@ -34,6 +34,8 @@ pub struct Snapshot {
     pub dockerfile: String,
     pub mise_toml: String,
     pub mise_ci_toml: String,
+    /// mise.dev.toml (empty when there is none).
+    pub mise_dev_toml: String,
     /// .github/workflows/*.y*ml, then .github/actions/*/action.y*ml, each in path order.
     pub workflows: Vec<(String, String)>,
     pub deny_toml: String,
@@ -62,6 +64,9 @@ pub enum Finding {
     DocPins(String),
     /// The docs could not be searched. Stops the check.
     DocSearch(String),
+    /// A mise template reads a variable with `get_env` without falling back to mise's own
+    /// `[env]` (`default=env.NAME`), so a value set in mise.local.toml would be ignored.
+    EnvIgnoresLocal { file: String, line: String },
 }
 
 impl fmt::Display for Finding {
@@ -102,6 +107,11 @@ impl fmt::Display for Finding {
             Self::DocSearch(why) => {
                 writeln!(f, "could not search the docs for pinned versions ({why})")
             }
+            Self::EnvIgnoresLocal { file, line } => writeln!(
+                f,
+                "{file}: get_env without default=env.<the same name>, so the variable set under \
+                 [env] in mise.local.toml would be ignored: {line}"
+            ),
         }
     }
 }
@@ -138,6 +148,10 @@ regex!(
     r#"^min_version = \{ hard = "[0-9.]+", soft = "[0-9.]+" \}"#
 );
 regex!(LAST_QUOTED_VERSION, r#".*"([0-9.]+)".*"#);
+regex!(
+    GET_ENV,
+    r#"get_env\(\s*name\s*=\s*['"]([^'"]*)['"]\s*(?:,\s*default\s*=\s*env\.([A-Za-z0-9_]+))?"#
+);
 regex!(MISE_ACTION, r"uses: *jdx/mise-action@");
 regex!(BUILD_PUSH, r"uses: *docker/build-push-action@");
 regex!(TASK_TOOL, r#"^tools\.([A-Za-z0-9_-]+) *= *"([^"]+)".*"#);
@@ -436,6 +450,13 @@ pub fn check(s: &Snapshot) -> Report {
         synced.push(format!("{name} {joined}"));
     }
 
+    // A variable read with get_env falls back to mise's [env], or mise.local.toml is ignored.
+    findings.extend(env_ignores_local(&[
+        ("mise.toml", &s.mise_toml),
+        ("mise.dev.toml", &s.mise_dev_toml),
+        ("mise.ci.toml", &s.mise_ci_toml),
+    ]));
+
     // The docs never repeat a pinned version (CHANGELOG.md records history and is exempt).
     match &s.doc_pins {
         Err(why) => {
@@ -482,6 +503,30 @@ pub fn check(s: &Snapshot) -> Report {
         none(deny_ids)
     );
     Report { findings, summary }
+}
+
+/// Every `get_env(name='NAME', ...)` outside a comment line must read `default=env.NAME...`:
+/// `get_env` sees only the environment mise started with, so without that fallback a value set
+/// under `[env]` in mise.local.toml (where machine settings go) is silently ignored. The
+/// fallback keeps the order: the shell, then mise's `[env]`, then the default.
+pub fn env_ignores_local(files: &[(&str, &str)]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (file, text) in files {
+        for line in lines(text).filter(|l| !l.trim_start().starts_with('#')) {
+            let calls = line.matches("get_env(").count();
+            let good = GET_ENV
+                .captures_iter(line)
+                .filter(|c| c.get(2).is_some_and(|d| d.as_str() == &c[1]))
+                .count();
+            if good < calls {
+                out.push(Finding::EnvIgnoresLocal {
+                    file: (*file).to_owned(),
+                    line: line.trim().to_owned(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// The check's output: what goes to stdout and stderr, and whether it failed.
@@ -574,6 +619,11 @@ pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
         dockerfile: read(repo, "Dockerfile")?,
         mise_toml: read(repo, "mise.toml")?,
         mise_ci_toml: read(repo, "mise.ci.toml")?,
+        mise_dev_toml: if repo.join("mise.dev.toml").exists() {
+            read(repo, "mise.dev.toml")?
+        } else {
+            String::new()
+        },
         workflows: files(repo, workflows)?,
         deny_toml: read(repo, "deny.toml")?,
         audit_toml: read(repo, ".cargo/audit.toml")?,
@@ -742,6 +792,34 @@ mod tests {
         }
         let out = ok(run(&repo, &GitCli::new(&repo)));
         assert_eq!((out.stderr.as_str(), out.failed), ("", false));
+    }
+
+    /// Templates of the forms the mise files used before and after the fix for P1 (a version
+    /// pinned in mise.local.toml was ignored by `mise run up`).
+    #[test]
+    fn get_env_must_fall_back_to_mise_env() {
+        let before = "[tasks.up.env]\nOBS_VERSION = \"{{ get_env(name='OBS_VERSION', default='latest') }}\"\n";
+        let after = "[tasks.up.env]\nOBS_VERSION = \"{{ get_env(name='OBS_VERSION', default=env.OBS_VERSION | default(value='latest')) }}\"\n";
+        let dev_before =
+            "env = { A = \"x\", T = \"{{ get_env(name='T', default=vars.dev_token) }}\" }\n";
+        let dev_after = "env = { T = \"{{ get_env(name='T', default=env.T | default(value=vars.dev_token)) }}\" }\n";
+        let other_name = "X = \"{{ get_env(name='X', default=env.Y) }}\"\n";
+        let no_default = "X = \"{{ get_env(name='X') }}\"\n";
+        let two_calls = "X = \"{{ get_env(name='X', default=env.X) }}{{ get_env(name='Y') }}\"\n";
+        let comment = "# get_env(name='X') sees only the starting environment\n";
+        for good in [after, dev_after, comment] {
+            assert_eq!(env_ignores_local(&[("mise.toml", good)]), [], "{good}");
+        }
+        for bad in [before, dev_before, other_name, no_default, two_calls] {
+            let found = env_ignores_local(&[("mise.dev.toml", bad)]);
+            assert_eq!(found.len(), 1, "{bad}");
+            assert!(
+                found[0]
+                    .to_string()
+                    .starts_with("mise.dev.toml: get_env without"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

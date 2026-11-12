@@ -92,6 +92,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- `mise run up` now uses an `OBS_VERSION` set under `[env]` in `mise.local.toml`; before, only a variable exported in the shell was used, and a version pinned in `mise.local.toml` silently started `latest`. An exported variable still wins over `mise.local.toml`. Likewise, `mise run dev` now uses an `OBS_ADMIN_TOKEN` from `mise.local.toml` instead of the dev token. `mise run sync` refuses the pattern that caused it.
 - While the Region tool is on, the edge of the loaded area is drawn in red and the map beyond it is tinted and hatched. Corners clicked out there move to the edge, which used to look like part of the map refused corners for no reason (#71).
 - Selecting a camera no longer widens the inspector: a long model name is cut short in the model list's button, and the **Group** field takes only the width its pin button leaves, which also stops the button being cut off.
 - The demo street now has its 205 address nodes: the fixture had been recorded before the converter kept them, so many houses there had no address in the camera list or the Address tool.
