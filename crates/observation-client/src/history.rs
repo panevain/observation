@@ -33,7 +33,12 @@ impl Plugin for HistoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<History>()
             .add_message::<HistoryCommand>()
-            .add_systems(Update, (shortcuts, record).chain());
+            // After an area load: the load is recorded in its own frame, and
+            // an undo asked for in that frame reverts it.
+            .add_systems(
+                Update,
+                (shortcuts, record.after(crate::world::AreaLoadSet)).chain(),
+            );
     }
 }
 

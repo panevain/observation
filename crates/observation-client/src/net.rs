@@ -118,7 +118,10 @@ impl Plugin for NetPlugin {
             .add_systems(
                 Update,
                 (
-                    start_area_loads,
+                    // After `record`, which so runs before the whole chain: an
+                    // undo in the frame after a Load click still runs, and
+                    // `record` is still busy in the frame an area reply comes.
+                    start_area_loads.after(crate::history::record),
                     pump_tiles,
                     send_region_requests,
                     drain_replies,
@@ -203,7 +206,7 @@ fn send_region_action(net: &Net, token: &str, action: ActionKind, body: RegionAc
     );
 }
 
-fn drain_replies(
+pub(crate) fn drain_replies(
     net: Res<Net>,
     mut tiles: ResMut<Tiles>,
     mut images: ResMut<Assets<Image>>,

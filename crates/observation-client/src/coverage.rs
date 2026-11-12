@@ -71,11 +71,16 @@ impl Plugin for CoveragePlugin {
                 Update,
                 (
                     // After a new area's state reset and `Area` insert, which
-                    // Bevy applies in between (an automatic sync point).
-                    update_coverage.after(AreaLoadSet),
+                    // Bevy applies in between (an automatic sync point), and
+                    // after the frame's edits up to `record`.
+                    update_coverage
+                        .after(AreaLoadSet)
+                        .after(crate::history::record),
                     paint_overlay,
                     draw_region,
-                    draw_outside_area,
+                    // Before the pointer (and so are the three above): drawing
+                    // shows the state the click is made against.
+                    draw_outside_area.before(crate::input::PointerSet),
                 )
                     .chain(),
             );

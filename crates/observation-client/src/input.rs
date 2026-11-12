@@ -119,6 +119,11 @@ struct AddressKey {
     view: Affine3A,
 }
 
+/// Turns the frame's clicks, drags and hover into edits; what draws the
+/// scene, and Export, are ordered against it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PointerSet;
+
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
@@ -131,7 +136,7 @@ impl Plugin for InputPlugin {
                 Update,
                 (
                     keyboard,
-                    pointer.after(AreaLoadSet),
+                    pointer.in_set(PointerSet).after(AreaLoadSet),
                     focus_on_ground,
                     apply_orbit,
                 )
@@ -234,7 +239,7 @@ fn apply_orbit(
     }
 }
 
-fn keyboard(
+pub(crate) fn keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<EguiWantsInput>,
     mut editor: ResMut<Editor>,
