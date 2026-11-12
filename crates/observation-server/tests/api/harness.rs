@@ -1,6 +1,12 @@
-use axum::http::{StatusCode, header};
+use std::time::Duration;
+
+use axum::Router;
+use axum::body::{Body, BodyDataStream, Bytes};
+use axum::http::{HeaderMap, Request, StatusCode, header};
+use futures_util::StreamExt;
 use observation_server::config::Config;
 use observation_upstream::testing::{FakeHttp, FakeReply};
+use tower::ServiceExt;
 
 pub(crate) use crate::common::{area_uri, get_uri, json, send};
 
@@ -51,4 +57,72 @@ pub(crate) fn tile_png(max_age: u64) -> FakeReply {
         .header(header::ETAG, "\"tile-etag\"")
         .header(header::LAST_MODIFIED, "Mon, 01 Jan 2024 00:00:00 GMT")
         .header(header::CACHE_CONTROL, format!("max-age={max_age}"))
+}
+
+/// Longest [`Stream`] waits for one piece.
+pub(crate) const PIECE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Most a [`Stream`] reads in all. An event stream under paused time yields
+/// keep-alives forever, so every read is bounded by this and the deadline.
+pub(crate) const STREAM_CAP: usize = 64 * 1024;
+
+/// Sends `req` and returns the head with the body unread: check the status
+/// before reading, since a stream never ends.
+pub(crate) async fn open(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Stream) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let stream = Stream {
+        body: body.into_data_stream(),
+        read: 0,
+    };
+    (parts.status, parts.headers, stream)
+}
+
+/// A response body read piece by piece, each read bounded by
+/// [`PIECE_DEADLINE`] and all of them together by [`STREAM_CAP`]; a read
+/// past either bound fails the test.
+#[derive(Debug)]
+pub(crate) struct Stream {
+    body: BodyDataStream,
+    read: usize,
+}
+
+impl Stream {
+    /// The next piece, or `None` at the end.
+    pub(crate) async fn next(&mut self) -> Option<Bytes> {
+        let piece = tokio::time::timeout(PIECE_DEADLINE, self.body.next())
+            .await
+            .unwrap_or_else(|_| panic!("no piece within {PIECE_DEADLINE:?}"))?
+            .unwrap();
+        self.read += piece.len();
+        assert!(
+            self.read <= STREAM_CAP,
+            "more than {STREAM_CAP} bytes read without finding what was expected"
+        );
+        Some(piece)
+    }
+
+    /// The next piece as text; the stream must not have ended.
+    pub(crate) async fn next_text(&mut self) -> String {
+        let piece = self.next().await.expect("the stream ended");
+        String::from_utf8(piece.to_vec()).unwrap()
+    }
+
+    /// Reads until the text read by this call contains `needle`.
+    pub(crate) async fn until(&mut self, needle: &str) -> String {
+        let mut seen = String::new();
+        while !seen.contains(needle) {
+            seen.push_str(&self.next_text().await);
+        }
+        seen
+    }
+
+    /// Reads to the end.
+    pub(crate) async fn rest(mut self) -> Vec<u8> {
+        let mut all = Vec::new();
+        while let Some(piece) = self.next().await {
+            all.extend_from_slice(&piece);
+        }
+        all
+    }
 }

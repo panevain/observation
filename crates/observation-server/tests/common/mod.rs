@@ -1,5 +1,7 @@
 //! What both test binaries use: the demo fixtures and request helpers.
 
+use std::time::Duration;
+
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -18,14 +20,27 @@ pub(crate) const PNG: &[u8] = &[
     0x42, 0x60, 0x82,
 ];
 
+/// Largest body [`send`] reads.
+pub(crate) const BODY_CAP: usize = 64 << 20;
+
+/// Longest [`send`] waits for a whole body.
+pub(crate) const BODY_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Sends `req` and reads the whole answer. The read is bounded, so that a
+/// route that streams forever fails the test instead of running it out of
+/// memory: more than [`BODY_CAP`], or no end within [`BODY_DEADLINE`], is a
+/// test failure. Read streams with the `api` harness's `open` instead.
 pub(crate) async fn send(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Bytes) {
+    let uri = req.uri().clone();
     let resp = app.clone().oneshot(req).await.unwrap();
     let (parts, body) = resp.into_parts();
-    (
-        parts.status,
-        parts.headers,
-        axum::body::to_bytes(body, usize::MAX).await.unwrap(),
-    )
+    let body = tokio::time::timeout(BODY_DEADLINE, axum::body::to_bytes(body, BODY_CAP))
+        .await
+        .unwrap_or_else(|_| panic!("{uri}: the body did not end within {BODY_DEADLINE:?}"))
+        .unwrap_or_else(|e| {
+            panic!("{uri}: the body could not be read within {BODY_CAP} bytes: {e}")
+        });
+    (parts.status, parts.headers, body)
 }
 
 pub(crate) async fn get_uri(app: &Router, uri: &str) -> (StatusCode, HeaderMap, Bytes) {

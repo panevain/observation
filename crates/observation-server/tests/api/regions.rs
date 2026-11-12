@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::http::{Method, Request, StatusCode, header};
-use futures_util::StreamExt;
 use observation_core::bundle::AreaBundle;
 use observation_core::geo::BBox;
 use observation_core::provenance::{format_utc, parse_utc};
@@ -16,7 +15,7 @@ use observation_upstream::testing::FakeHttp;
 use tower::ServiceExt;
 
 use crate::common::FIXTURE;
-use crate::harness::{OVERPASS, area_uri, get_uri, hits, json, overpass_ok, send};
+use crate::harness::{OVERPASS, area_uri, get_uri, hits, json, open, overpass_ok, send};
 
 /// A [`TestApp`] following `agent`, on the production configuration without
 /// elevation (as the socket harness had it); `admin` sets OBS_ADMIN_TOKEN.
@@ -141,7 +140,8 @@ async fn regions_are_off_without_an_agent() {
         "/api/regions/events",
         "/api/regions/catalog",
     ] {
-        let (status, _, _) = get_uri(&app.router, uri).await;
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let (status, _, _) = open(&app.router, req).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
     }
 }
@@ -495,40 +495,25 @@ async fn region_events_stream_every_change() {
     let agent = FakeRegionAgent::new();
     let h = region_app(FakeHttp::new(), agent.clone(), None);
     poll_to(&h, snapshot(0, None)).await;
-    let resp = h.router.clone().oneshot(events_request()).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    let (status, headers, mut events) = open(&h.router, events_request()).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(
-        resp.headers()[header::CONTENT_TYPE]
+        headers[header::CONTENT_TYPE]
             .to_str()
             .unwrap()
             .starts_with("text/event-stream")
     );
-    let mut body = resp.into_body().into_data_stream();
-    let mut seen = String::new();
-    let mut next = async || {
-        let chunk = tokio::time::timeout(Duration::from_secs(5), body.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        String::from_utf8(chunk.to_vec()).unwrap()
-    };
-    seen.push_str(&next().await);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    let seen = events.next_text().await;
     assert!(seen.contains("event: regions"), "{seen}");
     assert!(seen.contains("\"agent_online\":true"), "{seen}");
 
     poll_to(&h, snapshot(1, Some(("wa", 1)))).await;
-    let mut later = String::new();
-    while !later.contains("\"wa\"") {
-        later.push_str(&next().await);
-    }
+    events.until("\"wa\"").await;
     // And the change after it: the agent going offline.
     agent.snapshot_reply(Err("agent unreachable".into()));
     assert!(h.state.regions().unwrap().poll_once().await.is_err());
-    let mut offline = String::new();
-    while !offline.contains("\"agent_online\":false") {
-        offline.push_str(&next().await);
-    }
+    events.until("\"agent_online\":false").await;
 }
 
 /// At most 256 event streams are open at once; one more is refused with a
@@ -563,17 +548,13 @@ async fn region_events_are_limited_to_256_streams() {
 #[tokio::test(start_paused = true)]
 async fn region_events_end_when_the_server_shuts_down() {
     let h = region_app(FakeHttp::new(), FakeRegionAgent::new(), None);
-    let resp = h.router.clone().oneshot(events_request()).await.unwrap();
-    let mut body = resp.into_body().into_data_stream();
-    let first = tokio::time::timeout(Duration::from_secs(5), body.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&first).contains("event: regions"));
+    let (status, _, mut events) = open(&h.router, events_request()).await;
+    assert_eq!(status, StatusCode::OK);
+    let first = events.next_text().await;
+    assert!(first.contains("event: regions"), "{first}");
 
     // A stream already waiting for the next change ends.
-    let waiting = tokio::spawn(async move { body.next().await.is_none() });
+    let waiting = tokio::spawn(async move { events.next().await.is_none() });
     for _ in 0..3 {
         tokio::task::yield_now().await;
     }
@@ -585,16 +566,8 @@ async fn region_events_end_when_the_server_shuts_down() {
         .unwrap();
     assert!(ended, "the stream ended");
 
-    // Read with a cap and a deadline: a stream that did not end would yield
-    // keep-alives forever under paused time.
-    let late = h.router.clone().oneshot(events_request()).await.unwrap();
-    assert_eq!(late.status(), StatusCode::OK);
-    let body = tokio::time::timeout(
-        Duration::from_secs(5),
-        axum::body::to_bytes(late.into_body(), 64 * 1024),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert!(body.is_empty(), "ended before its first event");
+    // A stream asked for afterwards ends before its first event.
+    let (status, _, late) = open(&h.router, events_request()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(late.rest().await.is_empty(), "ended before its first event");
 }
