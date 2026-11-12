@@ -74,10 +74,8 @@ TRUNK_SKIP_VERSION_CHECK = "true"
 native_excludes = "--exclude observation-client"
 # What is linted for wasm32: the client and the engine-free model it builds on.
 wasm_packages = "-p observation-client -p observation-client-model"
-# The two native binaries: the server (`serve`, `dev`) and the region agent. The Dockerfile
-# builds both and repeats these names.
+# The server binary (`serve`, `dev`). The Dockerfile repeats the name.
 server_package = "observation-server"
-regions_package = "observation-regions"
 # What line coverage leaves out of `--workspace`.
 coverage_excludes = "--exclude observation-client"
 # The tooling workspace (xtask/, its own Cargo.lock), which fmt, clippy-native and test cover

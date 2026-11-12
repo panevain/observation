@@ -165,7 +165,7 @@ jobs:
         with:
           tools: typos cargo-shear
       - run: mise run typos
-      # cargo-shear reads both workspaces through `cargo metadata`.
+      # cargo-shear reads all three workspaces through `cargo metadata`.
       - uses: $/.github/actions/setup-rust
       - run: mise run shear
 
