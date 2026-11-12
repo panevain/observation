@@ -104,6 +104,17 @@ enum ReleaseCommand {
         #[arg(long, value_name = "FILE")]
         config: Option<PathBuf>,
     },
+    /// Fail unless TAG names the workspace version and COMMIT is on origin/main (a
+    /// pre-release: its parent is on origin/develop and it changes only the files on the
+    /// parent's .config/release.toml prerelease list).
+    VerifyTag {
+        /// The tag being published.
+        #[arg(long, value_name = "TAG")]
+        tag: String,
+        /// The tagged commit's full id ($GITHUB_SHA).
+        #[arg(long, value_name = "COMMIT")]
+        sha: String,
+    },
     /// The workspace version (`version` in Cargo.toml's [workspace.package]).
     #[command(subcommand)]
     Version(VersionCommand),
@@ -349,6 +360,13 @@ fn main() -> ExitCode {
                 false
             },
         ),
+        Command::Release(ReleaseCommand::VerifyTag { tag, sha }) => {
+            let git = GitCli::new(&repo);
+            cmd::release::verify_tag::verify(&repo, &tag, &sha, &git, github_actions()).map(|v| {
+                emit(v.stdout.as_bytes(), b"");
+                v.failed
+            })
+        }
         Command::Release(ReleaseCommand::UnexpectedFiles { kind, config }) => {
             let kind = match kind {
                 FilesKind::Hotfix => cmd::release::files::Kind::Hotfix,

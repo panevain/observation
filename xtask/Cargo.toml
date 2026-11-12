@@ -31,6 +31,12 @@ path = "parity/release_version.rs"
 name = "release_files"
 path = "parity/release_files.rs"
 
+# release.yml's verify step before `release verify-tag` against the step now, in scenario
+# repositories, through the built binary.
+[[test]]
+name = "release_verify"
+path = "parity/release_verify.rs"
+
 # Dependencies with no user yet: the commands that need them arrive in later changes. Remove in
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
 # the root workspace.

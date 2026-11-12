@@ -4,4 +4,5 @@ pub mod changelog;
 pub mod files;
 pub mod plan;
 pub mod state;
+pub mod verify_tag;
 pub mod version;
