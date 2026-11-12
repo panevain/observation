@@ -277,12 +277,12 @@ mod tests {
             panic!("LoadArea did not round-trip: {built:?}");
         };
         let built = inputs.build();
-        assert_eq!(built.grid, direct.grid);
-        assert_eq!(built.building_mask, direct.building_mask);
-        assert_eq!(built.street_mask, direct.street_mask);
-        assert_eq!(built.facades, direct.facades);
+        assert_eq!(built.grid(), direct.grid());
+        assert_eq!(built.building_mask(), direct.building_mask());
+        assert_eq!(built.street_mask(), direct.street_mask());
+        assert_eq!(built.facades(), direct.facades());
         assert_eq!(built.terrain(), direct.terrain());
         assert!(!built.terrain().is_flat());
-        assert!(direct.building_mask.contains(&true) && direct.street_mask.contains(&true));
+        assert!(direct.building_mask().contains(&true) && direct.street_mask().contains(&true));
     }
 }

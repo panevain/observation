@@ -322,9 +322,9 @@ proptest! {
         let cone = cam.cone(&layers);
         let sight = layers.sight(&cone, subject);
         prop_assert_eq!(sight.range, cone.range);
-        prop_assert!(well_formed(&sight.ground, &sight.ground_d2, layers.grid.len()));
-        prop_assert!(well_formed(&sight.facade, &sight.facade_d2, layers.facades.len()));
-        prop_assert!(sight.ground.iter().all(|&i| !layers.building_mask[i as usize]));
+        prop_assert!(well_formed(&sight.ground, &sight.ground_d2, layers.grid().len()));
+        prop_assert!(well_formed(&sight.facade, &sight.facade_d2, layers.facades().len()));
+        prop_assert!(sight.ground.iter().all(|&i| !layers.building_mask()[i as usize]));
         let range = cone.range * cut;
         let direct = layers.visibility(&ViewCone { range, ..cone }, subject);
         prop_assert_eq!(sight.within(range), direct);
@@ -341,7 +341,7 @@ proptest! {
         let mask = region.as_ref().map(|r| RegionMask::new(&layers, r));
         let (tally, _) = run(&layers, mask.as_ref(), &sights, &ops);
         let kept = tally.stats(&layers);
-        same_figures(kept, CoverageStats::compute_in(&layers, &tally.counts, mask.as_ref()))?;
+        same_figures(kept, CoverageStats::compute_in(&layers, tally.counts(), mask.as_ref()))?;
         // Limiting the figures to the region afresh gives the same figures.
         let mut again = tally.clone();
         again.limit_to(&layers, mask.as_ref());
@@ -357,8 +357,8 @@ proptest! {
         let sights: Vec<Sight> = cams.iter().map(|c| layers.sight(&c.cone(&layers), 1.0)).collect();
         let (tally, active) = run(&layers, None, &sights, &ops);
         let (ground, facade) = true_counts(&layers, &sights, &active);
-        prop_assert_eq!(first_difference(&tally.counts.ground, &ground), None);
-        prop_assert_eq!(first_difference(&tally.counts.facade, &facade), None);
+        prop_assert_eq!(first_difference(&tally.counts().ground, &ground), None);
+        prop_assert_eq!(first_difference(&tally.counts().facade, &facade), None);
     }
 
     #[test]
@@ -368,7 +368,7 @@ proptest! {
         let mask = RegionMask::new(&layers, &region);
         let ring: Vec<Vec2> = region.points.iter().map(|p| Vec2::from_array(*p)).collect();
         for (i, &inside) in mask.ground.iter().enumerate() {
-            let c = layers.grid.center(i);
+            let c = layers.grid().center(i);
             prop_assert_eq!(inside, point_in_ring(c, &ring), "cell {} at {}", i, c);
         }
     }
@@ -393,8 +393,8 @@ fn true_counts(
     sights: &[Sight],
     active: &[(usize, f32)],
 ) -> (Vec<u8>, Vec<u8>) {
-    let mut ground = vec![0usize; layers.grid.len()];
-    let mut facade = vec![0usize; layers.facades.len()];
+    let mut ground = vec![0usize; layers.grid().len()];
+    let mut facade = vec![0usize; layers.facades().len()];
     for &(cam, range) in active {
         for i in sights[cam].ground_within(range) {
             ground[i as usize] += 1;
@@ -445,10 +445,10 @@ proptest! {
         }
         let active = vec![(0, sight.range); added - removed];
         let (ground, _) = true_counts(&layers, std::slice::from_ref(&sight), &active);
-        prop_assert_eq!(first_difference(&tally.counts.ground, &ground), None);
+        prop_assert_eq!(first_difference(&tally.counts().ground, &ground), None);
         same_figures(
             tally.stats(&layers),
-            CoverageStats::compute_in(&layers, &tally.counts, mask.as_ref()),
+            CoverageStats::compute_in(&layers, tally.counts(), mask.as_ref()),
         )?;
     }
 }

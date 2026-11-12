@@ -25,13 +25,13 @@ impl CoverageStats {
         counts: &CoverageCounts,
         region: Option<&RegionMask>,
     ) -> Self {
-        let a = layers.grid.cell_area_m2();
+        let a = layers.grid().cell_area_m2();
         let mut s = Self::default();
         for (i, &c) in counts.ground.iter().enumerate() {
             if region.is_some_and(|r| !r.ground[i]) {
                 continue;
             }
-            if layers.street_mask[i] {
+            if layers.street_mask()[i] {
                 s.street_m2 += a;
                 if c >= 1 {
                     s.street_seen_m2 += a;
@@ -44,7 +44,7 @@ impl CoverageStats {
                 s.open_ground_seen_m2 += a;
             }
         }
-        for (i, (f, &c)) in layers.facades.iter().zip(&counts.facade).enumerate() {
+        for (i, (f, &c)) in layers.facades().iter().zip(&counts.facade).enumerate() {
             if region.is_some_and(|r| !r.facade[i]) {
                 continue;
             }

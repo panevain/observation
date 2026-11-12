@@ -106,7 +106,7 @@ pub struct RegionMask {
 impl RegionMask {
     pub fn new(layers: &StaticLayers, region: &Region) -> Self {
         let ring: Vec<Vec2> = region.points.iter().map(|p| Vec2::from_array(*p)).collect();
-        let grid = &layers.grid;
+        let grid = layers.grid();
         // Scanline fill: on each row of cell centres, the cells between pairs
         // of edge crossings are inside (even-odd, like `point_in_ring`).
         let mut ground = vec![false; grid.len()];
@@ -133,7 +133,7 @@ impl RegionMask {
             }
         }
         let facade = layers
-            .facades
+            .facades()
             .iter()
             .map(|f| {
                 let probe = f.center + f.normal * REGION_WALL_PROBE_M;
@@ -240,7 +240,7 @@ mod tests {
         let ring: Vec<Vec2> = r.points.iter().map(|p| Vec2::from_array(*p)).collect();
         let mask = RegionMask::new(&l, &r);
         for (i, &inside) in mask.ground.iter().enumerate() {
-            assert_eq!(inside, point_in_ring(l.grid.center(i), &ring), "cell {i}");
+            assert_eq!(inside, point_in_ring(l.grid().center(i), &ring), "cell {i}");
         }
         assert!(mask.ground.iter().any(|b| *b));
     }

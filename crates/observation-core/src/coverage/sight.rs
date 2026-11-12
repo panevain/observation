@@ -160,13 +160,13 @@ mod tests {
         let cone =
             ViewCone::from_angles(Vec3::new(0.0, 2.5, 0.0), 90.0, -5.0, 0.0, 40.0, 40.0, 40.0);
         let seen = |l: &StaticLayers, x: f32| {
-            let i = l.grid.cell_at(Vec2::new(x, 0.0)).unwrap() as u32;
+            let i = l.grid().cell_at(Vec2::new(x, 0.0)).unwrap() as u32;
             l.visibility(&cone, 1.0).ground.contains(&i)
         };
         assert!(seen(&flat, 30.0) && seen(&hilly, 5.0));
         assert!(!seen(&hilly, 30.0), "behind the mound");
         // The subject on top of the mound stands 6 m up.
-        let i = hilly.grid.cell_at(Vec2::new(15.5, 0.5)).unwrap();
+        let i = hilly.grid().cell_at(Vec2::new(15.5, 0.5)).unwrap();
         assert!((hilly.ground_subject(i, 1.0).y - 7.0).abs() < 0.01);
 
         // A wall half buried by the mound has patches only above the ground.
@@ -204,8 +204,8 @@ mod tests {
             60.0,
         );
         let v = l.visibility(&behind, 1.0);
-        let shadowed = l.grid.cell_at(Vec2::new(0.0, 0.0)).unwrap() as u32;
-        let visible = l.grid.cell_at(Vec2::new(30.0, 0.0)).unwrap() as u32;
+        let shadowed = l.grid().cell_at(Vec2::new(0.0, 0.0)).unwrap() as u32;
+        let visible = l.grid().cell_at(Vec2::new(30.0, 0.0)).unwrap() as u32;
         assert!(
             !v.ground.contains(&shadowed),
             "road directly behind the house is hidden"
@@ -218,12 +218,12 @@ mod tests {
         assert!(
             v.facade
                 .iter()
-                .any(|&i| l.facades[i as usize].normal.z < -0.9)
+                .any(|&i| l.facades()[i as usize].normal.z < -0.9)
         );
         assert!(
             !v.facade
                 .iter()
-                .any(|&i| l.facades[i as usize].normal.z > 0.9)
+                .any(|&i| l.facades()[i as usize].normal.z > 0.9)
         );
     }
 
@@ -232,11 +232,11 @@ mod tests {
     fn direct(l: &StaticLayers, cone: &ViewCone, subject_height_m: f32) -> Visibility {
         let mut ground = Vec::new();
         let (lo, hi) = cone.xz_bounds();
-        if let Some((x0, x1, z0, z1)) = l.grid.range(Vec2::from_array(lo), Vec2::from_array(hi)) {
+        if let Some((x0, x1, z0, z1)) = l.grid().range(Vec2::from_array(lo), Vec2::from_array(hi)) {
             for z in z0..=z1 {
                 for x in x0..=x1 {
-                    let i = (z * l.grid.w + x) as usize;
-                    if l.building_mask[i] {
+                    let i = (z * l.grid().w + x) as usize;
+                    if l.building_mask()[i] {
                         continue;
                     }
                     let p = l.ground_subject(i, subject_height_m);
@@ -248,7 +248,7 @@ mod tests {
         }
         let r2 = cone.range * cone.range;
         let facade = l
-            .facades
+            .facades()
             .iter()
             .enumerate()
             .filter(|(_, f)| {
@@ -400,7 +400,7 @@ mod tests {
             .iter()
             .zip(&sight.facade_d2)
             .filter_map(|(&i, &d2)| {
-                let centre = (eye - l.facades[i as usize].center).length_squared();
+                let centre = (eye - l.facades()[i as usize].center).length_squared();
                 (centre < d2).then(|| (i as usize, (centre.sqrt() + d2.sqrt()) / 2.0))
             })
             .collect();

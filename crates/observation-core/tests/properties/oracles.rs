@@ -464,15 +464,15 @@ fn prop_sight_matches_an_independent_scan() {
                     _ => Ok(()),
                 }
             };
-            for i in 0..layers.grid.len() {
-                if layers.building_mask[i] {
+            for i in 0..layers.grid().len() {
+                if layers.building_mask()[i] {
                     prop_assert!(
                         !sight.ground.contains(&(i as u32)),
                         "building cell {i} listed"
                     );
                     continue;
                 }
-                let c = layers.grid.center(i);
+                let c = layers.grid().center(i);
                 let p = [
                     f64::from(c.x),
                     f64::from(terrain.height_at(c)) + f64::from(subject),
@@ -483,7 +483,7 @@ fn prop_sight_matches_an_independent_scan() {
                 ground_seen |= matches!(v, Verdict::Seen(_));
                 check(&sight.ground, &sight.ground_d2, i, v, margin)?;
             }
-            for (i, f) in layers.facades.iter().enumerate() {
+            for (i, f) in layers.facades().iter().enumerate() {
                 let (centre, normal) = (d3(f.center), d3(f.normal));
                 let to_eye = sub(e, centre);
                 let facing = dot(to_eye, normal) / dot(to_eye, to_eye).sqrt();
@@ -543,16 +543,16 @@ proptest! {
         let end = |x: f32| [f64::from(x), f64::from(s.road_z + (x + 50.0) / 10.0)];
         let (a, b) = (end(s.road_x.0), end(s.road_x.1));
         let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
-        for i in 0..layers.grid.len() {
-            let c = layers.grid.center(i);
+        for i in 0..layers.grid().len() {
+            let c = layers.grid().center(i);
             let (px, pz) = (f64::from(c.x) - a[0], f64::from(c.y) - a[1]);
             let t = ((px * dx + pz * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0);
             let dist = (px - t * dx).hypot(pz - t * dz);
             if (dist - 3.0).abs() < 1e-3 {
                 continue;
             }
-            let want = dist < 3.0 && !layers.building_mask[i];
-            prop_assert_eq!(layers.street_mask[i], want, "cell {} at {}, {} m from the road", i, c, dist);
+            let want = dist < 3.0 && !layers.building_mask()[i];
+            prop_assert_eq!(layers.street_mask()[i], want, "cell {} at {}, {} m from the road", i, c, dist);
         }
     }
 }

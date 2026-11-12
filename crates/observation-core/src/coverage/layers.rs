@@ -117,6 +117,31 @@ impl StaticLayers {
         }
     }
 
+    /// The ground raster the masks and counts are indexed by.
+    pub fn grid(&self) -> &GroundGrid {
+        &self.grid
+    }
+
+    /// The buildings, as the sight lines test them.
+    pub fn occluders(&self) -> &Occluders {
+        &self.occluders
+    }
+
+    /// Per ground cell: inside a building footprint.
+    pub fn building_mask(&self) -> &[bool] {
+        &self.building_mask
+    }
+
+    /// Per ground cell: on a road surface (and not under a building).
+    pub fn street_mask(&self) -> &[bool] {
+        &self.street_mask
+    }
+
+    /// The façade cells, in footprint order.
+    pub fn facades(&self) -> &[FacadeCell] {
+        &self.facades
+    }
+
     /// The ground the layers stand on.
     pub fn terrain(&self) -> &Terrain {
         &self.terrain
@@ -168,16 +193,16 @@ mod tests {
     #[test]
     fn masks() {
         let l = layers();
-        let street = l.street_mask.iter().filter(|b| **b).count();
+        let street = l.street_mask().iter().filter(|b| **b).count();
         assert!(
             (550..=650).contains(&street),
             "≈100 m × 6 m of road, got {street}"
         );
-        assert_eq!(l.building_mask.iter().filter(|b| **b).count(), 100);
+        assert_eq!(l.building_mask().iter().filter(|b| **b).count(), 100);
         // 4 walls × 10 cols × 6 rows
-        assert_eq!(l.facades.len(), 240);
+        assert_eq!(l.facades().len(), 240);
         assert!(
-            l.facades
+            l.facades()
                 .iter()
                 .all(|f| f.normal.dot(f.center - Vec3::new(0.0, 3.0, -20.0)) > 0.0)
         );
