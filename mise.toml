@@ -152,7 +152,7 @@ raw_args = true
 run = "cargo xtask tokens"
 
 [tasks.sync]
-description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, the advisory ignore lists agree, every get_env falls back to [env] (mise.local.toml), every package named to cargo is a crate of the workspace (server_package is the Dockerfile's server build), and a crate's testing feature is enabled only from [dev-dependencies]"
+description = "The Rust version agrees between rust-toolchain.toml and mise.lock (and is set nowhere else), the CI mise version across setup-mise, the Dockerfile and min_version, task tool pins agree (cosign with CI's), the docs repeat no pinned version, images build through build-image, the advisory ignore lists agree, every get_env falls back to [env] (mise.local.toml), every package named to cargo is a crate of the workspace (server_package is the Dockerfile's server build), a crate's testing feature is enabled only from [dev-dependencies], the image lists of release.yml, prune-images.yml and security-patch agree, and the cooldown days agree with .config/cargo-cooldown.toml"
 raw_args = true
 run = "cargo xtask sync"
 

@@ -44,6 +44,13 @@ pub struct Snapshot {
     pub osv_scanner_toml: String,
     /// .config/release.toml (empty when there is none).
     pub release_toml: String,
+    /// The files only the rules in [`extra`] read, each empty when there is none:
+    /// .config/cargo-cooldown.toml, .github/dependabot.yml, scripts/bump-pins.py and
+    /// scripts/security-patch.py.
+    pub cooldown_toml: String,
+    pub dependabot: String,
+    pub bump_pins: String,
+    pub security_patch: String,
     /// What `git grep` found for [`doc_pattern`] in the Markdown files (empty: nothing), or why
     /// it could not search.
     pub doc_pins: Result<String, String>,
@@ -743,6 +750,15 @@ fn files(repo: &Path, paths: Vec<String>) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
+/// The file read at `path` in `repo`, or empty when there is none.
+fn optional(repo: &Path, path: &str) -> Result<String> {
+    if repo.join(path).exists() {
+        read(repo, path)
+    } else {
+        Ok(String::new())
+    }
+}
+
 /// Reads the repository at `repo` and runs every rule: the script's ([`check`]), then the
 /// newer ones ([`extra`]); `git` searches the docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
@@ -796,11 +812,11 @@ pub fn snapshot(repo: &Path, git: &dyn Git) -> Result<Snapshot> {
         deny_toml: read(repo, "deny.toml")?,
         audit_toml: read(repo, ".cargo/audit.toml")?,
         osv_scanner_toml: read(repo, "osv-scanner.toml")?,
-        release_toml: if repo.join(super::release::files::CONFIG).exists() {
-            read(repo, super::release::files::CONFIG)?
-        } else {
-            String::new()
-        },
+        release_toml: optional(repo, super::release::files::CONFIG)?,
+        cooldown_toml: optional(repo, extra::COOLDOWN)?,
+        dependabot: optional(repo, extra::DEPENDABOT)?,
+        bump_pins: optional(repo, extra::BUMP_PINS)?,
+        security_patch: optional(repo, extra::SECURITY_PATCH)?,
         doc_pins: Ok(String::new()),
     };
     let pattern = doc_pattern(&s.mise_toml, &s.mise_ci_toml);

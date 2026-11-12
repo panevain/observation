@@ -6,6 +6,11 @@
 //!   `--exclude`) in the mise files, the Dockerfile and the workflows is a crate of the
 //!   workspace; mise.toml's `server_package` is the one the Dockerfile's `server-build` stage
 //!   builds; every `crates/NAME` path a workflow names is a crate.
+//! - Images: release.yml's image matrix, prune-images.yml's package matrix, the release notes'
+//!   image loop, and the image tables of scripts/security-patch.py and `security-patch check`
+//!   name the same images, at the same registry path and Dockerfile stages.
+//! - Cooldown: .config/cargo-cooldown.toml's `days` is the cooldown of every Dependabot update,
+//!   of mise (`minimum_release_age`) and of scripts/bump-pins.py.
 //! - `testing`: a crate's `testing` feature is enabled only from `[dev-dependencies]` (fuzz/ is
 //!   outside the workspace and may enable it).
 
@@ -16,6 +21,7 @@ use regex::Regex;
 use toml::{Table, Value};
 
 use super::{Finding, Snapshot, lines, re};
+use crate::cmd::security_patch::IMAGES;
 
 regex!(
     CARGO_COMMAND,
@@ -32,6 +38,29 @@ regex!(
     CRATE_PATH,
     r"(?:^|[\s\x22'!\[,])(?:\./)?crates/([A-Za-z0-9_-]+)"
 );
+regex!(MATRIX_IMAGE, r"^\s+- image: *([^\s#]+)\s*$");
+regex!(MATRIX_TARGET, r"^\s+target: *([^\s#]+)\s*$");
+regex!(
+    IMAGE_NAME,
+    r"^\s+IMAGE_NAME: *(\S+)\$\{\{ *matrix\.image *\}\}\s*$"
+);
+regex!(PRUNE_PACKAGES, r"^\s+package: *\[([^\]]*)\]\s*$");
+regex!(NOTES_LOOP, r"^\s*for name in ([^;]*); do\s*$");
+regex!(SCRIPT_IMAGES_START, r"^IMAGES = \{\s*$");
+regex!(
+    SCRIPT_IMAGE,
+    r#"^\s+"([^"]+)": \("([^"]+)", "([^"]+)", (True|False)\),\s*$"#
+);
+// `KEY-days: N` (a comment line does not match).
+regex!(DEPENDABOT_DAYS, r"^\s+([a-z-]+-days): *(\S+)\s*$");
+regex!(BUMP_PINS_DAYS, r"^COOLDOWN_DAYS = (\S+)\s*$");
+
+pub const RELEASE: &str = ".github/workflows/release.yml";
+pub const PRUNE: &str = ".github/workflows/prune-images.yml";
+pub const COOLDOWN: &str = ".config/cargo-cooldown.toml";
+pub const DEPENDABOT: &str = ".github/dependabot.yml";
+pub const BUMP_PINS: &str = "scripts/bump-pins.py";
+pub const SECURITY_PATCH: &str = "scripts/security-patch.py";
 
 fn finding(text: String) -> Finding {
     Finding::Rule(text)
@@ -144,6 +173,14 @@ fn members(s: &Snapshot) -> Result<BTreeSet<String>, Finding> {
     Ok(names)
 }
 
+/// Dockerfile stage names, in order.
+fn stages(dockerfile: &str) -> Vec<String> {
+    commands(dockerfile)
+        .iter()
+        .filter_map(|c| STAGE.captures(c).map(|m| m[1].to_owned()))
+        .collect()
+}
+
 /// mise.toml's `[vars] server_package`.
 fn server_package(mise_toml: &str) -> Result<String, Finding> {
     parse("mise.toml", mise_toml)?
@@ -243,6 +280,241 @@ pub fn packages(s: &Snapshot) -> Vec<Finding> {
             }
         }
     }
+    out
+}
+
+/// What one file says about the images, or why it could not be read.
+type Images = Result<Vec<(String, String, String)>, String>;
+
+fn workflow<'a>(s: &'a Snapshot, path: &str) -> Option<&'a str> {
+    s.workflows
+        .iter()
+        .find(|(p, _)| p == path)
+        .map(|(_, t)| t.as_str())
+}
+
+/// release.yml's matrix: (image, registry path, target stage) for each `- image:` entry.
+fn release_images(release: &str) -> Images {
+    let prefixes: Vec<String> = lines(release)
+        .filter_map(|l| IMAGE_NAME.captures(l).map(|c| c[1].to_owned()))
+        .collect();
+    let [prefix] = &prefixes[..] else {
+        return Err(format!(
+            "{RELEASE} has {} IMAGE_NAME: <path>${{{{ matrix.image }}}} lines, expected one",
+            prefixes.len()
+        ));
+    };
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    for line in lines(release) {
+        if let Some(c) = MATRIX_IMAGE.captures(line) {
+            out.push((c[1].to_owned(), format!("{prefix}{}", &c[1]), String::new()));
+        } else if let (Some(c), Some(last)) = (MATRIX_TARGET.captures(line), out.last_mut()) {
+            if !last.2.is_empty() {
+                return Err(format!("{RELEASE}: image {} has two targets", last.0));
+            }
+            last.2 = c[1].to_owned();
+        }
+    }
+    if out.is_empty() || out.iter().any(|i| i.2.is_empty()) {
+        return Err(format!(
+            "{RELEASE}: no image matrix with a target for each `- image:`"
+        ));
+    }
+    Ok(out)
+}
+
+/// The one line of `text` that `re` matches, split into names by `split`.
+fn one_list(
+    text: &str,
+    re: &Regex,
+    file: &str,
+    what: &str,
+    split: &[char],
+) -> Result<Vec<String>, String> {
+    let found: Vec<String> = lines(text)
+        .filter_map(|l| re.captures(l).map(|c| c[1].to_owned()))
+        .collect();
+    let [list] = &found[..] else {
+        return Err(format!("{file} has {} {what}, expected one", found.len()));
+    };
+    Ok(list
+        .split(split)
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// scripts/security-patch.py's `IMAGES`: (name, path, stage, rebuild fixes all).
+fn script_images(script: &str) -> Result<Vec<(String, String, String, bool)>, String> {
+    let mut rows = lines(script).skip_while(|l| !SCRIPT_IMAGES_START.is_match(l));
+    if rows.next().is_none() {
+        return Err(format!("{SECURITY_PATCH} has no `IMAGES = {{` line"));
+    }
+    let mut out = Vec::new();
+    for line in rows {
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        if line.starts_with('}') {
+            return Ok(out);
+        }
+        let c = SCRIPT_IMAGE.captures(line).ok_or_else(|| {
+            format!("{SECURITY_PATCH}: IMAGES has a line sync cannot read: {line}")
+        })?;
+        out.push((
+            c[1].to_owned(),
+            c[2].to_owned(),
+            c[3].to_owned(),
+            &c[4] == "True",
+        ));
+    }
+    Err(format!("{SECURITY_PATCH}: IMAGES is not closed"))
+}
+
+pub fn images(s: &Snapshot) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let Some(release) = workflow(s, RELEASE) else {
+        return vec![finding(format!("{RELEASE} is missing"))];
+    };
+    let release_images = match release_images(release) {
+        Ok(i) => i,
+        Err(why) => return vec![finding(why)],
+    };
+    let names = |v: &[String]| {
+        let mut v = v.to_vec();
+        v.sort();
+        v.join(" ")
+    };
+    let expected: Vec<String> = release_images.iter().map(|i| i.0.clone()).collect();
+    let mut compare = |label: String, got: Result<Vec<String>, String>| match got {
+        Err(why) => out.push(finding(why)),
+        Ok(got) if names(&got) != names(&expected) => out.push(Finding::Mismatch {
+            label,
+            actual: names(&got),
+            expected: format!("{} ({RELEASE}'s image matrix)", names(&expected)),
+        }),
+        Ok(_) => {}
+    };
+    compare(
+        format!("{PRUNE} package matrix"),
+        workflow(s, PRUNE)
+            .ok_or_else(|| format!("{PRUNE} is missing"))
+            .and_then(|t| one_list(t, &PRUNE_PACKAGES, PRUNE, "package: [...] lines", &[','])),
+    );
+    compare(
+        format!("{RELEASE} release notes' image loop"),
+        one_list(
+            release,
+            &NOTES_LOOP,
+            RELEASE,
+            "`for name in ...; do` lines",
+            &[' ', '\t'],
+        ),
+    );
+    let script = if s.security_patch.is_empty() {
+        Err(format!("{SECURITY_PATCH} is missing"))
+    } else {
+        script_images(&s.security_patch)
+    };
+    compare(
+        format!("{SECURITY_PATCH} IMAGES"),
+        script.clone().map(|v| v.into_iter().map(|i| i.0).collect()),
+    );
+    let stages = stages(&s.dockerfile);
+    for (name, _, target) in &release_images {
+        if !stages.contains(target) {
+            out.push(finding(format!(
+                "{RELEASE}: image {name} targets {target}, not a Dockerfile stage"
+            )));
+        }
+    }
+    if let Ok(script) = script {
+        for (name, path, stage, _) in &script {
+            if let Some((_, want, _)) = release_images.iter().find(|i| &i.0 == name)
+                && path != want
+            {
+                out.push(Finding::Mismatch {
+                    label: format!("{SECURITY_PATCH} IMAGES path of {name}"),
+                    actual: path.clone(),
+                    expected: format!("{want} ({RELEASE}'s IMAGE_NAME)"),
+                });
+            }
+            if !stages.contains(stage) {
+                out.push(finding(format!(
+                    "{SECURITY_PATCH}: image {name} reads stage {stage}, not a Dockerfile stage"
+                )));
+            }
+        }
+        let ported: Vec<_> = IMAGES
+            .iter()
+            .map(|&(n, p, st, r)| (n.to_owned(), p.to_owned(), st.to_owned(), r))
+            .collect();
+        if ported != script {
+            out.push(finding(format!(
+                "mismatch: xtask's security_patch::IMAGES differs from {SECURITY_PATCH}'s IMAGES \
+                 (names, paths, stages, rebuild flags, in order)"
+            )));
+        }
+    }
+    out
+}
+
+pub fn cooldown(s: &Snapshot) -> Vec<Finding> {
+    let days = if s.cooldown_toml.is_empty() {
+        Err(finding(format!("{COOLDOWN} is missing")))
+    } else {
+        parse(COOLDOWN, &s.cooldown_toml).and_then(|t| {
+            t.get("days")
+                .and_then(Value::as_integer)
+                .ok_or_else(|| finding(format!("{COOLDOWN} has no integer days")))
+        })
+    };
+    let days = match days {
+        Ok(d) => d.to_string(),
+        Err(f) => return vec![f],
+    };
+    let mut out = Vec::new();
+    let mut check = |label: String, actual: String| {
+        if actual != days {
+            out.push(Finding::Mismatch {
+                label,
+                actual,
+                expected: format!("{days} ({COOLDOWN} days)"),
+            });
+        }
+    };
+    let dependabot: Vec<_> = lines(&s.dependabot)
+        .filter_map(|l| DEPENDABOT_DAYS.captures(l))
+        .collect();
+    if dependabot.is_empty() {
+        check(format!("{DEPENDABOT} cooldown"), String::new());
+    }
+    for c in dependabot {
+        check(format!("{DEPENDABOT} {}", &c[1]), c[2].to_owned());
+    }
+    let age = parse("mise.toml", &s.mise_toml)
+        .ok()
+        .and_then(|t| {
+            t.get("settings")?
+                .get("minimum_release_age")?
+                .as_str()?
+                .strip_suffix('d')
+                .map(str::to_owned)
+        })
+        .unwrap_or_default();
+    check(
+        "mise.toml [settings] minimum_release_age (days)".into(),
+        age,
+    );
+    let pins: Vec<_> = lines(&s.bump_pins)
+        .filter_map(|l| BUMP_PINS_DAYS.captures(l).map(|c| c[1].to_owned()))
+        .collect();
+    let pins = match &pins[..] {
+        [one] => one.clone(),
+        _ => String::new(),
+    };
+    check(format!("{BUMP_PINS} COOLDOWN_DAYS"), pins);
     out
 }
 
@@ -375,6 +647,8 @@ pub fn testing(s: &Snapshot) -> Vec<Finding> {
 /// Every rule of this module, in order.
 pub fn check(s: &Snapshot) -> Vec<Finding> {
     let mut out = packages(s);
+    out.extend(images(s));
+    out.extend(cooldown(s));
     out.extend(testing(s));
     out
 }
@@ -393,6 +667,18 @@ mod tests {
         FROM debian AS regions\n\
         FROM scratch AS runtime-base\n\
         FROM runtime-base AS runtime\n";
+    const RELEASE_YML: &str = "jobs:\n  image:\n    strategy:\n      matrix:\n        include:\n\
+        \x20         - image: observation\n            target: runtime\n\
+        \x20         - image: observation-regions\n            target: regions\n\
+        \x20   env:\n      IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }}\n\
+        \x20 notes:\n    steps:\n      - run: |\n          for name in observation observation-regions; do\n            echo\n          done\n";
+    const PRUNE_YML: &str = "jobs:\n  prune:\n    strategy:\n      matrix:\n        package: [observation, observation-regions]\n";
+    const SCRIPT: &str = "IMAGES = {\n    # name: (path, stage, rebuild fixes all)\n\
+        \x20   \"observation\": (\"ghcr.io/panevain/observation\", \"runtime-base\", False),\n\
+        \x20   \"observation-regions\": (\"ghcr.io/panevain/observation-regions\", \"regions\", True),\n}\n";
+    const DEPENDABOT_YML: &str = "updates:\n  - package-ecosystem: cargo\n    cooldown:\n      default-days: 7\n\
+        \x20 - package-ecosystem: npm\n    cooldown:\n      # semver-major-days: 30\n      default-days: 7\n";
+
     fn base() -> Snapshot {
         let manifest = |name: &str| format!("[package]\nname = \"{name}\"\n");
         Snapshot {
@@ -416,7 +702,7 @@ mod tests {
                 ),
             ],
             dockerfile: DOCKERFILE.into(),
-            mise_toml: "[vars]\n\
+            mise_toml: "[settings]\nminimum_release_age = \"7d\"\n\n[vars]\n\
                 native_excludes = \"--exclude app-web\"\nwasm = \"-p app-web -p lib\"\n\
                 server_package = \"app\"\n\n[tasks.serve]\n\
                 run = \"cargo run --locked -p {{vars.server_package}}\"\n\
@@ -424,16 +710,24 @@ mod tests {
                 .into(),
             mise_ci_toml: "[tasks.audit]\nrun = \"cargo update -p regex && cargo audit\"\n".into(),
             mise_dev_toml: String::new(),
-            workflows: vec![(
-                ".github/workflows/ci.yml".into(),
-                "on:\n  push:\n    paths: [crates/**, \"!crates/app-web/**\"]\n\
+            workflows: vec![
+                (RELEASE.into(), RELEASE_YML.into()),
+                (PRUNE.into(), PRUNE_YML.into()),
+                (
+                    ".github/workflows/ci.yml".into(),
+                    "on:\n  push:\n    paths: [crates/**, \"!crates/app-web/**\"]\n\
                      jobs:\n  test:\n    steps:\n      - run: cargo nextest run --exclude app-web\n"
-                    .into(),
-            )],
+                        .into(),
+                ),
+            ],
             deny_toml: String::new(),
             audit_toml: String::new(),
             osv_scanner_toml: String::new(),
             release_toml: String::new(),
+            cooldown_toml: "days = 7\nexempt = []\n".into(),
+            dependabot: DEPENDABOT_YML.into(),
+            bump_pins: "import os\n\nCOOLDOWN_DAYS = 7\n".into(),
+            security_patch: SCRIPT.into(),
             doc_pins: Ok(String::new()),
         }
     }
@@ -449,7 +743,13 @@ mod tests {
             "mise.dev" => &mut s.mise_dev_toml,
             "mise.ci" => &mut s.mise_ci_toml,
             "docker" => &mut s.dockerfile,
+            "cooldown" => &mut s.cooldown_toml,
+            "dependabot" => &mut s.dependabot,
+            "bump-pins" => &mut s.bump_pins,
+            "security-patch" => &mut s.security_patch,
             "ci" => file(&mut s.workflows, ".github/workflows/ci.yml"),
+            "release" => file(&mut s.workflows, RELEASE),
+            "prune" => file(&mut s.workflows, PRUNE),
             "root" => file(&mut s.manifests, "Cargo.toml"),
             "app" => file(&mut s.manifests, "crates/app/Cargo.toml"),
             _ => panic!("no field {name}"),
@@ -549,6 +849,45 @@ mod tests {
                 .iter()
                 .any(|f| f.contains("[dependencies] lib enables")),
             "{found:?}"
+        );
+    }
+
+    #[test]
+    fn image_lists_agree() {
+        rows(
+            r#"
+            prune | , observation-regions] | ] | package matrix has 'observation', expected 'observation observation-regions
+            release | for name in observation observation-regions | for name in observation-x observation-regions | image loop has 'observation-regions observation-x'
+            release | target: regions | target: region | image observation-regions targets region, not a Dockerfile stage
+            release | target: regions | target: regions\n            target: runtime | image observation-regions has two targets
+            release | IMAGE_NAME | NAME | 0 IMAGE_NAME
+            security-patch | "ghcr.io/panevain/observation" | "ghcr.io/other/observation" | path of observation has 'ghcr.io/other/observation' && security_patch::IMAGES differs
+            security-patch | "regions", True | "regions", False | security_patch::IMAGES differs
+            security-patch | "runtime-base" | "runtime-bas" | reads stage runtime-bas, not a Dockerfile stage && security_patch::IMAGES differs
+            security-patch | "observation-regions": ( | "regions": ( | IMAGES has 'observation regions' && security_patch::IMAGES differs
+            security-patch | True),\n | True),\n    "x": 1,\n | IMAGES has a line sync cannot read
+            security-patch | IMAGES = { | IMAGES = dict( | no `IMAGES = {` line
+            security-patch | IMAGES = { | IMAGES = {\n}\nOTHER = { | IMAGES has '<nothing>' && security_patch::IMAGES differs
+            prune | package: | packages: | prune-images.yml has 0 package: [...] lines
+            security-patch | * |  | security-patch.py is missing
+        "#,
+        );
+    }
+
+    #[test]
+    fn cooldowns_agree() {
+        rows(
+            r#"
+            cooldown | days = 7 | days = 5 | default-days has '7' && default-days has '7' && minimum_release_age (days) has '7' && COOLDOWN_DAYS has '7'
+            dependabot | default-days: 7\n  - | default-days: 3\n  - | default-days has '3', expected '7 (.config/cargo-cooldown.toml days)'
+            dependabot | default-days: 7\n  - | default-days: 7\n      semver-major-days: 30\n  - | semver-major-days has '30'
+            dependabot | * | updates: []\n | dependabot.yml cooldown has '<nothing>'
+            mise | "7d" | "1w" | minimum_release_age (days) has '<nothing>'
+            bump-pins | COOLDOWN_DAYS = 7 | COOLDOWN_DAYS = 7\nCOOLDOWN_DAYS = 7 | COOLDOWN_DAYS has '<nothing>'
+            cooldown | days = 7 | days = "7" | has no integer days
+            cooldown | days = 7 | dais = 7 | has no integer days
+            cooldown | * |  | cargo-cooldown.toml is missing
+        "#,
         );
     }
 
