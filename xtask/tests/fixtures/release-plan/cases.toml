@@ -778,3 +778,39 @@ args = []
 cargo = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n"
 changelog = "# Changelog\n\n## [Unreleased]\n\n\n## [0.1.0] - 2026-01-01\n\n- First.\n"
 differs = "message"
+
+[[case]]
+name = "plan: no entries, only CI, release and development scripts changed"
+command = "plan"
+args = []
+cargo = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+changelog = "# Changelog\n\n## [Unreleased]\n\n\n## [0.1.0] - 2026-01-01\n\n- First.\n"
+init_tags = ["v0.1.0"]
+[[case.commit]]
+subject = "Scripts"
+files = { "scripts/browser-smoke-test.sh" = "x\n", "scripts/bump-pins.py" = "x\n", "scripts/ci-git.sh" = "x\n", "scripts/prune-images.sh" = "x\n", "scripts/release-plan.py" = "x\n", "scripts/release-state.sh" = "x\n", "scripts/rulesets.sh" = "x\n", "scripts/security-patch.py" = "x\n", "scripts/set-version.sh" = "x\n", "scripts/smoke-test-image.sh" = "x\n", "scripts/smoke-test-regions.sh" = "x\n", "scripts/subset-fonts.sh" = "x\n", "scripts/wait-healthz.sh" = "x\n", "scripts/wasm-size-report.sh" = "x\n", "scripts/wasm-size-treemap.py" = "x\n", "scripts/workspace-version.sh" = "x\n" }
+
+[[case]]
+name = "plan: no entries, scripts/verify-image.sh changed"
+command = "plan"
+args = []
+cargo = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+changelog = "# Changelog\n\n## [Unreleased]\n\n\n## [0.1.0] - 2026-01-01\n\n- First.\n"
+init_tags = ["v0.1.0"]
+[[case.commit]]
+subject = "Change"
+files = { "scripts/verify-image.sh" = "x\n" }
+
+[[case]]
+name = "changelog: no entries, CI scripts and scripts/verify-image.sh changed"
+command = "changelog"
+args = ["--version", "0.1.1"]
+cargo = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+changelog = "# Changelog\n\n## [Unreleased]\n\n\n## [0.1.0] - 2026-01-01\n\n- First.\n"
+init_tags = ["v0.1.0"]
+[[case.commit]]
+subject = "Scripts"
+files = { "scripts/browser-smoke-test.sh" = "x\n", "scripts/bump-pins.py" = "x\n", "scripts/ci-git.sh" = "x\n", "scripts/prune-images.sh" = "x\n", "scripts/release-plan.py" = "x\n", "scripts/release-state.sh" = "x\n", "scripts/rulesets.sh" = "x\n", "scripts/security-patch.py" = "x\n", "scripts/set-version.sh" = "x\n", "scripts/smoke-test-image.sh" = "x\n", "scripts/smoke-test-regions.sh" = "x\n", "scripts/subset-fonts.sh" = "x\n", "scripts/wait-healthz.sh" = "x\n", "scripts/wasm-size-report.sh" = "x\n", "scripts/wasm-size-treemap.py" = "x\n", "scripts/workspace-version.sh" = "x\n" }
+[[case.commit]]
+subject = "Verify fix"
+files = { "scripts/verify-image.sh" = "x\n" }

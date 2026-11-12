@@ -39,10 +39,20 @@ PATCH = {"Fixed", "Security"}
 # image build; .config holds CI-only settings: nextest's profile, the crate cooldown and the wasm
 # size budget; .typos.toml is the spelling check's; tests/browser is the browser smoke test, whose
 # npm lockfile Dependabot bumps; supply-chain holds cargo-vet's audits and exemptions; .vscode is
-# editor settings; scripts/prune-images.sh is the Prune images workflow's.)
+# editor settings; the scripts listed are run only by CI, the release workflows or developers
+# (scripts/verify-image.sh is not among them: `mise run up` and `mise run verify` run it on an
+# operator's machine, so a change to it alone is a reason to release).)
 NOT_SHIPPED = [":(exclude).github", ":(exclude)docs", ":(exclude)fuzz", ":(exclude)xtask",
                ":(exclude).config", ":(exclude).typos.toml", ":(exclude)tests/browser",
-               ":(exclude)supply-chain", ":(exclude).vscode", ":(exclude)scripts/prune-images.sh",
+               ":(exclude)supply-chain", ":(exclude).vscode",
+               ":(exclude)scripts/browser-smoke-test.sh", ":(exclude)scripts/bump-pins.py",
+               ":(exclude)scripts/ci-git.sh", ":(exclude)scripts/prune-images.sh",
+               ":(exclude)scripts/release-plan.py", ":(exclude)scripts/release-state.sh",
+               ":(exclude)scripts/rulesets.sh", ":(exclude)scripts/security-patch.py",
+               ":(exclude)scripts/set-version.sh", ":(exclude)scripts/smoke-test-image.sh",
+               ":(exclude)scripts/smoke-test-regions.sh", ":(exclude)scripts/subset-fonts.sh",
+               ":(exclude)scripts/wait-healthz.sh", ":(exclude)scripts/wasm-size-report.sh",
+               ":(exclude)scripts/wasm-size-treemap.py", ":(exclude)scripts/workspace-version.sh",
                ":(exclude,glob)*.md"]
 
 
