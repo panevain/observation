@@ -10,7 +10,7 @@ mod toolbar;
 mod widgets;
 
 use crate::coverage::CoverageState;
-use crate::history::HistoryOp;
+use crate::history::{HistoryCommand, HistoryOp};
 use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::platform::Platform;
@@ -86,6 +86,7 @@ pub struct UiData<'w> {
     pub area: Option<Res<'w, Area>>,
     pub loading: ResMut<'w, Loading>,
     pub history: Res<'w, crate::history::History>,
+    pub history_commands: MessageWriter<'w, HistoryCommand>,
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
     pub config: Res<'w, crate::net::ServerConfig>,
@@ -227,7 +228,7 @@ fn draw_ui(
     overlays::address_card(&ctx, &t, viewport_rect, &d.hover, &d.editor);
     match overlays::toasts(&ctx, &t, viewport_rect, &d.toasts) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
-            d.ui.history_request = Some(HistoryOp::Undo);
+            d.history_commands.write(HistoryCommand(HistoryOp::Undo));
             d.toasts.forget_undo();
         }
         Some(overlays::ToastEvent::Action(ToastAction::Retry(req))) => {

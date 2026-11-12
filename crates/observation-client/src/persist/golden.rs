@@ -22,11 +22,12 @@ use super::{ADDRESS_JUMP_KEY, FONT_KEY, PersistAction, PersistPlugin, STORAGE_KE
 use crate::platform::SaveFailure;
 use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
 use crate::state::{
-    Editor, LoadArea, Models, Panels, SaveState, Scene, Snapshot, ToastKind, Toasts, UiState,
+    Editor, LoadArea, Models, Panels, SaveState, Scene, ToastKind, Toasts, UiState,
 };
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
+use observation_client_model::document::Snapshot;
 use observation_client_model::testing::{
     FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore, StoreOp,
 };

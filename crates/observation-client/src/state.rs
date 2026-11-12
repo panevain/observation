@@ -11,7 +11,6 @@ use observation_core::terrain::{FLAT, Terrain};
 
 use crate::platform::SaveFailure;
 use observation_client_model::commands::Tracked;
-pub use observation_client_model::document::Snapshot;
 use observation_client_model::document::{self, Document};
 use observation_client_model::editor;
 pub use observation_client_model::editor::{InspectorTab, OverlayMode, Tool, select};
@@ -38,8 +37,6 @@ impl Default for AddressJump {
 pub struct UiState {
     /// Frame the selected camera in the 3D view (consumed by the input systems).
     pub focus_request: bool,
-    /// Undo or redo asked for by the UI or a shortcut (consumed by `history`).
-    pub history_request: Option<crate::history::HistoryOp>,
     /// Whether the last autosave reached browser storage.
     pub save: SaveState,
     /// Wall-clock seconds since start-up, for "saved just now" and the
@@ -58,7 +55,6 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             focus_request: false,
-            history_request: None,
             save: SaveState::Pending,
             now: 0.0,
             jump_to_address: false,

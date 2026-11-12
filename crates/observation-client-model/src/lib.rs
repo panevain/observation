@@ -7,6 +7,7 @@
 pub mod commands;
 pub mod document;
 pub mod editor;
+pub mod history;
 pub mod platform;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

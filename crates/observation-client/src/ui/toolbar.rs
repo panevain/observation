@@ -2,7 +2,7 @@
 
 use super::UiData;
 use super::widgets::{RailKind, hint, keycap, rail_button, secondary};
-use crate::history::HistoryOp;
+use crate::history::{HistoryCommand, HistoryOp};
 use crate::icons;
 use crate::persist::PersistAction;
 use crate::state::{LoadArea, SaveState, Tool};
@@ -102,7 +102,7 @@ pub fn top_bar(
                 .on_disabled_hover_text(&tip)
                 .clicked()
             {
-                d.ui.history_request = Some(op);
+                d.history_commands.write(HistoryCommand(op));
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
