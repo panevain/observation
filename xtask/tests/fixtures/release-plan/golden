@@ -991,3 +991,43 @@ release-plan.py changelog: error: the following arguments are required: --versio
 
 - First.
 -- end
+== plan: no entries, only CI, release and development scripts changed
+exit 0
+-- stdout
+version=
+kind=
+latest=0.1.0
+reason=nothing to release: no CHANGELOG entries and no shipped changes since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== plan: no entries, scripts/verify-image.sh changed
+exit 0
+-- stdout
+version=0.1.1
+kind=patch
+latest=0.1.0
+reason=no CHANGELOG entries, but shipped files changed since v0.1.0
+-- stderr
+-- CHANGELOG.md
+-- end
+== changelog: no entries, CI scripts and scripts/verify-image.sh changed
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.1.1] - 2026-01-05
+
+### Changed
+
+- Dependency and maintenance updates:
+  - Verify fix
+
+## [0.1.0] - 2026-01-01
+
+- First.
+-- end
