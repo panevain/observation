@@ -187,3 +187,98 @@ async fn the_cache_gets_its_caps_and_is_trimmed() {
 fn at_most_256_event_streams_are_open() {
     assert_eq!(crate::MAX_EVENT_STREAMS, 256);
 }
+
+/// Runs `test` on its own current-thread runtime with paused time, and fails
+/// if it takes more than 10 s of real time, so a probe that hangs cannot
+/// hang the suite.
+///
+/// The two timeout probes below are the declared exception to "socket tests
+/// run on real time": they use loopback sockets only, reqwest's timeouts run
+/// on Tokio's timer, so paused time makes them exact and instant (the real
+/// time form would wait 20 s), and this guard bounds them in real time.
+fn paused_with_a_real_time_guard<F>(test: impl FnOnce() -> F + Send + 'static)
+where
+    F: std::future::Future<Output = ()>,
+{
+    let (done, finished) = std::sync::mpsc::channel();
+    let runner = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(test());
+        let _ = done.send(());
+    });
+    match finished.recv_timeout(Duration::from_secs(10)) {
+        Ok(()) => runner.join().unwrap(),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            // The test panicked: report its panic.
+            if let Err(panic) = runner.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("the probe took more than 10 s of real time")
+        }
+    }
+}
+
+/// The tile client gives up on a stalled upstream after [`TILE_TIMEOUT`]:
+/// tile requests set no timeout of their own.
+#[test]
+fn the_tile_client_times_out_after_20_s() {
+    paused_with_a_real_time_guard(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = default_config(dir.path());
+        config.allow_private_upstreams = true;
+        let ports = production_ports(&config).unwrap().ports;
+        let (stalled, seen) = serve(None).await;
+        let started = Instant::now();
+        let err = ports
+            .tile_http
+            .send(HttpRequest::get(
+                format!("http://localhost:{stalled}/"),
+                100,
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, TransportErrorKind::Timeout, "{}", err.message);
+        assert_eq!(started.elapsed(), Duration::from_secs(20));
+        assert_eq!(seen.connections(), 1);
+    });
+}
+
+/// The agent client gives up connecting after 5 s. A loopback listener whose
+/// accept queue is full never completes another connection (Linux drops the
+/// SYN while `tcp_abort_on_overflow` is off, its default).
+#[test]
+fn the_agent_client_stops_connecting_after_5_s() {
+    paused_with_a_real_time_guard(|| async {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let listener = socket.listen(1).unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Fill the accept queue: connect until a connection no longer completes.
+        let mut queued = Vec::new();
+        loop {
+            match tokio::time::timeout(Duration::from_secs(1), tokio::net::TcpStream::connect(addr))
+                .await
+            {
+                Ok(stream) => queued.push(stream.unwrap()),
+                Err(_) => break,
+            }
+            assert!(queued.len() < 16, "the accept queue never filled");
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = default_config(dir.path());
+        config.regions_url = Some(format!("http://{addr}"));
+        let ports = production_ports(&config).unwrap().ports;
+        let agent = ports.agent.expect("an agent client");
+        let started = Instant::now();
+        assert!(agent.snapshot(None).await.is_err());
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
+        drop(listener);
+    });
+}
