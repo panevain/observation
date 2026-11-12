@@ -30,7 +30,10 @@ pub trait HttpClient: Send + Sync + fmt::Debug {
 pub struct HttpRequest {
     pub method: Method,
     pub url: String,
-    pub headers: HeaderMap,
+    /// Set through [`Self::header`] and [`Self::bearer`] only, so that
+    /// credential headers are always marked sensitive; read with
+    /// [`Self::headers`].
+    headers: HeaderMap,
     pub body: RequestBody,
     /// Longest the whole exchange may take, body included. `None` leaves only
     /// the timeout the client itself was built with, if any.
@@ -102,8 +105,20 @@ impl HttpRequest {
         }
     }
 
+    /// The headers set on this request (without the body's content type).
+    /// They cannot be written directly, which would bypass the sensitive
+    /// marking of credentials:
+    ///
+    /// ```compile_fail
+    /// let mut req = observation_upstream::HttpRequest::get("http://a.example/", 1);
+    /// req.headers.insert("authorization", "Bearer s3cret".parse().unwrap());
+    /// ```
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
     /// Whether a response with `status` must not have its body read at all.
-    pub fn skips_body(&self, status: StatusCode) -> bool {
+    pub(crate) fn skips_body(&self, status: StatusCode) -> bool {
         !status.is_success() && self.error_max_bytes == 0
     }
 
@@ -293,7 +308,7 @@ mod tests {
         let req = HttpRequest::get("https://user:pw@a.example/x", 10)
             .bearer("s3cret")
             .unwrap();
-        assert_eq!(req.headers[AUTHORIZATION], "Bearer s3cret");
+        assert_eq!(req.headers()[AUTHORIZATION], "Bearer s3cret");
         let shown = format!("{req:?}");
         assert!(!shown.contains("s3cret"), "{shown}");
         assert!(!shown.contains("pw"), "{shown}");
