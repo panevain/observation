@@ -102,6 +102,7 @@ async fn requests_are_capped_form_posts_with_the_attempt_timeout() {
 async fn transport_failures_are_classified_by_kind() {
     for (kind, want) in [
         (TransportErrorKind::Timeout, TOO_SLOW),
+        (TransportErrorKind::BodyTimeout, TOO_SLOW),
         (TransportErrorKind::ConnectTimeout, UNREACHABLE),
         (TransportErrorKind::Connect, UNREACHABLE),
         (TransportErrorKind::Body, UNREACHABLE),
@@ -113,7 +114,10 @@ async fn transport_failures_are_classified_by_kind() {
         let started = Instant::now();
         let e = client.fetch(&bbox()).await.unwrap_err();
         assert_eq!(message(&e), want, "{kind:?}");
-        let status = if kind == TransportErrorKind::Timeout {
+        let status = if matches!(
+            kind,
+            TransportErrorKind::Timeout | TransportErrorKind::BodyTimeout
+        ) {
             StatusCode::GATEWAY_TIMEOUT
         } else {
             StatusCode::BAD_GATEWAY

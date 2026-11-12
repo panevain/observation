@@ -253,7 +253,7 @@ async fn a_stalled_body_times_out() {
         )
         .await
         .unwrap_err();
-    assert_eq!(err.kind, TransportErrorKind::Timeout, "{}", err.message);
+    assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
 }
 
 #[tokio::test]

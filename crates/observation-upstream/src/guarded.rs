@@ -57,7 +57,7 @@ impl GuardedHttp {
             // Read here, under the request's own deadline, as reqwest's timeout covers the body.
             match read_capped(resp, req.cap_for(status))
                 .await
-                .map_err(transport_error)?
+                .map_err(body_error)?
             {
                 Some(bytes) => Body::Complete(bytes),
                 None => Body::TooLarge,
@@ -99,6 +99,16 @@ impl HttpClient for GuardedHttp {
     fn send(&self, req: HttpRequest) -> BoxFuture<'_, Result<HttpResponse, TransportError>> {
         self.exchange(req).boxed()
     }
+}
+
+/// [`transport_error`] for a failure while reading the body, where a
+/// timeout is a [`TransportErrorKind::BodyTimeout`].
+fn body_error(e: reqwest::Error) -> TransportError {
+    let mut error = transport_error(e);
+    if error.kind == TransportErrorKind::Timeout {
+        error.kind = TransportErrorKind::BodyTimeout;
+    }
+    error
 }
 
 /// Classifies a reqwest error. A timeout while connecting stays apart from

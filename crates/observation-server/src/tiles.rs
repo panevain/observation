@@ -224,7 +224,10 @@ impl TileProxy {
             }
         }
         let resp = self.client.send(req).await.map_err(|e| {
-            if e.kind == TransportErrorKind::Body {
+            if matches!(
+                e.kind,
+                TransportErrorKind::Body | TransportErrorKind::BodyTimeout
+            ) {
                 tracing::warn!(error = %e, ?id, server = self.server(), "tile body failed");
                 ApiError::Upstream(format!(
                     "the download from the {} was interrupted",

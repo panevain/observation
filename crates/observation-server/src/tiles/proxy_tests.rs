@@ -244,6 +244,18 @@ async fn failures_serve_the_expired_copy_or_fail() {
             StatusCode::BAD_GATEWAY,
             "the download from the tile server was interrupted",
         ),
+        // A timeout while the body arrives is an interrupted download; one
+        // before the response is an unreachable server.
+        (
+            FakeReply::error(TransportErrorKind::BodyTimeout),
+            StatusCode::BAD_GATEWAY,
+            "the download from the tile server was interrupted",
+        ),
+        (
+            FakeReply::error(TransportErrorKind::Timeout),
+            StatusCode::BAD_GATEWAY,
+            "could not reach the tile server; map tiles may be missing",
+        ),
         (
             FakeReply::ok("<html>"),
             StatusCode::BAD_GATEWAY,
@@ -277,7 +289,7 @@ async fn failures_serve_the_expired_copy_or_fail() {
         );
     }
     let errors_counted = counts(&recorder);
-    assert_eq!(errors_counted[0], ("result=error".to_owned(), 8));
+    assert_eq!(errors_counted[0], ("result=error".to_owned(), 10));
 }
 
 /// A client over its limit is not sent upstream: it gets the expired copy

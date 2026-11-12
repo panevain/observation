@@ -45,7 +45,8 @@ enum Transient {
 impl Transient {
     fn of(e: &TransportError) -> Self {
         match e.kind {
-            TransportErrorKind::Timeout => Self::TimedOut,
+            // Before or after the headers, as before the port told them apart.
+            TransportErrorKind::Timeout | TransportErrorKind::BodyTimeout => Self::TimedOut,
             // A connect timeout means the host was never reached, not that it was slow.
             TransportErrorKind::ConnectTimeout
             | TransportErrorKind::Connect

@@ -251,8 +251,10 @@ pub enum TransportErrorKind {
     Connect,
     /// No connection within the connect timeout: the host was never reached.
     ConnectTimeout,
-    /// Connected, but the exchange outlasted the request's timeout.
+    /// Connected, but no response (status and headers) within the timeout.
     Timeout,
+    /// The response arrived, but its body did not finish within the timeout.
+    BodyTimeout,
     /// The response body broke off or could not be decoded.
     Body,
     Other,
