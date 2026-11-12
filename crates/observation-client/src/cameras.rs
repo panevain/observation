@@ -1,7 +1,7 @@
 //! Camera bodies in the scene and their field-of-view outlines.
 
 use crate::coverage::cone_for;
-use crate::state::{Area, Editor, Models, Scene, UiState, terrain_of};
+use crate::state::{Area, Editor, Hover, Models, Panels, Scene, terrain_of};
 use crate::theme::{Tokens, from_rgb, to_bevy, to_rgb};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
@@ -174,7 +174,8 @@ fn draw_frustums(
     mut gizmos: Gizmos,
     scene: Res<Scene>,
     models: Res<Models>,
-    ui: Res<UiState>,
+    panels: Res<Panels>,
+    hover: Res<Hover>,
     editor: Res<Editor>,
     tokens: Res<Tokens>,
     area: Option<Res<Area>>,
@@ -182,8 +183,8 @@ fn draw_frustums(
     let terrain = terrain_of(area.as_deref());
     for c in &scene.cameras {
         let selected = editor.selected == Some(c.id);
-        let hovered = ui.hovered() == Some(c.id);
-        if !(ui.show_frustums || selected || hovered) {
+        let hovered = hover.hovered() == Some(c.id);
+        if !(panels.show_frustums || selected || hovered) {
             continue;
         }
         let Some(m) = models.get(&c.model_id) else {

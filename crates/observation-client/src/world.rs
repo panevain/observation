@@ -5,7 +5,7 @@ use crate::input::OrbitCamera;
 use crate::net::Tiles;
 use crate::platform::Platform;
 use crate::state::{
-    Area, AreaLoaded, Editor, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, Toasts, UiState,
+    Area, AreaLoaded, Editor, FACADE_CELL_M, GROUND_CELL_M, Hover, Models, Scene, Toasts, UiState,
     grid_bounds,
 };
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
@@ -254,6 +254,7 @@ struct AreaAssets<'w> {
     tiles: ResMut<'w, Tiles>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn on_area_loaded(
     mut loaded: MessageReader<AreaLoaded>,
     mut commands: Commands,
@@ -262,6 +263,7 @@ fn on_area_loaded(
     models: Res<Models>,
     mut ui: ResMut<UiState>,
     mut editor: ResMut<Editor>,
+    mut hover: ResMut<Hover>,
     mut toasts: ResMut<Toasts>,
     mut coverage: ResMut<CoverageState>,
     mut orbit: Query<&mut OrbitCamera>,
@@ -444,7 +446,7 @@ fn on_area_loaded(
 
     // An address picked in the old area means nothing in the new one.
     editor.selected_address = None;
-    ui.hover_address = None;
+    hover.hover_address = None;
     ui.jump_to_address = false;
 
     // Document state.

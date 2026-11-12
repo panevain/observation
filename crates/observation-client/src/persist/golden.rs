@@ -22,7 +22,7 @@ use super::{ADDRESS_JUMP_KEY, FONT_KEY, PersistAction, PersistPlugin, STORAGE_KE
 use crate::platform::SaveFailure;
 use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
 use crate::state::{
-    Editor, LoadArea, Models, SaveState, Scene, Snapshot, ToastKind, Toasts, UiState,
+    Editor, LoadArea, Models, Panels, SaveState, Scene, Snapshot, ToastKind, Toasts, UiState,
 };
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
@@ -362,7 +362,7 @@ fn restoring_the_autosave_loads_its_area_with_its_cameras() {
     let mut h = harness(Some(&golden));
     assert_eq!(h.loads(), [(fixture_area(), true)]);
     assert_eq!(h.toasts(), []);
-    assert!(!h.app.world().resource::<UiState>().help_open);
+    assert!(!h.app.world().resource::<Panels>().help_open);
     assert_eq!(h.saved_json().as_deref(), Some(golden.as_str()));
     let (scene, models) = fixture_scene();
     let w = h.app.world();
@@ -381,7 +381,7 @@ fn a_first_visit_opens_help_over_the_demo_street() {
     let mut h = harness(None);
     assert_eq!(h.loads(), [(AreaRef::Demo, false)]);
     assert_eq!(h.toasts(), []);
-    assert!(h.app.world().resource::<UiState>().help_open);
+    assert!(h.app.world().resource::<Panels>().help_open);
     // Nothing to save until an area is set.
     h.run_past_autosave();
     assert_eq!(h.store.get(STORAGE_KEY), None);
@@ -428,7 +428,7 @@ fn an_unreadable_autosave_falls_back_to_the_demo_street_and_says_why() {
             "{text}"
         );
         assert!(text.contains(why), "{text}");
-        assert!(!h.app.world().resource::<UiState>().help_open);
+        assert!(!h.app.world().resource::<Panels>().help_open);
         // The unreadable text is left alone until something replaces it,
         // also once autosave intervals have passed.
         h.store.take_ops();

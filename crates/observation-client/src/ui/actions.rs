@@ -59,17 +59,17 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
         return;
     };
     match action {
-        CameraAction::Select => select(&mut d.editor, &mut d.ui, id),
+        CameraAction::Select => select(&mut d.editor, &mut d.panels, id),
         CameraAction::Focus => {
-            select(&mut d.editor, &mut d.ui, id);
+            select(&mut d.editor, &mut d.panels, id);
             d.ui.focus_request = true;
         }
         CameraAction::Aim => {
-            select(&mut d.editor, &mut d.ui, id);
+            select(&mut d.editor, &mut d.panels, id);
             d.editor.tool = Tool::Aim;
         }
         CameraAction::Move => {
-            select(&mut d.editor, &mut d.ui, id);
+            select(&mut d.editor, &mut d.panels, id);
             d.editor.tool = Tool::Move;
         }
         CameraAction::Duplicate => {
@@ -79,7 +79,7 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
             let [x, _, z] = copy.position;
             copy.position = terrain_of(d.area.as_deref()).moved_to(copy.position, x + 1.0, z);
             let new = d.scene.add_camera(copy);
-            select(&mut d.editor, &mut d.ui, new);
+            select(&mut d.editor, &mut d.panels, new);
         }
         CameraAction::ToggleEnabled => {
             if let Some(c) = d.scene.camera_mut(id) {

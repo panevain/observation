@@ -3,8 +3,8 @@
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{
-    AddressJump, Area, Editor, MOUNT_OFFSET_M, Models, Scene, Toasts, Tool, UiLayout, UiState,
-    select, terrain_of,
+    AddressJump, Area, Editor, Hover, MOUNT_OFFSET_M, Models, Panels, Scene, Toasts, Tool,
+    UiLayout, UiState, select, terrain_of,
 };
 use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -240,6 +240,7 @@ fn keyboard(
     wants: Res<EguiWantsInput>,
     mut ui: ResMut<UiState>,
     mut editor: ResMut<Editor>,
+    mut panels: ResMut<Panels>,
     mut toasts: ResMut<Toasts>,
     mut scene: ResMut<Scene>,
     mut orbit: Query<&mut OrbitCamera>,
@@ -264,9 +265,9 @@ fn keyboard(
             editor.selected = None;
         }
         editor.tool = Tool::Select;
-        ui.map_open = false;
-        ui.help_open = false;
-        ui.regions_open = false;
+        panels.map_open = false;
+        panels.help_open = false;
+        panels.regions_open = false;
     }
     if editor.tool == Tool::Region {
         // Drawing a region: Enter closes it, Backspace undoes a corner.
@@ -287,7 +288,7 @@ fn keyboard(
         scene.remove_camera(id);
     }
     if keys.just_pressed(KeyCode::Slash) || keys.just_pressed(KeyCode::F1) {
-        ui.help_open = !ui.help_open;
+        panels.help_open = !panels.help_open;
     }
     if keys.just_pressed(KeyCode::KeyF) {
         ui.focus_request = true;
@@ -301,7 +302,7 @@ fn keyboard(
         o.distance = o.distance.min(60.0);
     }
     if keys.just_pressed(KeyCode::KeyN) {
-        ui.overlay = match ui.overlay {
+        panels.overlay = match panels.overlay {
             crate::state::OverlayMode::Overlap => crate::state::OverlayMode::PerCamera,
             crate::state::OverlayMode::PerCamera => crate::state::OverlayMode::Overlap,
         };
@@ -343,6 +344,7 @@ struct Targets<'w, 's> {
     area: Option<Res<'w, Area>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pointer(
     input: RawInput,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -352,6 +354,8 @@ fn pointer(
     mut st: ResMut<PointerState>,
     mut ui: ResMut<UiState>,
     mut editor: ResMut<Editor>,
+    mut panels: ResMut<Panels>,
+    mut hovering: ResMut<Hover>,
     mut toasts: ResMut<Toasts>,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
@@ -549,11 +553,11 @@ fn pointer(
     }
 
     let Some(pos) = pos else {
-        if ui.hover_scene.is_some() {
-            ui.hover_scene = None;
+        if hovering.hover_scene.is_some() {
+            hovering.hover_scene = None;
         }
-        if ui.hover_address.is_some() {
-            ui.hover_address = None;
+        if hovering.hover_address.is_some() {
+            hovering.hover_address = None;
         }
         st.address_key = None;
         return;
@@ -577,8 +581,8 @@ fn pointer(
         } else {
             None
         };
-        if ui.hover_scene != hover {
-            ui.hover_scene = hover;
+        if hovering.hover_scene != hover {
+            hovering.hover_scene = hover;
         }
     }
 
@@ -594,14 +598,14 @@ fn pointer(
             st.address_key = Some(key);
             st.address_found = address_under(&mut cast, pos);
             let hover = Some(st.address_found.as_ref().map(address_label));
-            if ui.hover_address != hover {
-                ui.hover_address = hover;
+            if hovering.hover_address != hover {
+                hovering.hover_address = hover;
             }
         }
     } else {
         st.address_key = None;
-        if ui.hover_address.is_some() {
-            ui.hover_address = None;
+        if hovering.hover_address.is_some() {
+            hovering.hover_address = None;
         }
     }
 
@@ -691,7 +695,14 @@ fn pointer(
                     };
                     hit = near_body(&mut cast, pos, radius).or(hit);
                 }
-                click(&mut editor, &mut ui, &mut toasts, &mut scene, &models, hit);
+                click(
+                    &mut editor,
+                    &mut panels,
+                    &mut toasts,
+                    &mut scene,
+                    &models,
+                    hit,
+                );
             }
         }
         st.gesture = Gesture::None;
@@ -796,7 +807,7 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
 /// A click/tap (press + release without dragging).
 fn click(
     editor: &mut Editor,
-    ui: &mut UiState,
+    panels: &mut Panels,
     toasts: &mut Toasts,
     scene: &mut Scene,
     models: &Models,
@@ -807,13 +818,13 @@ fn click(
             Some(Hit {
                 target: HitTarget::Camera(id),
                 ..
-            }) => select(editor, ui, id),
+            }) => select(editor, panels, id),
             _ => editor.selected = None,
         },
         Tool::Place => {
             let Some(hit) = hit else { return };
             if let HitTarget::Camera(id) = hit.target {
-                select(editor, ui, id);
+                select(editor, panels, id);
                 return;
             }
             let kind = models.kind_of(&editor.place_model);
@@ -830,7 +841,7 @@ fn click(
                 enabled: true,
                 group: None,
             });
-            select(editor, ui, id);
+            select(editor, panels, id);
             if yaw.is_none() {
                 // Placed on the ground: switch to Aim so the next click points it.
                 editor.tool = Tool::Aim;
@@ -846,7 +857,7 @@ fn click(
                     ..
                 }) = hit
             {
-                select(editor, ui, id);
+                select(editor, panels, id);
             }
         }
     }

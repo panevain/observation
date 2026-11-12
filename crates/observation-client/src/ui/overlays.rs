@@ -6,7 +6,7 @@ use super::widgets::{hint, keycap, primary, secondary, swatch};
 use crate::addresses::address_label;
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{Editor, ToastAction, ToastKind, Toasts, Tool, UiState};
+use crate::state::{Editor, Hover, Panels, ToastAction, ToastKind, Toasts, Tool};
 use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
 use observation_core::scene::AreaRef;
@@ -170,10 +170,10 @@ pub fn address_card(
     ctx: &egui::Context,
     t: &Tokens,
     vp: egui::Rect,
-    ui_state: &UiState,
+    hover: &Hover,
     editor: &Editor,
 ) {
-    let (Tool::Address, Some(address)) = (editor.tool, &ui_state.hover_address) else {
+    let (Tool::Address, Some(address)) = (editor.tool, &hover.hover_address) else {
         return;
     };
     let Some(at) = ctx
@@ -405,7 +405,7 @@ pub fn loading(
     choice
 }
 
-pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {
+pub fn help(ctx: &egui::Context, t: &Tokens, panels: &mut Panels) {
     let mut open = true;
     egui::Window::new("Getting started")
         .collapsible(false)
@@ -454,10 +454,10 @@ pub fn help(ctx: &egui::Context, t: &Tokens, ui_state: &mut UiState) {
             hint(ui, t, "Coverage is modelled from published field of view and resolution (DORI pixel density); real cameras vary with lens distortion, lighting and compression.");
             ui.add_space(t.space.sm);
             if ui.add(primary(t, "Got it")).clicked() {
-                ui_state.help_open = false;
+                panels.help_open = false;
             }
         });
     if !open {
-        ui_state.help_open = false;
+        panels.help_open = false;
     }
 }

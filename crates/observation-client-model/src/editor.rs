@@ -1,5 +1,6 @@
-//! What the user is editing with: the active tool, the selection, the model
-//! the Place tool places, the region being drawn and the address picked.
+//! What the user is editing with (the active tool, the selection, the model
+//! the Place tool places, the region being drawn and the address picked),
+//! which panels are open, and what the pointer is over.
 
 use crate::document::Models;
 use observation_core::address::Address;
@@ -170,6 +171,88 @@ impl Editor {
     }
 }
 
+/// How the coverage overlay is coloured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OverlayMode {
+    /// Heat ramp by number of cameras that see a spot.
+    #[default]
+    Overlap,
+    /// Each camera's own colour.
+    PerCamera,
+}
+
+/// The inspector's tabs below the coverage summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum InspectorTab {
+    /// Model picker, Place, the camera list and custom models.
+    #[default]
+    Cameras,
+    /// The selected camera's settings.
+    Camera,
+    /// What the coverage figures count (detail level, lighting, subject
+    /// height) and how the overlay colours the ground.
+    Analysis,
+}
+
+/// The panels and dialogs that are open, and how the scene is shown.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Panels {
+    pub overlay: OverlayMode,
+    pub show_facades: bool,
+    pub show_frustums: bool,
+    pub map_open: bool,
+    pub help_open: bool,
+    /// The local map-data regions dialog.
+    pub regions_open: bool,
+    pub custom_model_open: bool,
+    pub inspector_tab: InspectorTab,
+    /// The selection the inspector last saw, so it can open the Camera tab
+    /// when the selection changes some other way than [`select`].
+    pub inspector_seen: Option<u32>,
+}
+
+impl Default for Panels {
+    fn default() -> Self {
+        Self {
+            overlay: OverlayMode::Overlap,
+            show_facades: true,
+            show_frustums: true,
+            map_open: false,
+            help_open: false,
+            regions_open: false,
+            custom_model_open: false,
+            inspector_tab: InspectorTab::Cameras,
+            inspector_seen: None,
+        }
+    }
+}
+
+/// Selects a camera and shows its settings in the inspector, even when it
+/// was already selected.
+pub fn select(editor: &mut Editor, panels: &mut Panels, id: u32) {
+    editor.selected = Some(id);
+    panels.inspector_tab = InspectorTab::Camera;
+}
+
+/// What the pointer is over.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Hover {
+    /// Camera under the pointer in the camera list.
+    pub hover_list: Option<u32>,
+    /// Camera under the pointer in the 3D view.
+    pub hover_scene: Option<u32>,
+    /// What the Address tool shows by the pointer: `None` off the scene,
+    /// `Some(None)` where there is no address.
+    pub hover_address: Option<Option<String>>,
+}
+
+impl Hover {
+    /// The camera to highlight: hovered in the list or in the 3D view.
+    pub fn hovered(&self) -> Option<u32> {
+        self.hover_list.or(self.hover_scene)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +315,40 @@ mod tests {
         .filter(|t| t.needs_selection())
         .collect();
         assert_eq!(needs, [Tool::Aim, Tool::Move]);
+    }
+
+    #[test]
+    fn selecting_opens_the_camera_tab_even_when_already_selected() {
+        let mut editor = Editor::default();
+        let mut panels = Panels::default();
+        select(&mut editor, &mut panels, 3);
+        assert_eq!(
+            (editor.selected, panels.inspector_tab),
+            (Some(3), InspectorTab::Camera)
+        );
+        panels.inspector_tab = InspectorTab::Analysis;
+        select(&mut editor, &mut panels, 3);
+        assert_eq!(panels.inspector_tab, InspectorTab::Camera);
+    }
+
+    #[test]
+    fn the_list_hover_wins_over_the_scene_hover() {
+        let mut hover = Hover::default();
+        assert_eq!(hover.hovered(), None);
+        hover.hover_scene = Some(2);
+        assert_eq!(hover.hovered(), Some(2));
+        hover.hover_list = Some(5);
+        assert_eq!(hover.hovered(), Some(5));
+    }
+
+    #[test]
+    fn panels_start_with_both_overlays_shown_and_the_camera_list() {
+        let p = Panels::default();
+        assert!(p.show_facades && p.show_frustums);
+        assert!(!(p.map_open || p.help_open || p.regions_open || p.custom_model_open));
+        assert_eq!(
+            (p.overlay, p.inspector_tab, p.inspector_seen),
+            (OverlayMode::Overlap, InspectorTab::Cameras, None)
+        );
     }
 }

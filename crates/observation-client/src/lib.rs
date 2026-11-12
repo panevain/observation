@@ -80,6 +80,8 @@ impl Plugin for ResourcesPlugin {
             .init_resource::<state::Scene>()
             .init_resource::<state::UiState>()
             .init_resource::<state::Editor>()
+            .init_resource::<state::Panels>()
+            .init_resource::<state::Hover>()
             .init_resource::<state::Toasts>()
             .init_resource::<state::UiLayout>();
     }

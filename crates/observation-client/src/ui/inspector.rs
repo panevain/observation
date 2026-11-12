@@ -10,7 +10,7 @@ use super::widgets::{
 use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{Editor, InspectorTab, OverlayMode, Tool, UiState, select, terrain_of};
+use crate::state::{Editor, InspectorTab, OverlayMode, Panels, Tool, select, terrain_of};
 use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
@@ -22,12 +22,12 @@ use observation_core::scene::MAX_CUSTOM_MODELS;
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
-    follow_selection(&d.editor, &mut d.ui);
+    follow_selection(&d.editor, &mut d.panels);
     if d.ui.jump_to_address {
         let groups = d.addresses.groups(&d.scene.cameras);
         if picked_group(d, &groups).is_some() {
             // Show the list it scrolls.
-            d.ui.inspector_tab = InspectorTab::Cameras;
+            d.panels.inspector_tab = InspectorTab::Cameras;
         } else {
             // No camera is listed there: nothing to scroll to.
             d.ui.jump_to_address = false;
@@ -46,7 +46,7 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     tabs(
         ui,
         &t,
-        &mut d.ui.inspector_tab,
+        &mut d.panels.inspector_tab,
         &[
             (InspectorTab::Cameras, "Cameras"),
             (InspectorTab::Camera, &camera),
@@ -54,11 +54,12 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
         ],
     );
     ui.separator();
-    let tab = d.ui.inspector_tab;
+    let tab = d.panels.inspector_tab;
     // Only the list sets this; without it a row hovered last stays
     // highlighted in the view.
-    if (tab != InspectorTab::Cameras || d.scene.cameras.is_empty()) && d.ui.hover_list.is_some() {
-        d.ui.hover_list = None;
+    if (tab != InspectorTab::Cameras || d.scene.cameras.is_empty()) && d.hover.hover_list.is_some()
+    {
+        d.hover.hover_list = None;
     }
     // One scroll area per tab, so each keeps its own position.
     ScrollArea::vertical()
@@ -76,16 +77,16 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
 
 /// Opens the Camera tab when the selection changes to another camera, and
 /// goes back to the list when the selection is cleared there.
-fn follow_selection(editor: &Editor, ui: &mut UiState) {
-    if editor.selected != ui.inspector_seen {
+fn follow_selection(editor: &Editor, panels: &mut Panels) {
+    if editor.selected != panels.inspector_seen {
         match editor.selected {
-            Some(_) => ui.inspector_tab = InspectorTab::Camera,
-            None if ui.inspector_tab == InspectorTab::Camera => {
-                ui.inspector_tab = InspectorTab::Cameras;
+            Some(_) => panels.inspector_tab = InspectorTab::Camera,
+            None if panels.inspector_tab == InspectorTab::Camera => {
+                panels.inspector_tab = InspectorTab::Cameras;
             }
             None => {}
         }
-        ui.inspector_seen = editor.selected;
+        panels.inspector_seen = editor.selected;
     }
 }
 
@@ -176,7 +177,7 @@ fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         .on_hover_text("Detail level, lighting and subject height: change them under Analysis")
         .clicked()
     {
-        d.ui.inspector_tab = InspectorTab::Analysis;
+        d.panels.inspector_tab = InspectorTab::Analysis;
     }
     if let Some(a) = &d.area {
         super::provenance::card_data_date(ui, t, &a.bundle);
@@ -361,7 +362,7 @@ fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             .on_hover_text("Back to the camera list")
             .clicked()
         {
-            d.ui.inspector_tab = InspectorTab::Cameras;
+            d.panels.inspector_tab = InspectorTab::Cameras;
         }
         let Some(i) = order.iter().position(|&c| c == id) else {
             return;
@@ -380,9 +381,9 @@ fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 .add_enabled(n > 1, secondary(t, icons::CARET_LEFT))
                 .on_hover_text("Previous camera in the list");
             if next.clicked() {
-                select(&mut d.editor, &mut d.ui, order[(i + 1) % n]);
+                select(&mut d.editor, &mut d.panels, order[(i + 1) % n]);
             } else if prev.clicked() {
-                select(&mut d.editor, &mut d.ui, order[(i + n - 1) % n]);
+                select(&mut d.editor, &mut d.panels, order[(i + n - 1) % n]);
             }
         });
     });
@@ -448,13 +449,13 @@ fn analysis_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     segmented(
         ui,
         t,
-        &mut d.ui.overlay,
+        &mut d.panels.overlay,
         &[
             (OverlayMode::Overlap, "Overlap"),
             (OverlayMode::PerCamera, "Per camera"),
         ],
     );
-    if d.ui.overlay == OverlayMode::Overlap {
+    if d.panels.overlay == OverlayMode::Overlap {
         ui.horizontal_wrapped(|ui| {
             for (i, label) in ["1", "2", "3", "4+"].iter().enumerate() {
                 swatch(ui, t, t.coverage_ramp[i]);
@@ -511,7 +512,7 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 color: camera_color(&d.scene, c, &d.models, t),
                 enabled: c.enabled,
                 selected: d.editor.selected == Some(c.id),
-                highlighted: d.ui.hover_scene == Some(c.id),
+                highlighted: d.hover.hover_scene == Some(c.id),
             };
             let (resp, eye) = camera_row(ui, t, &row);
             if resp.hovered() || eye.hovered() {
@@ -548,8 +549,8 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         }
     }
     ui.spacing_mut().item_spacing.y = t.space.sm;
-    if d.ui.hover_list != hovered {
-        d.ui.hover_list = hovered;
+    if d.hover.hover_list != hovered {
+        d.hover.hover_list = hovered;
     }
     if let Some((id, a)) = action {
         actions::apply(d, id, a);
@@ -1212,7 +1213,7 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             .strong()
             .color(t.text_muted),
     )
-    .open(d.ui.custom_model_open.then_some(true))
+    .open(d.panels.custom_model_open.then_some(true))
     .show(ui, |ui| {
         let m = &mut draft.model;
         egui::Grid::new("custom-grid")

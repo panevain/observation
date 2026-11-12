@@ -13,7 +13,7 @@ use crate::platform::SaveFailure;
 pub use observation_client_model::document::Snapshot;
 use observation_client_model::document::{self, Document};
 use observation_client_model::editor;
-pub use observation_client_model::editor::Tool;
+pub use observation_client_model::editor::{InspectorTab, OverlayMode, Tool, select};
 use observation_client_model::toasts;
 pub use observation_client_model::toasts::{ToastAction, ToastKind};
 
@@ -35,44 +35,9 @@ impl Default for AddressJump {
     }
 }
 
-/// How the coverage overlay is coloured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OverlayMode {
-    /// Heat ramp by number of cameras that see a spot.
-    #[default]
-    Overlap,
-    /// Each camera's own colour.
-    PerCamera,
-}
-
-/// The inspector's tabs below the coverage summary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum InspectorTab {
-    /// Model picker, Place, the camera list and custom models.
-    #[default]
-    Cameras,
-    /// The selected camera's settings.
-    Camera,
-    /// What the coverage figures count (detail level, lighting, subject
-    /// height) and how the overlay colours the ground.
-    Analysis,
-}
-
 /// Transient UI state.
 #[derive(Debug, Resource)]
 pub struct UiState {
-    pub overlay: OverlayMode,
-    pub show_facades: bool,
-    pub show_frustums: bool,
-    pub map_open: bool,
-    pub help_open: bool,
-    /// The local map-data regions dialog.
-    pub regions_open: bool,
-    pub custom_model_open: bool,
-    /// Camera under the pointer in the camera list.
-    pub hover_list: Option<u32>,
-    /// Camera under the pointer in the 3D view.
-    pub hover_scene: Option<u32>,
     /// Frame the selected camera in the 3D view (consumed by the input systems).
     pub focus_request: bool,
     /// Undo or redo asked for by the UI or a shortcut (consumed by `history`).
@@ -82,16 +47,9 @@ pub struct UiState {
     /// Wall-clock seconds since start-up, for "saved just now" and the
     /// loading timer.
     pub now: f64,
-    /// What the Address tool shows by the pointer: `None` off the scene,
-    /// `Some(None)` where there is no address.
-    pub hover_address: Option<Option<String>>,
     /// Scroll the camera list to the picked address's group once (consumed by
     /// the inspector).
     pub jump_to_address: bool,
-    pub inspector_tab: InspectorTab,
-    /// The selection the inspector last saw, so it can open the Camera tab
-    /// when the selection changes some other way than [`select`].
-    pub inspector_seen: Option<u32>,
     /// A restored or imported scene's area came back with different map
     /// data: shown in the Coverage card until dismissed or another area
     /// loads.
@@ -101,23 +59,11 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            overlay: OverlayMode::Overlap,
-            show_facades: true,
-            show_frustums: true,
-            map_open: false,
-            help_open: false,
-            regions_open: false,
-            custom_model_open: false,
-            hover_list: None,
-            hover_scene: None,
             focus_request: false,
             history_request: None,
             save: SaveState::Pending,
             now: 0.0,
-            hover_address: None,
             jump_to_address: false,
-            inspector_tab: InspectorTab::Cameras,
-            inspector_seen: None,
             data_change: None,
         }
     }
@@ -138,24 +84,18 @@ pub enum SaveState {
     Failed(SaveFailure),
 }
 
-/// Selects a camera and shows its settings in the inspector, even when it
-/// was already selected.
-pub fn select(editor: &mut Editor, ui: &mut UiState, id: u32) {
-    editor.selected = Some(id);
-    ui.inspector_tab = InspectorTab::Camera;
-}
-
 /// The editing state (tool, selection, Place model, region draft, picked
 /// address), as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
 pub struct Editor(editor::Editor);
 
-impl UiState {
-    /// The camera to highlight: hovered in the list or in the 3D view.
-    pub fn hovered(&self) -> Option<u32> {
-        self.hover_list.or(self.hover_scene)
-    }
-}
+/// The panels, dialogs and overlay settings, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Panels(editor::Panels);
+
+/// What the pointer is over, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Hover(editor::Hover);
 
 /// Curated + user-defined camera models, as a resource: its change detection
 /// keeps the Place tool's model valid and drives autosave.

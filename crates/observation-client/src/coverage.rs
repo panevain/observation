@@ -10,7 +10,7 @@
 mod backend;
 
 use crate::input::OrbitCamera;
-use crate::state::{Area, Editor, Models, OverlayMode, Scene, Tool, UiState, terrain_of};
+use crate::state::{Area, Editor, Models, OverlayMode, Panels, Scene, Tool, terrain_of};
 use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
 use backend::CoverageBackend;
@@ -364,7 +364,7 @@ fn apply(state: &mut CoverageState, scope: Scope, current: Option<u64>, r: JobRe
 
 fn paint_overlay(
     mut state: ResMut<CoverageState>,
-    ui: Res<UiState>,
+    panels: Res<Panels>,
     scene: Res<Scene>,
     models: Res<Models>,
     tokens: Res<Tokens>,
@@ -375,7 +375,7 @@ fn paint_overlay(
 ) {
     let Some(overlay) = overlay else { return };
     for mut v in &mut facade_vis {
-        let want = if ui.show_facades {
+        let want = if panels.show_facades {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -388,10 +388,10 @@ fn paint_overlay(
     if tokens.is_changed() {
         state.paint = true;
     }
-    let mode = (ui.overlay, ui.show_facades);
+    let mode = (panels.overlay, panels.show_facades);
     // Per-camera colours can change without any visibility changing; repaint
     // only when one actually did.
-    let colors = if (ui.overlay == OverlayMode::PerCamera
+    let colors = if (panels.overlay == OverlayMode::PerCamera
         && (scene.is_changed() || models.is_changed()))
         || tokens.is_changed()
     {
@@ -411,7 +411,7 @@ fn paint_overlay(
     let Some(counts) = state.rungs.get(state.selected).map(|r| &r.tally.counts) else {
         return;
     };
-    let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match ui.overlay {
+    let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match panels.overlay {
         OverlayMode::Overlap => (
             counts
                 .ground
@@ -441,7 +441,7 @@ fn paint_overlay(
             vec![CLEAR; counts.facade.len()],
         ),
     };
-    if ui.overlay == OverlayMode::PerCamera {
+    if panels.overlay == OverlayMode::PerCamera {
         for c in &scene.cameras {
             let Some((seen_ground, seen_facade)) = state.seen(c.id) else {
                 continue;

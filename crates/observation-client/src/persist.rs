@@ -1,7 +1,9 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
 use crate::platform::{KeyValueStore, Platform};
-use crate::state::{AddressJump, Editor, LoadArea, Models, SaveState, Scene, Toasts, UiState};
+use crate::state::{
+    AddressJump, Editor, LoadArea, Models, Panels, SaveState, Scene, Toasts, UiState,
+};
 use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -107,7 +109,7 @@ fn restore(
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
     mut load: MessageWriter<LoadArea>,
-    mut ui: ResMut<UiState>,
+    mut panels: ResMut<Panels>,
     mut toasts: ResMut<Toasts>,
     platform: Res<Platform>,
 ) {
@@ -128,7 +130,7 @@ fn restore(
             load.write(LoadArea::demo());
         }
         None => {
-            ui.help_open = true;
+            panels.help_open = true;
             load.write(LoadArea::demo());
         }
     }

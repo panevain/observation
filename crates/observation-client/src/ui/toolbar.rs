@@ -42,7 +42,7 @@ pub fn top_bar(
         {
             d.picker
                 .open_at(d.scene.origin, d.area.as_ref().map(|a| a.bundle.bbox));
-            d.ui.map_open = true;
+            d.panels.map_open = true;
         }
         if ui
             .add(secondary(&t, "Demo street"))
@@ -65,7 +65,7 @@ pub fn top_bar(
                 None => "Local map data: regions this server answers itself",
             };
             if ui.add(secondary(&t, &text)).on_hover_text(tip).clicked() {
-                d.ui.regions_open = !d.ui.regions_open;
+                d.panels.regions_open = !d.panels.regions_open;
             }
             if progress.is_some() {
                 ui.spinner();
@@ -111,7 +111,7 @@ pub fn top_bar(
                 .on_hover_text("Help and shortcuts (?)")
                 .clicked()
             {
-                d.ui.help_open = !d.ui.help_open;
+                d.panels.help_open = !d.panels.help_open;
             }
             settings_menu(ui, d);
             if ui
@@ -180,19 +180,19 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         ui.add_space(t.space.md);
         ui.separator();
         ui.add_space(t.space.md);
-        let ui_state = &mut *d.ui;
+        let panels = &mut **d.panels;
         let toggles: [(&str, &str, &str, &mut bool); 2] = [
             (
                 icons::TRIANGLE_DASHED,
                 "Cones",
                 "Show every camera's view cone (the selected one always shows)",
-                &mut ui_state.show_frustums,
+                &mut panels.show_frustums,
             ),
             (
                 icons::WALL,
                 "Walls",
                 "Show coverage on building walls",
-                &mut ui_state.show_facades,
+                &mut panels.show_facades,
             ),
         ];
         for (glyph, label, tip, value) in toggles {

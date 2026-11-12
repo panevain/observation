@@ -15,7 +15,8 @@ use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::platform::Platform;
 use crate::state::{
-    Area, Editor, LoadArea, Loading, Models, Scene, ToastAction, Toasts, Tool, UiState,
+    Area, Editor, Hover, LoadArea, Loading, Models, Panels, Scene, ToastAction, Toasts, Tool,
+    UiState,
 };
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
@@ -75,6 +76,8 @@ pub struct UiData<'w> {
     pub tokens: Res<'w, Tokens>,
     pub ui: ResMut<'w, UiState>,
     pub editor: ResMut<'w, Editor>,
+    pub panels: ResMut<'w, Panels>,
+    pub hover: ResMut<'w, Hover>,
     pub toasts: ResMut<'w, Toasts>,
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
@@ -221,7 +224,7 @@ fn draw_ui(
         actions::apply(&mut d, id, a);
     }
     overlays::tool_cursor(&ctx, viewport_rect, d.editor.tool);
-    overlays::address_card(&ctx, &t, viewport_rect, &d.ui, &d.editor);
+    overlays::address_card(&ctx, &t, viewport_rect, &d.hover, &d.editor);
     match overlays::toasts(&ctx, &t, viewport_rect, &d.toasts) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
             d.ui.history_request = Some(HistoryOp::Undo);
@@ -251,11 +254,11 @@ fn draw_ui(
             None => {}
         }
     }
-    if d.ui.help_open {
-        overlays::help(&ctx, &t, &mut d.ui);
+    if d.panels.help_open {
+        overlays::help(&ctx, &t, &mut d.panels);
     }
-    if d.ui.regions_open {
-        regions::window(&ctx, &t, &mut d.regions, &mut d.ui.regions_open, clock);
+    if d.panels.regions_open {
+        regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);
     }
     let local: Vec<(String, observation_core::geo::BBox)> = d
         .regions
@@ -264,7 +267,7 @@ fn draw_ui(
         .filter(|r| r.ready)
         .filter_map(|r| Some((r.name.clone(), r.bbox?)))
         .collect();
-    if d.ui.map_open
+    if d.panels.map_open
         && let Some(bbox) = map_picker::window(
             &ctx,
             &t,
@@ -272,7 +275,7 @@ fn draw_ui(
             &tile_draws,
             &local,
             &d.config,
-            &mut d.ui.map_open,
+            &mut d.panels.map_open,
         )
     {
         load.write(LoadArea::osm(bbox));
