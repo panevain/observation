@@ -5,6 +5,7 @@
 //! `cargo test`. `observation-client` renders this model and feeds it input.
 
 pub mod commands;
+pub mod coverage;
 pub mod document;
 pub mod editor;
 pub mod history;
