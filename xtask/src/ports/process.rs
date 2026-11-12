@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::SystemTime;
 
-use super::{AuditOutput, Brotli, Cargo, Clock, Git, Http, Response};
+use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, Http, Response};
 use crate::core::time::Timestamp;
 use crate::{Error, Result};
 
@@ -265,6 +265,40 @@ impl Brotli for BrotliCli {
             return Err(failed(&cmd, &out));
         }
         Ok(out.stdout.len())
+    }
+}
+
+/// `gh`, found on `PATH`, with the caller's environment (its token included).
+#[derive(Debug)]
+pub struct GhCli {
+    pub program: PathBuf,
+}
+
+impl Default for GhCli {
+    fn default() -> Self {
+        Self {
+            program: PathBuf::from("gh"),
+        }
+    }
+}
+
+impl GitHub for GhCli {
+    /// Output read as `subprocess.run(text=True)` read it: strict UTF-8, universal newlines.
+    fn gh(&self, args: &[String]) -> Result<GhOutput> {
+        use std::os::unix::process::ExitStatusExt as _;
+        let mut cmd = Command::new(&self.program);
+        cmd.args(args);
+        let out = run(&mut cmd, None).map_err(|e| spawn_error(&cmd, &e))?;
+        let code = out
+            .status
+            .code()
+            .or_else(|| out.status.signal().map(|s| -s))
+            .unwrap_or(-1);
+        Ok(GhOutput {
+            code,
+            stdout: crate::core::py::universal_newlines(&utf8(&cmd, out.stdout)?),
+            stderr: crate::core::py::universal_newlines(&utf8(&cmd, out.stderr)?),
+        })
     }
 }
 

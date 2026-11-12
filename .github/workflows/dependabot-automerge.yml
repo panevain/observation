@@ -1,7 +1,7 @@
 name: Dependabot auto-merge
 
 # Enables auto-merge (squash) on Dependabot pull requests that only bring semver patch updates,
-# base image digest refreshes or the fuzz targets' nightly (scripts/dependabot-automerge.py);
+# base image digest refreshes or the fuzz targets' nightly (`cargo xtask automerge list`);
 # they merge once the required checks pass, and the weekly Prepare release ships them. Minor and
 # major updates still need a person. To hold one, label it `hold`: it is skipped, and auto-merge
 # is switched off if it was already on. The Pins PR's auto-merge is pins.yml's to set, but a
@@ -9,6 +9,10 @@ name: Dependabot auto-merge
 # A sweep on a schedule rather than a pull_request workflow: the bot app enables auto-merge,
 # so the merge into develop starts its push workflows (one enabled with GITHUB_TOKEN would
 # not), and the app's key is only available to runs on develop.
+# The checker that decides is built from the commit this run is on (develop on schedule; a
+# dispatched branch reaches only the dry part, since `bot` admits develop, main and v* only),
+# never from a pull request: no pull request's code is checked out. It is built uncached in the
+# `find` job, whose token can only read, and the bot job receives only its JSON.
 on:
   schedule:
     # Every 4 hours; the 06:00 run follows the 05:00-05:30 update window (Dependabot, Pins).
@@ -26,20 +30,32 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml's tools, environment and tasks (setup-rust's ci:toolchain).
+env:
+  MISE_ENV: ci
+
 jobs:
   find:
     name: find patch updates
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # An uncached build of xtask, then the gh calls.
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
     outputs:
       prs: ${{ steps.list.outputs.prs }}
+      has_work: ${{ steps.list.outputs.has_work }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          cache: "false"
+      - uses: $/.github/actions/setup-rust
+      - name: Build the checker
+        run: cargo build --locked --quiet --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask-target"
       - name: Eligible pull requests
         id: list
         env:
@@ -48,17 +64,19 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          args=(--repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")
+          args=(--github-repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")
           if [ "${DRY_RUN}" = true ]; then args+=(--dry-run); fi
-          prs="$(python3 scripts/dependabot-automerge.py list "${args[@]}")"
+          prs="$("${RUNNER_TEMP}/xtask-target/debug/xtask" automerge list "${args[@]}")"
           echo "prs=${prs}" >> "${GITHUB_OUTPUT}"
+          has_work="$(jq -c '(.merge | length) + (.hold | length) > 0' <<<"${prs}")"
+          echo "has_work=${has_work}" >> "${GITHUB_OUTPUT}"
 
   # Only when there is something to do, so the sweep does not deploy to `bot` each time, and
   # never on a dry run.
   merge:
     name: set auto-merge
     needs: find
-    if: needs.find.outputs.prs != '' && needs.find.outputs.prs != '{"merge":[],"hold":[]}' && !inputs.dry_run
+    if: needs.find.outputs.has_work == 'true' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: bot

@@ -411,6 +411,54 @@ fn toml_1_0_syntax(text: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// `str.isspace()` of one character, which is also what `\s` matches in a `str` pattern of
+/// `re`: Unicode's White_Space plus the information separators U+001C to U+001F.
+pub fn is_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// `json.dumps()` of a string with the default `ensure_ascii`: `"` and `\` escaped, `\n`, `\r`,
+/// `\t`, `\b` and `\f` written short, and everything else outside space to `~` as `\uXXXX`
+/// (UTF-16 surrogate pairs beyond the BMP).
+pub fn json_str(s: &str) -> String {
+    let mut out = String::from('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            ' '..='~' => out.push(c),
+            c => {
+                let mut units = [0u16; 2];
+                for u in c.encode_utf16(&mut units) {
+                    let _ = write!(out, "\\u{u:04x}");
+                }
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `str()` of a scalar that `json.loads` returned (`None` for an array or object, whose
+/// `str()` is not reproduced): `None`, `True`/`False`, the integer's digits, the float's
+/// `repr`, or the string itself.
+pub fn str_json_scalar(v: &serde_json::Value) -> Option<String> {
+    use serde_json::Value;
+    match v {
+        Value::Null => Some("None".to_owned()),
+        Value::Bool(b) => Some(if *b { "True" } else { "False" }.to_owned()),
+        Value::Number(n) if n.is_f64() => n.as_f64().map(repr_float),
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => Some(s.clone()),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +544,49 @@ mod tests {
             repr_str("\u{7f}\u{1}é\u{2028}\u{e000}\u{10ffff}"),
             "'\\x7f\\x01é\\u2028\\ue000\\U0010ffff'"
         );
+    }
+
+    #[test]
+    fn json_strings_and_scalars_as_python_writes_them() {
+        // From Python 3.13: json.dumps(s) and str(v).
+        let strings = [
+            ("abc", r#""abc""#),
+            ("a\"b\\c", r#""a\"b\\c""#),
+            ("\n\r\t\u{8}\u{c}\u{1}\u{1f}", r#""\n\r\t\b\f\u0001\u001f""#),
+            ("\u{7f}", r#""\u007f""#),
+            ("\u{e9}", r#""\u00e9""#),
+            ("\u{1F600}", r#""\ud83d\ude00""#),
+            ("\u{2028}", r#""\u2028""#),
+        ];
+        for (s, want) in strings {
+            assert_eq!(json_str(s), want, "{s:?}");
+        }
+        let scalars = [
+            ("5", "5"),
+            ("-3", "-3"),
+            ("5.0", "5.0"),
+            ("1e20", "1e+20"),
+            ("true", "True"),
+            ("false", "False"),
+            ("null", "None"),
+            (r#""x""#, "x"),
+            ("0.1", "0.1"),
+        ];
+        for (json, want) in scalars {
+            let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+            assert_eq!(str_json_scalar(&v).as_deref(), Some(want), "{json}");
+        }
+        assert_eq!(str_json_scalar(&serde_json::json!([1])), None);
+        // Python's str.isspace() over U+0000..U+3000.
+        let spaces: Vec<char> = (0..=0x3000u32)
+            .filter_map(char::from_u32)
+            .filter(|&c| is_space(c))
+            .collect();
+        let mut want: Vec<char> = "\t\n\u{b}\u{c}\r\u{1c}\u{1d}\u{1e}\u{1f} \u{85}\u{a0}\u{1680}"
+            .chars()
+            .collect();
+        want.extend('\u{2000}'..='\u{200a}');
+        want.extend(['\u{2028}', '\u{2029}', '\u{202f}', '\u{205f}', '\u{3000}']);
+        assert_eq!(spaces, want);
     }
 }

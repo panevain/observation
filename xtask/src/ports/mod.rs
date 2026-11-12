@@ -56,6 +56,20 @@ pub trait Brotli {
 }
 
 /// The current time.
+/// What a `gh` command printed, and its exit status (negative: the signal that ended it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GhOutput {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// GitHub through the `gh` CLI, which reads its token from the environment (`GH_TOKEN`).
+pub trait GitHub {
+    /// Runs `gh` with `args` and returns its output whatever its exit status.
+    fn gh(&self, args: &[String]) -> Result<GhOutput>;
+}
+
 pub trait Clock {
     fn now(&self) -> Timestamp;
 }

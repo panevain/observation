@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::time::Timestamp;
-use crate::ports::{AuditOutput, Brotli, Cargo, Clock, Git, Http, Response};
+use crate::ports::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, Http, Response};
 use crate::{Error, Result};
 
 /// The calls a fake received, in order, written like the command they stand for.
@@ -137,6 +137,25 @@ impl Cargo for FakeCargo {
         Ok(Some(json.unwrap_or_else(|| {
             unexpected(&format!("cargo-audit on\n{text}"))
         })))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct FakeGitHub {
+    /// `gh` arguments joined with spaces -> its output.
+    pub answers: HashMap<String, GhOutput>,
+    pub calls: Calls,
+}
+
+impl GitHub for FakeGitHub {
+    fn gh(&self, args: &[String]) -> Result<GhOutput> {
+        let call = args.join(" ");
+        self.calls.record(format!("gh {call}"));
+        Ok(self
+            .answers
+            .get(&call)
+            .cloned()
+            .unwrap_or_else(|| unexpected(&format!("gh {call}"))))
     }
 }
 

@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use xtask::cmd;
 use xtask::ports::Brotli;
-use xtask::ports::process::{BrotliCli, CargoCli, Curl, GitCli, SystemClock};
+use xtask::ports::process::{BrotliCli, CargoCli, Curl, GhCli, GitCli, SystemClock};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -25,6 +25,23 @@ struct Cli {
     repo: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum AutomergeCommand {
+    /// Print {"merge": [...], "hold": [...]}: the open Dependabot pull requests that may merge
+    /// themselves, and those (or the Pins pull request) labelled hold with auto-merge on.
+    List {
+        /// The GitHub repository (OWNER/NAME).
+        #[arg(long = "github-repo", value_name = "OWNER/NAME")]
+        github_repo: String,
+        /// Append a Markdown table of the verdicts to FILE (e.g. $GITHUB_STEP_SUMMARY).
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+        /// Word the table as what would happen.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -42,6 +59,9 @@ enum CoverageCommand {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Dependabot pull requests whose auto-merge to enable or disable.
+    #[command(subcommand)]
+    Automerge(AutomergeCommand),
     /// Fail when a crate version added to a lockfile since BASE is younger than the cooldown
     /// (.config/cargo-cooldown.toml), unless exempt or a RustSec fix.
     Cooldown {
@@ -110,6 +130,27 @@ fn main() -> ExitCode {
         .repo
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
     let result = match cli.command {
+        Command::Automerge(AutomergeCommand::List {
+            github_repo,
+            summary,
+            dry_run,
+        }) => {
+            let args = cmd::automerge::Args {
+                repo: github_repo,
+                dry_run,
+            };
+            let mut diagnostics = String::new();
+            let result = cmd::automerge::run(&args, &GhCli::default(), &mut diagnostics);
+            emit(b"", diagnostics.as_bytes());
+            result.and_then(|out| {
+                // As the script: an empty --summary writes nothing.
+                if let Some(path) = summary.filter(|p| !p.as_os_str().is_empty()) {
+                    append(&path, &out.summary)?;
+                }
+                emit(out.stdout.as_bytes(), b"");
+                Ok(false)
+            })
+        }
         Command::Cooldown {
             base,
             lockfiles,
