@@ -474,4 +474,454 @@ mod tests {
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
+
+    /// The steps of release-prep.yml's bot jobs (prepare, then pretag) that check plan's outputs
+    /// in plain shell before using them: each `run` text named `name`, with the KIND it sets.
+    fn bot_job_steps(name: &str) -> Vec<(String, String)> {
+        let wf = ok(fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/release-prep.yml"),
+        ));
+        let lines: Vec<&str> = wf.lines().collect();
+        let indent = |l: &str| l.len() - l.trim_start().len();
+        let mut out = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim() != format!("- name: {name}") {
+                continue;
+            }
+            let mut kind = String::new();
+            let mut j = i + 1;
+            let run = loop {
+                let l = lines[j].trim();
+                assert!(!l.starts_with("- "), "no run in the step at line {}", i + 1);
+                if let Some(k) = l.strip_prefix("KIND: ") {
+                    k.clone_into(&mut kind);
+                }
+                if l == "run: |" {
+                    let body: Vec<&str> = lines[j + 1..]
+                        .iter()
+                        .take_while(|b| b.trim().is_empty() || indent(b) > indent(lines[j]))
+                        .map(|b| b.get(indent(lines[j]) + 2..).unwrap_or(""))
+                        .collect();
+                    break body.join("\n") + "\n";
+                }
+                if let Some(quoted) = l.strip_prefix("run: '").and_then(|r| r.strip_suffix('\'')) {
+                    break quoted.replace("''", "'");
+                }
+                j += 1;
+            };
+            out.push((kind, run));
+        }
+        out
+    }
+
+    /// Runs a check in `dir` as the job would: exit status and stdout.
+    fn run_check(script: &str, dir: &Path, vars: [(&str, &str); 4]) -> (i32, String) {
+        let out = ok(Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", script])
+            .current_dir(dir)
+            .envs(ENV)
+            .envs(vars)
+            .env_remove("GITHUB_ACTIONS")
+            .output());
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        (out.status.code().unwrap_or(-1), stdout)
+    }
+
+    /// What the bot jobs' checkout gives the check: develop as refs/remotes/origin/develop, and
+    /// scripts/workspace-version.sh (copied in, untracked).
+    fn as_checked_out(dir: &Path, develop: &str) {
+        let script =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/workspace-version.sh");
+        ok(fs::create_dir_all(dir.join("scripts")));
+        ok(fs::copy(script, dir.join("scripts/workspace-version.sh")));
+        git_out(dir, &["update-ref", "refs/remotes/origin/develop", develop]);
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = ok(Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .envs(ENV)
+            .output());
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// prepare and pretag run the same check, and it accepts every version the port plans in the
+    /// scenario repositories of release-plan/cases.toml, from the commit it planned on.
+    #[test]
+    fn the_bot_jobs_accept_every_plan_the_port_makes() {
+        let checks = bot_job_steps("Check the plan");
+        let kinds: Vec<&str> = checks.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(kinds, ["stable", "prerelease"]);
+        assert_eq!(
+            checks[0].1, checks[1].1,
+            "prepare and pretag check differently"
+        );
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/release-plan");
+        let cases: Cases = ok(toml::from_str(&ok(fs::read_to_string(
+            dir.join("cases.toml"),
+        ))));
+        let mut checked = 0;
+        let mut problems = Vec::new();
+        for case in cases.case.iter().filter(|c| c.command == "plan") {
+            let flag = |name: &str| {
+                case.args
+                    .iter()
+                    .position(|a| a == name)
+                    .map(|i| case.args[i + 1].clone())
+                    .unwrap_or_default()
+            };
+            let (given, prerelease) = (flag("--version"), flag("--prerelease"));
+            let tmp = ok(tempfile::tempdir());
+            let dir = tmp.path().join("repo");
+            ok(fs::create_dir(&dir));
+            build(&dir, case);
+            let mut git = GitCli::new(&dir);
+            git.env = ENV.iter().map(|&(k, v)| (k.into(), v.into())).collect();
+            let Ok(planned) = plan(&dir, &given, &prerelease, &git) else {
+                continue;
+            };
+            if planned.version.is_empty() || !["", "dev"].contains(&prerelease.as_str()) {
+                continue;
+            }
+            as_checked_out(&dir, "HEAD");
+            let sha = git_out(&dir, &["rev-parse", "HEAD"]);
+            let kind = match planned.version.contains('-') {
+                true => "prerelease",
+                false => "stable",
+            };
+            let vars = [
+                ("SHA", sha.as_str()),
+                ("VERSION", &planned.version),
+                ("KIND", kind),
+                ("GIVEN", &given),
+            ];
+            let (code, stdout) = run_check(&checks[0].1, &dir, vars);
+            if code != 0 {
+                problems.push(format!(
+                    "{}: {} refused: {stdout}",
+                    case.name, planned.version
+                ));
+            }
+            checked += 1;
+        }
+        assert!(checked > 40, "only {checked} plans checked");
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    /// What the check refuses, one scenario per rule: a forged sha (not a commit id, not the one
+    /// checked out, not on develop, without the latest release) or a forged version (not semver,
+    /// of the other kind, already tagged, or not one the plan could give).
+    #[test]
+    fn the_bot_jobs_refuse_a_forged_plan() {
+        let checks = bot_job_steps("Check the plan");
+        let script = &checks[0].1;
+        let forms = bot_job_steps("Check the plan's commit id");
+        assert_eq!(forms.len(), 2);
+        assert_eq!(
+            forms[0].1, forms[1].1,
+            "prepare and pretag check differently"
+        );
+
+        // c1 -- c2 (v0.1.0) -- c3 (develop: version 0.4.0, tag v0.2.0-dev.1) -- c4 (not on develop)
+        let tmp = ok(tempfile::tempdir());
+        let dir = tmp.path().join("repo");
+        ok(fs::create_dir(&dir));
+        let mut repo = Repo {
+            dir: dir.clone(),
+            commits: 0,
+        };
+        let cargo = |v: &str| {
+            let text = format!("[workspace]\n\n[workspace.package]\nversion = \"{v}\"\n");
+            BTreeMap::from([("Cargo.toml".to_owned(), text)])
+        };
+        repo.git(&["init", "-q", "-b", "develop"]);
+        repo.write(&cargo("0.1.0"));
+        repo.commit("c1");
+        repo.write(&BTreeMap::from([("a".to_owned(), "2\n".to_owned())]));
+        repo.commit("c2");
+        repo.git(&["tag", "v0.1.0"]);
+        repo.write(&cargo("0.4.0"));
+        repo.commit("c3");
+        repo.git(&["tag", "v0.2.0-dev.1"]);
+        repo.git(&["switch", "-q", "-c", "fork"]);
+        repo.write(&BTreeMap::from([("a".to_owned(), "4\n".to_owned())]));
+        repo.commit("c4");
+        let [c1, c2, c3, c4] =
+            ["HEAD~3", "HEAD~2", "HEAD~1", "HEAD"].map(|r| git_out(&dir, &["rev-parse", r]));
+        as_checked_out(&dir, &c3);
+
+        let bad_sha = |s: &str| format!("::error::the plan's sha is not a commit id: '{s}'\n");
+        let refused = |v: &str, allowed: &str| {
+            format!("::error::{v} is not a version this run may release ({allowed})\n")
+        };
+        let bumps = "1.0.0 0.2.0 0.1.1 0.4.0";
+        let upper = c3.to_uppercase();
+        // (checked out, sha, version, kind, given, refusal: none when it passes)
+        type Scenario<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str, Option<String>);
+        let scenarios: Vec<Scenario> = vec![
+            (&c3, &c3, "0.1.1", "stable", "", None),
+            (&c3, &c3, "0.2.0", "stable", "", None),
+            (&c3, &c3, "1.0.0", "stable", "", None),
+            (&c3, &c3, "0.4.0", "stable", "", None),
+            (&c3, &c3, "0.1.1-dev.1", "prerelease", "", None),
+            (&c3, &c3, "0.4.0-dev.12", "prerelease", "", None),
+            (&c3, &c3, "0.7.0", "stable", "0.7.0", None),
+            (&c3, &c3, "0.7.0-rc.1", "prerelease", "0.7.0-rc.1", None),
+            // the sha
+            (&c3, "abc", "0.2.0", "stable", "", Some(bad_sha("abc"))),
+            (&c3, &upper, "0.2.0", "stable", "", Some(bad_sha(&upper))),
+            (&c3, "", "0.2.0", "stable", "", Some(bad_sha(""))),
+            (
+                &c3,
+                &c2,
+                "0.2.0",
+                "stable",
+                "",
+                Some(format!("::error::HEAD is not the plan's commit {c2}\n")),
+            ),
+            (
+                &c4,
+                &c4,
+                "0.2.0",
+                "stable",
+                "",
+                Some(format!("::error::{c4} is not on develop\n")),
+            ),
+            (
+                &c1,
+                &c1,
+                "0.2.0",
+                "stable",
+                "",
+                Some(format!("::error::{c1} does not contain v0.1.0\n")),
+            ),
+            // the version's form and kind
+            (
+                &c3,
+                &c3,
+                "0.2",
+                "stable",
+                "",
+                Some("::error::not a semver version: '0.2'\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "v0.2.0",
+                "stable",
+                "",
+                Some("::error::not a semver version: 'v0.2.0'\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.02.0",
+                "stable",
+                "",
+                Some("::error::not a semver version: '0.02.0'\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0\n",
+                "stable",
+                "",
+                Some("::error::not a semver version: '0.2.0\n'\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-",
+                "prerelease",
+                "",
+                Some("::error::not a semver version: '0.2.0-'\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-a..b",
+                "prerelease",
+                "",
+                Some("::error::not a semver version: '0.2.0-a..b'\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "",
+                "stable",
+                "",
+                Some("::error::not a semver version: ''\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-dev.2",
+                "stable",
+                "",
+                Some("::error::0.2.0-dev.2 is a pre-release\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0",
+                "prerelease",
+                "",
+                Some("::error::0.2.0 is not a pre-release\n".into()),
+            ),
+            // tagged already
+            (
+                &c3,
+                &c3,
+                "0.1.0",
+                "stable",
+                "",
+                Some("::error::v0.1.0 already exists\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-dev.1",
+                "prerelease",
+                "",
+                Some("::error::v0.2.0-dev.1 already exists\n".into()),
+            ),
+            // not a version the plan could give
+            (
+                &c3,
+                &c3,
+                "9.0.0",
+                "stable",
+                "",
+                Some(refused("9.0.0", bumps)),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.3.0",
+                "stable",
+                "",
+                Some(refused("0.3.0", bumps)),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.1.2",
+                "stable",
+                "",
+                Some(refused("0.1.2", bumps)),
+            ),
+            (
+                &c3,
+                &c3,
+                "1.1.0",
+                "stable",
+                "",
+                Some(refused("1.1.0", bumps)),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.5.0",
+                "stable",
+                "",
+                Some(refused("0.5.0", bumps)),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0",
+                "stable",
+                "0.7.0",
+                Some(refused("0.2.0", "0.7.0")),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.3.0-dev.1",
+                "prerelease",
+                "",
+                Some(refused("0.3.0-dev.1", bumps)),
+            ),
+            (
+                &c3,
+                &c3,
+                "9.0.0-dev.1",
+                "prerelease",
+                "",
+                Some(refused("9.0.0-dev.1", bumps)),
+            ),
+            // from c2, develop's version is the latest release's, so it is no candidate
+            (
+                &c2,
+                &c2,
+                "0.1.0-dev.1",
+                "prerelease",
+                "",
+                Some(refused("0.1.0-dev.1", "1.0.0 0.2.0 0.1.1")),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-rc.1",
+                "prerelease",
+                "",
+                Some("::error::0.2.0-rc.1 is not X.Y.Z-dev.N\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-dev.0",
+                "prerelease",
+                "",
+                Some("::error::0.2.0-dev.0 is not X.Y.Z-dev.N\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-dev.01",
+                "prerelease",
+                "",
+                Some("::error::0.2.0-dev.01 is not X.Y.Z-dev.N\n".into()),
+            ),
+            (
+                &c3,
+                &c3,
+                "0.2.0-dev.1.2",
+                "prerelease",
+                "",
+                Some("::error::0.2.0-dev.1.2 is not X.Y.Z-dev.N\n".into()),
+            ),
+        ];
+        let mut problems = Vec::new();
+        for (head, sha, version, kind, given, want) in &scenarios {
+            git_out(&dir, &["checkout", "-q", "--detach", head]);
+            let got = run_check(
+                script,
+                &dir,
+                [
+                    ("SHA", sha),
+                    ("VERSION", version),
+                    ("KIND", kind),
+                    ("GIVEN", given),
+                ],
+            );
+            let want = match want {
+                None => (0, String::new()),
+                Some(error) => (1, error.clone()),
+            };
+            if got != want {
+                problems.push(format!(
+                    "{version:?} ({kind}, sha {sha}): {got:?}, not {want:?}"
+                ));
+            }
+        }
+        for (sha, code) in [(c3.as_str(), 0), ("abc", 1), (upper.as_str(), 1), ("", 1)] {
+            let vars = [("SHA", sha), ("VERSION", ""), ("KIND", ""), ("GIVEN", "")];
+            assert_eq!(run_check(&forms[0].1, &dir, vars).0, code, "{sha:?}");
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
 }
