@@ -1,0 +1,71 @@
+{
+  "version": "1.2.3",
+  "rust": {
+    "fixed": [
+      {
+        "id": "RUSTSEC-2022-0013",
+        "title": "Regexes with large repetitions",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2022-0013",
+        "crate": "regex",
+        "version": "1.5.4",
+        "patched": [
+          ">=1.5.5"
+        ],
+        "to": "1.5.5"
+      }
+    ],
+    "unfixable": [
+      {
+        "id": "RUSTSEC-2020-0071",
+        "title": "Potential segfault",
+        "url": "https://example.com/a",
+        "crate": "time",
+        "version": "0.1.43",
+        "patched": []
+      }
+    ]
+  },
+  "images": [
+    {
+      "name": "observation",
+      "ref": "ghcr.io/panevain/observation:1.2.3",
+      "missing": false,
+      "findings": [
+        {
+          "id": "CVE-2",
+          "pkg": "libc6",
+          "installed": "1",
+          "fixed": "2",
+          "severity": "MEDIUM",
+          "title": "\u00e9\u007f",
+          "waiting": false
+        },
+        {
+          "id": "CVE-1",
+          "pkg": "libssl3",
+          "installed": "1",
+          "fixed": "2",
+          "severity": "CRITICAL",
+          "title": "\ud83e\udd80",
+          "waiting": true
+        },
+        {
+          "id": "CVE-0",
+          "pkg": "zlib",
+          "installed": "1",
+          "fixed": "2",
+          "severity": "LOW",
+          "title": "",
+          "waiting": false
+        }
+      ]
+    },
+    {
+      "name": "observation-regions",
+      "ref": "ghcr.io/panevain/observation-regions:1.2.3",
+      "missing": true
+    }
+  ],
+  "action": "hotfix",
+  "attention": true
+}
