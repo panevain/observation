@@ -26,6 +26,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, EguiTextureHandle, egui};
 use map_picker::MapPicker;
+use observation_client_model::vm::LoadingVm;
 
 pub struct UiPlugin;
 
@@ -241,10 +242,8 @@ fn draw_ui(
         }
         _ => {}
     }
-    if let Some(area) = d.loading.area() {
-        let elapsed = d.ui.now - d.loading.started();
-        let cancellable = d.loading.request().is_some_and(|r| !r.keep_cameras);
-        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed, cancellable) {
+    if let Some(vm) = LoadingVm::new(&d.loading, d.ui.now) {
+        match overlays::loading(&ctx, &t, viewport_rect, &vm) {
             Some(overlays::LoadingChoice::Cancel) => {
                 d.loading.cancel();
             }

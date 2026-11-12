@@ -9,7 +9,7 @@ use crate::icons;
 use crate::state::{Editor, Hover, Panels, ToastAction, ToastKind, Toasts, Tool};
 use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
-use observation_core::scene::AreaRef;
+use observation_client_model::vm::LoadingVm;
 
 /// Full-screen block for viewports below the supported minimum.
 pub fn viewport_gate(ctx: &egui::Context, t: &Tokens, w: f32, h: f32) {
@@ -347,9 +347,7 @@ pub fn loading(
     ctx: &egui::Context,
     t: &Tokens,
     vp: egui::Rect,
-    area: AreaRef,
-    elapsed: f64,
-    cancellable: bool,
+    vm: &LoadingVm,
 ) -> Option<LoadingChoice> {
     let mut choice = None;
     egui::Area::new(Id::new("loading"))
@@ -361,44 +359,30 @@ pub fn loading(
                 ui.set_max_width(380.0);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    let what = match area {
-                        AreaRef::Demo => "Loading the demo street…".to_owned(),
-                        AreaRef::Osm { bbox } => format!(
-                            "Loading buildings for {:.0} × {:.0} m…",
-                            bbox.width_m(),
-                            bbox.height_m()
-                        ),
-                    };
-                    ui.label(RichText::new(what).family(strong_family()));
+                    ui.label(RichText::new(&vm.headline).family(strong_family()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new(format!("{elapsed:.0} s"))
+                            RichText::new(&vm.elapsed)
                                 .size(t.font.caption)
                                 .color(t.text_muted),
                         );
                     });
                 });
-                let stage = match (area, elapsed) {
-                    (AreaRef::Demo, _) => "Built into the server; this should take a moment.",
-                    (_, e) if e < 5.0 => "Fetching map data and preparing the 3D scene on the server.",
-                    (_, e) if e < 25.0 => {
-                        "Still working: a new place waits on OpenStreetMap's public Overpass service, which can take up to a minute. Places loaded before come from the server's cache."
-                    }
-                    _ => "The map-data service is slow right now. You can keep waiting, cancel and try a smaller area, or explore the demo street meanwhile.",
-                };
                 ui.add_space(t.space.xs);
-                ui.add(egui::Label::new(
-                    RichText::new(stage).size(t.font.caption).color(t.text_muted),
-                ).wrap());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(vm.stage)
+                            .size(t.font.caption)
+                            .color(t.text_muted),
+                    )
+                    .wrap(),
+                );
                 ui.add_space(t.space.sm);
                 ui.horizontal(|ui| {
-                    if cancellable && ui.add(secondary(t, "Cancel")).clicked() {
+                    if vm.can_cancel && ui.add(secondary(t, "Cancel")).clicked() {
                         choice = Some(LoadingChoice::Cancel);
                     }
-                    if area != AreaRef::Demo
-                        && elapsed >= 5.0
-                        && ui.add(secondary(t, "Use demo street instead")).clicked()
-                    {
+                    if vm.offer_demo && ui.add(secondary(t, "Use demo street instead")).clicked() {
                         choice = Some(LoadingChoice::Demo);
                     }
                 });
