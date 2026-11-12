@@ -1,0 +1,11 @@
+# The files a release change may touch (`cargo xtask release unexpected-files KIND`, which
+# prints every path on stdin that is not on KIND's list: whole paths, compared exactly).
+
+[allowed-files]
+# What hotfix.yml's prepare job may change in main: versions and pins. hotfix.yml's open-pr job
+# checks the patch against its own copy of this list, inline, because it compiles nothing;
+# `cargo xtask sync` fails when the two differ.
+hotfix = ["Cargo.toml", "Cargo.lock", "fuzz/Cargo.lock", "CHANGELOG.md", "Dockerfile"]
+# What a pre-release tag's commit may change over its parent (release.yml's verify job, which
+# reads this file from that parent, never from the tag being verified).
+prerelease = ["Cargo.toml", "Cargo.lock", "fuzz/Cargo.lock"]

@@ -76,9 +76,27 @@ enum ReleaseCommand {
         #[arg(long, value_name = "FILE")]
         summary: Option<PathBuf>,
     },
+    /// Print each path read from stdin (one per line) that is not on KIND's list in
+    /// .config/release.toml's [allowed-files]: whole paths, compared exactly.
+    UnexpectedFiles {
+        kind: FilesKind,
+        /// The list's file (default: .config/release.toml in the repository). A relative path
+        /// is taken from the repository.
+        #[arg(long, value_name = "FILE")]
+        config: Option<PathBuf>,
+    },
     /// The workspace version (`version` in Cargo.toml's [workspace.package]).
     #[command(subcommand)]
     Version(VersionCommand),
+}
+
+/// Which list of .config/release.toml `release unexpected-files` reads.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum FilesKind {
+    /// What a hotfix may change in main.
+    Hotfix,
+    /// What a pre-release tag's commit may change over its parent.
+    Prerelease,
 }
 
 /// The workflow whose check `release gate` applies.
@@ -294,6 +312,17 @@ fn main() -> ExitCode {
                 }
                 Ok(gated.failed)
             })
+        }
+        Command::Release(ReleaseCommand::UnexpectedFiles { kind, config }) => {
+            let kind = match kind {
+                FilesKind::Hotfix => cmd::release::files::Kind::Hotfix,
+                FilesKind::Prerelease => cmd::release::files::Kind::Prerelease,
+            };
+            cmd::release::files::run(&repo, kind, config.as_deref(), &mut std::io::stdin().lock())
+                .map(|out| {
+                    emit(out.as_bytes(), b"");
+                    false
+                })
         }
         Command::Release(ReleaseCommand::Version(VersionCommand::Get { file, name })) => {
             cmd::release::version::get(

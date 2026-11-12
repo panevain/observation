@@ -92,8 +92,9 @@ jobs:
           python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
           "${XTASK}" --repo main release version set -- "${NEXT}"
           python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
-          # A hotfix only moves versions and pins.
-          unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
+          # A hotfix only moves versions and pins: .config/release.toml's hotfix list, read from
+          # this workflow's checkout (develop), never from main/.
+          unexpected="$(git -C main diff --name-only | "${XTASK}" --repo . release unexpected-files hotfix)"
           [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
           git -C main diff --binary > "${out}/hotfix.patch"
           {
@@ -154,6 +155,8 @@ jobs:
           # on the same list as there. No file added, deleted, renamed or copied, no mode or type
           # change (a symlink or gitlink), no binary patch; anything else fails. What the allowed
           # files now say is not judged here: that is for the review of the pull request.
+          # The list is .config/release.toml's hotfix list, written out here so that this job
+          # reads no data file and runs nothing built; `cargo xtask sync` keeps the two equal.
           patch="${RUNNER_TEMP}/hotfix/hotfix.patch"
           allowed='Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile'
           tab=$'\t'

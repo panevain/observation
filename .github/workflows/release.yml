@@ -59,7 +59,11 @@ jobs:
           if [[ "${version}" == *-* ]]; then
             # Pre-releases stay off main, so that main is always the latest stable release.
             git merge-base --is-ancestor "${GITHUB_SHA}^" origin/develop || { echo "::error::${TAG}'s parent is not on develop"; exit 1; }
-            other="$(git diff --name-only "${GITHUB_SHA}^" "${GITHUB_SHA}" | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock' || true)"
+            # The allowed files (.config/release.toml's prerelease list) come from the parent,
+            # never from the tag being checked, which could otherwise allow its own changes.
+            config="${RUNNER_TEMP}/release.toml"
+            git show "${GITHUB_SHA}^:.config/release.toml" > "${config}"
+            other="$(git diff --name-only "${GITHUB_SHA}^" "${GITHUB_SHA}" | "${XTASK}" release unexpected-files prerelease --config "${config}")"
             [ -z "${other}" ] || { echo "::error::${TAG} changes more than the version: ${other}"; exit 1; }
             echo "${TAG}: version ${version}, a version bump on top of develop"
           else
