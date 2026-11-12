@@ -467,7 +467,9 @@ mod tests {
             "http://127.0.0.1:9/",
             "http://127.0.0.1:9/{z}/{x}/{y}.png",
         );
-        let proxy = TileProxy::new(reqwest::Client::new(), &config, cache, clock.clone());
+        // No proxy: the environment's proxy settings must not reach the test.
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let proxy = TileProxy::new(client, &config, cache, clock.clone());
         let stale_at = |unix: u64| {
             clock.set(std::time::UNIX_EPOCH + Duration::from_secs(unix));
             let proxy = &proxy;
