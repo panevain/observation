@@ -203,10 +203,14 @@ pub fn render(checked: &Checked, brotli: Option<&[u64]>) -> String {
     lines.join("\n") + "\n"
 }
 
+/// The deflate level of the gzip figures: this check's and the treemap's (`cmd::treemap::zlib`),
+/// measured with the same library so that the two agree.
+pub const GZIP_LEVEL: u32 = 9;
+
 /// The size of `data` compressed as Python's `gzip.compress(data, compresslevel=9)` frames it:
 /// a 10-byte header, the deflate stream, an 8-byte trailer.
 pub fn gzip_len(data: &[u8]) -> Result<u64> {
-    let mut gz = GzEncoder::new(Vec::new(), Compression::new(9));
+    let mut gz = GzEncoder::new(Vec::new(), Compression::new(GZIP_LEVEL));
     gz.write_all(data)
         .map_err(|e| Error::new(format!("gzip: {e}")))?;
     let out = gz.finish().map_err(|e| Error::new(format!("gzip: {e}")))?;

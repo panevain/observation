@@ -10,7 +10,8 @@
 # generation is identical. The module is then post-processed like trunk does
 # (wasm-bindgen CLI matching Cargo.lock, then wasm-opt at the level and with the
 # feature flags web/index.html gives trunk, plus --debuginfo to keep the name section)
-# and attributed to crates by scripts/wasm-size-treemap.py.
+# and attributed to crates by `cargo xtask treemap` (the port of
+# scripts/wasm-size-treemap.py, which stays as its reference).
 #
 # A fat-LTO build takes 15-20 minutes on four cores. --no-build reuses the
 # existing named module in the target directory.
@@ -87,7 +88,7 @@ else
 fi
 
 mkdir -p "$(dirname "$out_svg")"
-python3 -I scripts/wasm-size-treemap.py \
+cargo xtask treemap \
   --wasm "$module" --out "$out_svg" --stage "$stage" \
   --commit "$(git rev-parse --short=9 HEAD)" \
   --date "$(git log -1 --format=%cs HEAD)" \
