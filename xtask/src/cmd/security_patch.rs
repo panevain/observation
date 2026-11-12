@@ -1,8 +1,7 @@
 //! `security-patch check`: whether the latest release needs a security patch release, worked
 //! out as `scripts/security-patch.py check` does. That script stays: hotfix.yml writes the
-//! hotfix pull request's files with it, in a job that builds nothing. The port is for Release
-//! watch's `scan`, which only looks. This part reads what the scanners report and writes the
-//! report; running them comes with the command line.
+//! hotfix pull request's files with it, in a job that builds nothing. Release watch's `scan`,
+//! which only looks, runs this port.
 //!
 //! The repository's `Cargo.lock` is audited (cargo-audit, honouring its `.cargo/audit.toml`),
 //! `cargo update -p` is run for each vulnerable crate, and the lock is audited again: the
@@ -16,15 +15,17 @@
 //! serde_json does not (NaN, a lone surrogate, deep nesting), and on a crate name or image
 //! reference that starts with `-` (it would be read as an option).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::core::py::json_truthy;
+use crate::core::py::{json_truthy, universal_newlines};
+use crate::ports::{ProgramOutput, Scanners};
 use crate::{Error, Result};
 
 /// The published images: name, registry path, the Dockerfile stage whose base gives the image
@@ -46,6 +47,8 @@ pub const IMAGES: [(&str, &str, &str, bool); 2] = [
 ];
 /// The severities that call for a patch release.
 const TRIGGER: [&str; 2] = ["CRITICAL", "HIGH"];
+/// The severities reported.
+const REPORT: &str = "MEDIUM,HIGH,CRITICAL";
 
 /// Python's `\s` and `\S` in a `str` pattern (`str.isspace()`: White_Space plus U+001C..U+001F).
 const S: &str = r"[\s\x1c-\x1f]";
@@ -394,10 +397,179 @@ pub fn report_json(report: &Report) -> Result<String> {
     Ok(out + "\n")
 }
 
+/// A file as Python's `read_text()` gives it: strict UTF-8, universal newlines.
+fn read_text(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| Error::new(format!("{}: not UTF-8", path.display())))?;
+    Ok(universal_newlines(&text))
+}
+
+fn not_an_option(value: &str, what: &str) -> Result<()> {
+    if value.starts_with('-') {
+        return Err(Error::new(format!("{what} starts with '-': {value}")));
+    }
+    Ok(())
+}
+
+fn audit(repo: &Path, tools: &dyn Scanners, diagnostics: &mut String) -> Result<Vec<Advisory>> {
+    let out = tools.cargo(repo, &["audit", "--json", "--file", "Cargo.lock"])?;
+    match serde_json::from_str::<Value>(&out.stdout) {
+        Ok(report) => advisories(&report),
+        Err(_) => {
+            diagnostics.push_str(&out.stdout);
+            diagnostics.push_str(&out.stderr);
+            Err(Error::new("cargo audit produced no JSON"))
+        }
+    }
+}
+
+fn rust_fix(
+    repo: &Path,
+    tools: &dyn Scanners,
+    diagnostics: &mut String,
+) -> Result<(Vec<Fixed>, Vec<Advisory>)> {
+    let before = audit(repo, tools, diagnostics)?;
+    let lock = repo.join("Cargo.lock");
+    let old = lock_versions(&read_text(&lock)?);
+    let vulnerable: BTreeSet<(&str, &str)> = before
+        .iter()
+        .map(|v| (v.krate.as_str(), v.version.as_str()))
+        .collect();
+    for (krate, version) in vulnerable {
+        let spec = format!("{krate}@{version}");
+        not_an_option(&spec, "a crate name")?;
+        let ProgramOutput { code, stderr, .. } = tools.cargo(repo, &["update", "-p", &spec])?;
+        if code != 0 {
+            let _ = writeln!(diagnostics, "cargo update -p {spec} failed:\n{stderr}");
+        }
+    }
+    let after = audit(repo, tools, diagnostics)?;
+    let new = lock_versions(&read_text(&lock)?);
+    let remaining: HashSet<(&str, &str)> = after
+        .iter()
+        .map(|v| (v.id.as_str(), v.krate.as_str()))
+        .collect();
+    let fixed = before
+        .into_iter()
+        .filter(|v| !remaining.contains(&(v.id.as_str(), v.krate.as_str())))
+        .map(|v| {
+            let to: BTreeSet<&str> = new
+                .difference(&old)
+                .filter(|(name, _)| *name == v.krate)
+                .map(|(_, version)| version.as_str())
+                .collect();
+            let to = to.into_iter().collect::<Vec<_>>().join(", ");
+            Fixed {
+                to: if to.is_empty() {
+                    "(removed)".into()
+                } else {
+                    to
+                },
+                advisory: v,
+            }
+        })
+        .collect();
+    Ok((fixed, after))
+}
+
+/// Trivy's findings for an image, or `None` when it is not published.
+fn trivy(
+    reference: &str,
+    tools: &dyn Scanners,
+    diagnostics: &mut String,
+) -> Result<Option<Vec<Finding>>> {
+    not_an_option(reference, "an image reference")?;
+    let out = tools.trivy(&[
+        "image",
+        "--image-src",
+        "remote",
+        "--scanners",
+        "vuln",
+        "--ignore-unfixed",
+        "--severity",
+        REPORT,
+        "--format",
+        "json",
+        "--quiet",
+        reference,
+    ])?;
+    if out.code != 0 {
+        // GHCR answers an anonymous pull of a missing image or package with MANIFEST_UNKNOWN
+        // or DENIED; Trivy wraps both in "unable to find the specified image".
+        if out.stderr.contains("unable to find the specified image")
+            || out.stderr.contains("MANIFEST_UNKNOWN")
+        {
+            return Ok(None);
+        }
+        diagnostics.push_str(&out.stderr);
+        return Err(Error::new(format!("trivy failed for {reference}")));
+    }
+    let report = serde_json::from_str::<Value>(&out.stdout)
+        .map_err(|e| Error::new(format!("trivy printed no JSON for {reference}: {e}")))?;
+    findings(&report).map(Some)
+}
+
+fn images(
+    repo: &Path,
+    version: &str,
+    tools: &dyn Scanners,
+    diagnostics: &mut String,
+) -> Result<Vec<Image>> {
+    let bases = dockerfile_bases(&read_text(&repo.join("Dockerfile"))?);
+    let mut out = Vec::new();
+    for (name, path, stage, rebuild_fixes_all) in IMAGES {
+        let reference = format!("{path}:{version}");
+        let mut findings = trivy(&reference, tools, diagnostics)?;
+        if let Some(fs) = &mut findings {
+            let mut still = HashSet::new();
+            if !fs.is_empty()
+                && !rebuild_fixes_all
+                && let Some(base) = bases.get(stage)
+            {
+                let base = trivy(base, tools, diagnostics)?.unwrap_or_default();
+                still = base.into_iter().map(|f| (f.id, f.pkg)).collect();
+            }
+            for f in fs.iter_mut() {
+                f.waiting = still.contains(&(f.id.clone(), f.pkg.clone()));
+            }
+        }
+        out.push(Image {
+            name: name.to_owned(),
+            reference,
+            missing: findings.is_none(),
+            findings,
+        });
+    }
+    Ok(out)
+}
+
+/// Runs the check on `repo` (whose `Cargo.lock` it leaves updated) for the release `version`,
+/// writes `out/report.json` and `out/summary.md`, and returns the line to print: the action,
+/// `hotfix` or `none`. What the scanners said when they failed goes to `diagnostics`.
+pub fn check(
+    repo: &Path,
+    version: &str,
+    out: &Path,
+    tools: &dyn Scanners,
+    diagnostics: &mut String,
+) -> Result<String> {
+    std::fs::create_dir_all(out).map_err(|e| Error::new(format!("{}: {e}", out.display())))?;
+    let (fixed, unfixable) = rust_fix(repo, tools, diagnostics)?;
+    let images = images(repo, version, tools, diagnostics)?;
+    let report = assess(version, fixed, unfixable, images);
+    let write = |name: &str, text: String| {
+        let path = out.join(name);
+        std::fs::write(&path, text).map_err(|e| Error::new(format!("{}: {e}", path.display())))
+    };
+    write("report.json", report_json(&report)?)?;
+    write("summary.md", summarize(&report))?;
+    Ok(format!("{}\n", report.action))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn json(text: &str) -> Value {
         serde_json::from_str(text).unwrap_or_else(|e| panic!("{text}: {e}"))

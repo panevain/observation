@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use xtask::cmd;
 use xtask::ports::Brotli;
-use xtask::ports::process::{BrotliCli, CargoCli, Curl, GhCli, GitCli, SystemClock};
+use xtask::ports::process::{BrotliCli, CargoCli, Curl, GhCli, GitCli, ScannersCli, SystemClock};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -130,6 +130,20 @@ enum GateKind {
 }
 
 #[derive(Debug, Subcommand)]
+enum SecurityPatchCommand {
+    /// Audit the repository's Cargo.lock and run `cargo update -p` for each vulnerable crate
+    /// (so the lock is left with every compatible fix: use a scratch checkout), scan the
+    /// published images of VERSION with Trivy, write OUT/report.json and OUT/summary.md, and
+    /// print the action: hotfix (a patch release would fix something) or none.
+    Check {
+        #[arg(long, value_name = "X.Y.Z")]
+        version: String,
+        #[arg(long, value_name = "OUT")]
+        out: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum VersionCommand {
     /// Print the workspace version; fail unless it is X.Y.Z or X.Y.Z-pre.
     Get {
@@ -175,6 +189,9 @@ enum Command {
     /// The release automation's steps.
     #[command(subcommand)]
     Release(ReleaseCommand),
+    /// Whether the latest release needs a security patch release.
+    #[command(subcommand)]
+    SecurityPatch(SecurityPatchCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
     /// be, or the advisory ignore lists disagree.
     Sync,
@@ -384,6 +401,21 @@ fn main() -> ExitCode {
             );
             emit(b"", diagnostics.as_bytes());
             result
+        }
+        Command::SecurityPatch(SecurityPatchCommand::Check { version, out }) => {
+            let mut diagnostics = String::new();
+            let result = cmd::security_patch::check(
+                &repo,
+                &version,
+                &out,
+                &ScannersCli::default(),
+                &mut diagnostics,
+            );
+            emit(b"", diagnostics.as_bytes());
+            result.map(|action| {
+                emit(action.as_bytes(), b"");
+                false
+            })
         }
         Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
             emit(out.stdout.as_bytes(), out.stderr.as_bytes());

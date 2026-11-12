@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Works out whether the latest release needs a security patch release, and prepares one.
 
-Used by release-watch.yml (daily, against the latest v* tag) and hotfix.yml (against main).
+Used by hotfix.yml (against main), which commits what it writes. Release watch runs xtask's port
+of `check` (`cargo xtask security-patch check`), pinned to this script by xtask/parity/security_patch.rs.
 Needs cargo (with the checkout's rust-toolchain.toml), cargo-audit, trivy and docker buildx.
 
   check --repo DIR --version X.Y.Z --out OUT
