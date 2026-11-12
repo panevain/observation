@@ -143,6 +143,10 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool) -> bool {
         && let Some(id) = ctx.editor.selected.take()
     {
         ctx.doc.get_mut().remove_camera(id);
+        // As the camera list's Delete: Aim and Move have nothing left to work on.
+        if ctx.editor.tool.needs_selection() {
+            ctx.editor.tool = Tool::Select;
+        }
     }
     if pressed(Key::Help) {
         ctx.panels.help_open = !ctx.panels.help_open;
@@ -772,11 +776,30 @@ mod tests {
         assert_eq!(f.editor.selected_address, None);
         assert_eq!(f.doc.cameras.len(), 1);
 
-        // Today the tool stays on when the camera it works on is deleted.
+        // Aim or Move goes back to Select with its camera, as from the list.
         f.editor.tool = Tool::Aim;
         f.press(&[Key::Erase]);
         assert!(f.doc.cameras.is_empty());
-        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Aim));
+        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Select));
+    }
+
+    #[test]
+    fn deleting_with_the_key_leaves_aim_and_move_like_the_list_does() {
+        for tool in [Tool::Aim, Tool::Move] {
+            let mut by_key = Fixture::default().with_camera();
+            by_key.editor.tool = tool;
+            by_key.press(&[Key::Erase]);
+            let mut by_list = Fixture::default().with_camera();
+            by_list.editor.tool = tool;
+            act(&mut by_list, 1, CameraAction::Delete);
+            assert_eq!(by_key.editor, by_list.editor, "{tool:?}");
+            assert_eq!(by_key.editor.tool, Tool::Select);
+        }
+        // Select and Place stay as they are.
+        let mut f = Fixture::default().with_camera();
+        f.editor.tool = Tool::Place;
+        f.press(&[Key::Erase]);
+        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Place));
     }
 
     #[test]

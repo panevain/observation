@@ -92,6 +92,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- Deleting the selected camera with Delete or Backspace while the Aim or Move tool is on goes back to the Select tool, as the camera list's **Delete** does. The tool used to stay on with no camera to work on.
 - While the Region tool is on, the edge of the loaded area is drawn in red and the map beyond it is tinted and hatched. Corners clicked out there move to the edge, which used to look like part of the map refused corners for no reason (#71).
 - Selecting a camera no longer widens the inspector: a long model name is cut short in the model list's button, and the **Group** field takes only the width its pin button leaves, which also stops the button being cut off.
 - The demo street now has its 205 address nodes: the fixture had been recorded before the converter kept them, so many houses there had no address in the camera list or the Address tool.
