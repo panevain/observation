@@ -47,6 +47,9 @@ pub struct HttpRequest {
     /// When set, only a response with this status has its body read; any
     /// other comes back as an error status does under `error_max_bytes` 0.
     pub body_only_for: Option<StatusCode>,
+    /// When set, a response with this status never has its body read, as
+    /// under `error_max_bytes` 0; other statuses follow the caps.
+    pub body_skipped_for: Option<StatusCode>,
 }
 
 impl fmt::Debug for HttpRequest {
@@ -60,6 +63,7 @@ impl fmt::Debug for HttpRequest {
             .field("max_bytes", &self.max_bytes)
             .field("error_max_bytes", &self.error_max_bytes)
             .field("body_only_for", &self.body_only_for)
+            .field("body_skipped_for", &self.body_skipped_for)
             .finish()
     }
 }
@@ -107,6 +111,7 @@ impl HttpRequest {
             max_bytes,
             error_max_bytes: DEFAULT_ERROR_MAX_BYTES,
             body_only_for: None,
+            body_skipped_for: None,
         }
     }
 
@@ -126,6 +131,7 @@ impl HttpRequest {
     pub(crate) fn skips_body(&self, status: StatusCode) -> bool {
         (!status.is_success() && self.error_max_bytes == 0)
             || self.body_only_for.is_some_and(|s| s != status)
+            || self.body_skipped_for == Some(status)
     }
 
     /// The cap that applies to a response with `status`.
@@ -174,6 +180,14 @@ impl HttpRequest {
     /// stall the request.
     pub fn body_only_for(mut self, status: StatusCode) -> Self {
         self.body_only_for = Some(status);
+        self
+    }
+
+    /// Never reads the body of a response with `status`: it is returned
+    /// unread, as [`Self::body_only_for`] returns the others, while every
+    /// other status is read under its cap.
+    pub fn skip_body_of(mut self, status: StatusCode) -> Self {
+        self.body_skipped_for = Some(status);
         self
     }
 
@@ -282,6 +296,9 @@ pub enum TransportErrorKind {
 pub struct TransportError {
     pub kind: TransportErrorKind,
     pub message: String,
+    /// The response's status when the failure came while reading its body
+    /// (the status and headers had arrived); `None` before that.
+    pub status: Option<StatusCode>,
 }
 
 impl TransportError {
@@ -289,7 +306,14 @@ impl TransportError {
         Self {
             kind,
             message: message.into(),
+            status: None,
         }
+    }
+
+    /// The same failure, during the body of a response with `status`.
+    pub fn in_body_of(mut self, status: StatusCode) -> Self {
+        self.status = Some(status);
+        self
     }
 }
 
@@ -370,6 +394,11 @@ mod tests {
         assert!(req.skips_body(StatusCode::PARTIAL_CONTENT));
         assert!(req.skips_body(StatusCode::NO_CONTENT));
         assert!(req.skips_body(StatusCode::NOT_FOUND));
+        let req = HttpRequest::get("http://a.example/", 10).skip_body_of(StatusCode::NOT_FOUND);
+        assert!(req.skips_body(StatusCode::NOT_FOUND));
+        assert!(!req.skips_body(StatusCode::OK));
+        assert!(!req.skips_body(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(!req.skips_body(StatusCode::GONE));
     }
 
     #[test]

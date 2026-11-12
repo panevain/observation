@@ -290,7 +290,8 @@ impl FakeHttp {
             }) if !req.skips_body(status) => Err(TransportError::new(
                 kind,
                 format!("FakeHttp: scripted {kind:?} in the body"),
-            )),
+            )
+            .in_body_of(status)),
             Ok(r) => Ok(HttpResponse {
                 body: if req.skips_body(r.status) {
                     if r.body.is_empty() {
@@ -418,8 +419,13 @@ where
                 match Limited::new(body, cap).collect().await {
                     Ok(collected) => Body::Complete(collected.to_bytes()),
                     Err(e) if e.is::<LengthLimitError>() => Body::TooLarge,
+                    // A body that breaks off keeps its status. One that stalls
+                    // is caught by the timeout around the whole exchange
+                    // below: `Timeout` with no status, where `GuardedHttp`
+                    // gives `BodyTimeout` with the status.
                     Err(e) => {
-                        return Err(TransportError::new(TransportErrorKind::Body, e.to_string()));
+                        return Err(TransportError::new(TransportErrorKind::Body, e.to_string())
+                            .in_body_of(parts.status));
                     }
                 }
             };
@@ -774,6 +780,34 @@ mod tests {
         fake.assert_drained();
     }
 
+    /// A scripted body failure comes with the status that preceded it, and
+    /// only when the body is read.
+    #[tokio::test]
+    async fn fake_body_failures_carry_the_status() {
+        let fake = FakeHttp::replying([
+            FakeReply::status(StatusCode::NOT_FOUND).body_fails(TransportErrorKind::BodyTimeout),
+            FakeReply::status(StatusCode::NOT_FOUND).body_fails(TransportErrorKind::Body),
+            FakeReply::status(StatusCode::NOT_FOUND)
+                .body("gone")
+                .body_fails(TransportErrorKind::Body),
+        ]);
+        let err = fake
+            .send(HttpRequest::get("http://t.example/", 10))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, TransportErrorKind::BodyTimeout);
+        assert_eq!(err.status, Some(StatusCode::NOT_FOUND));
+        let unread = HttpRequest::get("http://t.example/", 10).error_max_bytes(0);
+        let resp = fake.send(unread).await.unwrap();
+        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        assert_eq!(resp.body, Body::Complete(Bytes::new()), "never read");
+        let skipped = HttpRequest::get("http://t.example/", 10).skip_body_of(StatusCode::NOT_FOUND);
+        let resp = fake.send(skipped).await.unwrap();
+        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        assert_eq!(resp.body, Body::TooLarge, "never read");
+        fake.assert_drained();
+    }
+
     type Frames = Box<
         dyn futures_util::Stream<Item = Result<http_body::Frame<Bytes>, std::io::Error>>
             + Send
@@ -825,10 +859,9 @@ mod tests {
                 Err(std::io::Error::other("reset")),
             ]))
         }));
-        assert_eq!(
-            broken.send(get()).await.unwrap_err().kind,
-            TransportErrorKind::Body
-        );
+        let err = broken.send(get()).await.unwrap_err();
+        assert_eq!(err.kind, TransportErrorKind::Body);
+        assert_eq!(err.status, Some(StatusCode::OK), "the head had arrived");
         // A long poll or event stream that stops sending: the timeout ends it,
         // the request's own or else the client's.
         let stalled = RouterHttp::new(streaming(|| {

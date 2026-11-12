@@ -57,7 +57,7 @@ impl GuardedHttp {
             // Read here, under the request's own deadline, as reqwest's timeout covers the body.
             match read_capped(resp, req.cap_for(status))
                 .await
-                .map_err(body_error)?
+                .map_err(|e| body_error(e).in_body_of(status))?
             {
                 Some(bytes) => Body::Complete(bytes),
                 None => Body::TooLarge,

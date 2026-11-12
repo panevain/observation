@@ -85,12 +85,25 @@ impl HttpRegionAgent {
     ) -> Result<Option<QueryResult>, String> {
         // Digits, `.`, `-` and `,` only: no escaping needed.
         let path = format!("{}?bbox={}", paths::INTERPRETER, bbox.overpass());
+        // A 404's body is never read; another error's is read for the log,
+        // and is left out of it if it breaks off.
         let req = self
             .request(Method::POST, &path, MAX_RESULT_BYTES)?
             .form([("data", query)])
             .timeout(timeout)
-            .error_max_bytes(QUERY_ERROR_BYTES);
-        let resp = self.client.send(req).await.map_err(|e| e.to_string())?;
+            .error_max_bytes(QUERY_ERROR_BYTES)
+            .skip_body_of(StatusCode::NOT_FOUND);
+        let resp = match self.client.send(req).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                return match e.status {
+                    Some(status) if !status.is_success() => {
+                        Err(format!("agent answered {status}: "))
+                    }
+                    _ => Err(e.to_string()),
+                };
+            }
+        };
         if resp.status == StatusCode::NOT_FOUND {
             return Ok(None);
         }

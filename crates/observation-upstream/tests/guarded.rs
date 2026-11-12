@@ -254,6 +254,11 @@ async fn a_stalled_body_times_out() {
         .await
         .unwrap_err();
     assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
+    assert_eq!(
+        err.status,
+        Some(http::StatusCode::OK),
+        "the head had arrived"
+    );
 }
 
 /// A status whose body the request does not want comes back at once,
@@ -272,6 +277,29 @@ async fn an_unwanted_body_is_not_read() {
         .unwrap();
     assert_eq!(resp.status, http::StatusCode::PARTIAL_CONTENT);
     assert_eq!(resp.body, Body::TooLarge);
+}
+
+/// The one status whose body is skipped comes back at once, unread, though
+/// its body stalls; another error status is read under its cap.
+#[tokio::test]
+async fn a_skipped_status_is_not_read() {
+    let skipped = |port: u16| {
+        HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100)
+            .skip_body_of(http::StatusCode::NOT_FOUND)
+            .timeout(Duration::from_secs(30))
+    };
+    let port = serve_stalled("HTTP/1.1 404 Not Found\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let resp = lax().send(skipped(port)).await.unwrap();
+    assert_eq!(resp.status, http::StatusCode::NOT_FOUND);
+    assert_eq!(resp.body, Body::TooLarge);
+    let port =
+        serve_stalled("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let err = lax()
+        .send(skipped(port).timeout(Duration::from_millis(300)))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
+    assert_eq!(err.status, Some(http::StatusCode::INTERNAL_SERVER_ERROR));
 }
 
 #[tokio::test]
@@ -300,6 +328,7 @@ async fn refused_connections_are_connect_errors() {
         .await
         .unwrap_err();
     assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
+    assert_eq!(err.status, None, "no response");
     drop(socket);
 }
 
