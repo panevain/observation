@@ -2356,6 +2356,60 @@ status = 404
 json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
 
 [[case]]
+name = "version with a space exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"serde\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0 x\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serde"]
+status = 200
+body = "{\"name\": \"serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."serde/1.0.0 x"]
+error = true
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "name with a space exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"a b\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"a b\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."a b"]
+error = true
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "name non-ascii exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"s\u00e9rde\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"s\\u00e9rde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."s\u00e9rde"]
+error = true
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "version leading space security fix"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"0.9.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \" 1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serde"]
+status = 200
+body = "{\"name\": \"serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."serde/ 1.0.0"]
+error = true
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"serde\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.0.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
 name = "exempt reason printed, float"
 now = "2026-11-11T12:00:00Z"
 config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = 1.5\n"

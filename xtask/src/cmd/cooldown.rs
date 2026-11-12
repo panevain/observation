@@ -1072,17 +1072,31 @@ mod tests {
         "pubtime space before offset",
         "pubtime basic format",
         "pubtime lowercase t",
-        // A name crates.io cannot have is NOT FOUND without a request (the script's request
-        // reached serde's index file).
+        // A new entry whose name or version could not be a crates.io crate's is an error
+        // without a request. The script's requests went through for these: serde's index file
+        // for `serde?x`, and NOT FOUND, then an exemption, for the other two.
         "name query string",
+        "name glob brackets exempt",
+        "version two parts exempt",
         // A crates.io lock entry whose name or version is not a string.
         "lock name int in both",
+    ];
+
+    /// The cases on which both fail, the script with its own report (NOT FOUND, exit 1) and the
+    /// port with an error, on purpose: the entry's name or version could not be a crates.io
+    /// crate's, so the port refuses it before any verdict.
+    const ERROR_FOR_A_REPORT: &[&str] = &[
+        "name glob brackets",
+        "name slash",
+        "version glob brackets",
+        "version glob braces",
     ];
 
     /// Every case of cooldown/parity-cases.toml against what the script did with it
     /// (cooldown/parity-golden, captured from the script with the same recorded answers):
     /// - where the script failed, the port fails; where it failed with a message of its own
-    ///   (not a Python traceback), with the same output;
+    ///   (not a Python traceback), with the same output, except for the cases in
+    ///   [`ERROR_FOR_A_REPORT`], where the port fails with its own error;
     /// - where the script passed, the port passes with the same output, except for the cases
     ///   in [`STRICTER`], where it fails.
     #[test]
@@ -1127,6 +1141,13 @@ mod tests {
                 }
                 ("exit 0", _) => "",
                 (_, 0) => "PASSES WHERE THE SCRIPT FAILED",
+                _ if ERROR_FOR_A_REPORT.contains(&case.name.as_str()) => {
+                    if !stdout.is_empty() || !stderr.contains(": new crates.io package name = ") {
+                        "is listed as an error for the script's report, but is not that error"
+                    } else {
+                        ""
+                    }
+                }
                 _ if !py_stderr.contains("<traceback>") && !same => {
                     "fails with output other than the script's message"
                 }

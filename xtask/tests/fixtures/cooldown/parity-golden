@@ -1468,6 +1468,26 @@ exit 0
 | `serde` | 1.0 | ? | unknown | exempt: r |
 
 -- stderr
+== version with a space exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== name with a space exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== name non-ascii exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== version leading space security fix
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
 == exempt reason printed, float
 exit 0
 -- stdout
