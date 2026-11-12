@@ -119,6 +119,9 @@ struct FakeState {
     requests: Vec<HttpRequest>,
     /// The client-level timeout.
     timeout: Option<Duration>,
+    /// Requests nothing answered (`METHOD redacted-url`), recorded before the
+    /// panic, which a spawned task may swallow.
+    unexpected: Vec<String>,
 }
 
 impl fmt::Debug for FakeHttp {
@@ -134,6 +137,21 @@ impl fmt::Debug for FakeHttp {
             .field("requests", &state.requests.len())
             .field("timeout", &state.timeout)
             .finish()
+    }
+}
+
+/// The last clone of a fake that saw unexpected requests fails the test when
+/// it is dropped (unless the thread is already panicking).
+impl Drop for FakeHttp {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.0) != 1 || std::thread::panicking() {
+            return;
+        }
+        let unexpected = std::mem::take(&mut self.state().unexpected);
+        assert!(
+            unexpected.is_empty(),
+            "FakeHttp: unexpected requests: {unexpected:?}"
+        );
     }
 }
 
@@ -166,8 +184,15 @@ impl FakeHttp {
     }
 
     /// Panics if scripted replies were left unused, naming them.
+    /// Also panics if any request was unexpected, naming them, even when the
+    /// panic it caused was swallowed by a spawned task.
     pub fn assert_drained(&self) {
         let state = self.state();
+        assert!(
+            state.unexpected.is_empty(),
+            "FakeHttp: unexpected requests: {:?}",
+            state.unexpected
+        );
         let keyed: Vec<String> = state
             .keyed
             .iter()
@@ -223,11 +248,9 @@ impl FakeHttp {
 
     async fn answer(&self, req: HttpRequest) -> Result<HttpResponse, TransportError> {
         let Some(reply) = self.reply_for(&req) else {
-            panic!(
-                "FakeHttp: unexpected request {} {}",
-                req.method,
-                crate::redact(&req.url)
-            );
+            let what = format!("{} {}", req.method, crate::redact(&req.url));
+            self.state().unexpected.push(what.clone());
+            panic!("FakeHttp: unexpected request {what}");
         };
         let timeout = req.timeout.or(self.state().timeout);
         let wait = async {
@@ -801,5 +824,69 @@ mod tests {
             .unwrap();
         assert_eq!(resp.body, Body::Complete(Bytes::new()));
         assert_eq!(resp.content_length(), Some(123_456_789));
+    }
+
+    /// A request from a spawned task whose panic nobody sees still fails
+    /// `assert_drained`.
+    #[tokio::test]
+    #[should_panic(expected = "unexpected requests: [\"GET https://t.example/lost\"]")]
+    async fn unexpected_requests_in_spawned_tasks_are_not_lost() {
+        let fake = FakeHttp::new();
+        let task_fake = fake.clone();
+        drop(tokio::spawn(async move {
+            let _ = task_fake
+                .send(HttpRequest::get("https://u:pw@t.example/lost", 1))
+                .await;
+        }));
+        while fake.requests().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        fake.assert_drained();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "unexpected requests")]
+    async fn dropping_a_fake_that_saw_unexpected_requests_fails() {
+        let fake = FakeHttp::new();
+        let task_fake = fake.clone();
+        let _ = tokio::spawn(async move {
+            let _ = task_fake
+                .send(HttpRequest::get("http://t.example/lost", 1))
+                .await;
+        })
+        .await;
+        drop(fake);
+    }
+
+    #[tokio::test]
+    async fn router_error_cap_of_zero_keeps_only_empty_error_bodies() {
+        let svc = tower::service_fn(|req: http::Request<Full<Bytes>>| async move {
+            let (status, body) = match req.uri().path() {
+                "/bad" => (StatusCode::BAD_GATEWAY, "oops"),
+                "/not-modified" => (StatusCode::NOT_MODIFIED, ""),
+                _ => (StatusCode::OK, "ok"),
+            };
+            let mut resp = http::Response::new(Full::new(Bytes::from_static(body.as_bytes())));
+            *resp.status_mut() = status;
+            Ok::<_, Infallible>(resp)
+        });
+        let client = RouterHttp::new(svc);
+        let get = |path: &str| {
+            HttpRequest::get(format!("http://a.internal{path}"), 10).error_max_bytes(0)
+        };
+        let bad = client.send(get("/bad")).await.unwrap();
+        assert_eq!(
+            (bad.status, bad.body),
+            (StatusCode::BAD_GATEWAY, Body::TooLarge)
+        );
+        let nm = client.send(get("/not-modified")).await.unwrap();
+        assert_eq!(nm.body, Body::Complete(Bytes::new()));
+        assert_eq!(client.send(get("/")).await.unwrap().bytes().unwrap(), "ok");
+        // With the default error cap the same error body is read.
+        let read = client
+            .send(HttpRequest::get("http://a.internal/bad", 10))
+            .await
+            .unwrap();
+        assert_eq!(read.bytes().unwrap(), "oops");
     }
 }
