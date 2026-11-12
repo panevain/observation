@@ -60,14 +60,16 @@ pub(crate) fn house() -> impl Strategy<Value = House> {
 /// ground that is flat or tilted. Cells are 2 m, so that a cell's area (4 m²)
 /// adds up exactly in `f32`.
 #[derive(Debug, Clone)]
-struct Street {
-    houses: Vec<House>,
-    road_z: f32,
+pub(crate) struct Street {
+    pub houses: Vec<House>,
+    pub road_z: f32,
+    /// Where the road starts and ends along x (it may stop inside the area).
+    pub road_x: (f32, f32),
     tilt: Option<(f32, f32)>,
 }
 
 impl Street {
-    fn layers(&self) -> StaticLayers {
+    pub fn layers(&self) -> StaticLayers {
         let footprints: Vec<_> = self.houses.iter().map(House::footprint).collect();
         let refs: Vec<_> = footprints.iter().collect();
         let road = Road {
@@ -75,7 +77,10 @@ impl Street {
             highway: "residential".into(),
             name: None,
             width_m: 6.0,
-            points: vec![[-50.0, self.road_z], [50.0, self.road_z + 10.0]],
+            points: vec![
+                [self.road_x.0, self.road_z + (self.road_x.0 + 50.0) / 10.0],
+                [self.road_x.1, self.road_z + (self.road_x.1 + 50.0) / 10.0],
+            ],
         };
         let terrain = self.tilt.map_or_else(Terrain::default, |(a, b)| {
             Terrain::sample_from(
@@ -91,22 +96,27 @@ impl Street {
     }
 }
 
-fn street() -> impl Strategy<Value = Street> {
+pub(crate) fn street() -> impl Strategy<Value = Street> {
     (
         prop::collection::vec(house(), 0..6),
         -30.0..=30.0f32,
+        prop_oneof![
+            Just((-50.0f32, 50.0f32)),
+            (-50.0..=-10.0f32, 10.0..=50.0f32),
+        ],
         prop::option::of((-0.15..=0.15f32, -0.15..=0.15f32)),
     )
-        .prop_map(|(houses, road_z, tilt)| Street {
+        .prop_map(|(houses, road_z, road_x, tilt)| Street {
             houses,
             road_z,
+            road_x,
             tilt,
         })
 }
 
 /// A camera somewhere over the street, 1 to 8 m above the ground.
 #[derive(Debug, Clone, Copy)]
-struct Camera {
+pub(crate) struct Camera {
     at: Vec2,
     above: f32,
     yaw: f32,
@@ -118,7 +128,7 @@ struct Camera {
 }
 
 impl Camera {
-    fn cone(&self, layers: &StaticLayers) -> ViewCone {
+    pub fn cone(&self, layers: &StaticLayers) -> ViewCone {
         let eye = Vec3::new(
             self.at.x,
             layers.terrain().height_at(self.at) + self.above,
@@ -133,7 +143,7 @@ impl Camera {
 /// Mostly ordinary cameras, sometimes degenerate ones: a range of half a
 /// metre or less, a field of view of a few degrees, or looking (nearly)
 /// straight down or up.
-fn camera() -> impl Strategy<Value = Camera> {
+pub(crate) fn camera() -> impl Strategy<Value = Camera> {
     (
         (-45.0..=45.0f32, -45.0..=45.0f32, 1.0..=8.0f32),
         (
@@ -416,7 +426,12 @@ proptest! {
         extra in 0..40usize,
         removed in 1..=255usize,
     ) {
-        let layers = Street { houses: vec![], road_z: 0.0, tilt: None }.layers();
+        let layers = Street {
+            houses: vec![],
+            road_z: 0.0,
+            road_x: (-50.0, 50.0),
+            tilt: None,
+        }.layers();
         let sight = layers.sight(&cam.cone(&layers), 1.0);
         prop_assume!(!sight.ground.is_empty());
         let mask = region.as_ref().map(|r| RegionMask::new(&layers, r));

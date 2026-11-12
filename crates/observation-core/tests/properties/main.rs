@@ -12,6 +12,7 @@
 mod coverage;
 mod formats;
 mod geo;
+mod oracles;
 mod strategies;
 mod terrain;
 mod time;
