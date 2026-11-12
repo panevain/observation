@@ -238,4 +238,38 @@ mod tests {
         t.tick(1.0);
         assert!(t.is_empty());
     }
+
+    #[test]
+    fn the_dedupe_key_is_kind_and_text_not_the_button() {
+        let mut t = Toasts::default();
+        t.error_with("load failed", ToastAction::Retry(LoadArea::demo()));
+        t.info("between");
+        // Same kind and text without a button: replaces the one with Retry.
+        t.error("load failed");
+        assert_eq!(t.len(), 2);
+        let last = t.iter().last().expect("two toasts");
+        assert_eq!(
+            (last.text.as_str(), &last.action, last.ttl),
+            ("load failed", &None, 8.0)
+        );
+        // And a button on the same kind and text replaces the plain one.
+        t.info("note");
+        t.info_with("note", ToastAction::Undo);
+        let notes: Vec<_> = t.iter().filter(|t| t.text == "note").collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].action, Some(ToastAction::Undo));
+    }
+
+    #[test]
+    fn dismiss_removes_exactly_the_toast_at_its_index() {
+        let mut t = Toasts::default();
+        t.error_sticky("first");
+        t.error_sticky("second");
+        t.error_sticky("third");
+        assert!(t.dismiss(1));
+        let left: Vec<_> = t.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(left, ["first", "third"]);
+        assert!(!t.dismiss(2));
+        assert_eq!(t.len(), 2);
+    }
 }
