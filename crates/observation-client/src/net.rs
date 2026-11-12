@@ -305,6 +305,7 @@ fn drain_replies(
 mod tests {
     use super::*;
     use crate::platform::{KeyValueStore, PlatformPlugin};
+    use observation_client_model::net::{MAX_IN_FLIGHT, TILE_RETRY_SECS};
     use observation_client_model::testing::{
         FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore,
     };
@@ -320,18 +321,20 @@ mod tests {
         app: App,
         http: Arc<FakeHttp>,
         session: Arc<MemoryStore>,
+        clock: Arc<FakeClock>,
     }
 
     impl Harness {
         fn new() -> Self {
             let http = Arc::new(FakeHttp::default());
             let session = Arc::new(MemoryStore::default());
+            let clock = Arc::new(FakeClock::at(1_000_000.0));
             let platform = Platform {
                 http: http.clone(),
                 local: Arc::new(MemoryStore::default()),
                 session: session.clone(),
                 files: Arc::new(FakeFiles::default()),
-                clock: Arc::new(FakeClock::at(1_000_000.0)),
+                clock: clock.clone(),
                 scheme: Arc::new(FakeColorScheme::new(false)),
             };
             let mut app = App::new();
@@ -341,7 +344,12 @@ mod tests {
                 .add_plugins((PlatformPlugin, crate::ResourcesPlugin, NetPlugin));
             app.update();
             assert_eq!(http.pending_urls(), ["/api/config"]);
-            Self { app, http, session }
+            Self {
+                app,
+                http,
+                session,
+                clock,
+            }
         }
 
         fn load(&mut self, req: LoadArea) {
@@ -466,33 +474,85 @@ mod tests {
         assert!(h.toasts().is_empty());
     }
 
+    /// A 1x1 PNG, as a tile server sends.
+    const PNG: [u8; 70] = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 16, 80, 48, 248, 15,
+        0, 2, 4, 1, 96, 141, 188, 187, 113, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
     #[test]
-    fn tiles_wait_for_the_server_config_then_go_the_next_frame() {
+    fn tiles_wait_for_the_config_then_go_six_at_a_time_and_a_reply_frees_a_slot() {
         let mut h = Harness::new();
-        let t = TileId::new(17, 65_000, 43_000).expect("valid tile");
-        let clock = FakeClock::at(1_000_000.0);
-        assert_eq!(
-            h.app.world_mut().resource_mut::<Tiles>().get(t, &clock),
-            None
-        );
+        let tiles: Vec<TileId> = (0..MAX_IN_FLIGHT as u32 + 2)
+            .map(|x| TileId::new(17, 65_000 + x, 43_000).expect("valid tile"))
+            .collect();
+        for &t in &tiles {
+            let mut queue = h.app.world_mut().resource_mut::<Tiles>();
+            assert_eq!(queue.get(t, &*h.clock), None);
+        }
         h.app.update();
         h.app.update();
         assert_eq!(h.http.pending_urls(), ["/api/config"], "held");
 
-        assert!(h.http.respond("/api/config", Ok(b"{}".to_vec())));
+        // A config that cannot be fetched still lets the tiles go, with this
+        // build's own tile template.
+        assert!(h.http.respond("/api/config", Err("offline".into())));
         h.app.update();
         assert!(
             h.http.pending_urls().is_empty(),
             "the config arrives after pump_tiles"
         );
         h.app.update();
-        let url = t.url(&h.app.world().resource::<ServerConfig>().tile_template);
-        assert_eq!(h.http.pending_urls(), std::slice::from_ref(&url));
+        let template = h
+            .app
+            .world()
+            .resource::<ServerConfig>()
+            .tile_template
+            .clone();
+        let url = |t: TileId| t.url(&template);
+        let newest_six: Vec<String> = tiles
+            .iter()
+            .rev()
+            .take(MAX_IN_FLIGHT)
+            .map(|&t| url(t))
+            .collect();
+        assert_eq!(h.http.pending_urls(), newest_six);
+        let (first, second) = (tiles[0], tiles[1]);
+        let (newest, next) = (tiles[MAX_IN_FLIGHT + 1], tiles[MAX_IN_FLIGHT]);
 
-        assert!(h.http.respond(&url, Err("offline".into())));
+        // A loaded tile is drawn, and its slot goes to the next tile.
+        assert!(h.http.respond(&url(newest), Ok(PNG.to_vec())));
         h.app.update();
-        let tiles = h.app.world().resource::<Tiles>();
-        assert_eq!(tiles.ready(t), None, "a failed tile is not drawn");
+        let handle = h
+            .app
+            .world()
+            .resource::<Tiles>()
+            .ready(newest)
+            .expect("ready");
+        assert!(h.app.world().resource::<Assets<Image>>().contains(&handle));
+        h.app.update();
+        assert!(h.http.pending_urls().contains(&url(second)));
+        assert!(
+            !h.http.pending_urls().contains(&url(first)),
+            "six at a time"
+        );
+
+        // So does a failed one's, and it is asked for again after the wait.
+        assert!(h.http.respond(&url(next), Err("offline".into())));
+        h.app.update();
+        assert_eq!(h.app.world().resource::<Tiles>().ready(next), None);
+        h.app.update();
+        assert!(h.http.pending_urls().contains(&url(first)));
+        h.clock.advance((TILE_RETRY_SECS * 1000) as f64);
+        let mut queue = h.app.world_mut().resource_mut::<Tiles>();
+        assert_eq!(queue.get(next, &*h.clock), None);
+        h.app.update();
+        assert!(!h.http.pending_urls().contains(&url(next)), "no slot free");
+        assert!(h.http.respond(&url(tiles[2]), Ok(PNG.to_vec())));
+        h.app.update();
+        h.app.update();
+        assert!(h.http.pending_urls().contains(&url(next)), "retried");
     }
 
     #[test]
