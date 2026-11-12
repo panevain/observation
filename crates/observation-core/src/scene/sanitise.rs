@@ -9,31 +9,57 @@ use crate::coverage::MAX_REGION_POINTS;
 use std::collections::{HashMap, HashSet};
 
 impl SceneFile {
+    /// Reads a scene file, refusing one the app cannot use and tidying what
+    /// can be kept. The steps run in this order, and the first refusal wins.
     pub fn from_json(s: &str) -> Result<Self, SceneError> {
         let mut scene: Self = serde_json::from_str(s)?;
-        if scene.format != SCENE_FORMAT {
+        scene.check_header()?;
+        scene.check_counts()?;
+        scene.tidy_groups();
+        scene.check_camera_poses()?;
+        scene.drop_unusable_region();
+        if let Some(p) = &mut scene.provenance {
+            p.sanitise();
+        }
+        scene.check_params()?;
+        scene.check_custom_models()?;
+        scene.make_custom_ids_unique();
+        Ok(scene)
+    }
+
+    /// The format name and a version this build reads.
+    fn check_header(&self) -> Result<(), SceneError> {
+        if self.format != SCENE_FORMAT {
             // Cut short: the value comes from the file and may be huge.
-            let found: String = scene.format.chars().take(40).collect();
+            let found: String = self.format.chars().take(40).collect();
             return Err(SceneError::Format(found));
         }
-        if scene.version > SCENE_VERSION {
-            return Err(SceneError::TooNew(scene.version));
+        if self.version > SCENE_VERSION {
+            return Err(SceneError::TooNew(self.version));
         }
-        if scene.cameras.len() > MAX_CAMERAS {
+        Ok(())
+    }
+
+    /// At most [`MAX_CAMERAS`] cameras and [`MAX_CUSTOM_MODELS`] custom models.
+    fn check_counts(&self) -> Result<(), SceneError> {
+        if self.cameras.len() > MAX_CAMERAS {
             return Err(SceneError::Invalid(format!(
                 "{} cameras, but at most {MAX_CAMERAS} are supported",
-                scene.cameras.len()
+                self.cameras.len()
             )));
         }
-        if scene.custom_models.len() > MAX_CUSTOM_MODELS {
+        if self.custom_models.len() > MAX_CUSTOM_MODELS {
             return Err(SceneError::Invalid(format!(
                 "{} custom models, but at most {MAX_CUSTOM_MODELS} are supported",
-                scene.custom_models.len()
+                self.custom_models.len()
             )));
         }
-        let finite = |v: &[f32]| v.iter().all(|x| x.is_finite() && x.abs() < 10_000.0);
-        for c in &mut scene.cameras {
-            // A blank group means "by address"; an overlong one is cut short.
+        Ok(())
+    }
+
+    /// A blank group means "by address"; an overlong one is cut short.
+    fn tidy_groups(&mut self) {
+        for c in &mut self.cameras {
             c.group = c
                 .group
                 .as_deref()
@@ -41,7 +67,11 @@ impl SceneFile {
                 .filter(|g| !g.is_empty())
                 .map(|g| g.chars().take(MAX_GROUP_CHARS).collect());
         }
-        for (i, c) in scene.cameras.iter().enumerate() {
+    }
+
+    /// Every camera position and angle is a number within 10 000 (m or °).
+    fn check_camera_poses(&self) -> Result<(), SceneError> {
+        for (i, c) in self.cameras.iter().enumerate() {
             if !finite(&c.position) {
                 return Err(SceneError::Invalid(format!(
                     "camera {} has a position that is not a number or lies beyond 10 000 m",
@@ -55,50 +85,69 @@ impl SceneFile {
                 )));
             }
         }
-        // Drop an unusable region rather than the whole scene: losing the
-        // outline is a small price, losing every camera with it is not.
-        if scene.region.as_ref().is_some_and(|r| {
+        Ok(())
+    }
+
+    /// Drops an unusable region rather than the whole scene: losing the
+    /// outline is a small price, losing every camera with it is not.
+    fn drop_unusable_region(&mut self) {
+        if self.region.as_ref().is_some_and(|r| {
             r.points.len() > MAX_REGION_POINTS || !r.points.iter().all(|p| finite(p))
         }) {
-            scene.region = None;
+            self.region = None;
         }
-        if let Some(p) = &mut scene.provenance {
-            p.sanitise();
-        }
-        let height = scene.params.subject_height_m;
+    }
+
+    /// The subject height and the custom pixel density are in range.
+    fn check_params(&self) -> Result<(), SceneError> {
+        let height = self.params.subject_height_m;
         if !(0.0..=10.0).contains(&height) {
             return Err(SceneError::Invalid(format!(
                 "subject height is {height} m, but must be 0 to 10 m"
             )));
         }
-        let ppm = scene.params.custom_ppm;
+        let ppm = self.params.custom_ppm;
         if !(MIN_CUSTOM_PPM..=MAX_CUSTOM_PPM).contains(&ppm) {
             return Err(SceneError::Invalid(format!(
                 "custom pixel density is {ppm} px/m, but must be {MIN_CUSTOM_PPM} to {MAX_CUSTOM_PPM} px/m"
             )));
         }
-        // The app looks models up by id, custom models first: a second custom
-        // model with an id cannot be reached (the editor would pick, save and
-        // delete the first), and one with a catalogue id replaces that model.
-        // The app only makes unique `custom-` ids, so this is a hand-edited
-        // file; give each offender a fresh id rather than refusing the scene
-        // (as with regions and links, an older autosave still restores).
-        let mut taken: HashSet<String> = scene
-            .custom_models
-            .iter()
-            .map(|m| m.id.clone())
-            .chain(scene.cameras.iter().map(|c| c.model_id.clone()))
-            .collect();
-        let mut seen = HashSet::new();
-        let mut renamed = HashMap::new();
-        for (i, m) in scene.custom_models.iter_mut().enumerate() {
-            // Drop a non-https spec-sheet link rather than the whole scene: a
-            // planted `javascript:` link is neutralised, and a scene autosaved
-            // before links were checked still restores (losing only the link).
+        Ok(())
+    }
+
+    /// Drops each custom model's spec-sheet link unless it is https, then
+    /// refuses the scene if a model is invalid. Dropping the link rather than
+    /// the whole scene neutralises a planted `javascript:` link, and a scene
+    /// autosaved before links were checked still restores (losing only the
+    /// link).
+    fn check_custom_models(&mut self) -> Result<(), SceneError> {
+        for m in &mut self.custom_models {
             if m.source.as_deref().is_some_and(|s| !is_https_url(s)) {
                 m.source = None;
             }
             m.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Gives every custom model a reachable `custom-` id.
+    ///
+    /// The app looks models up by id, custom models first: a second custom
+    /// model with an id cannot be reached (the editor would pick, save and
+    /// delete the first), and one with a catalogue id replaces that model.
+    /// The app only makes unique `custom-` ids, so this is a hand-edited
+    /// file; give each offender a fresh id rather than refusing the scene
+    /// (as with regions and links, an older autosave still restores).
+    fn make_custom_ids_unique(&mut self) {
+        let mut taken: HashSet<String> = self
+            .custom_models
+            .iter()
+            .map(|m| m.id.clone())
+            .chain(self.cameras.iter().map(|c| c.model_id.clone()))
+            .collect();
+        let mut seen = HashSet::new();
+        let mut renamed = HashMap::new();
+        for (i, m) in self.custom_models.iter_mut().enumerate() {
             let first = seen.insert(m.id.clone());
             if first && m.id.starts_with(CUSTOM_ID_PREFIX) {
                 continue;
@@ -112,13 +161,17 @@ impl SceneFile {
                 renamed.insert(old, m.id.clone());
             }
         }
-        for c in &mut scene.cameras {
+        for c in &mut self.cameras {
             if let Some(id) = renamed.get(&c.model_id) {
                 c.model_id.clone_from(id);
             }
         }
-        Ok(scene)
     }
+}
+
+/// Whether every value is a number within 10 000 of zero.
+fn finite(v: &[f32]) -> bool {
+    v.iter().all(|x| x.is_finite() && x.abs() < 10_000.0)
 }
 
 #[cfg(test)]
@@ -128,6 +181,202 @@ mod tests {
     use crate::camera::{CameraKind, CameraModel, DoriLevel};
     use crate::coverage::{CoverageParams, Region};
     use crate::provenance::Provenance;
+
+    fn invalid(r: Result<(), SceneError>) -> String {
+        match r {
+            Err(SceneError::Invalid(why)) => why,
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn step_check_header() {
+        let mut s = scene();
+        assert!(s.check_header().is_ok());
+        s.format = "x".repeat(100);
+        assert!(matches!(s.check_header(), Err(SceneError::Format(f)) if f == "x".repeat(40)));
+        let mut s = scene();
+        s.version = SCENE_VERSION;
+        assert!(s.check_header().is_ok());
+        s.version = SCENE_VERSION + 1;
+        assert!(matches!(s.check_header(), Err(SceneError::TooNew(v)) if v == SCENE_VERSION + 1));
+    }
+
+    #[test]
+    fn step_check_counts() {
+        let mut s = scene();
+        s.cameras = vec![s.cameras[0].clone(); MAX_CAMERAS];
+        s.custom_models = vec![custom_model("custom-a-1"); MAX_CUSTOM_MODELS];
+        assert!(s.check_counts().is_ok());
+        s.cameras.push(s.cameras[0].clone());
+        assert_eq!(
+            invalid(s.check_counts()),
+            "257 cameras, but at most 256 are supported"
+        );
+        s.cameras.pop();
+        s.custom_models.push(custom_model("custom-a-1"));
+        assert_eq!(
+            invalid(s.check_counts()),
+            "65 custom models, but at most 64 are supported"
+        );
+    }
+
+    #[test]
+    fn step_tidy_groups() {
+        let mut s = scene();
+        let mut c = s.cameras[0].clone();
+        for g in [None, Some("  a b  "), Some(" \t "), Some(&*"é".repeat(90))] {
+            c.group = g.map(str::to_owned);
+            s.cameras.push(c.clone());
+        }
+        s.tidy_groups();
+        let groups: Vec<Option<&str>> = s.cameras.iter().map(|c| c.group.as_deref()).collect();
+        let long = "é".repeat(MAX_GROUP_CHARS);
+        assert_eq!(groups, [None, None, Some("a b"), None, Some(long.as_str())]);
+    }
+
+    #[test]
+    fn step_check_camera_poses() {
+        let mut s = scene();
+        s.cameras.push(s.cameras[0].clone());
+        s.cameras[1].position = [9_999.0, -9_999.0, 0.0];
+        assert!(s.check_camera_poses().is_ok());
+        s.cameras[1].roll_deg = f32::NAN;
+        assert_eq!(
+            invalid(s.check_camera_poses()),
+            "camera 2 has an angle that is not a number or lies beyond 10 000°"
+        );
+        s.cameras[1].position[2] = -10_000.0;
+        assert_eq!(
+            invalid(s.check_camera_poses()),
+            "camera 2 has a position that is not a number or lies beyond 10 000 m"
+        );
+    }
+
+    #[test]
+    fn step_drop_unusable_region() {
+        let region = |points: Vec<[f32; 2]>| {
+            Some(Region {
+                points,
+                enabled: true,
+            })
+        };
+        let mut s = scene();
+        for (points, kept) in [
+            (vec![[0.0, 0.0]; MAX_REGION_POINTS], true),
+            (vec![[0.0, 0.0]; MAX_REGION_POINTS + 1], false),
+            (vec![[9_999.0, -9_999.0]], true),
+            (vec![[0.0, 10_000.0]], false),
+            (vec![[f32::INFINITY, 0.0]], false),
+        ] {
+            s.region = region(points.clone());
+            s.drop_unusable_region();
+            assert_eq!(s.region.is_some(), kept, "{}", points.len());
+        }
+        s.region = None;
+        s.drop_unusable_region();
+        assert_eq!(s.region, None);
+    }
+
+    #[test]
+    fn step_check_params() {
+        let mut s = scene();
+        for h in [0.0, 10.0] {
+            s.params.subject_height_m = h;
+            assert!(s.check_params().is_ok(), "{h}");
+        }
+        s.params.subject_height_m = 10.5;
+        assert_eq!(
+            invalid(s.check_params()),
+            "subject height is 10.5 m, but must be 0 to 10 m"
+        );
+        s.params.subject_height_m = 1.0;
+        for ppm in [MIN_CUSTOM_PPM, MAX_CUSTOM_PPM] {
+            s.params.custom_ppm = ppm;
+            assert!(s.check_params().is_ok(), "{ppm}");
+        }
+        s.params.custom_ppm = f32::NAN;
+        assert_eq!(
+            invalid(s.check_params()),
+            format!(
+                "custom pixel density is NaN px/m, but must be {MIN_CUSTOM_PPM} to {MAX_CUSTOM_PPM} px/m"
+            )
+        );
+    }
+
+    #[test]
+    fn step_check_custom_models() {
+        let mut s = scene();
+        let mut sources = Vec::new();
+        for link in [
+            None,
+            Some("https://example.com/a"),
+            Some("http://example.com/a"),
+            Some("javascript:x"),
+        ] {
+            let mut m = custom_model("custom-a-1");
+            m.source = link.map(str::to_owned);
+            sources.push(m);
+        }
+        s.custom_models = sources;
+        assert!(s.check_custom_models().is_ok());
+        let kept: Vec<Option<&str>> = s
+            .custom_models
+            .iter()
+            .map(|m| m.source.as_deref())
+            .collect();
+        assert_eq!(kept, [None, Some("https://example.com/a"), None, None]);
+        s.custom_models[2].hfov_deg = 0.0;
+        assert!(matches!(s.check_custom_models(), Err(SceneError::Model(_))));
+    }
+
+    #[test]
+    fn step_make_custom_ids_unique() {
+        let mut s = scene();
+        s.custom_models = vec![custom_model("custom-a-1"), custom_model("custom-a-1")];
+        s.cameras[0].model_id = "custom-a-1".into();
+        s.make_custom_ids_unique();
+        let ids: Vec<&str> = s.custom_models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["custom-a-1", "custom-mine-2"]);
+        assert_eq!(s.cameras[0].model_id, "custom-a-1");
+        let before = s.clone();
+        s.make_custom_ids_unique();
+        assert_eq!(s, before, "a second pass changes nothing");
+    }
+
+    #[test]
+    fn the_first_refusal_wins() {
+        // Each later step's problem is present too; the earlier one is reported.
+        let mut s = scene();
+        s.params.subject_height_m = 99.0;
+        s.custom_models = vec![CameraModel {
+            hfov_deg: 0.0,
+            ..custom_model("custom-a-1")
+        }];
+        let params = SceneFile::from_json(&s.to_json()).unwrap_err().to_string();
+        assert!(params.contains("subject height"), "{params}");
+        s.cameras[0].yaw_deg = 1e6;
+        let pose = SceneFile::from_json(&s.to_json()).unwrap_err().to_string();
+        assert!(pose.contains("camera 1 has an angle"), "{pose}");
+        s.cameras = vec![s.cameras[0].clone(); MAX_CAMERAS + 1];
+        let count = SceneFile::from_json(&s.to_json()).unwrap_err().to_string();
+        assert!(count.contains("257 cameras"), "{count}");
+        s.version = SCENE_VERSION + 1;
+        assert!(matches!(
+            SceneFile::from_json(&s.to_json()),
+            Err(SceneError::TooNew(_))
+        ));
+        // Without the earlier problems, the custom model is refused last.
+        let mut s = scene();
+        s.custom_models = vec![CameraModel {
+            hfov_deg: 0.0,
+            ..custom_model("custom-a-1")
+        }];
+        assert!(matches!(
+            SceneFile::from_json(&s.to_json()),
+            Err(SceneError::Model(_))
+        ));
+    }
 
     #[test]
     fn rejects_bad_files() {
