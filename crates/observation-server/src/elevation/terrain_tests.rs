@@ -210,3 +210,49 @@ async fn without_elevation_areas_are_flat_and_nothing_is_asked() {
     );
     assert!(r.fake.requests().is_empty());
 }
+
+/// A flat Terrarium tile at `meters`.
+fn level_png(meters: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, 256, 256);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().unwrap();
+    let e = 32768 + meters;
+    let data: Vec<u8> = (0..256 * 256)
+        .flat_map(|_| [(e >> 8) as u8, (e & 0xff) as u8, 0])
+        .collect();
+    w.write_image_data(&data).unwrap();
+    w.finish().unwrap();
+    out
+}
+
+/// Each tile's bytes are decoded as that tile: with a different height per
+/// tile, the terrain equals one built directly from the same tiles.
+#[tokio::test(start_paused = true)]
+async fn each_tile_is_decoded_as_its_own_id() {
+    let r = rig(Some(TEMPLATE));
+    let ids = dem_tiles_for(&bbox());
+    assert!(ids.len() >= 2, "the demo box spans tiles");
+    let height = |i: usize| 100 + 37 * i as u32;
+    for (i, id) in ids.iter().enumerate() {
+        // Later tiles answer first, so completion order differs from `ids`.
+        let delay = Duration::from_millis(100 * (ids.len() - i) as u64);
+        r.fake.on(
+            Method::GET,
+            &url(*id),
+            FakeReply::ok(level_png(height(i))).delay(delay),
+        );
+    }
+    let terrain = r.elevation.terrain(&bbox()).await.unwrap();
+    let tiles: Vec<_> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| super::decode_tile(*id, &level_png(height(i))).unwrap())
+        .collect();
+    let want =
+        observation_core::terrain::terrain_from_dem(&bbox(), &tiles, "Elevation: test".to_owned())
+            .unwrap();
+    assert_eq!(terrain, want);
+    r.fake.assert_drained();
+}
