@@ -145,6 +145,12 @@ pub struct Editor {
     /// The address picked with the Address tool; its buildings are
     /// highlighted.
     pub selected_address: Option<Address>,
+    /// One-shot request: frame the selected camera in the 3D view. Consumed
+    /// by the input systems the next time they read the keyboard.
+    pub focus_request: bool,
+    /// One-shot request: scroll the camera list to the picked address's group
+    /// once. Consumed by the inspector; an area load drops it.
+    pub jump_to_address: bool,
 }
 
 impl Default for Editor {
@@ -157,6 +163,8 @@ impl Default for Editor {
             region_hover: None,
             region_snap_m: 1.0,
             selected_address: None,
+            focus_request: false,
+            jump_to_address: false,
         }
     }
 }
@@ -270,6 +278,8 @@ mod tests {
                 region_hover: None,
                 region_snap_m: 1.0,
                 selected_address: None,
+                focus_request: false,
+                jump_to_address: false,
             }
         );
     }

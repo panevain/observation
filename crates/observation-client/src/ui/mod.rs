@@ -15,8 +15,8 @@ use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::platform::Platform;
 use crate::state::{
-    Area, Editor, Hover, LoadArea, Loading, Models, Panels, Scene, ToastAction, Toasts, Tool,
-    UiState,
+    Area, DataChangeNotice, Editor, Hover, LoadArea, Loading, Models, Panels, Scene, ToastAction,
+    Toasts, Tool,
 };
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
@@ -26,6 +26,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, EguiTextureHandle, egui};
 use map_picker::MapPicker;
+use observation_client_model::vm::LoadingVm;
 
 pub struct UiPlugin;
 
@@ -61,9 +62,8 @@ fn apply_theme(
 
 /// Wall-clock time: the virtual clock caps each frame at 250 ms, which would
 /// slow toasts and the loading timer whenever frames are sparse.
-fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>, mut toasts: ResMut<Toasts>) {
+fn tick_toasts(time: Res<Time<Real>>, mut toasts: ResMut<Toasts>) {
     let dt = time.delta_secs();
-    ui.now = time.elapsed_secs_f64();
     if toasts.is_empty() {
         return;
     }
@@ -74,7 +74,9 @@ fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>, mut toasts: ResMu
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct UiData<'w> {
     pub tokens: Res<'w, Tokens>,
-    pub ui: ResMut<'w, UiState>,
+    /// Wall-clock time, for "saved just now" and the loading timer.
+    pub time: Res<'w, Time<Real>>,
+    pub data_change: ResMut<'w, DataChangeNotice>,
     pub save: Res<'w, crate::persist::Autosave>,
     pub editor: ResMut<'w, Editor>,
     pub panels: ResMut<'w, Panels>,
@@ -241,10 +243,8 @@ fn draw_ui(
         }
         _ => {}
     }
-    if let Some(area) = d.loading.area() {
-        let elapsed = d.ui.now - d.loading.started();
-        let cancellable = d.loading.request().is_some_and(|r| !r.keep_cameras);
-        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed, cancellable) {
+    if let Some(vm) = LoadingVm::new(&d.loading, d.time.elapsed_secs_f64()) {
+        match overlays::loading(&ctx, &t, viewport_rect, &vm) {
             Some(overlays::LoadingChoice::Cancel) => {
                 d.loading.cancel();
             }

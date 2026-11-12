@@ -7,7 +7,7 @@
 //! cameras.
 
 use crate::state::{
-    Editor, LoadArea, Loading, Models, Scene, Toasts, TrackModels, TrackScene, UiState,
+    DataChangeNotice, Editor, LoadArea, Loading, Models, Scene, Toasts, TrackModels, TrackScene,
 };
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -82,7 +82,7 @@ pub fn record(
     mut history: ResMut<History>,
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
-    mut ui: ResMut<UiState>,
+    mut notice: ResMut<DataChangeNotice>,
     mut editor: ResMut<Editor>,
     mut toasts: ResMut<Toasts>,
     loading: Res<Loading>,
@@ -119,7 +119,7 @@ pub fn record(
     }
     // The notice described a restored or imported file; once undo or redo
     // moves away from that step it no longer describes the scene.
-    ui.data_change = None;
+    **notice = None;
 }
 
 #[cfg(test)]
@@ -137,7 +137,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .insert_resource(Models::new(Catalog::default()))
             .init_resource::<Scene>()
-            .init_resource::<UiState>()
+            .init_resource::<DataChangeNotice>()
             .init_resource::<Editor>()
             .init_resource::<Toasts>()
             .init_resource::<Loading>()
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn a_command_undoes_on_the_next_run_and_clears_the_data_notice() {
         let mut app = app();
-        app.world_mut().resource_mut::<UiState>().data_change = Some(DataChange {
+        **app.world_mut().resource_mut::<DataChangeNotice>() = Some(DataChange {
             saved: Some(1),
             now: Some(2),
             saved_app: String::new(),
@@ -200,7 +200,7 @@ mod tests {
         undo(&mut app);
         app.update();
         assert_eq!(cameras(&app), 0);
-        assert_eq!(app.world().resource::<UiState>().data_change, None);
+        assert_eq!(**app.world().resource::<DataChangeNotice>(), None);
         assert!(app.world().resource::<Messages<LoadArea>>().is_empty());
         // Read once: it does not undo again.
         app.update();

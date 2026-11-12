@@ -6,12 +6,11 @@ use crate::history::{HistoryCommand, HistoryOp};
 use crate::icons;
 use crate::persist::PersistAction;
 use crate::state::{LoadArea, Tool};
-use crate::theme::{UiFont, strong_family};
+use crate::theme::{Tokens, UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
-use observation_client_model::persist::SaveState;
+use observation_client_model::vm::{HistoryVm, SaveVm, StatusVm};
 use observation_core::scene::AreaRef;
-use observation_core::terrain::{TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL};
 
 pub fn top_bar(
     ui: &mut egui::Ui,
@@ -73,37 +72,18 @@ pub fn top_bar(
             }
         }
         ui.separator();
-        for (op, glyph, keys, can, what) in [
-            (
-                HistoryOp::Undo,
-                icons::ARROW_COUNTER_CLOCKWISE,
-                "Ctrl+Z",
-                d.history.can_undo(),
-                d.history.undo_label(),
-            ),
-            (
-                HistoryOp::Redo,
-                icons::ARROW_CLOCKWISE,
-                "Ctrl+Shift+Z",
-                d.history.can_redo(),
-                d.history.redo_label(),
-            ),
-        ] {
-            let name = match op {
-                HistoryOp::Undo => "Undo",
-                HistoryOp::Redo => "Redo",
-            };
-            let tip = match what {
-                Some(w) => format!("{name} {w} ({keys})"),
-                None => format!("Nothing to {} ({keys})", name.to_lowercase()),
+        for button in HistoryVm::new(&d.history).0 {
+            let glyph = match button.op {
+                HistoryOp::Undo => icons::ARROW_COUNTER_CLOCKWISE,
+                HistoryOp::Redo => icons::ARROW_CLOCKWISE,
             };
             if ui
-                .add_enabled(can, secondary(&t, glyph))
-                .on_hover_text(&tip)
-                .on_disabled_hover_text(&tip)
+                .add_enabled(button.enabled, secondary(&t, glyph))
+                .on_hover_text(&button.tip)
+                .on_disabled_hover_text(&button.tip)
                 .clicked()
             {
-                d.history_commands.write(HistoryCommand(op));
+                d.history_commands.write(HistoryCommand(button.op));
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -224,58 +204,49 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
 /// view while the inspector is scrolled.
 pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
     let t = *d.tokens;
+    let vm = StatusVm::new(
+        d.area.as_ref().map(|a| &a.bundle),
+        &d.config.tile_attribution,
+        d.save.status(),
+        d.time.elapsed_secs_f64(),
+        &d.coverage.stats,
+    );
     ui.horizontal_centered(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // Right to left: the date ends the line, after the credit.
             if let Some(a) = &d.area {
                 super::provenance::status_data_date(ui, &t, &a.bundle);
             }
-            let data = d.area.as_ref().map_or("© OpenStreetMap contributors", |a| {
-                a.bundle.attribution.as_str()
-            });
-            let tiles = d.config.tile_attribution.as_str();
-            let attribution = if tiles == data {
-                data.to_owned()
-            } else {
-                format!("{data} · Tiles {tiles}")
-            };
             ui.hyperlink_to(
-                RichText::new(attribution)
+                RichText::new(&vm.attribution)
                     .size(t.font.caption)
                     .color(t.text_muted),
                 "https://www.openstreetmap.org/copyright",
             );
-            if let Some(dem) = d
-                .area
-                .as_ref()
-                .map(|a| a.bundle.terrain.attribution.as_str())
-                .filter(|a| !a.is_empty())
-            {
-                let text = RichText::new(dem).size(t.font.caption).color(t.text_muted);
-                // The default source's credits are listed in full there; an
-                // operator's own source has only the text it was given.
-                if dem == TERRAIN_TILES_ATTRIBUTION {
-                    ui.hyperlink_to(text, TERRAIN_TILES_CREDITS_URL);
-                } else {
-                    ui.label(text);
+            if let Some(dem) = &vm.dem {
+                let text = RichText::new(&dem.text)
+                    .size(t.font.caption)
+                    .color(t.text_muted);
+                match dem.link {
+                    Some(url) => {
+                        ui.hyperlink_to(text, url);
+                    }
+                    None => {
+                        ui.label(text);
+                    }
                 }
             }
             ui.separator();
-            save_status(ui, d);
+            save_status(ui, &t, vm.save.as_ref());
             ui.separator();
-            let s = d.coverage.stats;
-            for (value, caption) in [
-                (s.facade_fraction(), "walls"),
-                (s.street_multi_fraction(), "2+ cams"),
-                (s.street_fraction(), "street"),
-            ] {
+            for (caption, value) in &vm.figures {
                 ui.label(
-                    RichText::new(caption)
+                    RichText::new(*caption)
                         .size(t.font.caption)
                         .color(t.text_muted),
                 );
                 ui.label(
-                    RichText::new(format!("{:.0}%", value * 100.0))
+                    RichText::new(value)
                         .size(t.font.caption)
                         .family(strong_family())
                         .color(t.text),
@@ -302,40 +273,21 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
 }
 
 /// Whether the scene is safely in this browser's storage.
-fn save_status(ui: &mut egui::Ui, d: &UiData) {
-    let t = *d.tokens;
-    let (icon, text, color, tip) = match d.save.status() {
-        SaveState::Saved(at) => {
-            let ago = (d.ui.now - at).max(0.0);
-            let when = if ago < 60.0 {
-                "just now".to_owned()
-            } else {
-                format!("{:.0} min ago", ago / 60.0)
-            };
-            (
-                icons::CLOUD_CHECK,
-                "Saved",
-                t.text_muted,
-                format!("Saved in this browser {when}. Use Export to keep a copy elsewhere."),
-            )
-        }
-        SaveState::Failed(why) => (
-            icons::CLOUD_WARNING,
-            "Not saved",
-            t.warning,
-            format!(
-                "{} The scene is not saved; use Export to keep your work.",
-                why.reason()
-            ),
-        ),
-        SaveState::Pending => return,
+fn save_status(ui: &mut egui::Ui, t: &Tokens, save: Option<&SaveVm>) {
+    let Some(save) = save else {
+        return;
+    };
+    let (icon, color) = if save.failed {
+        (icons::CLOUD_WARNING, t.warning)
+    } else {
+        (icons::CLOUD_CHECK, t.text_muted)
     };
     ui.label(
-        RichText::new(format!("{icon} {text}"))
+        RichText::new(format!("{icon} {}", save.text))
             .size(t.font.caption)
             .color(color),
     )
-    .on_hover_text(tip);
+    .on_hover_text(&save.tip);
 }
 
 /// Display preferences, remembered in this browser.

@@ -3,7 +3,7 @@
 use crate::addresses::NO_ADDRESS;
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::terrain_of;
+use crate::state::{TrackScene, terrain_of};
 use crate::theme::{Tokens, strong_family, to_rgb};
 use crate::ui::UiData;
 use crate::ui::actions::{self, CameraAction};
@@ -11,6 +11,7 @@ use crate::ui::widgets::{
     NUMBER_TIP, compass_dial, danger, drag_speed, row, secondary, subsection, swatch, swatch_button,
 };
 use bevy_egui::egui::{self, DragValue, RichText, TextEdit};
+use observation_client_model::commands;
 use observation_core::camera::{
     ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, MAX_GROUP_CHARS,
     forward_from_yaw_pitch, is_https_url,
@@ -217,11 +218,7 @@ pub(super) fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         }
     });
 
-    if d.scene.camera(id).is_some_and(|old| *old != c)
-        && let Some(slot) = d.scene.camera_mut(id)
-    {
-        *slot = c;
-    }
+    commands::update_camera(&mut TrackScene(&mut d.scene), id, c);
     if let Some(a) = action {
         actions::apply(d, id, a);
     }

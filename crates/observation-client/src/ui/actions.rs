@@ -30,6 +30,6 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
         toasts: &mut d.toasts,
     };
     if commands::camera_action(&mut ctx, terrain_of(d.area.as_deref()), id, action) {
-        d.ui.focus_request = true;
+        d.editor.focus_request = true;
     }
 }

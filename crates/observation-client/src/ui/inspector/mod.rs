@@ -17,9 +17,10 @@ use super::widgets::{
 };
 use crate::addresses::address_label;
 use crate::icons;
-use crate::state::{Editor, InspectorTab, OverlayMode, Panels, Tool, select};
+use crate::state::{Editor, InspectorTab, OverlayMode, Panels, Tool, TrackScene, select};
 use crate::theme::Tokens;
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea};
+use observation_client_model::commands;
 use observation_core::camera::{
     CameraPlacement, DoriLevel, Lighting, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM,
 };
@@ -27,14 +28,14 @@ use observation_core::camera::{
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
     follow_selection(&d.editor, &mut d.panels);
-    if d.ui.jump_to_address {
+    if d.editor.jump_to_address {
         let groups = d.addresses.groups(&d.scene.cameras);
         if picked_group(d, &groups).is_some() {
             // Show the list it scrolls.
             d.panels.inspector_tab = InspectorTab::Cameras;
         } else {
             // No camera is listed there: nothing to scroll to.
-            d.ui.jump_to_address = false;
+            d.editor.jump_to_address = false;
         }
     }
     ui.spacing_mut().item_spacing.y = t.space.sm;
@@ -236,10 +237,7 @@ fn analysis_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             }
         }
     });
-    if p != d.scene.params {
-        d.scene.params = p;
-        d.scene.touch();
-    }
+    commands::set_params(&mut TrackScene(&mut d.scene), p);
     subsection(ui, t, "Overlay colours");
     segmented(
         ui,
