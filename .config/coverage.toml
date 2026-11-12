@@ -5,6 +5,12 @@
 # from the measured values (each rounded down to a whole percent, minus 1 for noise) to copy
 # here; raise a floor when a crate's coverage has risen for good.
 #
-# No floors yet: the first run of the job measures them.
+# The table is empty on purpose, so every crate warns and the job passes. The refactor that
+# introduced this check also moves well-tested code between crates (client -> client-model,
+# server -> regions-api and upstream), so floors measured before those moves land would be
+# wrong after them. Once they have merged, the floors are filled from a run on develop (the
+# job's summary prints a ready-to-paste table), in the change that proposes making the job a
+# required check. From then on, a change that moves code between crates re-derives the
+# floors of the crates it touches, in the same change.
 
 [floors]

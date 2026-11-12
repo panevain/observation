@@ -1,4 +1,5 @@
 {
+  "cargo_llvm_cov": { "version": "0.9.1", "manifest_path": "/repo/Cargo.toml" },
   "data": [
     {
       "files": [

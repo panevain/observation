@@ -34,10 +34,6 @@ impl Lines {
     pub fn meets(self, floor: f64) -> bool {
         self.covered as f64 * 100.0 >= floor * self.total as f64
     }
-
-    fn percent(self) -> Option<f64> {
-        (self.total > 0).then(|| self.covered as f64 * 100.0 / self.total as f64)
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,10 +141,14 @@ pub fn check(per_crate: &BTreeMap<String, Lines>, floors: &BTreeMap<String, f64>
     out
 }
 
+/// The coverage with two decimals, rounded DOWN, so a crate below its floor never shows a
+/// value that reads as reaching it (4003 of 5004 lines is 79.99%, not 80.00%).
 fn pct(lines: Lines) -> String {
-    lines
-        .percent()
-        .map_or("-".to_owned(), |p| format!("{p:.2}%"))
+    if lines.total == 0 {
+        return "-".to_owned();
+    }
+    let hundredths = u128::from(lines.covered) * 10_000 / u128::from(lines.total);
+    format!("{}.{:02}%", hundredths / 100, hundredths % 100)
 }
 
 fn floor_text(floor: f64) -> String {
@@ -167,6 +167,10 @@ pub fn messages(verdicts: &[Verdict]) -> Vec<(Level, String)> {
                     pct(*lines),
                     floor_text(*floor)
                 ),
+            )),
+            Verdict::NoFloor { name, lines } if lines.total == 0 => Some((
+                Level::Warning,
+                format!("{name}: no measured lines, and no floor in {CONFIG}"),
             )),
             Verdict::NoFloor { name, lines } => Some((
                 Level::Warning,
@@ -253,6 +257,16 @@ struct Config {
     floors: BTreeMap<String, f64>,
 }
 
+/// Every floor is a percentage: a number from 0 to 100.
+pub fn validate(floors: &BTreeMap<String, f64>) -> Result<()> {
+    match floors.iter().find(|(_, f)| !(0.0..=100.0).contains(*f)) {
+        Some((name, f)) => Err(Error::new(format!(
+            "{CONFIG}: the floor for {name} must be a percentage from 0 to 100, not {f}"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// What the command prints: the report on stdout, the messages on stderr (as workflow
 /// annotations under GitHub Actions); the summary file gets the report.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,8 +282,10 @@ pub fn run(repo: &Path, json: &Path, annotate: bool) -> Result<Outcome> {
         |p: &Path| fs::read_to_string(p).map_err(|e| Error::new(format!("{}: {e}", p.display())));
     let config: Config = toml::from_str(&read(&repo.join(CONFIG))?)
         .map_err(|e| Error::new(format!("{CONFIG}: {e}")))?;
+    validate(&config.floors)?;
     let root = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_owned());
-    let measured = per_crate(&read(json)?, &root.to_string_lossy())?;
+    let measured = per_crate(&read(json)?, &root.to_string_lossy())
+        .map_err(|e| Error::new(format!("{}: {e}", json.display())))?;
     if measured.is_empty() {
         return Err(Error::new(format!(
             "coverage: no file of {} is under {}/crates/",
@@ -312,8 +328,8 @@ mod tests {
         Lines { covered, total }
     }
 
-    /// A recorded export in llvm-cov's format (trimmed to the fields read), with file names
-    /// under /repo.
+    /// An export in the format of `cargo llvm-cov --json --summary-only` (cargo-llvm-cov's own
+    /// key, then llvm-cov's), with file names under /repo.
     #[test]
     fn sums_files_per_crate() {
         let path = concat!(
@@ -394,6 +410,44 @@ mod tests {
         assert!(
             report.ends_with("```toml\n[floors]\na = 79\nb = 78\nc = 49\n```\n"),
             "{report}"
+        );
+    }
+
+    #[test]
+    fn a_crate_below_its_floor_never_reads_as_reaching_it() {
+        let measured = BTreeMap::from([
+            ("m".to_owned(), lines(4003, 5004)),
+            ("e".to_owned(), lines(0, 0)),
+        ]);
+        let floors = BTreeMap::from([("m".to_owned(), 80.0)]);
+        let messages = messages(&check(&measured, &floors));
+        assert_eq!(
+            messages,
+            [
+                (
+                    Level::Warning,
+                    "e: no measured lines, and no floor in .config/coverage.toml".to_owned()
+                ),
+                (
+                    Level::Error,
+                    "m: line coverage 79.99% is below its floor of 80%".to_owned()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn floors_must_be_percentages() {
+        for bad in [f64::NAN, -1.0, 100.5, f64::INFINITY] {
+            let floors = BTreeMap::from([("m".to_owned(), bad)]);
+            assert!(validate(&floors).is_err(), "{bad}");
+        }
+        assert_eq!(
+            validate(&BTreeMap::from([
+                ("m".to_owned(), 0.0),
+                ("n".to_owned(), 100.0)
+            ])),
+            Ok(())
         );
     }
 
