@@ -10,6 +10,7 @@ use observation_core::scene::AreaRef;
 use observation_core::terrain::{FLAT, Terrain};
 
 use crate::platform::SaveFailure;
+use observation_client_model::commands::Tracked;
 pub use observation_client_model::document::Snapshot;
 use observation_client_model::document::{self, Document};
 use observation_client_model::editor;
@@ -21,9 +22,6 @@ pub use observation_client_model::toasts::{ToastAction, ToastKind};
 pub const GROUND_CELL_M: f32 = 0.5;
 /// Façade patch size, metres.
 pub const FACADE_CELL_M: f32 = 1.0;
-/// Cameras are mounted this far in front of the surface they are placed on.
-pub const MOUNT_OFFSET_M: f32 = 0.15;
-
 /// Whether a click with the Address tool also scrolls the camera list to that
 /// address (a setting, remembered in this browser).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Resource)]
@@ -118,6 +116,22 @@ pub fn forget_missing_place_model(models: Res<Models>, mut editor: ResMut<Editor
 /// [`Document::revision`]) drives sync, coverage and autosave.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
 pub struct Scene(Document);
+
+/// The scene for an
+/// [`EditCtx`](observation_client_model::commands::EditCtx), marked changed
+/// only when a command writes to it.
+#[derive(Debug)]
+pub struct TrackScene<'a, 'w>(pub &'a mut ResMut<'w, Scene>);
+
+impl Tracked<Document> for TrackScene<'_, '_> {
+    fn get(&self) -> &Document {
+        self.0
+    }
+
+    fn get_mut(&mut self) -> &mut Document {
+        self.0
+    }
+}
 
 /// The currently loaded area and its analysis layers.
 #[derive(Resource)]

@@ -3,8 +3,8 @@
 use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{
-    AddressJump, Area, Editor, Hover, MOUNT_OFFSET_M, Models, Panels, Scene, Toasts, Tool,
-    UiLayout, UiState, select, terrain_of,
+    AddressJump, Area, Editor, Hover, Models, Panels, Scene, Toasts, Tool, TrackScene, UiLayout,
+    UiState, terrain_of,
 };
 use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -13,9 +13,8 @@ use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, Ra
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
+use observation_client_model::commands::{self, EditCtx, Hit, HitTarget, Key};
 use observation_core::address::{Address, ON_OUTLINE_M};
-use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
-use observation_core::coverage::{MAX_REGION_POINTS, Region};
 use observation_core::terrain::Terrain;
 
 /// Pixels a press may travel and still count as a click/tap.
@@ -248,49 +247,14 @@ fn keyboard(
     if wants.wants_any_keyboard_input() {
         return;
     }
-    for (key, tool) in [
-        (KeyCode::KeyV, Tool::Select),
-        (KeyCode::KeyP, Tool::Place),
-        (KeyCode::KeyA, Tool::Aim),
-        (KeyCode::KeyM, Tool::Move),
-        (KeyCode::KeyR, Tool::Region),
-        (KeyCode::KeyL, Tool::Address),
-    ] {
-        if keys.just_pressed(key) {
-            editor.tool = tool;
-        }
-    }
-    if keys.just_pressed(KeyCode::Escape) {
-        if editor.tool == Tool::Select {
-            editor.selected = None;
-        }
-        editor.tool = Tool::Select;
-        panels.map_open = false;
-        panels.help_open = false;
-        panels.regions_open = false;
-    }
-    if editor.tool == Tool::Region {
-        // Drawing a region: Enter closes it, Backspace undoes a corner.
-        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
-            finish_region(&mut editor, &mut toasts, &mut scene);
-        }
-        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
-            editor.region_draft.pop();
-        }
-    } else if editor.tool == Tool::Address {
-        // The picked address, not the camera selected before the tool.
-        if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::Delete) {
-            editor.selected_address = None;
-        }
-    } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
-        && let Some(id) = editor.selected.take()
-    {
-        scene.remove_camera(id);
-    }
-    if keys.just_pressed(KeyCode::Slash) || keys.just_pressed(KeyCode::F1) {
-        panels.help_open = !panels.help_open;
-    }
-    if keys.just_pressed(KeyCode::KeyF) {
+    let pressed = |key| key_codes(key).iter().any(|k| keys.just_pressed(*k));
+    let mut ctx = EditCtx {
+        doc: &mut TrackScene(&mut scene),
+        editor: &mut editor,
+        panels: &mut panels,
+        toasts: &mut toasts,
+    };
+    if commands::keys(&mut ctx, &pressed) {
         ui.focus_request = true;
     }
     if std::mem::take(&mut ui.focus_request)
@@ -301,27 +265,24 @@ fn keyboard(
         o.focus = Vec3::from_array(c.position).with_y(0.0);
         o.distance = o.distance.min(60.0);
     }
-    if keys.just_pressed(KeyCode::KeyN) {
-        panels.overlay = match panels.overlay {
-            crate::state::OverlayMode::Overlap => crate::state::OverlayMode::PerCamera,
-            crate::state::OverlayMode::PerCamera => crate::state::OverlayMode::Overlap,
-        };
+}
+
+/// The keys of a shortcut.
+fn key_codes(key: Key) -> &'static [KeyCode] {
+    match key {
+        Key::Tool(Tool::Select) => &[KeyCode::KeyV],
+        Key::Tool(Tool::Place) => &[KeyCode::KeyP],
+        Key::Tool(Tool::Aim) => &[KeyCode::KeyA],
+        Key::Tool(Tool::Move) => &[KeyCode::KeyM],
+        Key::Tool(Tool::Region) => &[KeyCode::KeyR],
+        Key::Tool(Tool::Address) => &[KeyCode::KeyL],
+        Key::Escape => &[KeyCode::Escape],
+        Key::Finish => &[KeyCode::Enter, KeyCode::NumpadEnter],
+        Key::Erase => &[KeyCode::Backspace, KeyCode::Delete],
+        Key::Help => &[KeyCode::Slash, KeyCode::F1],
+        Key::Focus => &[KeyCode::KeyF],
+        Key::Overlay => &[KeyCode::KeyN],
     }
-}
-
-/// A ray-cast hit on something the tools care about.
-#[derive(Debug, Clone, Copy)]
-struct Hit {
-    point: Vec3,
-    normal: Vec3,
-    target: HitTarget,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum HitTarget {
-    Building,
-    Ground,
-    Camera(u32),
 }
 
 /// Raw input sources for [`pointer`].
@@ -615,7 +576,7 @@ fn pointer(
         {
             st.gesture = Gesture::Tool;
             if let Some(hit) = cast(pos, false) {
-                apply_tool(&mut editor, &mut scene, &models, hit);
+                commands::apply_tool(&mut editor, &mut scene, &models, hit);
             }
         }
     }
@@ -638,7 +599,7 @@ fn pointer(
                 if delta != Vec2::ZERO
                     && let Some(hit) = cast(pos, false)
                 {
-                    apply_tool(&mut editor, &mut scene, &models, hit);
+                    commands::apply_tool(&mut editor, &mut scene, &models, hit);
                 }
             }
             _ => {}
@@ -653,10 +614,13 @@ fn pointer(
         {
             if editor.tool == Tool::Region {
                 if let Some(p) = ground_point(camera, cam_t, pos, terrain) {
-                    region_click(
-                        &mut editor,
-                        &mut toasts,
-                        &mut scene,
+                    commands::region_click(
+                        &mut EditCtx {
+                            doc: &mut **scene,
+                            editor: &mut editor,
+                            panels: &mut panels,
+                            toasts: &mut toasts,
+                        },
                         clamp_to_area(p, area.as_deref()),
                     );
                 }
@@ -695,11 +659,13 @@ fn pointer(
                     };
                     hit = near_body(&mut cast, pos, radius).or(hit);
                 }
-                click(
-                    &mut editor,
-                    &mut panels,
-                    &mut toasts,
-                    &mut scene,
+                commands::click(
+                    &mut EditCtx {
+                        doc: &mut **scene,
+                        editor: &mut editor,
+                        panels: &mut panels,
+                        toasts: &mut toasts,
+                    },
                     &models,
                     hit,
                 );
@@ -741,49 +707,6 @@ pub fn region_snap_m(view_distance: f32) -> f32 {
     (view_distance * 0.02).clamp(1.0, 10.0)
 }
 
-/// Adds a region corner, or closes the region when the first corner is clicked.
-fn region_click(editor: &mut Editor, toasts: &mut Toasts, scene: &mut Scene, p: [f32; 2]) {
-    let closes = editor.region_draft.len() >= 3
-        && editor.region_draft.first().is_some_and(|f| {
-            Vec2::from_array(*f).distance(Vec2::from_array(p)) <= editor.region_snap_m
-        });
-    if closes {
-        finish_region(editor, toasts, scene);
-    } else if editor.region_draft.len() < MAX_REGION_POINTS {
-        editor.region_draft.push(p);
-    } else {
-        toasts.error(format!(
-            "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
-        ));
-    }
-}
-
-/// Turns the draft into the scene's region (nothing to do without corners).
-fn finish_region(editor: &mut Editor, toasts: &mut Toasts, scene: &mut Scene) {
-    if editor.region_draft.is_empty() {
-        return;
-    }
-    let region = Region {
-        points: std::mem::take(&mut editor.region_draft),
-        enabled: true,
-    };
-    match region.problem() {
-        None => {
-            toasts.info(format!(
-                "Coverage now counts only the {:.0} m² region",
-                region.area_m2()
-            ));
-            scene.region = Some(region);
-            scene.touch();
-            editor.tool = Tool::Select;
-        }
-        Some(problem) => {
-            editor.region_draft = region.points;
-            toasts.error(problem.message());
-        }
-    }
-}
-
 /// Keeps a region corner on the loaded area, so a click near the horizon
 /// cannot put one kilometres away.
 fn clamp_to_area(p: [f32; 2], area: Option<&Area>) -> [f32; 2] {
@@ -802,103 +725,4 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
     let right = Vec3::new(c, 0.0, -s);
     let fwd = Vec3::new(-s, 0.0, -c);
     orbit.focus += (-right * delta.x + fwd * delta.y) * scale;
-}
-
-/// A click/tap (press + release without dragging).
-fn click(
-    editor: &mut Editor,
-    panels: &mut Panels,
-    toasts: &mut Toasts,
-    scene: &mut Scene,
-    models: &Models,
-    hit: Option<Hit>,
-) {
-    match editor.tool {
-        Tool::Select => match hit {
-            Some(Hit {
-                target: HitTarget::Camera(id),
-                ..
-            }) => select(editor, panels, id),
-            _ => editor.selected = None,
-        },
-        Tool::Place => {
-            let Some(hit) = hit else { return };
-            if let HitTarget::Camera(id) = hit.target {
-                select(editor, panels, id);
-                return;
-            }
-            let kind = models.kind_of(&editor.place_model);
-            let (position, yaw) = mount(hit, kind.default_mount_height_m());
-            let id = scene.add_camera(CameraPlacement {
-                id: 0,
-                label: String::new(),
-                model_id: editor.place_model.clone(),
-                position: position.to_array(),
-                yaw_deg: yaw.unwrap_or(0.0),
-                pitch_deg: kind.default_pitch_deg(),
-                roll_deg: 0.0,
-                color: None,
-                enabled: true,
-                group: None,
-            });
-            select(editor, panels, id);
-            if yaw.is_none() {
-                // Placed on the ground: switch to Aim so the next click points it.
-                editor.tool = Tool::Aim;
-                toasts.info("Click where the new camera should point");
-            }
-        }
-        // Handled in `pointer` (by `region_click` for Region).
-        Tool::Region | Tool::Address => {}
-        Tool::Aim | Tool::Move => {
-            if editor.selected.is_none()
-                && let Some(Hit {
-                    target: HitTarget::Camera(id),
-                    ..
-                }) = hit
-            {
-                select(editor, panels, id);
-            }
-        }
-    }
-}
-
-fn apply_tool(editor: &mut Editor, scene: &mut Scene, models: &Models, hit: Hit) {
-    let Some(id) = editor.selected else { return };
-    let tool = editor.tool;
-    let Some(cam) = scene.camera_mut(id) else {
-        return;
-    };
-    match tool {
-        Tool::Aim => {
-            if !matches!(hit.target, HitTarget::Camera(c) if c == id) {
-                cam.look_at(hit.point);
-            }
-        }
-        Tool::Move => {
-            if matches!(hit.target, HitTarget::Camera(_)) {
-                return;
-            }
-            let kind = models.kind_of(&cam.model_id);
-            let (position, yaw) = mount(hit, kind.default_mount_height_m());
-            cam.position = position.to_array();
-            if let Some(y) = yaw {
-                cam.yaw_deg = y;
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Mount position for a hit: on a wall, just in front of the surface facing
-/// outward; on the ground or a roof, raised to the mount height.
-fn mount(hit: Hit, mount_height: f32) -> (Vec3, Option<f32>) {
-    let wall = hit.target == HitTarget::Building && hit.normal.y.abs() < 0.5;
-    if wall {
-        let n = hit.normal.with_y(0.0).normalize_or(Vec3::X);
-        let yaw = yaw_pitch_from_forward(n).map(|(y, _)| y);
-        (hit.point + n * MOUNT_OFFSET_M, yaw)
-    } else {
-        (hit.point + Vec3::Y * mount_height, None)
-    }
 }
