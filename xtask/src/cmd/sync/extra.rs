@@ -92,7 +92,7 @@ pub const COMPOSE: &str = "compose.yaml";
 pub const BUMP_PINS: &str = "scripts/bump-pins.py";
 pub const SECURITY_PATCH: &str = "scripts/security-patch.py";
 
-fn finding(text: String) -> Finding {
+pub(super) fn finding(text: String) -> Finding {
     Finding::Rule(text)
 }
 
@@ -158,7 +158,7 @@ fn cargo_packages(text: &str, mise: bool) -> Vec<(String, String)> {
     out
 }
 
-fn parse(path: &str, text: &str) -> Result<Table, Finding> {
+pub(super) fn parse(path: &str, text: &str) -> Result<Table, Finding> {
     toml::from_str(text).map_err(|e| finding(format!("{path}: not TOML: {}", e.message())))
 }
 
@@ -1060,6 +1060,7 @@ mod tests {
             bump_pins: "import os\n\nCOOLDOWN_DAYS = 7\n".into(),
             security_patch: SCRIPT.into(),
             compose: COMPOSE_YAML.into(),
+            mise_ci_lock: String::new(),
             doc_pins: Ok(String::new()),
         }
     }

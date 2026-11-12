@@ -1,8 +1,8 @@
 //! `cargo xtask sync`: pinned versions agree wherever they are repeated, nothing repeats what
 //! is pinned once, and the advisory ignore lists agree. Ported rule by rule from
 //! scripts/check-toolchain-sync.sh, matching what its grep, sed and awk lines matched,
-//! quirks included (each is noted where it is kept). The rules in [`extra`] are newer: the
-//! script never had them.
+//! quirks included (each is noted where it is kept). The rules in [`extra`] and [`mise`] are
+//! newer: the script never had them.
 //!
 //! Sources of truth: rust-toolchain.toml for Rust (mise.lock records it for mise),
 //! .github/actions/setup-mise for the mise that the workflows, the Dockerfile and mise.toml's
@@ -52,6 +52,8 @@ pub struct Snapshot {
     pub bump_pins: String,
     pub security_patch: String,
     pub compose: String,
+    /// mise.ci.lock (empty when there is none), which only [`mise`] reads.
+    pub mise_ci_lock: String,
     /// What `git grep` found for [`doc_pattern`] in the Markdown files (empty: nothing), or why
     /// it could not search.
     pub doc_pins: Result<String, String>,
@@ -213,6 +215,7 @@ regex!(WORKFLOW_NAME, r"^.*\.y.*ml$");
 regex!(ACTION_NAME, r"^action\.y.*ml$");
 
 pub mod extra;
+pub mod mise;
 
 /// A file's lines as grep, sed and awk read them: split at LF, the last one even without a
 /// final newline. A CR stays part of its line.
@@ -761,15 +764,16 @@ fn optional(repo: &Path, path: &str) -> Result<String> {
 }
 
 /// Reads the repository at `repo` and runs every rule: the script's ([`check`]), then the
-/// newer ones ([`extra`]); `git` searches the docs.
+/// newer ones ([`extra`], [`mise`]); `git` searches the docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
     Ok(all(&snapshot(repo, git)?).outcome())
 }
 
-/// Every rule on `s`: the script's ([`check`]), then the newer ones ([`extra`]).
+/// Every rule on `s`: the script's ([`check`]), then the newer ones ([`extra`], [`mise`]).
 pub fn all(s: &Snapshot) -> Report {
     let mut report = check(s);
     report.findings.extend(extra::check(s));
+    report.findings.extend(mise::check(s));
     report
 }
 
@@ -819,6 +823,7 @@ pub fn snapshot(repo: &Path, git: &dyn Git) -> Result<Snapshot> {
         bump_pins: optional(repo, extra::BUMP_PINS)?,
         security_patch: optional(repo, extra::SECURITY_PATCH)?,
         compose: optional(repo, extra::COMPOSE)?,
+        mise_ci_lock: optional(repo, "mise.ci.lock")?,
         doc_pins: Ok(String::new()),
     };
     let pattern = doc_pattern(&s.mise_toml, &s.mise_ci_toml);

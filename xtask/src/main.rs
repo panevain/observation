@@ -193,8 +193,9 @@ enum Command {
     #[command(subcommand)]
     SecurityPatch(SecurityPatchCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
-    /// be, the advisory ignore lists disagree, a package named to cargo is not a crate, or a
-    /// testing feature is enabled outside [dev-dependencies].
+    /// be, the advisory ignore lists disagree, a package named to cargo is not a crate, a
+    /// testing feature is enabled outside [dev-dependencies], or the image lists, cooldown days,
+    /// mise lockfiles, MISE_ENV or `check`'s task list disagree with what they mirror.
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
