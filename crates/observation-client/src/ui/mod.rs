@@ -14,7 +14,9 @@ use crate::history::HistoryOp;
 use crate::net::Tiles;
 use crate::persist::PersistAction;
 use crate::platform::Platform;
-use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Toasts, Tool, UiState};
+use crate::state::{
+    Area, Editor, LoadArea, Loading, Models, Scene, ToastAction, Toasts, Tool, UiState,
+};
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
 };
@@ -72,6 +74,7 @@ fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>, mut toasts: ResMu
 pub struct UiData<'w> {
     pub tokens: Res<'w, Tokens>,
     pub ui: ResMut<'w, UiState>,
+    pub editor: ResMut<'w, Editor>,
     pub toasts: ResMut<'w, Toasts>,
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
@@ -203,21 +206,22 @@ fn draw_ui(
 
     overlays::mode_pill(&ctx, &t, viewport_rect, &d);
     // Quick actions next to the selected camera, where the eye already is.
-    let anchor =
-        d.ui.selected
-            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region | Tool::Address))
-            .and_then(|id| d.scene.camera(id))
-            .zip(camera.single().ok())
-            .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
-            .map(|p| egui::pos2(p.x, p.y))
-            .filter(|p| viewport_rect.shrink(t.space.lg).contains(*p));
-    if let (Some(id), Some(at)) = (d.ui.selected, anchor)
+    let anchor = d
+        .editor
+        .selected
+        .filter(|_| !matches!(d.editor.tool, Tool::Place | Tool::Region | Tool::Address))
+        .and_then(|id| d.scene.camera(id))
+        .zip(camera.single().ok())
+        .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
+        .map(|p| egui::pos2(p.x, p.y))
+        .filter(|p| viewport_rect.shrink(t.space.lg).contains(*p));
+    if let (Some(id), Some(at)) = (d.editor.selected, anchor)
         && let Some(a) = overlays::camera_toolbar(&ctx, &t, viewport_rect, at)
     {
         actions::apply(&mut d, id, a);
     }
-    overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
-    overlays::address_card(&ctx, &t, viewport_rect, &d.ui);
+    overlays::tool_cursor(&ctx, viewport_rect, d.editor.tool);
+    overlays::address_card(&ctx, &t, viewport_rect, &d.ui, &d.editor);
     match overlays::toasts(&ctx, &t, viewport_rect, &d.toasts) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
             d.ui.history_request = Some(HistoryOp::Undo);

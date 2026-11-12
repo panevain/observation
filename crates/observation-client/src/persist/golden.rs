@@ -21,7 +21,9 @@
 use super::{ADDRESS_JUMP_KEY, FONT_KEY, PersistAction, PersistPlugin, STORAGE_KEY};
 use crate::platform::SaveFailure;
 use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
-use crate::state::{LoadArea, Models, SaveState, Scene, Snapshot, ToastKind, Toasts, UiState};
+use crate::state::{
+    Editor, LoadArea, Models, SaveState, Scene, Snapshot, ToastKind, Toasts, UiState,
+};
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -619,13 +621,13 @@ fn a_first_visit_and_an_import_write_exactly_what_they_should() {
     h.frames(2 * INTERVAL_FRAMES);
     assert_eq!(h.store.ops(), [], "nothing to save before an area");
 
-    h.app.world_mut().resource_mut::<UiState>().selected = Some(2);
+    h.app.world_mut().resource_mut::<Editor>().selected = Some(2);
     h.app.world_mut().write_message(PersistAction::Import);
     h.app.update();
     assert!(h.files.pick(Ok(golden.clone())));
     h.app.update();
     assert_eq!(
-        h.app.world().resource::<UiState>().selected,
+        h.app.world().resource::<Editor>().selected,
         None,
         "an import clears the selection"
     );

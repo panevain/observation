@@ -10,7 +10,7 @@ use super::widgets::{
 use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{InspectorTab, OverlayMode, Tool, UiState, terrain_of};
+use crate::state::{Editor, InspectorTab, OverlayMode, Tool, UiState, select, terrain_of};
 use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
 use observation_core::camera::{
@@ -22,7 +22,7 @@ use observation_core::scene::MAX_CUSTOM_MODELS;
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
-    follow_selection(&mut d.ui);
+    follow_selection(&d.editor, &mut d.ui);
     if d.ui.jump_to_address {
         let groups = d.addresses.groups(&d.scene.cameras);
         if picked_group(d, &groups).is_some() {
@@ -35,13 +35,14 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     }
     ui.spacing_mut().item_spacing.y = t.space.sm;
     summary(ui, d, &t);
-    let camera =
-        d.ui.selected
-            .and_then(|id| d.scene.camera(id))
-            .map(|c| c.label.trim())
-            .filter(|l| !l.is_empty())
-            .unwrap_or("Camera")
-            .to_owned();
+    let camera = d
+        .editor
+        .selected
+        .and_then(|id| d.scene.camera(id))
+        .map(|c| c.label.trim())
+        .filter(|l| !l.is_empty())
+        .unwrap_or("Camera")
+        .to_owned();
     tabs(
         ui,
         &t,
@@ -75,16 +76,16 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
 
 /// Opens the Camera tab when the selection changes to another camera, and
 /// goes back to the list when the selection is cleared there.
-fn follow_selection(ui: &mut UiState) {
-    if ui.selected != ui.inspector_seen {
-        match ui.selected {
+fn follow_selection(editor: &Editor, ui: &mut UiState) {
+    if editor.selected != ui.inspector_seen {
+        match editor.selected {
             Some(_) => ui.inspector_tab = InspectorTab::Camera,
             None if ui.inspector_tab == InspectorTab::Camera => {
                 ui.inspector_tab = InspectorTab::Cameras;
             }
             None => {}
         }
-        ui.inspector_seen = ui.selected;
+        ui.inspector_seen = editor.selected;
     }
 }
 
@@ -94,7 +95,8 @@ fn picked_group<'a>(
     d: &UiData,
     groups: &[(Option<&'a str>, Vec<&'a CameraPlacement>)],
 ) -> Option<&'a str> {
-    d.ui.selected_address
+    d.editor
+        .selected_address
         .as_ref()
         .map(address_label)
         .and_then(|label| d.addresses.group_for(groups, &label))
@@ -247,7 +249,7 @@ fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
                 .on_hover_text("Limit the figures to an area you outline on the ground (R)")
                 .clicked()
             {
-                d.ui.tool = Tool::Region;
+                d.editor.tool = Tool::Region;
             }
             return;
         };
@@ -264,7 +266,7 @@ fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
             .on_hover_text("Outline a new region (R)")
             .clicked()
         {
-            d.ui.tool = Tool::Region;
+            d.editor.tool = Tool::Region;
         } else if ui.button("Clear").clicked() {
             d.scene.region = None;
             d.scene.touch();
@@ -285,14 +287,14 @@ fn cameras_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         "place-model",
         &d.models.catalog.models,
         &d.models.custom,
-        &mut d.ui.place_model,
+        &mut d.editor.place_model,
     );
     if ui
         .add(primary(t, &format!("{}  Place camera…", icons::PLUS)))
         .on_hover_text("Then click a wall or the ground (P)")
         .clicked()
     {
-        d.ui.tool = Tool::Place;
+        d.editor.tool = Tool::Place;
     }
     ui.add_space(t.space.xs);
     if d.scene.cameras.is_empty() {
@@ -339,7 +341,7 @@ fn empty_state(ui: &mut egui::Ui, t: &Tokens) {
 /// The selected camera's settings, with a way back to the list and to the
 /// cameras before and after it.
 fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    let Some(id) = d.ui.selected else {
+    let Some(id) = d.editor.selected else {
         hint(
             ui,
             t,
@@ -378,9 +380,9 @@ fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 .add_enabled(n > 1, secondary(t, icons::CARET_LEFT))
                 .on_hover_text("Previous camera in the list");
             if next.clicked() {
-                d.ui.select(order[(i + 1) % n]);
+                select(&mut d.editor, &mut d.ui, order[(i + 1) % n]);
             } else if prev.clicked() {
-                d.ui.select(order[(i + n - 1) % n]);
+                select(&mut d.editor, &mut d.ui, order[(i + n - 1) % n]);
             }
         });
     });
@@ -508,7 +510,7 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 glyph: icons::kind(d.models.kind_of(&c.model_id)),
                 color: camera_color(&d.scene, c, &d.models, t),
                 enabled: c.enabled,
-                selected: d.ui.selected == Some(c.id),
+                selected: d.editor.selected == Some(c.id),
                 highlighted: d.ui.hover_scene == Some(c.id),
             };
             let (resp, eye) = camera_row(ui, t, &row);
@@ -743,9 +745,9 @@ fn camera_row(ui: &mut egui::Ui, t: &Tokens, row: &CameraRow) -> (egui::Response
 }
 
 fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    let Some(id) = d.ui.selected else { return };
+    let Some(id) = d.editor.selected else { return };
     let Some(mut c) = d.scene.camera(id).cloned() else {
-        d.ui.selected = None;
+        d.editor.selected = None;
         return;
     };
     let color = camera_color(&d.scene, &c, &d.models, t);
@@ -1371,7 +1373,7 @@ fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
     model.id = d.models.new_custom_id(&model.name);
     match model.validate() {
         Ok(()) => {
-            d.ui.place_model = model.id.clone();
+            d.editor.place_model = model.id.clone();
             d.toasts.info(format!(
                 "Added “{}” — it is now the model for new cameras",
                 model.name

@@ -142,8 +142,8 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
         ui.spacing_mut().item_spacing.y = t.space.xs;
         ui.spacing_mut().button_padding = vec2(t.space.xs, t.space.xs);
         for tool in Tool::ALL {
-            let on = d.ui.tool == tool;
-            let disabled = tool.needs_selection() && d.ui.selected.is_none();
+            let on = d.editor.tool == tool;
+            let disabled = tool.needs_selection() && d.editor.selected.is_none();
             // The active tool is the one accent-filled button, with the filled
             // icon, so the mode never depends on hue alone.
             let glyph = icons::tool(tool);
@@ -174,7 +174,7 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
             )
             .on_hover_text(tip);
             if resp.clicked() {
-                d.ui.tool = tool;
+                d.editor.tool = tool;
             }
         }
         ui.add_space(t.space.md);
@@ -282,7 +282,7 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
             }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = t.space.xs;
-                for (key, what) in d.ui.tool.keymap() {
+                for (key, what) in d.editor.tool.keymap() {
                     // Drop the rest rather than run into the figures.
                     if ui.available_width() < 140.0 {
                         break;

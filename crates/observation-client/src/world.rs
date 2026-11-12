@@ -5,7 +5,8 @@ use crate::input::OrbitCamera;
 use crate::net::Tiles;
 use crate::platform::Platform;
 use crate::state::{
-    Area, AreaLoaded, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, Toasts, UiState, grid_bounds,
+    Area, AreaLoaded, Editor, FACADE_CELL_M, GROUND_CELL_M, Models, Scene, Toasts, UiState,
+    grid_bounds,
 };
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
@@ -260,6 +261,7 @@ fn on_area_loaded(
     mut scene: ResMut<Scene>,
     models: Res<Models>,
     mut ui: ResMut<UiState>,
+    mut editor: ResMut<Editor>,
     mut toasts: ResMut<Toasts>,
     mut coverage: ResMut<CoverageState>,
     mut orbit: Query<&mut OrbitCamera>,
@@ -441,7 +443,7 @@ fn on_area_loaded(
     });
 
     // An address picked in the old area means nothing in the new one.
-    ui.selected_address = None;
+    editor.selected_address = None;
     ui.hover_address = None;
     ui.jump_to_address = false;
 
@@ -458,8 +460,8 @@ fn on_area_loaded(
         // A region belongs to the area it was drawn on, as does one being
         // drawn.
         scene.region = None;
-        ui.region_draft.clear();
-        ui.selected = None;
+        editor.region_draft.clear();
+        editor.selected = None;
         if area == AreaRef::Demo {
             // A fresh demo street comes with example cameras to explore.
             let picks: Vec<&CameraModel> = EXAMPLE_MODELS
@@ -558,7 +560,7 @@ struct HighlightShown {
 #[allow(clippy::too_many_arguments)]
 fn highlight_address(
     mut commands: Commands,
-    ui: Res<UiState>,
+    editor: Res<Editor>,
     area: Option<Res<Area>>,
     tokens: Res<Tokens>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -567,7 +569,7 @@ fn highlight_address(
     mut shown: Local<HighlightShown>,
 ) {
     let area_changed = area.as_ref().is_some_and(|a| a.is_changed());
-    if shown.address == ui.selected_address && !area_changed {
+    if shown.address == editor.selected_address && !area_changed {
         if tokens.is_changed()
             && let Some(mut mat) = shown.material.as_ref().and_then(|h| materials.get_mut(h))
         {
@@ -575,12 +577,12 @@ fn highlight_address(
         }
         return;
     }
-    shown.address.clone_from(&ui.selected_address);
+    shown.address.clone_from(&editor.selected_address);
     shown.material = None;
     for e in &old {
         commands.entity(e).despawn();
     }
-    let (Some(address), Some(area)) = (&ui.selected_address, area) else {
+    let (Some(address), Some(area)) = (&editor.selected_address, area) else {
         return;
     };
     let b = &area.bundle;

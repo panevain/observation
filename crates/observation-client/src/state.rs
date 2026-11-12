@@ -12,6 +12,8 @@ use observation_core::terrain::{FLAT, Terrain};
 use crate::platform::SaveFailure;
 pub use observation_client_model::document::Snapshot;
 use observation_client_model::document::{self, Document};
+use observation_client_model::editor;
+pub use observation_client_model::editor::Tool;
 use observation_client_model::toasts;
 pub use observation_client_model::toasts::{ToastAction, ToastKind};
 
@@ -21,130 +23,6 @@ pub const GROUND_CELL_M: f32 = 0.5;
 pub const FACADE_CELL_M: f32 = 1.0;
 /// Cameras are mounted this far in front of the surface they are placed on.
 pub const MOUNT_OFFSET_M: f32 = 0.15;
-
-/// Editing tool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Tool {
-    #[default]
-    Select,
-    Place,
-    Aim,
-    Move,
-    /// Draw the coverage region.
-    Region,
-    /// Show the street address under the pointer; click to select it.
-    Address,
-}
-
-impl Tool {
-    pub const ALL: [Self; 6] = [
-        Self::Select,
-        Self::Place,
-        Self::Aim,
-        Self::Move,
-        Self::Region,
-        Self::Address,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Select => "Select",
-            Self::Place => "Place",
-            Self::Aim => "Aim",
-            Self::Move => "Move",
-            Self::Region => "Region",
-            Self::Address => "Address",
-        }
-    }
-
-    pub fn shortcut(self) -> &'static str {
-        match self {
-            Self::Select => "V",
-            Self::Place => "P",
-            Self::Aim => "A",
-            Self::Move => "M",
-            Self::Region => "R",
-            Self::Address => "L",
-        }
-    }
-
-    pub fn hint(self) -> &'static str {
-        match self {
-            Self::Select => {
-                "Click a camera to select it · drag to orbit · right-drag to pan · scroll to zoom"
-            }
-            Self::Place => {
-                "Click a wall to mount a camera there, or the ground to place it on a pole"
-            }
-            Self::Aim => "Click or drag on the scene to point the selected camera",
-            Self::Move => "Click or drag on a wall or the ground to move the selected camera",
-            Self::Region => {
-                "Click to add corners · click the first corner or press Enter to finish · Backspace undoes a corner"
-            }
-            Self::Address => {
-                "Point at a building to see its address · click to select it and the buildings at it"
-            }
-        }
-    }
-
-    /// Short instruction for the mode pill.
-    pub fn banner(self) -> &'static str {
-        match self {
-            Self::Select => "Click a camera to select it",
-            Self::Place => "Click a wall or the ground to place a camera",
-            Self::Aim => "Click where the selected camera should look",
-            Self::Move => "Click a wall or the ground to move the selected camera",
-            Self::Region => "Click corners of the area to measure, then the first corner",
-            Self::Address => "Point at a building to see its address",
-        }
-    }
-
-    /// Keys and gestures for the status bar: (key, what it does).
-    pub fn keymap(self) -> &'static [(&'static str, &'static str)] {
-        match self {
-            Self::Select => &[
-                ("Click", "select"),
-                ("Drag", "orbit"),
-                ("Right-drag", "pan"),
-                ("Scroll", "zoom"),
-                ("F", "focus"),
-                ("Del", "delete"),
-            ],
-            Self::Place => &[
-                ("Click wall", "mount"),
-                ("Click ground", "pole"),
-                ("Esc", "done"),
-            ],
-            Self::Aim => &[
-                ("Click/drag", "point camera"),
-                ("Right-drag", "pan"),
-                ("Esc", "done"),
-            ],
-            Self::Move => &[
-                ("Click/drag", "move camera"),
-                ("Right-drag", "pan"),
-                ("Esc", "done"),
-            ],
-            Self::Region => &[
-                ("Click", "add corner"),
-                ("Enter", "finish"),
-                ("Backspace", "remove corner"),
-                ("Esc", "cancel"),
-            ],
-            Self::Address => &[
-                ("Click", "select address"),
-                ("Drag", "orbit"),
-                ("Right-drag", "pan"),
-                ("Del", "clear"),
-                ("Esc", "done"),
-            ],
-        }
-    }
-
-    pub fn needs_selection(self) -> bool {
-        matches!(self, Self::Aim | Self::Move)
-    }
-}
 
 /// Whether a click with the Address tool also scrolls the camera list to that
 /// address (a setting, remembered in this browser).
@@ -183,10 +61,6 @@ pub enum InspectorTab {
 /// Transient UI state.
 #[derive(Debug, Resource)]
 pub struct UiState {
-    pub tool: Tool,
-    pub selected: Option<u32>,
-    /// Model used by the Place tool.
-    pub place_model: String,
     pub overlay: OverlayMode,
     pub show_facades: bool,
     pub show_frustums: bool,
@@ -208,24 +82,15 @@ pub struct UiState {
     /// Wall-clock seconds since start-up, for "saved just now" and the
     /// loading timer.
     pub now: f64,
-    /// Corners placed so far with the Region tool, world `[x, z]`.
-    pub region_draft: Vec<[f32; 2]>,
-    /// Ground point under the pointer while drawing a region.
-    pub region_hover: Option<[f32; 2]>,
-    /// How close to the first corner a click closes the region, metres.
-    pub region_snap_m: f32,
     /// What the Address tool shows by the pointer: `None` off the scene,
     /// `Some(None)` where there is no address.
     pub hover_address: Option<Option<String>>,
-    /// The address picked with the Address tool; its buildings are
-    /// highlighted.
-    pub selected_address: Option<observation_core::address::Address>,
     /// Scroll the camera list to the picked address's group once (consumed by
     /// the inspector).
     pub jump_to_address: bool,
     pub inspector_tab: InspectorTab,
     /// The selection the inspector last saw, so it can open the Camera tab
-    /// when the selection changes some other way than [`UiState::select`].
+    /// when the selection changes some other way than [`select`].
     pub inspector_seen: Option<u32>,
     /// A restored or imported scene's area came back with different map
     /// data: shown in the Coverage card until dismissed or another area
@@ -236,9 +101,6 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            tool: Tool::Select,
-            selected: None,
-            place_model: "generic-doorbell-160".to_owned(),
             overlay: OverlayMode::Overlap,
             show_facades: true,
             show_frustums: true,
@@ -252,11 +114,7 @@ impl Default for UiState {
             history_request: None,
             save: SaveState::Pending,
             now: 0.0,
-            region_draft: Vec::new(),
-            region_hover: None,
-            region_snap_m: 1.0,
             hover_address: None,
-            selected_address: None,
             jump_to_address: false,
             inspector_tab: InspectorTab::Cameras,
             inspector_seen: None,
@@ -280,25 +138,22 @@ pub enum SaveState {
     Failed(SaveFailure),
 }
 
-impl UiState {
-    /// Selects a camera and shows its settings in the inspector, even when
-    /// it was already selected.
-    pub fn select(&mut self, id: u32) {
-        self.selected = Some(id);
-        self.inspector_tab = InspectorTab::Camera;
-    }
+/// Selects a camera and shows its settings in the inspector, even when it
+/// was already selected.
+pub fn select(editor: &mut Editor, ui: &mut UiState, id: u32) {
+    editor.selected = Some(id);
+    ui.inspector_tab = InspectorTab::Camera;
+}
 
+/// The editing state (tool, selection, Place model, region draft, picked
+/// address), as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Editor(editor::Editor);
+
+impl UiState {
     /// The camera to highlight: hovered in the list or in the 3D view.
     pub fn hovered(&self) -> Option<u32> {
         self.hover_list.or(self.hover_scene)
-    }
-
-    /// Goes back to the default model for the Place tool if its model is
-    /// gone (deleted, undone, or left out of a restored or imported scene).
-    pub fn forget_missing_place_model(&mut self, models: &Models) {
-        if models.get(&self.place_model).is_none() {
-            self.place_model = Self::default().place_model;
-        }
     }
 }
 
@@ -315,8 +170,8 @@ impl Models {
 }
 
 /// Keeps the Place tool's model valid whenever the custom models change.
-pub fn forget_missing_place_model(models: Res<Models>, mut ui: ResMut<UiState>) {
-    ui.forget_missing_place_model(&models);
+pub fn forget_missing_place_model(models: Res<Models>, mut editor: ResMut<Editor>) {
+    editor.forget_missing_place_model(&models);
 }
 
 /// The user's document, as a resource: its change detection (and

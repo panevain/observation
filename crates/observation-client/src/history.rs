@@ -7,7 +7,7 @@
 //! cameras.
 
 use crate::state::{
-    LoadArea, Loading, Models, Scene, Snapshot, ToastAction, Toasts, Tool, UiState,
+    Editor, LoadArea, Loading, Models, Scene, Snapshot, ToastAction, Toasts, Tool, UiState,
 };
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -108,6 +108,7 @@ pub fn record(
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
     mut ui: ResMut<UiState>,
+    mut editor: ResMut<Editor>,
     mut toasts: ResMut<Toasts>,
     loading: Res<Loading>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -191,11 +192,11 @@ pub fn record(
     // moves away from that step it no longer describes the scene.
     ui.data_change = None;
     // UI state that pointed into the old document.
-    if ui.selected.is_some_and(|id| scene.camera(id).is_none()) {
-        ui.selected = None;
+    if editor.selected.is_some_and(|id| scene.camera(id).is_none()) {
+        editor.selected = None;
     }
-    if ui.selected.is_none() && ui.tool.needs_selection() {
-        ui.tool = Tool::Select;
+    if editor.selected.is_none() && editor.tool.needs_selection() {
+        editor.tool = Tool::Select;
     }
     h.last = Some(target);
     h.last_revision = scene.revision;

@@ -6,7 +6,7 @@ use super::widgets::{hint, keycap, primary, secondary, swatch};
 use crate::addresses::address_label;
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{ToastAction, ToastKind, Toasts, Tool, UiState};
+use crate::state::{Editor, ToastAction, ToastKind, Toasts, Tool, UiState};
 use crate::theme::{MIN_VIEWPORT, Tokens, strong_family};
 use bevy_egui::egui::{self, Align2, Id, Order, RichText, Stroke, vec2};
 use observation_core::scene::AreaRef;
@@ -43,8 +43,8 @@ pub fn viewport_gate(ctx: &egui::Context, t: &Tokens, w: f32, h: f32) {
 /// with the coverage and camera colours; the rail and the cursor carry the
 /// mode too.
 pub fn mode_pill(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, d: &UiData) {
-    let tool = d.ui.tool;
-    let selected = d.ui.selected.and_then(|id| d.scene.camera(id));
+    let tool = d.editor.tool;
+    let selected = d.editor.selected.and_then(|id| d.scene.camera(id));
     let max_width = vp.width() - 2.0 * t.space.md;
     egui::Area::new(Id::new("mode-pill"))
         .order(Order::Middle)
@@ -166,8 +166,14 @@ pub fn tool_cursor(ctx: &egui::Context, vp: egui::Rect, tool: Tool) {
 
 /// The Address tool's card by the pointer: the address under it, or that
 /// there is none.
-pub fn address_card(ctx: &egui::Context, t: &Tokens, vp: egui::Rect, ui_state: &UiState) {
-    let (Tool::Address, Some(address)) = (ui_state.tool, &ui_state.hover_address) else {
+pub fn address_card(
+    ctx: &egui::Context,
+    t: &Tokens,
+    vp: egui::Rect,
+    ui_state: &UiState,
+    editor: &Editor,
+) {
+    let (Tool::Address, Some(address)) = (editor.tool, &ui_state.hover_address) else {
         return;
     };
     let Some(at) = ctx
@@ -213,22 +219,22 @@ fn selection_chip(
         .inner_margin(egui::Margin::symmetric(t.space.sm as i8, 0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if d.ui.tool == Tool::Place {
+                if d.editor.tool == Tool::Place {
                     let model = d
                         .models
-                        .get(&d.ui.place_model)
-                        .map_or_else(|| d.ui.place_model.clone(), |m| m.display_name());
+                        .get(&d.editor.place_model)
+                        .map_or_else(|| d.editor.place_model.clone(), |m| m.display_name());
                     ui.label(RichText::new(format!("New: {model}")).strong());
-                } else if d.ui.tool == Tool::Region {
-                    let n = d.ui.region_draft.len();
+                } else if d.editor.tool == Tool::Region {
+                    let n = d.editor.region_draft.len();
                     let text = match n {
                         0 => "No corners yet".to_owned(),
                         1 => "1 corner".to_owned(),
                         n => format!("{n} corners"),
                     };
                     ui.label(RichText::new(text).strong());
-                } else if d.ui.tool == Tool::Address {
-                    match d.ui.selected_address.as_ref().map(address_label) {
+                } else if d.editor.tool == Tool::Address {
+                    match d.editor.selected_address.as_ref().map(address_label) {
                         Some(a) => {
                             let cameras = match d.addresses.count_at(&a) {
                                 0 => "no cameras".to_owned(),

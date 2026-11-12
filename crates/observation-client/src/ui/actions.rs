@@ -3,7 +3,7 @@
 
 use super::UiData;
 use crate::icons;
-use crate::state::{Tool, terrain_of};
+use crate::state::{Tool, select, terrain_of};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraAction {
@@ -59,18 +59,18 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
         return;
     };
     match action {
-        CameraAction::Select => d.ui.select(id),
+        CameraAction::Select => select(&mut d.editor, &mut d.ui, id),
         CameraAction::Focus => {
-            d.ui.select(id);
+            select(&mut d.editor, &mut d.ui, id);
             d.ui.focus_request = true;
         }
         CameraAction::Aim => {
-            d.ui.select(id);
-            d.ui.tool = Tool::Aim;
+            select(&mut d.editor, &mut d.ui, id);
+            d.editor.tool = Tool::Aim;
         }
         CameraAction::Move => {
-            d.ui.select(id);
-            d.ui.tool = Tool::Move;
+            select(&mut d.editor, &mut d.ui, id);
+            d.editor.tool = Tool::Move;
         }
         CameraAction::Duplicate => {
             let mut copy = c;
@@ -79,7 +79,7 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
             let [x, _, z] = copy.position;
             copy.position = terrain_of(d.area.as_deref()).moved_to(copy.position, x + 1.0, z);
             let new = d.scene.add_camera(copy);
-            d.ui.select(new);
+            select(&mut d.editor, &mut d.ui, new);
         }
         CameraAction::ToggleEnabled => {
             if let Some(c) = d.scene.camera_mut(id) {
@@ -88,10 +88,10 @@ pub fn apply(d: &mut UiData, id: u32, action: CameraAction) {
         }
         CameraAction::Delete => {
             d.scene.remove_camera(id);
-            if d.ui.selected == Some(id) {
-                d.ui.selected = None;
-                if d.ui.tool.needs_selection() {
-                    d.ui.tool = Tool::Select;
+            if d.editor.selected == Some(id) {
+                d.editor.selected = None;
+                if d.editor.tool.needs_selection() {
+                    d.editor.tool = Tool::Select;
                 }
             }
         }

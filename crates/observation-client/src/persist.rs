@@ -1,7 +1,7 @@
 //! Autosave to `localStorage`, and JSON scene import/export.
 
 use crate::platform::{KeyValueStore, Platform};
-use crate::state::{AddressJump, LoadArea, Models, SaveState, Scene, Toasts, UiState};
+use crate::state::{AddressJump, Editor, LoadArea, Models, SaveState, Scene, Toasts, UiState};
 use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -206,7 +206,7 @@ pub fn receive_imports(
     p: Res<Persist>,
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
-    mut ui: ResMut<UiState>,
+    mut editor: ResMut<Editor>,
     mut toasts: ResMut<Toasts>,
     mut load: MessageWriter<LoadArea>,
 ) {
@@ -223,7 +223,7 @@ pub fn receive_imports(
                 let area = file.area;
                 let n = file.cameras.len();
                 scene.load_file(file, &mut models);
-                ui.selected = None;
+                editor.selected = None;
                 load.write(LoadArea::new(area, true));
                 toasts.info(format!("Imported scene with {n} camera(s)"));
             }

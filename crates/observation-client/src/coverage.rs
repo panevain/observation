@@ -10,7 +10,7 @@
 mod backend;
 
 use crate::input::OrbitCamera;
-use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState, terrain_of};
+use crate::state::{Area, Editor, Models, OverlayMode, Scene, Tool, UiState, terrain_of};
 use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
 use backend::CoverageBackend;
@@ -473,7 +473,7 @@ struct RegionGizmos;
 fn draw_region(
     mut gizmos: Gizmos<RegionGizmos>,
     scene: Res<Scene>,
-    ui: Res<UiState>,
+    editor: Res<Editor>,
     tokens: Res<Tokens>,
     area: Option<Res<Area>>,
 ) {
@@ -493,7 +493,7 @@ fn draw_region(
         out
     };
     if let Some(r) = &scene.region
-        && ui.region_draft.is_empty()
+        && editor.region_draft.is_empty()
     {
         let c = if r.is_active() {
             color
@@ -503,18 +503,18 @@ fn draw_region(
         let ring = r.points.iter().chain(r.points.first()).copied().collect();
         gizmos.linestrip(draped(ring), c);
     }
-    if ui.tool != Tool::Region {
+    if editor.tool != Tool::Region {
         return;
     }
-    let draft = &ui.region_draft;
-    let path = draft.iter().chain(&ui.region_hover).copied().collect();
+    let draft = &editor.region_draft;
+    let path = draft.iter().chain(&editor.region_hover).copied().collect();
     gizmos.linestrip(draped(path), color);
     let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for (i, p) in draft.iter().enumerate() {
         // Once clicking it would close the region, the first corner shows
         // the whole area a click closes it from.
         let radius = if i == 0 && draft.len() >= 3 {
-            ui.region_snap_m
+            editor.region_snap_m
         } else {
             0.4
         };
@@ -542,10 +542,10 @@ fn draw_outside_area(
     mut outside: Query<(&OutsideArea, &mut Visibility)>,
     camera: Query<&GlobalTransform, With<OrbitCamera>>,
     area: Option<Res<Area>>,
-    ui: Res<UiState>,
+    editor: Res<Editor>,
     tokens: Res<Tokens>,
 ) {
-    let on = ui.tool == Tool::Region;
+    let on = editor.tool == Tool::Region;
     for (_, mut vis) in &mut outside {
         vis.set_if_neq(if on {
             Visibility::Inherited
