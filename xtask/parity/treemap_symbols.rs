@@ -1,6 +1,7 @@
 //! The crate of each symbol, as `xtask::core::demangle::crate_of_symbol` finds it, against
-//! `crate_of_symbol` of scripts/wasm-size-treemap.py, imported by python3 from the tree (the
-//! treemap job runs that script until the port replaces it).
+//! `crate_of_symbol` of scripts/wasm-size-treemap.py, imported by python3 from the tree (no job
+//! runs that script: scripts/wasm-size-report.sh draws with `cargo xtask treemap`, and the script
+//! stays as the reference the parity tests run).
 //! `python3` is whichever the machine has on its PATH: on CI, the runner's system Python.
 //!
 //! `tests/fixtures/treemap/symbols.jsonl` holds `[EXPECT, SYMBOL]` lines: the function names of

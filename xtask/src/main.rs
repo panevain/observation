@@ -200,6 +200,41 @@ enum Command {
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
+    /// Draw a WebAssembly module's size per crate as a treemap (SVG), from its `name` section
+    /// or from twiggy's CSV (as scripts/wasm-size-treemap.py draws it).
+    #[command(group(clap::ArgGroup::new("input").required(true).args(["wasm", "twiggy_csv"])))]
+    Treemap {
+        /// A module that still has its `name` section.
+        #[arg(long, value_name = "FILE")]
+        wasm: Option<PathBuf>,
+        /// The output of `twiggy top -n 1000000 --format csv` instead of a module.
+        #[arg(long, value_name = "FILE")]
+        twiggy_csv: Option<PathBuf>,
+        /// Print the N largest crates and the totals (0: nothing).
+        #[arg(long, value_name = "N", default_value = "0", allow_hyphen_values = true, value_parser = table_arg)]
+        table: usize,
+        /// The raw size to print instead of the measured one (0: measured).
+        #[arg(long, value_name = "BYTES", allow_hyphen_values = true, value_parser = xtask::core::py::int_arg)]
+        shipped_raw: Option<i128>,
+        /// The gzip size to print instead of the measured one (0: measured).
+        #[arg(long, value_name = "BYTES", allow_hyphen_values = true, value_parser = xtask::core::py::int_arg)]
+        shipped_gzip: Option<i128>,
+        /// Where to write the SVG.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// The commit shown in the subtitle.
+        #[arg(long, default_value = cmd::treemap::UNKNOWN, allow_hyphen_values = true, value_parser = xtask::core::py::argparse_value)]
+        commit: String,
+        /// The date shown in the subtitle.
+        #[arg(long, default_value = cmd::treemap::UNKNOWN, allow_hyphen_values = true, value_parser = xtask::core::py::argparse_value)]
+        date: String,
+        /// The build stage shown in the subtitle.
+        #[arg(long, default_value = cmd::treemap::STAGE, allow_hyphen_values = true, value_parser = xtask::core::py::argparse_value)]
+        stage: String,
+        /// Crates below this share of the total are grouped.
+        #[arg(long, value_name = "SHARE", default_value = cmd::treemap::THRESHOLD, allow_hyphen_values = true, value_parser = xtask::core::py::float_arg)]
+        threshold: f64,
+    },
     /// Fail when a WebAssembly module in dist/ is over its size budget
     /// (.config/wasm-size-budget.toml).
     WasmBudget {
@@ -216,6 +251,16 @@ enum Command {
     /// Print xtask's version.
     #[command(hide = true)]
     Version,
+}
+
+/// `--table`: an int as the script's argparse read it, but not negative (the script printed all
+/// but the last N crates).
+fn table_arg(text: &str) -> Result<usize, String> {
+    let n = xtask::core::py::int_arg(text)?;
+    if n < 0 {
+        return Err(format!("{n} is negative"));
+    }
+    Ok(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 /// Writes a command's output. A closed stdout or stderr (`| head`) leaves nothing to report
@@ -253,6 +298,22 @@ fn main() -> ExitCode {
                 clap::error::ErrorKind::MissingRequiredArgument,
                 "security-patch needs --repo <DIR> (a scratch checkout: the check edits its \
                  Cargo.lock)",
+            )
+            .exit();
+    }
+    // argparse takes no `--` anywhere in the script's command line (exit status 2); clap would
+    // skip one silently.
+    if matches!(cli.command, Command::Treemap { .. })
+        && std::env::args_os()
+            .skip_while(|a| a != "treemap")
+            .skip(1)
+            .any(|a| a == "--")
+    {
+        use clap::CommandFactory as _;
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::UnknownArgument,
+                "treemap takes no `--` (unrecognized arguments: --)",
             )
             .exit();
     }
@@ -461,6 +522,40 @@ fn main() -> ExitCode {
                     append(&path, &out.report)?;
                 }
                 Ok(out.failed)
+            })
+        }
+        Command::Treemap {
+            wasm,
+            twiggy_csv,
+            table,
+            shipped_raw,
+            shipped_gzip,
+            out,
+            commit,
+            date,
+            stage,
+            threshold,
+        } => {
+            // The group above makes exactly one of the two present.
+            let source = match (wasm, twiggy_csv) {
+                (Some(path), _) => cmd::treemap::Source::Wasm(path),
+                (None, path) => cmd::treemap::Source::TwiggyCsv(path.unwrap_or_default()),
+            };
+            let args = cmd::treemap::Args {
+                source,
+                table,
+                shipped_raw,
+                shipped_gzip,
+                out,
+                commit,
+                date,
+                stage,
+                threshold,
+            };
+            cmd::treemap::run(&args).map(|out| {
+                emit(b"", out.stderr.as_bytes());
+                emit(out.stdout.as_bytes(), b"");
+                false
             })
         }
         Command::Version => {
