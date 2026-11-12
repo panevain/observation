@@ -8,7 +8,7 @@ use observation_upstream::{BoundedQueue, GuardedHttp, HttpClient, Redirects};
 use crate::catalog::Catalog;
 use crate::config::Config;
 use crate::import::{self, Tools};
-use crate::ports::{Download, ExtractDownload, QueryRunner, Toolchain};
+use crate::ports::{Clock, Download, ExtractDownload, QueryRunner, SystemClock, Toolchain};
 use crate::query::Osm3sQuery;
 use crate::registry::{self, Registry};
 use crate::tools::OsmTools;
@@ -47,6 +47,7 @@ pub struct Ports {
     pub download: Arc<dyn Download>,
     pub toolchain: Arc<dyn Toolchain>,
     pub query_runner: Arc<dyn QueryRunner>,
+    pub clock: Arc<dyn Clock>,
 }
 
 impl Ports {
@@ -70,6 +71,7 @@ impl Ports {
             query_runner: Arc::new(Osm3sQuery {
                 bin: config.overpass_bin.clone(),
             }),
+            clock: Arc::new(SystemClock),
         })
     }
 }
@@ -87,12 +89,14 @@ impl Agent {
                 &config.data_dir,
                 config.max_download_bytes,
                 config.refresh_days,
+                Arc::clone(&ports.clock),
             )?
             .with_refresh_range(config.min_refresh_days, config.max_refresh_days),
         );
         Ok(Arc::new(Self {
             catalog: Catalog::new(
                 Arc::clone(&ports.http),
+                ports.clock,
                 config.catalog_url.clone(),
                 config.data_dir.join("catalog.json"),
             ),

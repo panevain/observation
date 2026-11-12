@@ -10,8 +10,9 @@ use thiserror::Error;
 use tokio::sync::{Notify, watch};
 
 use super::snapshot::build_snapshot;
-use super::{Refresh, Region, RegionDb, Registry, State};
+use super::{Refresh, Region, RegionDb, Registry, State, unix_secs};
 use crate::poly::Boundary;
+use crate::ports::Clock;
 
 /// What is kept about a region across restarts.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -66,6 +67,7 @@ impl Registry {
         data_dir: &Path,
         max_download_bytes: u64,
         refresh_days: u32,
+        clock: Arc<dyn Clock>,
     ) -> Result<Self, OpenError> {
         let path = data_dir.join("regions.json");
         let records: Vec<RegionRecord> = match std::fs::read(&path) {
@@ -99,7 +101,9 @@ impl Registry {
                 record.last_error =
                     Some("the region's database was missing; import it again".into());
             }
-            let job = record.pending.then(|| state.new_job());
+            let job = record
+                .pending
+                .then(|| state.new_job(unix_secs(clock.now())));
             if let Some((j, _)) = &job {
                 state.queue.push_back((record.id.clone(), *j));
             }
@@ -137,6 +141,7 @@ impl Registry {
             data_dir: data_dir.to_owned(),
             max_download_bytes,
             refresh,
+            clock,
         })
     }
 }

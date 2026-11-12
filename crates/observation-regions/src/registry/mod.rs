@@ -21,14 +21,16 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use observation_core::geo::BBox;
 use observation_core::regions::{JobPhase, JobView, RegionsSnapshot};
 use tokio::sync::{Notify, watch};
 use tokio::task::AbortHandle;
+use tokio::time::Instant;
 
 use crate::poly::Boundary;
+use crate::ports::Clock;
 
 mod persist;
 mod snapshot;
@@ -40,10 +42,9 @@ use self::snapshot::{build_snapshot, next_refresh};
 /// Progress is published at most this often (phase changes go out at once).
 const PUBLISH_EVERY: Duration = Duration::from_millis(250);
 
-pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+/// Seconds since the Unix epoch at `t` (0 before it).
+pub fn unix_secs(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// File-system-safe form of a region id (`us/california` -> `us__california`).
@@ -131,7 +132,7 @@ struct State {
 }
 
 impl State {
-    fn new_job(&mut self) -> (JobId, JobView) {
+    fn new_job(&mut self, now_unix: u64) -> (JobId, JobView) {
         self.next_job += 1;
         (
             self.next_job,
@@ -139,7 +140,7 @@ impl State {
                 phase: JobPhase::Queued,
                 done: 0,
                 total: None,
-                since_unix: now_unix(),
+                since_unix: now_unix,
             },
         )
     }
@@ -178,6 +179,7 @@ pub struct Registry {
     data_dir: PathBuf,
     max_download_bytes: u64,
     refresh: Refresh,
+    clock: Arc<dyn Clock>,
 }
 
 /// The agent's scheduled-refresh settings.
@@ -222,6 +224,11 @@ impl Registry {
         self.max_download_bytes
     }
 
+    /// The clock's time in Unix seconds.
+    pub fn now_unix(&self) -> u64 {
+        unix_secs(self.clock.now())
+    }
+
     pub fn subscribe(&self) -> watch::Receiver<RegionsSnapshot> {
         self.tx.subscribe()
     }
@@ -261,6 +268,11 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::{ManualClock, SystemClock};
+
+    fn now_unix() -> u64 {
+        unix_secs(SystemTime::now())
+    }
 
     const SQUARE: &str = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
 
@@ -282,7 +294,7 @@ mod tests {
     }
 
     fn open(dir: &Path) -> Registry {
-        Registry::open(dir, 1, 7).unwrap()
+        Registry::open(dir, 1, 7, Arc::new(SystemClock)).unwrap()
     }
 
     /// Database removal runs on its own thread; wait for it.
@@ -333,6 +345,57 @@ mod tests {
         reopened.delete("monaco").unwrap();
         assert!(reopened.covering(&bbox).is_none());
         assert!(gone(&dir.path().join("db/monaco-2")));
+    }
+
+    /// Every time the registry records comes from its clock; progress is
+    /// published at most every 250 ms of Tokio's clock.
+    #[tokio::test(start_paused = true)]
+    async fn times_come_from_the_clock() {
+        const T0: u64 = 1_700_000_000;
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::at_unix(T0));
+        let reg = Registry::open(dir.path(), 1, 7, clock.clone()).unwrap();
+        let job_view = |reg: &Registry| reg.snapshot().regions[0].job.clone().unwrap();
+        reg.enqueue("a", "A").unwrap();
+        assert_eq!(job_view(&reg).since_unix, T0);
+        let (id, job) = reg.next_job().await;
+        assert!(reg.started(&id, job, spawn_dummy()));
+
+        clock.advance(Duration::from_secs(10));
+        reg.progress(&id, job, JobPhase::Downloading, 1, None);
+        assert_eq!(job_view(&reg).since_unix, T0 + 10, "a new phase starts now");
+        reg.progress(&id, job, JobPhase::Downloading, 2, None);
+        tokio::time::advance(Duration::from_millis(249)).await;
+        reg.progress(&id, job, JobPhase::Downloading, 3, None);
+        assert_eq!(job_view(&reg).done, 1, "published less than 250 ms ago");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        reg.progress(&id, job, JobPhase::Downloading, 4, None);
+        assert_eq!(job_view(&reg).done, 4);
+        assert_eq!(job_view(&reg).since_unix, T0 + 10);
+
+        clock.advance(Duration::from_secs(10));
+        reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
+        let r = reg.snapshot().regions[0].clone();
+        assert_eq!(r.imported_unix, Some(T0 + 20));
+        assert_eq!(r.last_attempt_unix, Some(T0 + 20));
+        assert_eq!(r.next_refresh_unix, Some(T0 + 20 + 7 * 86_400));
+        clock.advance(Duration::from_secs(7 * 86_400));
+        assert!(reg.due_for_refresh().is_empty(), "due only after");
+        clock.advance(Duration::from_secs(1));
+        assert_eq!(reg.due_for_refresh().len(), 1);
+
+        // An import pending at a restart is queued again, at the clock's time.
+        reg.enqueue("b", "B").unwrap();
+        drop(reg);
+        clock.advance(Duration::from_secs(5));
+        let reg = Registry::open(dir.path(), 1, 7, clock.clone()).unwrap();
+        let b = reg
+            .snapshot()
+            .regions
+            .into_iter()
+            .find(|r| r.id == "b")
+            .unwrap();
+        assert_eq!(b.job.unwrap().since_unix, T0 + 20 + 7 * 86_400 + 1 + 5);
     }
 
     #[tokio::test]
@@ -387,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn failed_refreshes_are_not_retried_hourly() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = Registry::open(dir.path(), 1, 1).unwrap();
+        let reg = Registry::open(dir.path(), 1, 1, Arc::new(SystemClock)).unwrap();
         reg.enqueue("a", "A").unwrap();
         let (id, job) = reg.next_job().await;
         reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
@@ -411,7 +474,7 @@ mod tests {
     #[tokio::test]
     async fn auto_refresh_can_be_turned_off_per_region() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = Registry::open(dir.path(), 1, 1).unwrap();
+        let reg = Registry::open(dir.path(), 1, 1, Arc::new(SystemClock)).unwrap();
         assert_eq!(
             reg.change_settings("a", Some(false), None),
             Err(ActionError::NotFound)
@@ -442,7 +505,7 @@ mod tests {
 
         // Persisted across restarts.
         drop(reg);
-        let reopened = Registry::open(dir.path(), 1, 1).unwrap();
+        let reopened = Registry::open(dir.path(), 1, 1, Arc::new(SystemClock)).unwrap();
         assert!(!reopened.snapshot().regions[0].auto_refresh);
         assert!(reopened.due_for_refresh().is_empty());
         reopened.change_settings("a", Some(true), None).unwrap();
@@ -452,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn a_region_can_have_its_own_interval() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = Registry::open(dir.path(), 1, 7).unwrap();
+        let reg = Registry::open(dir.path(), 1, 7, Arc::new(SystemClock)).unwrap();
         assert_eq!(reg.refresh_range(), 7..=365, "the defaults");
         reg.enqueue("a", "A").unwrap();
         let (id, job) = reg.next_job().await;
@@ -482,7 +545,7 @@ mod tests {
         reg.change_settings("a", Some(true), None).unwrap();
         drop(reg);
         // A narrower range clamps it.
-        let narrow = Registry::open(dir.path(), 1, 7)
+        let narrow = Registry::open(dir.path(), 1, 7, Arc::new(SystemClock))
             .unwrap()
             .with_refresh_range(1, 14);
         let snap = narrow.snapshot();
@@ -491,7 +554,7 @@ mod tests {
         assert_eq!(narrow.due_for_refresh().len(), 0, "14 days have not passed");
         drop(narrow);
         // A default interval of 0 still turns every scheduled refresh off.
-        let off = Registry::open(dir.path(), 1, 0).unwrap();
+        let off = Registry::open(dir.path(), 1, 0, Arc::new(SystemClock)).unwrap();
         assert_eq!(off.snapshot().regions[0].next_refresh_unix, None);
     }
 
@@ -533,7 +596,7 @@ mod tests {
     #[tokio::test]
     async fn an_interval_can_be_cleared_back_to_the_default() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = Registry::open(dir.path(), 1, 7).unwrap();
+        let reg = Registry::open(dir.path(), 1, 7, Arc::new(SystemClock)).unwrap();
         reg.enqueue("a", "A").unwrap();
         let (id, job) = reg.next_job().await;
         reg.finish(&id, job, Some(Ok(imported(dir.path(), "a-1"))));
@@ -582,7 +645,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("db/a-1")).unwrap();
         std::fs::write(dir.path().join("regions.json"), b"[{\"id\": \"a\", ").unwrap();
-        let err = Registry::open(dir.path(), 1, 7).unwrap_err();
+        let err = Registry::open(dir.path(), 1, 7, Arc::new(SystemClock)).unwrap_err();
         assert!(err.to_string().contains("regions.json"));
         assert!(dir.path().join("db/a-1").exists());
     }

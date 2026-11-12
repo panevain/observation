@@ -1,12 +1,13 @@
-//! The agent's outside world: the extract download and the programs it runs
-//! on an import and a query. The import and the query route see only these
-//! traits, so tests can run them on fakes. The production implementations
-//! are `ExtractDownload` (below), `tools.rs` and `query.rs`. The extract
-//! list, the boundaries and the download sizes go through
-//! [`HttpClient`](observation_upstream::HttpClient).
+//! The agent's outside world: the extract download, the programs it runs on
+//! an import and a query, and the clock. The import and the query route see
+//! only these traits, so tests can run them on fakes. The production
+//! implementations are `ExtractDownload` and [`SystemClock`] (below),
+//! `tools.rs` and `query.rs`. The extract list, the boundaries and the
+//! download sizes go through [`HttpClient`](observation_upstream::HttpClient).
 
 use std::fmt;
 use std::path::Path;
+use std::time::SystemTime;
 
 use bytes::Bytes;
 use futures_util::FutureExt;
@@ -82,6 +83,49 @@ pub(crate) fn checked_body(resp: HttpResponse) -> Result<Option<Bytes>, String> 
         Body::Complete(bytes) => Ok(Some(bytes)),
         // `Skipped` comes only with a 4xx or 5xx, which is an error above.
         Body::TooLarge | Body::Skipped => Ok(None),
+    }
+}
+
+/// The wall clock: job and region times, the import's database name and the
+/// extract list's age. A plain read, called under the registry's lock.
+/// Durations (throttles, budgets) use `tokio::time::Instant` instead.
+pub trait Clock: Send + Sync + fmt::Debug {
+    fn now(&self) -> SystemTime;
+}
+
+/// The real wall clock.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> SystemTime {
+        SystemTime::now()
+    }
+}
+
+/// A clock that stands still until it is set or advanced.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct ManualClock(std::sync::Mutex<SystemTime>);
+
+#[cfg(test)]
+impl ManualClock {
+    /// A clock at `secs` after the Unix epoch.
+    pub(crate) fn at_unix(secs: u64) -> Self {
+        Self(std::sync::Mutex::new(
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs),
+        ))
+    }
+
+    pub(crate) fn advance(&self, by: std::time::Duration) {
+        *self.0.lock().unwrap() += by;
+    }
+}
+
+#[cfg(test)]
+impl Clock for ManualClock {
+    fn now(&self) -> SystemTime {
+        *self.0.lock().unwrap()
     }
 }
 

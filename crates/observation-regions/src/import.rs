@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use crate::catalog::Extract;
 use crate::poly::{Boundary, MAX_POLY_BYTES};
 use crate::ports::{Download, Toolchain, checked_body};
-use crate::registry::{Imported, JobId, RegionDb, Registry, now_unix, slug};
+use crate::registry::{Imported, JobId, RegionDb, Registry, slug};
 
 /// What an import talks to.
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ pub async fn run(
     tokio::fs::create_dir_all(&db_root)
         .await
         .map_err(|e| format!("could not create the database directory: {e}"))?;
-    let db_dir = format!("{}-{}", slug(id), now_unix());
+    let db_dir = format!("{}-{}", slug(id), registry.now_unix());
     let dest = db_root.join(&db_dir);
     let _ = tokio::fs::remove_dir_all(&dest).await;
     tokio::fs::rename(&db, &dest)

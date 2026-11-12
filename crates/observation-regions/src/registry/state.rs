@@ -9,7 +9,7 @@ impl Registry {
         if s.regions.get(id).is_some_and(|r| r.job.is_some()) {
             return Err(ActionError::Busy);
         }
-        let job = s.new_job();
+        let job = s.new_job(self.now_unix());
         let job_id = job.0;
         let region = s.regions.entry(id.to_owned()).or_insert_with(|| Region {
             record: RegionRecord {
@@ -36,7 +36,7 @@ impl Registry {
         let region = s.regions.get_mut(id).ok_or(ActionError::NotFound)?;
         let (job, _) = region.job.take().ok_or(ActionError::NotFound)?;
         region.record.pending = false;
-        region.record.last_attempt_unix = Some(now_unix());
+        region.record.last_attempt_unix = Some(self.now_unix());
         if region.db.is_none() {
             s.regions.remove(id);
         }
@@ -124,7 +124,7 @@ impl Registry {
         };
         let phase_changed = view.phase != phase;
         if phase_changed {
-            view.since_unix = now_unix();
+            view.since_unix = self.now_unix();
         }
         view.phase = phase;
         view.done = done;
@@ -146,7 +146,7 @@ impl Registry {
         if let Some(region) = s.job_region(id, job) {
             region.job = None;
             region.record.pending = false;
-            region.record.last_attempt_unix = Some(now_unix());
+            region.record.last_attempt_unix = Some(self.now_unix());
             match result {
                 Some(Ok(imported)) => {
                     retired = region.db.replace(Arc::clone(&imported.db));
@@ -154,7 +154,7 @@ impl Registry {
                     r.db_dir = Some(imported.db_dir);
                     r.bbox = imported.bbox;
                     r.data_timestamp = imported.data_timestamp;
-                    r.imported_unix = Some(now_unix());
+                    r.imported_unix = Some(self.now_unix());
                     r.disk_bytes = Some(imported.disk_bytes);
                     r.last_error = None;
                     r.last_error_unix = None;
@@ -164,7 +164,7 @@ impl Registry {
                 Some(Err(e)) => {
                     tracing::warn!(region = id, error = %e, "region import failed");
                     region.record.last_error = Some(e);
-                    region.record.last_error_unix = Some(now_unix());
+                    region.record.last_error_unix = Some(self.now_unix());
                 }
                 None => {}
             }
@@ -206,7 +206,7 @@ impl Registry {
 
     /// Regions due for a scheduled refresh (see [`next_refresh`]).
     pub fn due_for_refresh(&self) -> Vec<(String, String)> {
-        let now = now_unix();
+        let now = self.now_unix();
         self.lock()
             .regions
             .values()

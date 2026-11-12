@@ -5,15 +5,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use observation_core::regions::{CatalogEntry, is_valid_region_id};
 use observation_upstream::{HttpClient, HttpRequest, status_error};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
-use crate::ports::checked_body;
+use crate::ports::{Clock, checked_body};
 
 /// How long a fetched index is used before it is fetched again.
 const MAX_AGE: Duration = Duration::from_secs(24 * 3600);
@@ -125,6 +126,7 @@ fn origin(url: &str) -> Option<String> {
 #[derive(Debug)]
 pub struct Catalog {
     http: Arc<dyn HttpClient>,
+    clock: Arc<dyn Clock>,
     url: String,
     file: PathBuf,
     cached: Mutex<Option<(SystemTime, Arc<Vec<Extract>>)>>,
@@ -134,9 +136,15 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn new(http: Arc<dyn HttpClient>, url: String, file: PathBuf) -> Self {
+    pub fn new(
+        http: Arc<dyn HttpClient>,
+        clock: Arc<dyn Clock>,
+        url: String,
+        file: PathBuf,
+    ) -> Self {
         Self {
             http,
+            clock,
             url,
             file,
             cached: Mutex::new(None),
@@ -206,9 +214,16 @@ impl Catalog {
     /// The extracts, refetched when older than a day. A failed refetch falls
     /// back to the copy on disk, however old.
     pub async fn extracts(&self) -> Result<Arc<Vec<Extract>>, CatalogError> {
+        // A time in the future is not fresh: the list is fetched again.
+        let fresh = |at: SystemTime| {
+            self.clock
+                .now()
+                .duration_since(at)
+                .is_ok_and(|age| age < MAX_AGE)
+        };
         let mut cached = self.cached.lock().await;
         if let Some((at, list)) = cached.as_ref()
-            && at.elapsed().is_ok_and(|age| age < MAX_AGE)
+            && fresh(*at)
         {
             return Ok(Arc::clone(list));
         }
@@ -218,7 +233,7 @@ impl Catalog {
             .and_then(|m| m.modified())
             .ok();
         if let (Some(bytes), Some(at)) = (&disk, disk_age)
-            && at.elapsed().is_ok_and(|age| age < MAX_AGE)
+            && fresh(at)
             && let Ok(list) = parse_index(bytes, &self.url)
         {
             let list = Arc::new(list);
@@ -231,7 +246,7 @@ impl Catalog {
                     tracing::warn!(error = %e, "could not cache the extract list");
                 }
                 let list = Arc::new(list);
-                *cached = Some((SystemTime::now(), Arc::clone(&list)));
+                *cached = Some((self.clock.now(), Arc::clone(&list)));
                 Ok(list)
             }
             Err(e) => {
@@ -242,7 +257,9 @@ impl Catalog {
                         let list = Arc::new(list);
                         // Kept as if fetched long ago, so the next fetch is tried in
                         // RETRY_AFTER rather than by every caller meanwhile.
-                        let at = SystemTime::now()
+                        let at = self
+                            .clock
+                            .now()
                             .checked_sub(MAX_AGE.saturating_sub(RETRY_AFTER))
                             .unwrap_or(SystemTime::UNIX_EPOCH);
                         *cached = Some((at, Arc::clone(&list)));
@@ -372,6 +389,7 @@ mod tests {
                 .build()
                 .unwrap(),
             ),
+            Arc::new(crate::ports::SystemClock),
             format!("{base}/index.json"),
             dir.path().join("catalog.json"),
         );
@@ -433,6 +451,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let catalog = Catalog::new(
                 Arc::new(fake.clone()),
+                Arc::new(crate::ports::SystemClock),
                 URL.to_owned(),
                 dir.path().join("catalog.json"),
             );
@@ -477,6 +496,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let catalog = Catalog::new(
                 Arc::new(fake.clone()),
+                Arc::new(crate::ports::SystemClock),
                 URL.to_owned(),
                 dir.path().join("catalog.json"),
             );
@@ -498,6 +518,127 @@ mod tests {
             }
             fake.assert_drained();
         }
+    }
+
+    /// The list's age is read from the clock. It is kept for a day and
+    /// fetched again after; a copy whose time lies in the future (the disk
+    /// copy's real mtime, here) is not fresh. After a failed fetch the old
+    /// list is used, and the next fetch is tried after `RETRY_AFTER`.
+    #[tokio::test]
+    async fn the_list_ages_on_the_clock() {
+        use observation_upstream::testing::{FakeHttp, FakeReply};
+        const URL: &str = "https://download.geofabrik.de/index-v1-nogeom.json";
+        let fake = FakeHttp::replying([
+            FakeReply::ok(INDEX),
+            FakeReply::ok(INDEX),
+            FakeReply::status(http::StatusCode::SERVICE_UNAVAILABLE),
+        ]);
+        let clock = Arc::new(crate::ports::ManualClock::at_unix(1_700_000_000));
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::new(
+            Arc::new(fake.clone()),
+            clock.clone(),
+            URL.to_owned(),
+            dir.path().join("catalog.json"),
+        );
+        let fetches = |n: usize| {
+            let requests = fake.requests();
+            assert_eq!(requests.len(), n, "{requests:?}");
+        };
+        let ids =
+            |list: Arc<Vec<Extract>>| list.iter().map(|x| x.entry.id.clone()).collect::<Vec<_>>();
+
+        assert_eq!(
+            ids(catalog.extracts().await.unwrap()),
+            ["monaco", "us/california"]
+        );
+        fetches(1);
+        let req = &fake.requests()[0];
+        assert_eq!((&req.method, req.url.as_str()), (&http::Method::GET, URL));
+        assert_eq!(req.timeout, Some(Duration::from_secs(30)));
+        assert_eq!(req.max_bytes, 16 * 1024 * 1024);
+        assert!(req.skip_error_bodies);
+
+        clock.advance(Duration::from_secs(24 * 3600 - 1));
+        catalog.extracts().await.unwrap();
+        fetches(1);
+        clock.advance(Duration::from_secs(1));
+        catalog.extracts().await.unwrap();
+        fetches(2);
+
+        // The fetch fails: the copy on disk is used, as if fetched long ago.
+        clock.advance(Duration::from_secs(10 * 24 * 3600));
+        assert_eq!(catalog.extracts().await.unwrap().len(), 2);
+        fetches(3);
+        clock.advance(Duration::from_secs(599));
+        catalog.extracts().await.unwrap();
+        fetches(3);
+        fake.push(FakeReply::ok(INDEX));
+        clock.advance(Duration::from_secs(1));
+        catalog.extracts().await.unwrap();
+        fetches(4);
+        fake.assert_drained();
+    }
+
+    /// Known sizes are kept for a day and unknown ones for ten minutes, on
+    /// Tokio's clock.
+    #[tokio::test(start_paused = true)]
+    async fn sizes_are_cached_on_tokio_time() {
+        use http::header::CONTENT_LENGTH;
+        use http::{Method, StatusCode};
+        use observation_upstream::TransportErrorKind;
+        use observation_upstream::testing::{FakeHttp, FakeReply};
+        const URL: &str = "https://download.geofabrik.de/index-v1-nogeom.json";
+        const MONACO: &str = "https://download.geofabrik.de/europe/monaco-latest.osm.pbf";
+        const CALIFORNIA: &str =
+            "https://download.geofabrik.de/north-america/us/california-latest.osm.pbf";
+        let sized = |n: &str| FakeReply::status(StatusCode::OK).header(CONTENT_LENGTH, n);
+        let fake = FakeHttp::new();
+        fake.on(Method::GET, URL, FakeReply::ok(INDEX));
+        fake.on(Method::HEAD, MONACO, sized("1234"));
+        let failed = FakeReply::error(TransportErrorKind::Connect);
+        fake.on(Method::HEAD, CALIFORNIA, failed);
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::new(
+            Arc::new(fake.clone()),
+            Arc::new(crate::ports::SystemClock),
+            URL.to_owned(),
+            dir.path().join("catalog.json"),
+        );
+        let ids = ["monaco".to_owned(), "us/california".to_owned()];
+        let heads = || {
+            fake.requests()
+                .iter()
+                .filter(|r| r.method == Method::HEAD)
+                .count()
+        };
+        let sizes = |m: Option<u64>, c: Option<u64>| {
+            BTreeMap::from([("monaco".to_owned(), m), ("us/california".to_owned(), c)])
+        };
+
+        assert_eq!(catalog.sizes(&ids).await.unwrap(), sizes(Some(1234), None));
+        assert_eq!(heads(), 2);
+        tokio::time::advance(Duration::from_secs(599)).await;
+        assert_eq!(catalog.sizes(&ids).await.unwrap(), sizes(Some(1234), None));
+        assert_eq!(heads(), 2, "an unknown size is kept for ten minutes");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        fake.on(Method::HEAD, CALIFORNIA, sized("99"));
+        assert_eq!(
+            catalog.sizes(&ids).await.unwrap(),
+            sizes(Some(1234), Some(99))
+        );
+        assert_eq!(heads(), 3);
+        tokio::time::advance(Duration::from_secs(24 * 3600 - 600 - 1)).await;
+        catalog.sizes(&ids).await.unwrap();
+        assert_eq!(heads(), 3, "a known size is kept for a day");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        fake.on(Method::HEAD, MONACO, sized("1235"));
+        assert_eq!(
+            catalog.sizes(&ids).await.unwrap(),
+            sizes(Some(1235), Some(99))
+        );
+        assert_eq!(heads(), 4);
+        fake.assert_drained();
     }
 
     #[test]
