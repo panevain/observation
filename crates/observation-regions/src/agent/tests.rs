@@ -297,3 +297,50 @@ async fn the_catalog_and_the_boundary_go_through_the_http_port() {
     assert_eq!(fake.requests().len(), 3);
     fake.assert_drained();
 }
+
+/// The worker removes a failed import's work directory (a cancelled one's
+/// too: the same code runs after the task ends either way).
+#[tokio::test]
+async fn a_failed_import_leaves_no_work_directory() {
+    use crate::testing::{FakeDownload, FakeToolchain, GateRunner, Reply, Step, chunk};
+    const INDEX: &str = r#"{"features":[{"properties":{"id":"monaco","name":"Monaco",
+      "urls":{"pbf":"https://download.geofabrik.de/europe/monaco-latest.osm.pbf"}}}]}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let config = config(dir.path(), false);
+    let http = FakeHttp::new();
+    http.on(http::Method::GET, &config.catalog_url, FakeReply::ok(INDEX));
+    let broken = vec![chunk(b"abc"), Step::Fail(TransportErrorKind::Body, "boom")];
+    let ports = Ports {
+        http: Arc::new(http),
+        download: Arc::new(FakeDownload::new(Reply::ok(Some(10), broken))),
+        toolchain: Arc::new(FakeToolchain::default()),
+        query_runner: Arc::new(GateRunner::new()),
+        clock: Arc::new(crate::ports::SystemClock),
+    };
+    let agent = Agent::from_parts(&config, ports).unwrap();
+    let mut published = agent.registry.subscribe();
+    agent.registry.enqueue("monaco", "Monaco").unwrap();
+    let worker = tokio::spawn(Arc::clone(&agent).run_worker());
+    let failed = async {
+        loop {
+            let error = published.borrow_and_update().regions[0].last_error.clone();
+            if let Some(error) = error {
+                return error;
+            }
+            published.changed().await.unwrap();
+        }
+    };
+    let error = tokio::time::timeout(Duration::from_secs(10), failed)
+        .await
+        .unwrap();
+    assert_eq!(error, "the download failed: boom");
+    assert!(
+        dir.path().join("work").exists(),
+        "the import used the work area"
+    );
+    assert!(
+        !dir.path().join("work/monaco").exists(),
+        "its directory is left behind"
+    );
+    worker.abort();
+}

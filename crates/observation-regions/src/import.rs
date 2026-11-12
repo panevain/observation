@@ -244,80 +244,92 @@ mod tests {
         (result, std::fs::read(&dest).ok(), started.elapsed())
     }
 
+    /// What a failed or finished download leaves on disk.
+    #[derive(Debug, Clone, Copy)]
+    enum File {
+        /// The file holds exactly these bytes.
+        Is(&'static [u8]),
+        /// The file was never created.
+        Absent,
+        /// Created; what reached it before the failure is not checked (the
+        /// file is dropped unflushed).
+        Unchecked,
+    }
+
     /// Every way a download ends, with its sentence: the status texts, the
     /// 60 s waits for the head and for each piece, the size cap (declared
-    /// and while streaming) and an early end.
+    /// and while streaming) and a body that breaks off. A body ending early
+    /// is a body error from hyper ("error decoding response body", as
+    /// `a_broken_stream_is_a_body_error_with_its_status` pins), so the
+    /// import's own "ended early" check is defensive and not reached here.
     #[tokio::test(start_paused = true)]
     async fn downloads_end_as_described() {
         const MIB: u64 = 1 << 20;
         let fail = |e: &str| Err(e.to_owned());
-        // The reply, the cap, the result, what was written, the seconds taken.
-        type Case = (Reply, u64, Result<(), String>, Option<&'static [u8]>, u64);
+        // The reply, the cap, the result, what is on disk, the seconds taken.
+        type Case = (Reply, u64, Result<(), String>, File, u64);
         let cases: Vec<Case> = vec![
             (
                 Reply::ok(Some(6), vec![chunk(b"abc"), chunk(b"def")]),
                 MIB,
                 Ok(()),
-                Some(b"abcdef"),
+                File::Is(b"abcdef"),
                 0,
             ),
             (
                 Reply::ok(None, vec![chunk(b"abc")]),
                 MIB,
                 Ok(()),
-                Some(b"abc"),
+                File::Is(b"abc"),
                 0,
             ),
             (
                 Reply::status(404, None),
                 MIB,
                 fail("could not download the extract: HTTP status client error (404 Not Found)"),
-                None,
+                File::Absent,
                 0,
             ),
             (
                 Reply::status(503, Some("Busy")),
                 MIB,
                 fail("could not download the extract: HTTP status server error (503 Busy)"),
-                None,
+                File::Absent,
                 0,
             ),
             (
                 Reply::Fail(TransportErrorKind::Connect),
                 MIB,
                 fail("could not download the extract: scripted Connect"),
-                None,
+                File::Absent,
                 0,
             ),
             (
                 Reply::Hang,
                 MIB,
                 fail("the download server did not answer; try again later"),
-                None,
+                File::Absent,
                 60,
             ),
             (
                 Reply::ok(Some(6), vec![chunk(b"abc"), Step::Hang]),
                 MIB,
                 fail("the download stalled; try again later"),
-                Some(b""),
+                File::Unchecked,
                 60,
             ),
+            // A body that ends before its declared length, as hyper reports it.
             (
                 Reply::ok(
                     Some(6),
-                    vec![chunk(b"abc"), Step::Fail(TransportErrorKind::Body)],
+                    vec![
+                        chunk(b"abc"),
+                        Step::Fail(TransportErrorKind::Body, "error decoding response body"),
+                    ],
                 ),
                 MIB,
-                fail("the download failed: scripted Body"),
-                Some(b""),
-                0,
-            ),
-            (
-                Reply::ok(Some(6), vec![chunk(b"abc")]),
-                MIB,
-                fail("the download ended early; try again"),
-                Some(b"abc"),
+                fail("the download failed: error decoding response body"),
+                File::Unchecked,
                 0,
             ),
             // The cap: declared, refused before the file is created ...
@@ -327,14 +339,14 @@ mod tests {
                 fail(
                     "the extract is 4 MB, more than the 3 MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
                 ),
-                None,
+                File::Absent,
                 0,
             ),
             (
                 Reply::ok(Some(10), vec![chunk(b"0123456789")]),
                 10,
                 Ok(()),
-                Some(b"0123456789"),
+                File::Is(b"0123456789"),
                 0,
             ),
             // ... and while streaming, at exactly one byte over.
@@ -342,7 +354,7 @@ mod tests {
                 Reply::ok(None, vec![chunk(b"012345"), chunk(b"6789")]),
                 10,
                 Ok(()),
-                Some(b"0123456789"),
+                File::Is(b"0123456789"),
                 0,
             ),
             (
@@ -351,11 +363,11 @@ mod tests {
                 fail(
                     "the extract is 1 MB, more than the 0 MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
                 ),
-                Some(b"012345"),
+                File::Unchecked,
                 0,
             ),
         ];
-        for (reply, max, want, written, secs) in cases {
+        for (reply, max, want, on_disk, secs) in cases {
             let label = format!("{reply:?}, max {max}");
             // A lost deadline fails here rather than hanging the test.
             let (got, file, took) =
@@ -363,10 +375,10 @@ mod tests {
                     .await
                     .unwrap_or_else(|_| panic!("{label}: still waiting after an hour"));
             assert_eq!(got, want, "{label}");
-            if want.is_ok() {
-                assert_eq!(file.as_deref(), written, "{label}");
-            } else if written.is_none() {
-                assert_eq!(file, None, "{label}: the file was created");
+            match on_disk {
+                File::Is(bytes) => assert_eq!(file.as_deref(), Some(bytes), "{label}"),
+                File::Absent => assert_eq!(file, None, "{label}: the file was created"),
+                File::Unchecked => assert!(file.is_some(), "{label}: no file"),
             }
             assert_eq!(took, Duration::from_secs(secs), "{label}");
         }
@@ -400,10 +412,11 @@ mod tests {
         assert_eq!(*fake.urls.lock().unwrap(), [PBF]);
     }
 
-    /// A whole import on fakes: the tools run in order with the checked
-    /// timestamp, and the database lands in `db/<slug>-<clock's now>` with
-    /// its boundary.
-    #[tokio::test]
+    /// A whole import on fakes: it reports each phase and the load's
+    /// progress, the tools run in order with the checked timestamp, the
+    /// extract is gone once filtered, and the database lands in
+    /// `db/<slug>-<clock's now>` with its boundary.
+    #[tokio::test(start_paused = true)]
     async fn an_import_lands_in_a_directory_named_by_the_clock() {
         const SQUARE: &str = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
         let dir = tempfile::tempdir().unwrap();
@@ -412,7 +425,10 @@ mod tests {
         let toolchain = Arc::new(FakeToolchain::default());
         let tools = Tools {
             http: Arc::new(FakeHttp::replying([FakeReply::ok(SQUARE)])),
-            download: Arc::new(FakeDownload::new(Reply::ok(Some(3), vec![chunk(b"pbf")]))),
+            download: Arc::new(FakeDownload::new(Reply::ok(
+                Some(3),
+                vec![Step::Pause, chunk(b"pbf"), Step::Pause],
+            ))),
             toolchain: toolchain.clone(),
         };
         let extract = Extract {
@@ -424,7 +440,35 @@ mod tests {
             pbf_url: PBF.into(),
             poly_url: "https://download.geofabrik.de/europe/monaco.poly".into(),
         };
+        // Every published state of the job, in order.
+        let mut published = registry.subscribe();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let watcher = tokio::spawn(async move {
+            while published.changed().await.is_ok() {
+                let snapshot = published.borrow_and_update().clone();
+                if let Some(j) = snapshot.regions.iter().find_map(|r| r.job.clone()) {
+                    record.lock().unwrap().push((j.phase, j.done, j.total));
+                }
+            }
+        });
         let imported = run(&tools, &registry, job, &extract).await.unwrap();
+        // Let the watcher see the last state.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        watcher.abort();
+        use observation_core::regions::JobPhase::{Downloading, Filtering, Finishing, Importing};
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                (Downloading, 0, Some(3)),
+                (Downloading, 3, Some(3)),
+                (Filtering, 0, None),
+                (Importing, 0, Some(3)),
+                (Importing, 1, Some(3)),
+                (Importing, 3, Some(3)),
+                (Finishing, 0, None),
+            ]
+        );
         assert_eq!(imported.db_dir, "monaco-1700000000");
         assert_eq!(imported.data_timestamp.as_deref(), Some(FAKE_TIMESTAMP));
         let db = dir.path().join("db/monaco-1700000000");
@@ -441,7 +485,7 @@ mod tests {
             *toolchain.calls.lock().unwrap(),
             [
                 "tags_filter",
-                "file_info",
+                "file_info (extract kept: false)",
                 &format!("load Some({FAKE_TIMESTAMP:?})")
             ]
         );

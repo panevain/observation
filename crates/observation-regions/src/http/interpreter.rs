@@ -141,22 +141,20 @@ mod tests {
         .await
     }
 
-    /// With one query running and 32 waiting, the next is turned away at
-    /// once with 503 "too many queries waiting"; the others all answer.
-    #[tokio::test]
-    async fn a_full_queue_answers_503() {
-        use futures_util::FutureExt;
-        use observation_upstream::testing::FakeHttp;
-        use std::sync::atomic::Ordering;
-
+    /// An agent on fakes whose queries wait for the runner's gate, with
+    /// `monaco` ready; `concurrency` queries may run at once.
+    async fn gated_agent(
+        data: &std::path::Path,
+        concurrency: &str,
+    ) -> (Arc<Agent>, Arc<crate::testing::GateRunner>) {
         use crate::agent::Ports;
         use crate::ports::SystemClock;
         use crate::testing::{FakeDownload, FakeToolchain, GateRunner, Reply};
+        use observation_upstream::testing::FakeHttp;
 
-        let data = tempfile::tempdir().unwrap();
         let config = Config::from_lookup(|k| match k {
-            "OBS_REGIONS_DATA_DIR" => Some(data.path().display().to_string()),
-            "OBS_REGIONS_QUERY_CONCURRENCY" => Some("1".into()),
+            "OBS_REGIONS_DATA_DIR" => Some(data.display().to_string()),
+            "OBS_REGIONS_QUERY_CONCURRENCY" => Some(concurrency.into()),
             _ => None,
         })
         .unwrap();
@@ -169,7 +167,32 @@ mod tests {
             clock: Arc::new(SystemClock),
         };
         let agent = Agent::from_parts(&config, ports).unwrap();
-        install_monaco(&agent, data.path(), None).await;
+        install_monaco(&agent, data, None).await;
+        (agent, runner)
+    }
+
+    /// A query still running after 30 s answers 504 "the query took too
+    /// long".
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_query_answers_504_after_30_s() {
+        let data = tempfile::tempdir().unwrap();
+        let (agent, _runner) = gated_agent(data.path(), "4").await;
+        let started = tokio::time::Instant::now();
+        let err = ask(agent).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(err.1, "the query took too long");
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(30));
+    }
+
+    /// With one query running and 32 waiting, the next is turned away at
+    /// once with 503 "too many queries waiting"; the others all answer.
+    #[tokio::test]
+    async fn a_full_queue_answers_503() {
+        use futures_util::FutureExt;
+        use std::sync::atomic::Ordering;
+
+        let data = tempfile::tempdir().unwrap();
+        let (agent, runner) = gated_agent(data.path(), "1").await;
 
         let queued: Vec<_> = (0..33)
             .map(|_| tokio::spawn(ask(Arc::clone(&agent))))

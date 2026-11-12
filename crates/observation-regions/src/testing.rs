@@ -1,7 +1,7 @@
 //! Fakes of the agent's ports, for its own tests.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -17,9 +17,12 @@ use crate::ports::{Download, DownloadBody, DownloadResponse, FileInfo, QueryRunn
 #[derive(Debug, Clone)]
 pub(crate) enum Step {
     Chunk(Bytes),
-    Fail(TransportErrorKind),
+    /// The piece fails with this kind and message.
+    Fail(TransportErrorKind, &'static str),
     /// The next piece never comes.
     Hang,
+    /// The next step comes after [`PACE`].
+    Pause,
 }
 
 /// What a [`FakeDownload`] answers.
@@ -117,15 +120,22 @@ struct FakeBody {
 
 impl DownloadBody for FakeBody {
     fn chunk(&mut self) -> BoxFuture<'_, Result<Option<Bytes>, TransportError>> {
-        let step = self.steps.pop_front();
+        let mut step = self.steps.pop_front();
+        let mut paused = false;
+        while let Some(Step::Pause) = step {
+            paused = true;
+            step = self.steps.pop_front();
+        }
         async move {
+            if paused {
+                tokio::time::sleep(PACE).await;
+            }
             match step {
                 None => Ok(None),
                 Some(Step::Chunk(b)) => Ok(Some(b)),
-                Some(Step::Fail(kind)) => {
-                    Err(TransportError::new(kind, format!("scripted {kind:?}")))
-                }
+                Some(Step::Fail(kind, message)) => Err(TransportError::new(kind, message)),
                 Some(Step::Hang) => std::future::pending().await,
+                Some(Step::Pause) => unreachable!("skipped above"),
             }
         }
         .boxed()
@@ -138,12 +148,20 @@ impl Drop for FakeBody {
     }
 }
 
-/// A [`Toolchain`] that runs nothing: it records its calls, reports 3
-/// elements and a replication timestamp, and reports loading 1 then 3.
+/// A [`Toolchain`] that runs nothing: it records its calls (and whether
+/// the extract it filtered is still there when asked for the file's
+/// details), reports 3 elements and a replication timestamp, and reports
+/// loading 1 then 3. Each step first waits [`PACE`], so every state the
+/// import reports before it is published and seen (on paused time).
 #[derive(Debug, Default)]
 pub(crate) struct FakeToolchain {
     pub(crate) calls: Mutex<Vec<String>>,
+    filtered_from: Mutex<Option<PathBuf>>,
 }
+
+/// How long each [`FakeToolchain`] step waits, past the registry's 250 ms
+/// publication throttle.
+pub(crate) const PACE: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// The replication timestamp [`FakeToolchain`] reports.
 pub(crate) const FAKE_TIMESTAMP: &str = "2026-10-31T19:43:02Z";
@@ -151,16 +169,31 @@ pub(crate) const FAKE_TIMESTAMP: &str = "2026-10-31T19:43:02Z";
 impl Toolchain for FakeToolchain {
     fn tags_filter<'a>(
         &'a self,
-        _input: &'a Path,
+        input: &'a Path,
         _output: &'a Path,
     ) -> BoxFuture<'a, Result<(), String>> {
         self.calls.lock().unwrap().push("tags_filter".into());
-        async { Ok(()) }.boxed()
+        *self.filtered_from.lock().unwrap() = Some(input.to_owned());
+        async {
+            tokio::time::sleep(PACE).await;
+            Ok(())
+        }
+        .boxed()
     }
 
     fn file_info<'a>(&'a self, _file: &'a Path) -> BoxFuture<'a, Result<FileInfo, String>> {
-        self.calls.lock().unwrap().push("file_info".into());
-        async {
+        let kept = self
+            .filtered_from
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|p| p.exists());
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("file_info (extract kept: {kept})"));
+        async move {
+            tokio::time::sleep(PACE).await;
             Ok(FileInfo {
                 elements: 3,
                 replication_timestamp: Some(FAKE_TIMESTAMP.into()),
@@ -178,8 +211,11 @@ impl Toolchain for FakeToolchain {
     ) -> BoxFuture<'a, Result<(), String>> {
         self.calls.lock().unwrap().push(format!("load {version:?}"));
         async move {
+            tokio::time::sleep(PACE).await;
             progress(1);
+            tokio::time::sleep(PACE).await;
             progress(3);
+            tokio::time::sleep(PACE).await;
             Ok(())
         }
         .boxed()

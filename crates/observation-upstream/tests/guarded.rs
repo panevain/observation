@@ -563,6 +563,8 @@ async fn a_broken_stream_is_a_body_error_with_its_status() {
         }
     };
     assert_eq!(err.kind, TransportErrorKind::Body, "{}", err.message);
+    // reqwest's own text, which the import's "the download failed: …" carries.
+    assert_eq!(err.message, "error decoding response body");
     assert_eq!(err.status, Some(reqwest::StatusCode::OK));
 
     let err = lax().get_stream("http://127.0.0.1:1/").await.unwrap_err();
