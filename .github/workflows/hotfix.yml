@@ -58,17 +58,13 @@ jobs:
       - uses: $/.github/actions/setup-rust
       - uses: $/.github/actions/xtask
         id: xtask
+      # Fails unless main is the latest release and no release or hotfix is open; the state
+      # (latest, next, ...) becomes this step's outputs.
       - name: Release state
         id: state
-        run: |
-          set -euo pipefail
-          scripts/release-state.sh | tee -a "${GITHUB_OUTPUT}" > "${RUNNER_TEMP}/state"
-          # shellcheck disable=SC1091
-          . "${RUNNER_TEMP}/state"
-          [ -n "${latest}" ] || { echo "::error::no release yet; nothing to patch"; exit 1; }
-          [ "${pending}" = false ] || { echo "::error::main is at ${main}, which is not tagged yet; tag or finish that release first"; exit 1; }
-          [ "${hotfix}" = false ] || { echo "::error::a hotfix/* branch already exists"; exit 1; }
-          [ "${main}" = "${latest}" ] || { echo "::error::main is at ${main} but the latest release is ${latest}"; exit 1; }
+        env:
+          XTASK: ${{ steps.xtask.outputs.path }}
+        run: '"${XTASK}" release gate hotfix --output "${GITHUB_OUTPUT}"'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main

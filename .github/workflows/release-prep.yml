@@ -51,7 +51,7 @@ jobs:
   plan:
     name: plan release
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
@@ -64,32 +64,37 @@ jobs:
           ref: develop
           persist-credentials: false
           fetch-depth: 0 # tags, and the history since the latest release
+      # xtask from develop, built without a cache (this job decides what is released). The job's
+      # token only reads.
+      - uses: $/.github/actions/setup-mise
+        with:
+          cache: false
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
+        id: xtask
       - name: Version
         id: plan
         env:
           VERSION: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+          XTASK: ${{ steps.xtask.outputs.path }}
         run: |
           set -euo pipefail
-          scripts/release-state.sh > "${RUNNER_TEMP}/state"
-          # shellcheck disable=SC1091
-          . "${RUNNER_TEMP}/state"
           skip() { echo "$1" | tee -a "${GITHUB_STEP_SUMMARY}"; exit 0; }
+          # A stable release goes through main, so it waits while a release or hotfix is open,
+          # waits for its tag or for its back-merge (each reason goes to the summary). A
+          # pre-release does not go through main: only the state is read.
+          gate=(--prerelease)
+          if [[ "${VERSION}" != *-* ]] && [ "${PRERELEASE:-none}" = none ]; then
+            gate=()
+          fi
+          "${XTASK}" release gate prep "${gate[@]}" --output "${RUNNER_TEMP}/state" --summary "${GITHUB_STEP_SUMMARY}"
+          grep -qx 'go=true' "${RUNNER_TEMP}/state" || exit 0
           args=()
           if [ -n "${VERSION}" ]; then
             args=(--version "${VERSION}")
           elif [ "${PRERELEASE:-none}" != none ]; then
             args=(--prerelease "${PRERELEASE}")
-          fi
-          # A stable release goes through main; a pre-release does not, so these do not apply.
-          if [[ "${VERSION}" != *-* ]] && [ "${PRERELEASE:-none}" = none ]; then
-            # Before the first release main's initial version was never tagged, so that alone
-            # is not a release waiting for its tag.
-            [ "${pending}" = false ] || [ -z "${latest}" ] || skip "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."
-            # Until the back-merge lands, develop's [Unreleased] still holds what v${latest} shipped.
-            [ -z "${latest}" ] || git merge-base --is-ancestor "v${latest}" HEAD || skip "develop does not contain v${latest} yet (its back-merge is still open); skipping."
-            [ "${hotfix}" = false ] || skip "A hotfix/* branch exists (a hotfix is in progress); skipping."
-            [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || skip "A release/* branch exists (a release is in progress); skipping."
           fi
           python3 scripts/release-plan.py plan --repo . "${args[@]}" > "${RUNNER_TEMP}/plan"
           cat "${RUNNER_TEMP}/plan"

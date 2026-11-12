@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::SystemTime;
 
-use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, Http, Response};
+use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, GitRun, Http, Response};
 use crate::core::time::Timestamp;
 use crate::{Error, Result};
 
@@ -133,6 +133,24 @@ impl Git for GitCli {
             Some(1) => Ok(None),
             _ => Err(failed(&cmd, &out)),
         }
+    }
+
+    fn run(&self, args: &[&str]) -> Result<GitRun> {
+        use std::os::unix::process::ExitStatusExt as _;
+        let mut cmd = self.git(args);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let out = cmd.output().map_err(|e| spawn_error(&cmd, &e))?;
+        let code = out
+            .status
+            .code()
+            .or_else(|| out.status.signal().map(|s| -s))
+            .unwrap_or(-1);
+        Ok(GitRun {
+            code,
+            stdout: out.stdout,
+        })
     }
 }
 
@@ -504,5 +522,9 @@ mod tests {
         assert!(!ok(git.is_commit("--all")));
         assert_eq!(ok(git.show("--output=written", "a.md")), None);
         assert!(!dir.path().join("written:a.md").exists());
+        let run = |args: &[&str]| ok(git.run(args));
+        assert_eq!(run(&["show", "HEAD:a.md"]).stdout, b"one\ntwo\n");
+        let missing = run(&["merge-base", "--is-ancestor", "nope", "HEAD"]);
+        assert_eq!((missing.code, missing.stdout.is_empty()), (128, true));
     }
 }

@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::time::Timestamp;
-use crate::ports::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, Http, Response};
+use crate::ports::{
+    AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, GitRun, Http, Response,
+};
 use crate::{Error, Result};
 
 /// The calls a fake received, in order, written like the command they stand for.
@@ -35,6 +37,8 @@ pub struct FakeGit {
     pub files: HashMap<(String, String), Option<String>>,
     /// Flags, then the pattern, then the pathspecs -> output (`None`: nothing matched).
     pub greps: HashMap<Vec<String>, Option<String>>,
+    /// `run` arguments joined with spaces -> exit status and stdout.
+    pub runs: HashMap<String, GitRun>,
     pub calls: Calls,
 }
 
@@ -70,6 +74,17 @@ impl Git for FakeGit {
         self.calls.record(call.clone());
         Ok(self
             .greps
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| unexpected(&call)))
+    }
+
+    fn run(&self, args: &[&str]) -> Result<GitRun> {
+        let key = args.join(" ");
+        let call = format!("git {key}");
+        self.calls.record(call.clone());
+        Ok(self
+            .runs
             .get(&key)
             .cloned()
             .unwrap_or_else(|| unexpected(&call)))

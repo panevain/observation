@@ -59,9 +59,37 @@ enum CoverageCommand {
 
 #[derive(Debug, Subcommand)]
 enum ReleaseCommand {
+    /// Print origin's release state as key=value lines: latest (the newest stable v* tag),
+    /// main (main's workspace version), pending (main's version is not tagged yet), hotfix (a
+    /// hotfix/* branch exists), next (the patch release after latest).
+    State,
+    /// Read the release state and apply a workflow's check to it.
+    Gate {
+        kind: GateKind,
+        /// Prep only: a pre-release, to which no check applies (the state is still read).
+        #[arg(long)]
+        prerelease: bool,
+        /// Append the state lines, then go=true|false (prep, watch), to FILE ($GITHUB_OUTPUT).
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Append the verdict (prep, watch) to FILE ($GITHUB_STEP_SUMMARY).
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+    },
     /// The workspace version (`version` in Cargo.toml's [workspace.package]).
     #[command(subcommand)]
     Version(VersionCommand),
+}
+
+/// The workflow whose check `release gate` applies.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum GateKind {
+    /// Prepare release: skips (go=false) while a release or hotfix is open.
+    Prep,
+    /// Hotfix: fails unless main is the latest release and nothing else is open.
+    Hotfix,
+    /// Release watch: skips (go=false) without a release to watch or while one is open.
+    Watch,
 }
 
 #[derive(Debug, Subcommand)]
@@ -229,6 +257,42 @@ fn main() -> ExitCode {
                     append(&path, &out.stdout)?;
                 }
                 Ok(out.failed)
+            })
+        }
+        Command::Release(ReleaseCommand::State) => {
+            cmd::release::state::read(&GitCli::new(&repo), github_actions()).map(|state| {
+                let Some(state) = state else { return true };
+                emit(state.lines().as_bytes(), b"");
+                false
+            })
+        }
+        Command::Release(ReleaseCommand::Gate {
+            kind,
+            prerelease,
+            output,
+            summary,
+        }) => {
+            use cmd::release::state::{self, Kind};
+            let kind = match kind {
+                GateKind::Prep => Kind::Prep { prerelease },
+                GateKind::Hotfix => Kind::Hotfix,
+                GateKind::Watch => Kind::Watch,
+            };
+            let git = GitCli::new(&repo);
+            state::read(&git, github_actions()).and_then(|state| {
+                let Some(state) = state else { return Ok(true) };
+                if let Some(path) = &output {
+                    append(path, &state.lines())?;
+                }
+                let gated = state::render(kind, &state, &state::gate(kind, &state, &git)?);
+                emit(gated.stdout.as_bytes(), b"");
+                if let Some(path) = &summary {
+                    append(path, &gated.summary)?;
+                }
+                if let Some(path) = &output {
+                    append(path, &gated.output)?;
+                }
+                Ok(gated.failed)
             })
         }
         Command::Release(ReleaseCommand::Version(VersionCommand::Get { file, name })) => {

@@ -9,6 +9,14 @@ use std::path::Path;
 use crate::Result;
 use crate::core::time::Timestamp;
 
+/// What a `git` command printed on stdout, and its exit status (negative: the signal that
+/// ended it). Its stderr went straight to this process's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitRun {
+    pub code: i32,
+    pub stdout: Vec<u8>,
+}
+
 /// The repository, through `git`.
 pub trait Git {
     /// Whether `rev` names a commit.
@@ -18,6 +26,9 @@ pub trait Git {
     /// `git grep FLAGS -e PATTERN -- PATHSPECS`: its output, or `None` when nothing matched.
     /// `flags` are options; the pattern and pathspecs are never read as one.
     fn grep(&self, flags: &[&str], pattern: &str, pathspecs: &[&str]) -> Result<Option<String>>;
+    /// `git ARGS` as a script ran it: stderr passed through, any exit status returned. The
+    /// caller makes sure no value in `args` can be read as an option.
+    fn run(&self, args: &[&str]) -> Result<GitRun>;
 }
 
 /// An HTTP response; any status, so that callers decide what a 404 means.

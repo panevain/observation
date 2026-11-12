@@ -45,40 +45,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
+      # directories: without shims, nothing run in release/ resolves its own mise config.
+      # No cache: they are downloaded fresh and checked against mise.ci.lock.
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit trivy
+          cache: false
+          shims: false
+      # xtask is built here, with develop's toolchain, before setup-rust below installs the
+      # release's (and removes every other); no cache, as for anything that reads a release.
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
+        id: xtask
+      # Skips (go=false, the reason in the summary) without a release, while one waits for its
+      # tag, or while a hotfix is open; the state (latest, ...) becomes this step's outputs.
       - name: Release state
         id: state
-        run: |
-          set -euo pipefail
-          scripts/release-state.sh | tee -a "${GITHUB_OUTPUT}" > "${RUNNER_TEMP}/state"
-          # shellcheck disable=SC1091
-          . "${RUNNER_TEMP}/state"
-          go=true
-          if [ -z "${latest}" ]; then
-            msg="No release yet; nothing to watch."; go=false
-          elif [ "${pending}" = true ]; then
-            msg="main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag); skipping."; go=false
-          elif [ "${hotfix}" = true ]; then
-            msg="A hotfix/* branch exists (a hotfix is in progress); skipping."; go=false
-          else
-            msg="Checking v${latest}."
-          fi
-          echo "${msg}" | tee -a "${GITHUB_STEP_SUMMARY}"
-          echo "go=${go}" >> "${GITHUB_OUTPUT}"
+        env:
+          XTASK: ${{ steps.xtask.outputs.path }}
+        run: '"${XTASK}" release gate watch --output "${GITHUB_OUTPUT}" --summary "${GITHUB_STEP_SUMMARY}"'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.state.outputs.go == 'true'
         with:
           ref: v${{ steps.state.outputs.latest }}
           path: release
           persist-credentials: false
-      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
-      # directories: without shims, nothing run in release/ resolves its own mise config.
-      # No cache: they are downloaded fresh and checked against mise.ci.lock.
-      - uses: $/.github/actions/setup-mise
-        if: steps.state.outputs.go == 'true'
-        with:
-          tools: cargo-audit trivy
-          cache: false
-          shims: false
       - uses: $/.github/actions/setup-rust
         if: steps.state.outputs.go == 'true'
         with:
