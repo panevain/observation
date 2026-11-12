@@ -3,6 +3,10 @@
 //! with ties, zeros, negative sizes and square containers), `kib` (with the halves `round()`
 //! sends to even), and `aggregate` then `render` on random crates of every family (the SVG byte
 //! for byte, or both failing), with thresholds including 0, 1 and NaN and sizes beyond 2^53.
+//!
+//! Needs Python 3.12 or later as `python3` (CI's ubuntu-24.04 runner has 3.12): `sum()` of floats
+//! is compensated from 3.12 on, the port follows it, and `squarify`'s rectangles differ bit for
+//! bit under 3.11. The harness fails with that message under an older Python.
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -17,6 +21,9 @@ fn ok<T, E: std::fmt::Display>(r: Result<T, E>) -> T {
 /// Answers each task on stdin (one JSON line) with one JSON line. Floats travel as `repr()`.
 const HARNESS: &str = r#"
 import importlib.util, json, sys
+if sys.version_info < (3, 12):
+    sys.exit("the treemap parity tests need Python 3.12 or later (from 3.12, sum() of floats "
+             "is compensated, and the port follows it); python3 here is " + sys.version.split()[0])
 spec = importlib.util.spec_from_file_location("treemap", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -267,6 +274,33 @@ fn the_svg_is_the_scripts_for_random_crates() {
         }));
         inputs.push((crates, 1.0, meta));
     }
+    // A tile exactly as wide as `bevy_b`'s second line needs (`text_w(line2, 11) == rw - 10`,
+    // 165.88): the script keeps the percentage there, a `>=` in its place would drop it.
+    let tie = HashMap::from([
+        ("bevy_a".to_owned(), 62_994_235_731_748_093),
+        ("bevy_b".to_owned(), 37_173_060_411_452_187),
+        ("bevy_c".to_owned(), 64_324_042_359_716_312),
+        ("egui".to_owned(), 78_542_605_938_643_170),
+        ("naga".to_owned(), 2_566_032_922_417_765),
+    ]);
+    let list: Vec<_> = tie.iter().map(|(c, s)| json!([c, s])).collect();
+    tasks.push(json!({
+        "kind": "render",
+        "crates": list,
+        "threshold": "0.0",
+        "meta": {"raw": 1, "gzip": 1, "commit": "c", "date": "d", "stage": "s"},
+    }));
+    inputs.push((
+        tie,
+        0.0,
+        Meta {
+            raw: 1,
+            gzip: 1,
+            commit: "c".into(),
+            date: "d".into(),
+            stage: "s".into(),
+        },
+    ));
     let mut failures = 0;
     let mut crashes = 0;
     for ((crates, threshold, meta), want) in inputs.iter().zip(python(&tasks)) {

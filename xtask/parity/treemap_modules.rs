@@ -18,6 +18,9 @@
 //! - `stricter`: the script succeeds and the port fails: the differences the port declares.
 //!
 //! The cut and changed modules expect whatever the script does: `same` or `fails`.
+//!
+//! Needs Python 3.12 or later as `python3`, as `treemap_math` does (the SVG's layout sums floats
+//! as 3.12 does); the harness fails with that message under an older Python.
 use std::path::Path;
 use std::process::Command;
 
@@ -31,6 +34,9 @@ fn ok<T, E: std::fmt::Display>(r: Result<T, E>) -> T {
 /// `{"exit": N, "stdout": …, "stderr": …}` (for a crash, stderr is the exception's name).
 const HARNESS: &str = r#"
 import contextlib, importlib.util, io, json, signal, sys
+if sys.version_info < (3, 12):
+    sys.exit("the treemap parity tests need Python 3.12 or later (from 3.12, sum() of floats "
+             "is compensated, and the port follows it); python3 here is " + sys.version.split()[0])
 spec = importlib.util.spec_from_file_location("treemap", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -613,6 +619,31 @@ fn cases() -> Vec<Case> {
                 "x > y",
             ],
         ),
+        many_case("commit -", "same", &["--commit", "-"]),
+        many_case("commit '-5 '", "same", &["--commit", "-5 "]),
+        many_case("commit '-x y'", "same", &["--commit", "-x y"]),
+        many_case("commit '-Os build'", "same", &["--commit", "-Os build"]),
+        many_case("date -", "same", &["--date", "-"]),
+        many_case("date '-5 '", "same", &["--date", "-5 "]),
+        many_case("date '-x y'", "same", &["--date", "-x y"]),
+        many_case("date '-Os build'", "same", &["--date", "-Os build"]),
+        many_case("stage -", "same", &["--stage", "-"]),
+        many_case("stage '-5 '", "same", &["--stage", "-5 "]),
+        many_case("stage '-x y'", "same", &["--stage", "-x y"]),
+        many_case("stage '-Os build'", "same", &["--stage", "-Os build"]),
+        many_case("commit '-5\\n'", "same", &["--commit", "-5\n"]),
+        many_case("commit '--x y'", "same", &["--commit", "--x y"]),
+        many_case("commit '--da=x y'", "usage", &["--commit", "--da=x y"]),
+        many_case("commit '-h x'", "usage", &["--commit", "-h x"]),
+        many_case("commit --date", "usage", &["--commit", "--date"]),
+        many_case("commit -5.", "usage", &["--commit", "-5."]),
+        many_case(
+            "commit Arabic-Indic -3",
+            "stricter",
+            &["--commit", "-\u{663}"],
+        ),
+        many_case("threshold '-1 '", "same", &["--threshold", "-1 "]),
+        many_case("raw '-5 '", "same", &["--shipped-raw", "-5 "]),
         many_case(
             "gzip and raw given",
             "same",
@@ -763,10 +794,13 @@ fn port_and_script_agree_on_every_module() {
                 let svg_ok = !s_svg.is_empty()
                     && s_svg == p_svg
                     && s_mb.len() == p_mb.len()
-                    && s_mb
-                        .iter()
-                        .zip(&p_mb)
-                        .all(|(s, p)| (s - p).abs() <= 0.01 + s.abs() / 25.0);
+                    && s_mb.iter().zip(&p_mb).all(|(s, p)| {
+                        if given {
+                            s == p
+                        } else {
+                            (s - p).abs() <= 0.01 + s.abs() / 25.0
+                        }
+                    });
                 script.exit == 0
                     && port_exit == 0
                     && s == p

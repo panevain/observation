@@ -446,27 +446,68 @@ pub fn int_arg(text: &str) -> Result<i128, String> {
     format!("{sign}{digits}").parse().map_err(|_| invalid())
 }
 
-/// What argparse takes as an option's separate value: not a string that starts with `-`
-/// unless it looks like a negative number (`-5`, `-.5`, `-1.5`), which it would read as an
-/// option. (A value given as `--opt=-x` is refused here too, where argparse took it.)
+/// The option strings of scripts/wasm-size-treemap.py's parser, the only one whose values
+/// [`argparse_value`] reads.
+const SCRIPT_OPTIONS: [&str; 12] = [
+    "-h",
+    "--help",
+    "--wasm",
+    "--twiggy-csv",
+    "--out",
+    "--shipped-raw",
+    "--shipped-gzip",
+    "--commit",
+    "--date",
+    "--stage",
+    "--threshold",
+    "--table",
+];
+
+/// What argparse (3.11 to 3.13, `_parse_optional`) takes as an option's separate value rather
+/// than as an option, for the script's options: anything not starting with `-`; `-` alone; and
+/// a string starting with `-` that is not an option (exactly, before an `=`, or as an
+/// abbreviation: `--da=x`, `-hx`) and either looks like a negative number (`^-\d+$|^-\d*\.\d+$`,
+/// where `$` also matches before a final newline) or contains a space. Refused where argparse
+/// took it: a negative number with digits other than ASCII (`-١`, `\d` being Unicode), a value
+/// starting with `-=` that has a space (Python 3.11 and 3.12 take it, 3.13 does not), and any
+/// value given as `--opt=-x`.
 pub fn argparse_value(text: &str) -> Result<String, String> {
-    if let Some(rest) = text.strip_prefix('-') {
-        let (int, frac) = rest
-            .split_once('.')
-            .map_or((rest, None), |(i, f)| (i, Some(f)));
-        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-        let negative_number = match frac {
-            None => digits(int),
-            Some(frac) => (int.is_empty() || digits(int)) && digits(frac),
-        };
-        if !negative_number {
-            return Err(format!(
-                "{} starts with `-` and is not a negative number",
-                repr_str(text)
-            ));
-        }
+    let refuse = || {
+        Err(format!(
+            "{} starts with `-` and argparse would read it as an option",
+            repr_str(text)
+        ))
+    };
+    let Some(rest) = text.strip_prefix('-') else {
+        return Ok(text.to_owned());
+    };
+    if rest.is_empty() {
+        return Ok(text.to_owned());
     }
-    Ok(text.to_owned())
+    let prefix = text.split_once('=').map_or(text, |(p, _)| p);
+    let option = if rest.starts_with('-') {
+        SCRIPT_OPTIONS.iter().any(|o| o.starts_with(prefix))
+    } else {
+        // A short option and what follows it (`-hx`), or (3.13) every option for `-=…`.
+        text.starts_with("-h") || prefix == "-"
+    };
+    if option || SCRIPT_OPTIONS.contains(&text) {
+        return refuse();
+    }
+    let number = rest.strip_suffix('\n').unwrap_or(rest);
+    let (int, frac) = number
+        .split_once('.')
+        .map_or((number, None), |(i, f)| (i, Some(f)));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let negative_number = match frac {
+        None => digits(int),
+        Some(frac) => (int.is_empty() || digits(int)) && digits(frac),
+    };
+    if negative_number || text.contains(' ') {
+        Ok(text.to_owned())
+    } else {
+        refuse()
+    }
 }
 
 /// `float(text)` as argparse's `type=float` reads an option: Python whitespace around, `_`

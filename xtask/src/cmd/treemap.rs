@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
+use crate::cmd::wasm_budget;
 use crate::core::demangle::{Refused, crate_of_symbol};
 use crate::core::report::thousands;
 use crate::core::treemap::{self, Crash, Meta};
@@ -96,9 +97,10 @@ pub fn top_table(per_crate: &HashMap<String, i128>, total: i128, n: usize) -> Re
     Ok(lines.join("\n"))
 }
 
-/// `zlib.compress(module, 9)`, with flate2's backend: zlib framing, level 9.
+/// `zlib.compress(module, 9)`, with flate2's backend: zlib framing, at the level and with the
+/// library of wasm-budget's gzip figure ([`wasm_budget::GZIP_LEVEL`]), so that the two agree.
 pub fn zlib(module: &[u8]) -> Result<Vec<u8>> {
-    let mut z = ZlibEncoder::new(Vec::new(), Compression::new(9));
+    let mut z = ZlibEncoder::new(Vec::new(), Compression::new(wasm_budget::GZIP_LEVEL));
     z.write_all(module)
         .and_then(|()| z.finish())
         .map_err(|e| Error::new(format!("gzip: {e}")))
