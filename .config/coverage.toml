@@ -1,0 +1,10 @@
+# Line coverage floors per crate, checked on every pull request by `cargo xtask coverage check`
+# (`mise run coverage:check`; ci.yml's "coverage (per-crate floor)" job, which is not a
+# required check). A crate below its floor fails the job; a crate with no floor here, and a
+# floor whose crate no longer exists, only warn. The job's summary ends with a [floors] table
+# from the measured values (each rounded down to a whole percent, minus 1 for noise) to copy
+# here; raise a floor when a crate's coverage has risen for good.
+#
+# No floors yet: the first run of the job measures them.
+
+[floors]

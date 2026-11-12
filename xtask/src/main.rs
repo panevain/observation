@@ -28,7 +28,23 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+enum CoverageCommand {
+    /// Fail when a crate's line coverage is below its floor in .config/coverage.toml.
+    Check {
+        /// The export of `cargo llvm-cov --json --summary-only`.
+        #[arg(long, value_name = "FILE")]
+        json: PathBuf,
+        /// Append the Markdown report to FILE (e.g. $GITHUB_STEP_SUMMARY).
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
+    /// Line coverage per crate.
+    #[command(subcommand)]
+    Coverage(CoverageCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
     /// be, or the advisory ignore lists disagree.
     Sync,
@@ -61,12 +77,32 @@ fn emit(stdout: &[u8], stderr: &[u8]) {
     let _ = std::io::stderr().write_all(stderr);
 }
 
+/// Appends `text` to the file at `path` (a job summary), creating it if needed.
+fn append(path: &std::path::Path, text: &str) -> xtask::Result<()> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let repo = cli
         .repo
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
     let result = match cli.command {
+        Command::Coverage(CoverageCommand::Check { json, summary }) => {
+            let annotate = std::env::var_os("GITHUB_ACTIONS").is_some_and(|v| v == "true");
+            cmd::coverage::run(&repo, &json, annotate).and_then(|out| {
+                emit(out.stdout.as_bytes(), out.stderr.as_bytes());
+                if let Some(path) = summary {
+                    append(&path, &out.stdout)?;
+                }
+                Ok(out.failed)
+            })
+        }
         Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
             emit(out.stdout.as_bytes(), out.stderr.as_bytes());
             out.failed
@@ -93,13 +129,7 @@ fn main() -> ExitCode {
                 emit(b"", out.stderr.as_bytes());
                 emit(out.stdout.as_bytes(), b"");
                 if let Some(path) = summary {
-                    let mut file = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&path)
-                        .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))?;
-                    file.write_all(out.report.as_bytes())
-                        .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))?;
+                    append(&path, &out.report)?;
                 }
                 Ok(out.failed)
             })

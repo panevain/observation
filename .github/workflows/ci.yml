@@ -121,7 +121,7 @@ jobs:
           set -euo pipefail
           mise run coverage
           {
-            echo "### Coverage (observation-core + observation-server)"
+            echo "### Line coverage (the workspace except the wasm client)"
             echo
             echo '```'
             cargo llvm-cov report --summary-only
@@ -133,6 +133,31 @@ jobs:
           path: lcov.info
           if-no-files-found: error
           retention-days: 14
+
+  # Each crate's line coverage against its floor in .config/coverage.toml (a crate below its
+  # floor fails; one with no floor warns). Not a required check. Pull requests only, as the
+  # informational job above runs on pushes; same packages (mise.toml's coverage_excludes).
+  coverage-floor:
+    name: coverage (per-crate floor)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-llvm-cov
+      # The test job's cache, restored and never saved (as the informational job does).
+      - uses: $/.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+          cache-key: test
+          cache-save: false
+      - run: mise run coverage:check
 
   tokens:
     name: design tokens

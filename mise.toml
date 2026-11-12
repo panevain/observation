@@ -112,8 +112,15 @@ run = [
 ]
 
 [tasks.coverage]
-description = "Line coverage of core + server (needs cargo-llvm-cov, `mise -E ci install cargo-llvm-cov`, and the llvm-tools-preview component); writes lcov.info"
+description = "Line coverage of the workspace except the wasm client (needs cargo-llvm-cov, `mise -E ci install cargo-llvm-cov`, and the llvm-tools-preview component); writes lcov.info"
 run = "cargo llvm-cov --locked --workspace {{vars.coverage_excludes}} --lcov --output-path lcov.info"
+
+[tasks."coverage:check"]
+description = "Each crate's line coverage against its floor in .config/coverage.toml (needs what coverage needs); the report ends with floors to paste"
+run = [
+  "cargo llvm-cov --locked --workspace {{vars.coverage_excludes}} --json --summary-only --output-path coverage.json",
+  'cargo xtask coverage check --json coverage.json ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}',
+]
 
 [tasks.typos]
 description = "Spelling in code, docs and config (typos; correct words it does not know go in .typos.toml)"
