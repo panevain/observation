@@ -215,6 +215,8 @@ fn release_tag_kind_reads_the_head_branch() {
         ("release/x/y", Some("release")),
         ("", None),
         ("hotfix", None),
+        ("release", None),
+        ("release-1.3.0", None),
         ("xhotfix/1.2.1", None),
         ("feature/release/1.3.0", None),
         ("main", None),
