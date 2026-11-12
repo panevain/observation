@@ -75,11 +75,15 @@ fuzz_target!(|input: Input| {
         input.range.clamp(0.0, 100.0),
     );
     let vis = layers.visibility(&cone, input.subject_height);
-    assert!(vis.ground.iter().all(|&i| (i as usize) < layers.grid.len()));
+    assert!(
+        vis.ground
+            .iter()
+            .all(|&i| (i as usize) < layers.grid().len())
+    );
     assert!(
         vis.facade
             .iter()
-            .all(|&i| (i as usize) < layers.facades.len())
+            .all(|&i| (i as usize) < layers.facades().len())
     );
 
     let mut counts = CoverageCounts::new(&layers);
@@ -123,10 +127,10 @@ fuzz_target!(|input: Input| {
     tally.remove_within(&layers, None, &sight, cone.range);
     assert!(
         tally
-            .counts
+            .counts()
             .ground
             .iter()
-            .chain(&tally.counts.facade)
+            .chain(&tally.counts().facade)
             .all(|&c| c == 0)
     );
     assert_eq!(tally.stats(&layers).open_ground_seen_m2, 0.0);
