@@ -1,0 +1,7 @@
+# The dev task's deliberate get_env (sync's GET_ENV_EXCEPTIONS lists it).
+[vars]
+dev_token = "dev"
+
+[tasks."dev:server"]
+env = { OBS_ADMIN_TOKEN = "{{ get_env(name='OBS_ADMIN_TOKEN', default=vars.dev_token) }}" }
+run = "true"

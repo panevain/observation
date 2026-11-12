@@ -43,9 +43,9 @@ run = [
 description = "Run the server against the dev region agent (part of `dev`)"
 hide = true
 usage = 'flag "--release" help="Run the release build"'
-# Loopback only, whatever OBS_BIND says (see the header). The admin token: one exported in the
-# shell, then one under [env] in mise.local.toml, then the dev one.
-env = { OBS_BIND = "127.0.0.1:8080", OBS_REGIONS_URL = "http://127.0.0.1:8090", OBS_REGIONS_TOKEN = "{{vars.dev_token}}", OBS_ADMIN_TOKEN = "{{ get_env(name='OBS_ADMIN_TOKEN', default=env.OBS_ADMIN_TOKEN | default(value=vars.dev_token)) }}" }
+# Loopback only, whatever OBS_BIND says (see the header). An OBS_ADMIN_TOKEN exported in the
+# shell replaces the dev one.
+env = { OBS_BIND = "127.0.0.1:8080", OBS_REGIONS_URL = "http://127.0.0.1:8090", OBS_REGIONS_TOKEN = "{{vars.dev_token}}", OBS_ADMIN_TOKEN = "{{ get_env(name='OBS_ADMIN_TOKEN', default=vars.dev_token) }}" }
 run = "cargo run --locked -p {{vars.server_package}}{% if usage.release %} --release{% endif %}"
 
 [tasks."dev:regions"]

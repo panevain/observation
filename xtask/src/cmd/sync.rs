@@ -67,6 +67,12 @@ pub enum Finding {
     /// A mise template reads a variable with `get_env` without falling back to mise's own
     /// `[env]` (`default=env.NAME`), so a value set in mise.local.toml would be ignored.
     EnvIgnoresLocal { file: String, line: String },
+    /// An entry of [`GET_ENV_EXCEPTIONS`] that matches no such `get_env`.
+    StaleEnvException {
+        file: String,
+        task: String,
+        name: String,
+    },
 }
 
 impl fmt::Display for Finding {
@@ -112,6 +118,11 @@ impl fmt::Display for Finding {
                 "{file}: get_env without default=env.<the same name>, so the variable set under \
                  [env] in mise.local.toml would be ignored: {line}"
             ),
+            Self::StaleEnvException { file, task, name } => writeln!(
+                f,
+                "stale exception in sync's GET_ENV_EXCEPTIONS: {file} task {task:?} no longer reads \
+                 {name} with get_env without default=env.{name}; remove the entry"
+            ),
         }
     }
 }
@@ -150,7 +161,11 @@ regex!(
 regex!(LAST_QUOTED_VERSION, r#".*"([0-9.]+)".*"#);
 regex!(
     GET_ENV,
-    r#"get_env\(\s*name\s*=\s*['"]([^'"]*)['"]\s*(?:,\s*default\s*=\s*env\.([A-Za-z0-9_]+))?"#
+    r#"^get_env\(\s*name\s*=\s*['"]([^'"]*)['"]\s*(?:,\s*default\s*=\s*env\.([A-Za-z0-9_]+))?"#
+);
+regex!(
+    TASK_HEADER,
+    r#"^\[tasks\.(?:"([^"]+)"|([A-Za-z0-9_:-]+))(?:\.[A-Za-z_]+)*\]"#
 );
 regex!(MISE_ACTION, r"uses: *jdx/mise-action@");
 regex!(BUILD_PUSH, r"uses: *docker/build-push-action@");
@@ -451,11 +466,14 @@ pub fn check(s: &Snapshot) -> Report {
     }
 
     // A variable read with get_env falls back to mise's [env], or mise.local.toml is ignored.
-    findings.extend(env_ignores_local(&[
-        ("mise.toml", &s.mise_toml),
-        ("mise.dev.toml", &s.mise_dev_toml),
-        ("mise.ci.toml", &s.mise_ci_toml),
-    ]));
+    findings.extend(env_ignores_local(
+        &[
+            ("mise.toml", &s.mise_toml),
+            ("mise.dev.toml", &s.mise_dev_toml),
+            ("mise.ci.toml", &s.mise_ci_toml),
+        ],
+        GET_ENV_EXCEPTIONS,
+    ));
 
     // The docs never repeat a pinned version (CHANGELOG.md records history and is exempt).
     match &s.doc_pins {
@@ -505,25 +523,73 @@ pub fn check(s: &Snapshot) -> Report {
     Report { findings, summary }
 }
 
+/// The `get_env` reads that may ignore mise.local.toml on purpose: (file, task, variable,
+/// why). An entry that no longer matches such a read fails the check.
+pub const GET_ENV_EXCEPTIONS: &[(&str, &str, &str, &str)] = &[(
+    "mise.dev.toml",
+    "dev:server",
+    "OBS_ADMIN_TOKEN",
+    "dev deliberately ignores mise.local.toml; only an exported variable replaces the dev token",
+)];
+
 /// Every `get_env(name='NAME', ...)` outside a comment line must read `default=env.NAME...`:
 /// `get_env` sees only the environment mise started with, so without that fallback a value set
 /// under `[env]` in mise.local.toml (where machine settings go) is silently ignored. The
-/// fallback keeps the order: the shell, then mise's `[env]`, then the default.
-pub fn env_ignores_local(files: &[(&str, &str)]) -> Vec<Finding> {
+/// fallback keeps the order: the shell, then mise's `[env]`, then the default. A read listed in
+/// `exceptions` (by file, the task whose table it is in, and variable) is allowed; an exception
+/// that matches no such read is a finding.
+pub fn env_ignores_local(
+    files: &[(&str, &str)],
+    exceptions: &[(&str, &str, &str, &str)],
+) -> Vec<Finding> {
     let mut out = Vec::new();
+    let mut used = vec![false; exceptions.len()];
     for (file, text) in files {
+        let mut task = String::new();
         for line in lines(text).filter(|l| !l.trim_start().starts_with('#')) {
-            let calls = line.matches("get_env(").count();
-            let good = GET_ENV
-                .captures_iter(line)
-                .filter(|c| c.get(2).is_some_and(|d| d.as_str() == &c[1]))
-                .count();
-            if good < calls {
+            if let Some(c) = TASK_HEADER.captures(line.trim_start()) {
+                task = c
+                    .get(1)
+                    .or_else(|| c.get(2))
+                    .map_or("", |m| m.as_str())
+                    .to_owned();
+            }
+            let mut ignored = false;
+            for (at, _) in line.match_indices("get_env(") {
+                let caps = GET_ENV.captures(&line[at..]);
+                let name = caps
+                    .as_ref()
+                    .map_or("?", |c| c.get(1).map_or("?", |m| m.as_str()));
+                let good = caps
+                    .as_ref()
+                    .and_then(|c| c.get(2))
+                    .is_some_and(|d| d.as_str() == name);
+                if good {
+                    continue;
+                }
+                match exceptions
+                    .iter()
+                    .position(|(f, t, n, _)| f == file && *t == task && *n == name)
+                {
+                    Some(i) => used[i] = true,
+                    None => ignored = true,
+                }
+            }
+            if ignored {
                 out.push(Finding::EnvIgnoresLocal {
                     file: (*file).to_owned(),
                     line: line.trim().to_owned(),
                 });
             }
+        }
+    }
+    for ((file, task, name, _), used) in exceptions.iter().zip(used) {
+        if !used {
+            out.push(Finding::StaleEnvException {
+                file: (*file).to_owned(),
+                task: (*task).to_owned(),
+                name: (*name).to_owned(),
+            });
         }
     }
     out
@@ -808,10 +874,10 @@ mod tests {
         let two_calls = "X = \"{{ get_env(name='X', default=env.X) }}{{ get_env(name='Y') }}\"\n";
         let comment = "# get_env(name='X') sees only the starting environment\n";
         for good in [after, dev_after, comment] {
-            assert_eq!(env_ignores_local(&[("mise.toml", good)]), [], "{good}");
+            assert_eq!(env_ignores_local(&[("mise.toml", good)], &[]), [], "{good}");
         }
         for bad in [before, dev_before, other_name, no_default, two_calls] {
-            let found = env_ignores_local(&[("mise.dev.toml", bad)]);
+            let found = env_ignores_local(&[("mise.dev.toml", bad)], &[]);
             assert_eq!(found.len(), 1, "{bad}");
             assert!(
                 found[0]
@@ -820,6 +886,37 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    /// An exception allows one read in one task; the same read in another task, or an
+    /// exception with nothing to allow, is a finding.
+    #[test]
+    fn get_env_exceptions_are_exact_and_never_stale() {
+        let dev =
+            "[tasks.\"dev:server\"]\nenv = { T = \"{{ get_env(name='T', default=vars.t) }}\" }\n";
+        let other = "[tasks.serve]\nenv = { T = \"{{ get_env(name='T', default=vars.t) }}\" }\n";
+        let fixed =
+            "[tasks.\"dev:server\"]\nenv = { T = \"{{ get_env(name='T', default=env.T) }}\" }\n";
+        let exception = [("mise.dev.toml", "dev:server", "T", "why")];
+        assert_eq!(env_ignores_local(&[("mise.dev.toml", dev)], &exception), []);
+        let found = env_ignores_local(&[("mise.dev.toml", other)], &exception);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(matches!(found[0], Finding::EnvIgnoresLocal { .. }));
+        assert!(matches!(found[1], Finding::StaleEnvException { .. }));
+        let found = env_ignores_local(&[("mise.dev.toml", fixed)], &exception);
+        assert_eq!(
+            found.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [
+                "stale exception in sync's GET_ENV_EXCEPTIONS: mise.dev.toml task \"dev:server\" no \
+              longer reads T with get_env without default=env.T; remove the entry\n"
+            ]
+        );
+        // A table under a task (`[tasks.up.env]`) belongs to that task.
+        let up = "[tasks.up.env]\nV = \"{{ get_env(name='V') }}\"\n";
+        assert_eq!(
+            env_ignores_local(&[("mise.toml", up)], &[("mise.toml", "up", "V", "why")]),
+            []
+        );
     }
 
     #[test]
