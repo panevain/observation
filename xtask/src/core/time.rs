@@ -325,6 +325,36 @@ mod tests {
         }
     }
 
+    /// Every string of stamps.tsv (generated with Python's `datetime.fromisoformat`, as the
+    /// cooldown script read `pubtime` and `created_at`): what `parse_aware` accepts, Python read
+    /// as the same instant with an offset, and what `parse` accepts, Python read as the same
+    /// instant (a naive time as UTC). The reverse does not hold: Python accepts more forms.
+    #[test]
+    fn parsing_never_accepts_more_than_python() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/stamps.tsv");
+        let table = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}"));
+        let mut rows = 0;
+        for line in table.lines() {
+            let cols: Vec<&str> = line.split('\t').collect();
+            let [s, kind, micros, date] = cols[..] else {
+                panic!("bad row {line:?}")
+            };
+            let want = || (micros.parse::<i64>().ok(), date.to_owned());
+            let got = |t: Timestamp| (Some(t.micros), t.date().to_string());
+            if let Some(t) = Timestamp::parse_aware(s) {
+                assert_eq!(kind, "aware", "{s:?}");
+                assert_eq!(got(t), want(), "{s:?}");
+            }
+            if let Some(t) = Timestamp::parse(s) {
+                assert_ne!(kind, "error", "{s:?}");
+                assert_eq!(got(t), want(), "{s:?}");
+            }
+            rows += 1;
+        }
+        assert!(rows > 1000, "{rows} rows");
+    }
+
     #[test]
     fn whole_days_round_down_like_python_timedelta() {
         let now = ts("2026-11-11T12:00:00Z");

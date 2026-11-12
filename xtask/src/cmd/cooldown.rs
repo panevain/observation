@@ -992,6 +992,156 @@ mod tests {
         }
     }
 
+    /// One case run on the fakes: exit status, stdout, stderr (an error as its message).
+    /// A panic is a failure of the test.
+    fn run_case(case: &Case) -> (u8, String, String) {
+        let tmp = ok(tempfile::tempdir());
+        let repo = tmp.path();
+        ok(fs::create_dir_all(repo.join(".config")));
+        ok(fs::write(repo.join(CONFIG), &case.config));
+        let mut git = FakeGit {
+            commits: vec!["base".into()],
+            ..FakeGit::default()
+        };
+        for (path, sides) in &case.lockfiles {
+            git.files
+                .insert(("base".into(), path.clone()), sides.base.clone());
+            if let Some(head) = &sides.head {
+                ok(fs::create_dir_all(repo.join(path).parent().unwrap_or(repo)));
+                ok(fs::write(repo.join(path), head));
+            }
+        }
+        let mut responses = HashMap::new();
+        for (name, a) in &case.index {
+            responses.insert(
+                format!("https://index.crates.io/{}", index_path(name)),
+                answer(a),
+            );
+        }
+        for (key, a) in &case.api {
+            responses.insert(format!("https://crates.io/api/v1/crates/{key}"), answer(a));
+        }
+        let http = FakeHttp {
+            responses,
+            ..FakeHttp::default()
+        };
+        let mut cargo = FakeCargo {
+            audit_installed: case.audit.is_some(),
+            ..FakeCargo::default()
+        };
+        if let Some(audit) = &case.audit {
+            for sides in case.lockfiles.values() {
+                if let Some(text) = sides.base.clone().filter(|t| !t.is_empty()) {
+                    let out = AuditOutput {
+                        stdout: audit.json.clone(),
+                        stderr: audit.stderr.clone(),
+                    };
+                    cargo.audits.insert(py::universal_newlines(&text), out);
+                }
+            }
+        }
+        let clock = FixedClock(Timestamp::from_unix_micros(0));
+        let ports = Ports {
+            git: &git,
+            http: &http,
+            cargo: &cargo,
+            clock: &clock,
+        };
+        let args = Args {
+            base: case.base.clone().unwrap_or_else(|| "base".into()),
+            lockfiles: case.lockfiles.keys().cloned().collect(),
+            now: Some(case.now.clone()),
+        };
+        let mut diagnostics = String::new();
+        match run(repo, &args, &ports, &mut diagnostics) {
+            Ok(out) => (
+                u8::from(out.failed),
+                format!("{}\n", out.report),
+                diagnostics,
+            ),
+            Err(e) => (1, String::new(), format!("{diagnostics}{e}\n")),
+        }
+    }
+
+    /// The cases on which the port fails although the script passed, on purpose (each is
+    /// listed under "Behaviour differences" in the pull request that made it so).
+    const STRICTER: &[&str] = &[
+        // Timestamp forms Python's fromisoformat read and crates.io does not write.
+        "pubtime +00 short offset",
+        "pubtime offset with secs",
+        "pubtime space before offset",
+        "pubtime basic format",
+        "pubtime lowercase t",
+        // A name crates.io cannot have is NOT FOUND without a request (the script's request
+        // reached serde's index file).
+        "name query string",
+        // A crates.io lock entry whose name or version is not a string.
+        "lock name int in both",
+    ];
+
+    /// Every case of cooldown/parity-cases.toml against what the script did with it
+    /// (cooldown/parity-golden, captured from the script with the same recorded answers):
+    /// - where the script failed, the port fails; where it failed with a message of its own
+    ///   (not a Python traceback), with the same output;
+    /// - where the script passed, the port passes with the same output, except for the cases
+    ///   in [`STRICTER`], where it fails.
+    #[test]
+    fn never_passes_where_the_script_failed() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cooldown");
+        let cases: Cases = ok(toml::from_str(&ok(fs::read_to_string(
+            dir.join("parity-cases.toml"),
+        ))));
+        let golden = ok(fs::read_to_string(dir.join("parity-golden")));
+        let mut want = BTreeMap::new();
+        for block in golden.split("== ").filter(|b| !b.is_empty()) {
+            let (name, rest) = block.split_once('\n').unwrap_or((block, ""));
+            let (code, rest) = rest.split_once('\n').unwrap_or((rest, ""));
+            let rest = rest.strip_prefix("-- stdout\n").unwrap_or(rest);
+            let (stdout, stderr) = rest.split_once("-- stderr\n").unwrap_or((rest, ""));
+            want.insert(
+                name.to_owned(),
+                (code.to_owned(), stdout.to_owned(), stderr.to_owned()),
+            );
+        }
+        assert_eq!(
+            want.len(),
+            cases.case.len(),
+            "cases and golden differ in length"
+        );
+        let mut problems = Vec::new();
+        for case in &cases.case {
+            let (code, stdout, stderr) = run_case(case);
+            let Some((py_code, py_stdout, py_stderr)) = want.get(&case.name) else {
+                problems.push(format!("{}: not in the golden", case.name));
+                continue;
+            };
+            let same = stdout == *py_stdout && stderr == *py_stderr;
+            let problem = match (py_code.as_str(), code) {
+                ("exit 0", 0) if !same => "passes with different output",
+                ("exit 0", 0) if STRICTER.contains(&case.name.as_str()) => {
+                    "passes, but is listed as stricter"
+                }
+                ("exit 0", 0) => "",
+                ("exit 0", _) if !STRICTER.contains(&case.name.as_str()) => {
+                    "fails where the script passed (not listed as stricter)"
+                }
+                ("exit 0", _) => "",
+                (_, 0) => "PASSES WHERE THE SCRIPT FAILED",
+                _ if !py_stderr.contains("<traceback>") && !same => {
+                    "fails with output other than the script's message"
+                }
+                _ => "",
+            };
+            if !problem.is_empty() {
+                problems.push(format!(
+                    "{}: {problem}\n  script: {py_code} {py_stdout:?} {py_stderr:?}\n  port: exit {code} {stdout:?} {stderr:?}",
+                    case.name
+                ));
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
     #[test]
     fn index_paths() {
         let cases = [

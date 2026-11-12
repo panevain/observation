@@ -415,6 +415,41 @@ fn toml_1_0_syntax(text: &str) -> std::result::Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Every document of toml.jsonl (generated with Python's tomllib, the cooldown script's
+    /// reader): what `parse_toml` accepts, tomllib accepted, and `repr_table` writes what
+    /// Python's `repr` wrote for it. The reverse does not hold everywhere: an integer beyond 64
+    /// bits and a float beyond f64 (infinity to tomllib) are refused.
+    #[test]
+    fn toml_is_never_read_where_tomllib_refused() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/toml.jsonl");
+        let corpus = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}"));
+        let mut refused = Vec::new();
+        let mut wrong = Vec::new();
+        for line in corpus.lines() {
+            let doc: serde_json::Value =
+                serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"));
+            let text = doc["toml"].as_str().unwrap_or_default();
+            match parse_toml(text) {
+                Ok(table) => {
+                    if doc["ok"] != true
+                        || Some(repr_table(&table).as_str()) != doc["repr"].as_str()
+                    {
+                        wrong.push((text.to_owned(), repr_table(&table), doc["repr"].clone()));
+                    }
+                }
+                Err(_) if doc["ok"] == true => refused.push(text.to_owned()),
+                Err(_) => {}
+            }
+        }
+        assert_eq!(wrong, [], "read where tomllib refused, or read differently");
+        assert_eq!(
+            refused,
+            ["a = 9223372036854775808", "a = 1e400"],
+            "refused although tomllib read them"
+        );
+    }
+
     #[test]
     fn splits_lines_as_python() {
         let s = "a\nb\r\nc\rd\u{0b}e\u{0c}f\u{1c}g\u{1d}h\u{1e}i\u{85}j\u{2028}k\u{2029}l\n\nm\n";

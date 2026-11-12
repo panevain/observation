@@ -1,0 +1,2965 @@
+[[case]]
+name = "pubtime 6d23h59m"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:01:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime exactly 7d"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime 7d+1s"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:59:59Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime 7d-1us"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:00:00.000001Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime 7 frac digits"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:00:00.0000009Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime offset +01 exact"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T13:00:00+01:00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime offset -05 1s late"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T07:00:01-05:00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime offset date render"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-01T23:30:00-05:00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime comma frac"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:59:59,5Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime space sep"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04 11:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime no seconds"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime +0000 offset"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:00:00.123+0000\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime +00 short offset"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:00:00+00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime offset with secs"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:00:00+00:00:30\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime space before offset"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T11:00:00 +00:00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime lowercase z"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime naive pubtime"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime date-only pubtime"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime clock skew"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-12T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime trailing space"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z \"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime basic format"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"20260101T000000Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime lowercase t"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01t00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "now naive"
+now = "2026-11-11T12:00:00"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "now offset"
+now = "2026-11-11T13:00:00+01:00"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "now 7 frac"
+now = "2026-11-11T12:00:00.0000019Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-04T12:00:00.000001Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime numeric api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": 5}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime zero api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": 0}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime true api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": true}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime null api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": null}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime empty api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": \"\"}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime list api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": [\"x\"]}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "pubtime object api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"odd\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."odd"]
+status = 200
+body = "{\"name\": \"odd\", \"vers\": \"1.0.0\", \"pubtime\": {\"a\": 1}}\n"
+[case.api."odd/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "no pubtime api network down"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"nopt\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."nopt"]
+status = 200
+body = "{\"name\": \"nopt\", \"vers\": \"1.0.0\"}\n"
+[case.api."nopt/1.0.0"]
+error = true
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "no pubtime api 429"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"nopt\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."nopt"]
+status = 200
+body = "{\"name\": \"nopt\", \"vers\": \"1.0.0\"}\n"
+[case.api."nopt/1.0.0"]
+status = 429
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "no pubtime api 503"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"nopt\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."nopt"]
+status = 200
+body = "{\"name\": \"nopt\", \"vers\": \"1.0.0\"}\n"
+[case.api."nopt/1.0.0"]
+status = 503
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "no pubtime api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"nopt\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."nopt"]
+status = 200
+body = "{\"name\": \"nopt\", \"vers\": \"1.0.0\"}\n"
+[case.api."nopt/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "no pubtime api new"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"nopt\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."nopt"]
+status = 200
+body = "{\"name\": \"nopt\", \"vers\": \"1.0.0\"}\n"
+[case.api."nopt/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":\"2026-11-10T00:00:00Z\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at null exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":null}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":null}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api version string exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "{\"version\":\"x\"}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api version string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "{\"version\":\"x\"}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api version null exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "{\"version\":null}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api version null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "{\"version\":null}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api no version exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "{}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api no version"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "{}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at naive exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":\"2026-01-01T00:00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at naive"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":\"2026-01-01T00:00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at number exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":5}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at number"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":5}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api not json exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "oops"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api not json"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "oops"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api json list exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"apix\"\nreason = \"vetted\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apix\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apix"]
+status = 200
+body = "{\"name\": \"apix\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apix/1.0.0"]
+status = 200
+body = "[]"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api json list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiy"]
+status = 200
+body = "{\"name\": \"apiy\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiy/1.0.0"]
+status = 200
+body = "[]"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index malformed line"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\n{oops\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index array line"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "[]\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index vers number"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"vers\":1,\"pubtime\":\"2026-01-01T00:00:00Z\"}\n{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index no vers"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"pubtime\":\"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index dup new wins"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dup\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dup"]
+status = 200
+body = "{\"name\": \"dup\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"dup\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index dup old wins"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dup\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dup"]
+status = 200
+body = "{\"name\": \"dup\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n{\"name\": \"dup\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index U+2028 in line"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ls\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ls"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\",\"x\":\"a\u2028b\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index U+0085 in line"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ls\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ls"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\",\"x\":\"a\u0085b\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index FF in line"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ls\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ls"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\",\"x\":\"a\fb\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index CRLF"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ls\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ls"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\r\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index whitespace line"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ls\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ls"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\n  \n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index empty 200"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"emp\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."emp"]
+status = 200
+body = ""
+[case.api."emp/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index 404 api old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"emp\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."emp"]
+status = 404
+[case.api."emp/1.0.0"]
+status = 200
+body = "{\"version\": {\"created_at\": \"2026-01-01T00:00:00.123456+00:00\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index 404 api 404"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"emp\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."emp"]
+status = 404
+[case.api."emp/1.0.0"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index 429"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"rl\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."rl"]
+status = 429
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index 500"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"rl\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."rl"]
+status = 500
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index 403"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"rl\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."rl"]
+status = 403
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index network"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"rl\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."rl"]
+error = true
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index unknown version api 404"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"unk\"\nversion = \"1.0.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."unk"]
+status = 200
+body = "{\"name\": \"unk\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."unk/1.0.1"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "yanked"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"yk\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."yk"]
+status = 200
+body = "{\"name\": \"yk\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\", \"yanked\": true}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "yanked old"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"yk\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."yk"]
+status = 200
+body = "{\"name\": \"yk\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\", \"yanked\": true}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "uppercase name"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"Serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."Serde"]
+status = 200
+body = "{\"name\": \"Serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "one-letter"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"a\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."a"]
+status = 200
+body = "{\"name\": \"a\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "three-letter"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"abc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."abc"]
+status = 200
+body = "{\"name\": \"abc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "added to one lockfile only (present in another)"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"shared\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"shared\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.lockfiles."fuzz/Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"shared\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."shared"]
+status = 200
+body = "{\"name\": \"shared\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "downgrade to new"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"dg\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"dg\"\nversion = \"1.1.9\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dg"]
+status = 200
+body = "{\"name\": \"dg\", \"vers\": \"1.1.9\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n{\"name\": \"dg\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "build metadata change"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"bm\"\nversion = \"1.0.0+a\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"bm\"\nversion = \"1.0.0+b\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."bm"]
+status = 200
+body = "{\"name\": \"bm\", \"vers\": \"1.0.0+b\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "checksum change only"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"ck\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"aa\"\n"
+head = "version = 4\n\n[[package]]\nname = \"ck\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"bb\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "source switch crates.io registry->sparse same version"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"sw\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"sw\"\nversion = \"1.0.0\"\nsource = \"sparse+https://index.crates.io/\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "other registry shadow"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"sh\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"sh\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"sh\"\nversion = \"2.0.0\"\nsource = \"registry+https://evil.example/index\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "git shadow"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"gs\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"gs\"\nversion = \"1.0.0\"\nsource = \"git+https://example.com/gs#abc\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "source missing crates.io-like with trailing slash variant"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"tv\"\nversion = \"1.0.0\"\nsource = \"sparse+https://index.crates.io\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new lockfile"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."xtask/Cargo.lock"]
+head = "version = 4\n\n[[package]]\nname = \"nl\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."nl"]
+status = 200
+body = "{\"name\": \"nl\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "deleted lockfile"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"dl\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "base lockfile unshowable"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+head = "version = 4\n\n[[package]]\nname = \"ub\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ub"]
+status = 200
+body = "{\"name\": \"ub\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "bad base"
+now = "2026-11-11T12:00:00Z"
+base = "nope"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock missing version"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n[[package]]\nname = \"x\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock invalid toml"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock version int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n[[package]]\nname = \"x\"\nversion = 1\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt other version"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = \"0.9.0\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt expired"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = 2026-11-10\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt ends today"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = 2026-11-11\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt no reason"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt empty reason"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt not new crate"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"other\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt version float"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = 1.0\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt version int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = 1\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt version bool"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = true\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt version empty"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = \"\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt version build meta"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = \"1.0.0+x\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt name int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = 1\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = 5\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = [\"a\"]\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt exempt as table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[exempt]\nname = \"ex\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt exempt as string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = \"ex\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt exempt list of strings"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = [\"ex\"]\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt until datetime"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = 2026-12-01T00:00:00\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt until string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = \"2026-12-01\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt until expired float version"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = 1.0\nreason = \"r\"\nuntil = 2026-11-01\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "old crate, exempt as table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[exempt]\nname = \"ex\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "old crate, exempt as string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = \"ex\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, exempt as table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[exempt]\nname = \"ex\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days true"
+now = "2026-11-11T12:00:00Z"
+config = "days = true\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days true"
+now = "2026-11-11T12:00:00Z"
+config = "days = true\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days float"
+now = "2026-11-11T12:00:00Z"
+config = "days = 1.5\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days float"
+now = "2026-11-11T12:00:00Z"
+config = "days = 1.5\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days negative"
+now = "2026-11-11T12:00:00Z"
+config = "days = -1\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days negative"
+now = "2026-11-11T12:00:00Z"
+config = "days = -1\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days string"
+now = "2026-11-11T12:00:00Z"
+config = "days = \"7\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days string"
+now = "2026-11-11T12:00:00Z"
+config = "days = \"7\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days missing"
+now = "2026-11-11T12:00:00Z"
+config = ""
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days missing"
+now = "2026-11-11T12:00:00Z"
+config = ""
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days 0"
+now = "2026-11-11T12:00:00Z"
+config = "days = 0\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days 0"
+now = "2026-11-11T12:00:00Z"
+config = "days = 0\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days 800000"
+now = "2026-11-11T12:00:00Z"
+config = "days = 800000\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days 800000"
+now = "2026-11-11T12:00:00Z"
+config = "days = 800000\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days 200000000"
+now = "2026-11-11T12:00:00Z"
+config = "days = 200000000\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days 200000000"
+now = "2026-11-11T12:00:00Z"
+config = "days = 200000000\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, days i64max"
+now = "2026-11-11T12:00:00Z"
+config = "days = 9223372036854775807\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days i64max"
+now = "2026-11-11T12:00:00Z"
+config = "days = 9223372036854775807\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "nothing new, config invalid"
+now = "2026-11-11T12:00:00Z"
+config = "days = = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, config invalid"
+now = "2026-11-11T12:00:00Z"
+config = "days = = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "new crate, days wraps"
+now = "2026-11-11T12:00:00Z"
+config = "days = 213503982336\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"dc\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."dc"]
+status = 200
+body = "{\"name\": \"dc\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "rustsec fix"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec non-fix too new"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.1.5\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec fixes one of two"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 2, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": []}}, {\"advisory\": {\"id\": \"RUSTSEC-2026-0002\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.3.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec fixes both"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.3.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.3.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 2, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": []}}, {\"advisory\": {\"id\": \"RUSTSEC-2026-0002\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.3.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec unaffected range"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"0.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"0.4.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": [\"< 0.5\"]}}]}}"
+
+[[case]]
+name = "rustsec patched null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"0.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"0.4.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\"}, \"versions\": {\"patched\": null, \"unaffected\": [\"< 0.5\"]}}]}}"
+
+[[case]]
+name = "rustsec patched non-string first"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\"}, \"versions\": {\"patched\": [5, \">= 1.2.0\"]}}]}}"
+
+[[case]]
+name = "rustsec patched string list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\"}, \"versions\": {\"patched\": \">= 1.2.0\"}}]}}"
+
+[[case]]
+name = "rustsec unreadable range then match"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\"bogus\", \">= 1.2.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec match then unreadable"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\", \"bogus\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec no versions key"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\"}}]}}"
+
+[[case]]
+name = "rustsec advisory for other crate"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"other\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "rustsec no package name"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"list\": [{\"advisory\": {\"id\": \"X\"}, \"package\": {}}]}}"
+
+[[case]]
+name = "rustsec json null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "null"
+
+[[case]]
+name = "rustsec json list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "[]"
+
+[[case]]
+name = "rustsec json no vulnerabilities"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{}"
+
+[[case]]
+name = "rustsec vulnerabilities null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":null}"
+
+[[case]]
+name = "rustsec no json"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = ""
+
+[[case]]
+name = "rustsec missing cargo-audit"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+
+[[case]]
+name = "rustsec warning only (informational)"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"list\": []}, \"warnings\": {\"unmaintained\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0009\"}, \"package\": {\"name\": \"vu\"}, \"versions\": {\"patched\": [\">= 1.2.0\"]}}]}}"
+
+[[case]]
+name = "rustsec fix and exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"vu\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\": {\"found\": true, \"count\": 1, \"list\": [{\"advisory\": {\"id\": \"RUSTSEC-2026-0001\"}, \"package\": {\"name\": \"vu\", \"version\": \"1.1.0\"}, \"versions\": {\"patched\": [\">= 1.2.0\"], \"unaffected\": []}}]}}"
+
+[[case]]
+name = "old crate, audit json null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "null"
+
+[[case]]
+name = "old crate, audit json list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "[]"
+
+[[case]]
+name = "config toml 1.1 escape e"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\\e\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "config toml 1.1 escape x"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"\\x41\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "config toml 1.1 inline table newline"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = [{name = \"ex\",\n reason = \"r\"}]\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "config toml 1.1 inline table trailing comma"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = [{name = \"ex\", reason = \"r\",}]\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "config toml 1.1 until without seconds"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = 2026-12-01T10:00\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "config toml 1.1 unicode bare key"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\ncl\u00e9 = 1\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "config toml 1.1 control char in comment"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7 # \u0001\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock toml 1.1 escape x"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"\\x41\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock toml 1.1 inline table newline"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nmeta = {a = 1,\n b = 2}\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock toml 1.1 time without seconds"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nwhen = 10:00\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock CR line ends"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\r"
+head = "version = 4\r\r[[package]]\rname = \"old\"\rversion = \"1.0.0\"\rsource = \"registry+https://github.com/rust-lang/crates.io-index\"\r"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock BOM"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "\ufeffversion = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock leap second"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nwhen = 2026-01-01T10:00:60Z\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "name glob brackets"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serd[e-e]\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serd[e-e]"]
+status = 404
+[case.api."serd[e-e]/1.0.0"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "name glob brackets exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"serd[e-e]\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serd[e-e]\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serd[e-e]"]
+status = 404
+[case.api."serd[e-e]/1.0.0"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "name query string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serde?x\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serde?x"]
+status = 200
+body = "{\"name\": \"serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "name slash"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"se/de\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."se/de"]
+status = 404
+[case.api."se/de/1.0.0"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "version glob brackets"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.[0-0]\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serde"]
+status = 200
+body = "{\"name\": \"serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."serde/1.0.[0-0]"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "version glob braces"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"{1.0.0}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serde"]
+status = 200
+body = "{\"name\": \"serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."serde/{1.0.0}"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "version two parts exempt"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"serde\"\nreason = \"r\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."serde"]
+status = 200
+body = "{\"name\": \"serde\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."serde/1.0"]
+status = 404
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, float"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = 1.5\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, date"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = 2026-01-01\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = {a = 1}\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = [1, \"x\"]\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, bool"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = true\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, datetime"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = 2026-01-01T10:00:00+05:00\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason printed, time"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = 10:30:00.5\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt version float expired"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nversion = 1.0\nreason = \"r\"\nuntil = 2026-01-01\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt name int expired"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = 5\nreason = \"r\"\nuntil = 2026-01-01\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt until time"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = 10:00:00\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt until local datetime"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"ex\"\nreason = \"r\"\nuntil = 2026-12-01T00:00:00\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt empty table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = {}\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt empty string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = \"\"\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = 5\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt item not a table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\nexempt = [\"x\"]\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "exempt reason repr in error"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n[[exempt]]\nname = \"it's\"\nreason = 0\nwhen = 1e16\nat = 2026-01-01T10:00:00.25-05:00\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "days false"
+now = "2026-11-11T12:00:00Z"
+config = "days = false\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."old"]
+status = 200
+body = "{\"name\": \"old\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "days false new"
+now = "2026-11-11T12:00:00Z"
+config = "days = false\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"ex\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."ex"]
+status = 200
+body = "{\"name\": \"ex\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "days 739931 nothing new"
+now = "2026-11-11T12:00:00Z"
+config = "days = 739931\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "days 739932 nothing new"
+now = "2026-11-11T12:00:00Z"
+config = "days = 739932\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock package table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n[package]\nname = \"x\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock package empty table"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\npackage = {}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock package string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\npackage = \"x\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock source array"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = [\"x\"]\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock source int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"old\"\nversion = \"1.0.0\"\nsource = 5\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "lock name int in both"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n[[package]]\nname = 5\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n[[package]]\nname = 5\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "old crate, audit list empty object"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":{}}}"
+
+[[case]]
+name = "old crate, audit list empty string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":\"\"}}"
+
+[[case]]
+name = "old crate, audit list object"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":{\"a\":1}}}"
+
+[[case]]
+name = "old crate, audit no vulnerabilities key"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{}"
+
+[[case]]
+name = "old crate, audit versions null"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":\"X\"},\"versions\":null}]}}"
+
+[[case]]
+name = "old crate, audit package name int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":5},\"advisory\":{\"id\":\"X\"},\"versions\":{\"patched\":[\">=1.2\"]}}]}}"
+
+[[case]]
+name = "old crate, audit package name list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":[1]},\"advisory\":{\"id\":\"X\"},\"versions\":{}}]}}"
+
+[[case]]
+name = "old crate, audit package list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":[\"vu\"],\"advisory\":{\"id\":\"X\"},\"versions\":{}}]}}"
+
+[[case]]
+name = "new crate, audit patched string"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":\"X\"},\"versions\":{\"patched\":\">=1.2\"}}]}}"
+
+[[case]]
+name = "new crate, audit patched object"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":\"X\"},\"versions\":{\"patched\":{\">=1.2\":1}}}]}}"
+
+[[case]]
+name = "new crate, audit id int"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":5},\"versions\":{\"patched\":[\">=1.2\"]}}]}}"
+
+[[case]]
+name = "new crate, audit id int not fixed"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":5},\"versions\":{\"patched\":[\">=1.3\"]}}]}}"
+
+[[case]]
+name = "new crate, audit range int after match"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":\"X\"},\"versions\":{\"patched\":[\">=1.2\", 5]}}]}}"
+
+[[case]]
+name = "new crate, audit two ids"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+head = "version = 4\n\n[[package]]\nname = \"vu\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."vu"]
+status = 200
+body = "{\"name\": \"vu\", \"vers\": \"1.2.0\", \"pubtime\": \"2026-11-10T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"list\":[{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":\"B\"},\"versions\":{\"patched\":[\">=1.2\"]}},{\"package\":{\"name\":\"vu\"},\"advisory\":{\"id\":\"A\"},\"versions\":{\"unaffected\":[\"<1\"],\"patched\":[\"^1.2\"]}}]}}"
+
+[[case]]
+name = "pubtime date with offset"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"boundary\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."boundary"]
+status = 200
+body = "{\"name\": \"boundary\", \"vers\": \"1.0.0\", \"pubtime\": \"2026-01-01+00:00\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index vers list"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"vers\":[\"1.0.0\"]}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index vers null then real"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"vers\":null}\n{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index line separator U+2029"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\u2029{\"vers\":\"0.1.0\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "index vertical tab between lines"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"mal\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."mal"]
+status = 200
+body = "{\"vers\":\"1.0.0\",\"pubtime\":\"2026-01-01T00:00:00Z\"}\u000b{\"vers\":\"0.1.0\"}\n"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at date only"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiz\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiz"]
+status = 200
+body = "{\"name\": \"apiz\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiz/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":\"2026-01-01\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api created_at empty"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiz\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiz"]
+status = 200
+body = "{\"name\": \"apiz\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiz/1.0.0"]
+status = 200
+body = "{\"version\":{\"created_at\":\"\"}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
+
+[[case]]
+name = "api no created_at"
+now = "2026-11-11T12:00:00Z"
+config = "days = 7\n"
+[case.lockfiles."Cargo.lock"]
+base = "version = 4\n"
+head = "version = 4\n\n[[package]]\nname = \"apiz\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+[case.index."apiz"]
+status = 200
+body = "{\"name\": \"apiz\", \"vers\": \"0.1.0\", \"pubtime\": \"2026-01-01T00:00:00Z\"}\n"
+[case.api."apiz/1.0.0"]
+status = 200
+body = "{\"version\":{}}"
+[case.audit]
+json = "{\"vulnerabilities\":{\"found\":false,\"count\":0,\"list\":[]}}"
