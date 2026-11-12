@@ -361,4 +361,29 @@ mod tests {
         state.mark_painted(overlap, 7);
         assert!(state.is_painted(overlap, 7));
     }
+
+    #[test]
+    fn the_counts_painted_are_those_of_the_selected_level() {
+        use observation_core::bundle::build_bundle;
+        use observation_core::geo::BBox;
+        use observation_core::terrain::Terrain;
+        let bbox = BBox::new(51.5, -0.001, 51.5009, 0.001).expect("valid box");
+        let bundle = build_bundle(bbox, &[], &[], &[], Terrain::default(), "", 0, None);
+        let layers = StaticLayers::new(&bundle, 0.5, 1.0);
+        let scope = Scope {
+            layers: &layers,
+            region: None,
+        };
+        let mut state = CoverageState {
+            rungs: vec![
+                Rung::new(DoriLevel::Detect, scope),
+                Rung::new(DoriLevel::Identify, scope),
+            ],
+            selected: 1,
+            ..CoverageState::default()
+        };
+        state.rungs[1].tally.counts.ground[0] = 2;
+        let counts = state.selected_counts().expect("counted");
+        assert_eq!(counts.ground[0], 2, "the second rung's, not the first's");
+    }
 }
