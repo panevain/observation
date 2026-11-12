@@ -190,6 +190,10 @@ regex!(IGNORE_END, r"^ *\]");
 regex!(COMMENT_LINE, r"^ *#");
 regex!(OSV_ID, r"^id *=");
 regex!(ALLOWED_LINE, r"^ *allowed='([^']*)'$");
+// The word `allowed` as a shell name: what the rule must account for on every line.
+regex!(ALLOWED_WORD, r"(^|[^A-Za-z0-9_-])allowed($|[^A-Za-z0-9_-])");
+// The one way the job may use it: an exact-line `grep -vxE` whose pattern ends in the group.
+regex!(ALLOWED_USE, r#"grep -vxE "[^"]*\(\$\{allowed\}\)" "#);
 // One path of that list, with `\.` for each dot and no other pattern syntax.
 regex!(ALLOWED_PATH, r"^(?:[A-Za-z0-9_/-]|\\\.)+$");
 // The globs `*.y*ml` and `action.y*ml`.
@@ -609,7 +613,9 @@ pub fn env_ignores_local(
 
 /// hotfix.yml's open-pr job checks the patch with an inline regex (`allowed='A\.b|C'`), since
 /// it compiles nothing; its set of paths must be .config/release.toml's `hotfix` list (order
-/// aside). Nothing is checked in a tree with neither file.
+/// aside). Nothing is checked in a tree with neither file. So that nothing else can widen it,
+/// every line of hotfix.yml outside a comment that names `allowed` must be that one assignment
+/// or a use in `grep -vxE "…(${allowed})"`.
 pub fn hotfix_list(workflows: &[(String, String)], release_toml: &str) -> Vec<Finding> {
     const WORKFLOW: &str = ".github/workflows/hotfix.yml";
     let workflow = workflows.iter().find(|(p, _)| p == WORKFLOW);
@@ -619,10 +625,21 @@ pub fn hotfix_list(workflows: &[(String, String)], release_toml: &str) -> Vec<Fi
     let inline = workflow
         .ok_or_else(|| format!("{WORKFLOW} is missing"))
         .and_then(|(_, text)| {
-            let lists: Vec<&str> = lines(text)
-                .filter_map(|l| ALLOWED_LINE.captures(l))
-                .filter_map(|c| c.get(1).map(|m| m.as_str()))
-                .collect();
+            let named = lines(text)
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .filter(|l| ALLOWED_WORD.is_match(l));
+            let mut lists = Vec::new();
+            for line in named {
+                if let Some(list) = ALLOWED_LINE.captures(line).and_then(|c| c.get(1)) {
+                    lists.push(list.as_str());
+                } else if !ALLOWED_USE.is_match(line) {
+                    return Err(format!(
+                        "{WORKFLOW} names allowed other than in its one allowed='...' line and \
+                         grep -vxE \"...(${{allowed}})\": {}",
+                        line.trim()
+                    ));
+                }
+            }
             let [list] = lists[..] else {
                 return Err(format!(
                     "{WORKFLOW} has {} allowed='...' lines, expected one",
@@ -1067,6 +1084,34 @@ mod tests {
                 "{want}: {found:?}"
             );
         }
+        // Nothing else may assign or use it; an inline list larger than the toml list fails.
+        for extra in [
+            "allowed+='|.*'",
+            "allowed=\".*\"",
+            "allowed='.*'",
+            "export allowed",
+            "read -r allowed <<<x",
+            "bad=\"$(grep -vE \"(${allowed})\" <<<x)\"",
+            "bad=\"$(grep -vxE \"${allowed}\" <<<x)\"",
+        ] {
+            let mut w = good.clone();
+            w[0].1.push_str(&format!("          {extra}\n"));
+            let found = check(&w, toml);
+            assert!(found.len() == 1, "{extra}: {found:?}");
+        }
+        let mut used = good.clone();
+        used[0].1.push_str(
+            "          bad=\"$(grep -vxE \"M\t(${allowed})\" <<<x || true)\"\n          # allowed+='|.*' in a comment\n",
+        );
+        assert_eq!(check(&used, toml), Vec::<String>::new());
+        assert_eq!(
+            check(
+                &wf(r"allowed='Cargo\.toml|fuzz/Cargo\.lock|Dockerfile|README\.md'"),
+                toml
+            )
+            .len(),
+            1
+        );
         let twice = vec![(
             ".github/workflows/hotfix.yml".to_owned(),
             "  allowed='Cargo\\.toml'\n  allowed='Cargo\\.toml'\n".to_owned(),
