@@ -774,6 +774,14 @@ pub fn all(s: &Snapshot) -> Report {
     let mut report = check(s);
     report.findings.extend(extra::check(s));
     report.findings.extend(mise::check(s));
+    // A file several rules read (a workflow that is not YAML) is reported once.
+    let mut unique = Vec::new();
+    for f in std::mem::take(&mut report.findings) {
+        if !unique.contains(&f) {
+            unique.push(f);
+        }
+    }
+    report.findings = unique;
     report
 }
 

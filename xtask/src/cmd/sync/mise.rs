@@ -10,9 +10,12 @@
 //! - Layering: each job that uses setup-mise (directly or through a composite action) runs
 //!   with `MISE_ENV: ci` from its own or the workflow's `env:`, so that mise.ci.toml applies;
 //!   a job, step or workflow that sets `MISE_ENV: ci` sets mise up. Workflows are read as YAML.
-//! - `check`: every job of a workflow that runs on `pull_request` is covered by mise.toml's
-//!   `check` task (each of its `run:` steps is only `mise run TASK` of tasks `check` runs), or is
-//!   listed in [`JOBS_NOT_IN_CHECK`] with the reason.
+//!   The setup step's own `env:` may not set another `MISE_ENV`.
+//! - `check`: every job of a workflow that runs on `pull_request`, `pull_request_target` or
+//!   `merge_group` is covered by mise.toml's `check` task (each line of its `run:` steps is only
+//!   `mise run TASK` of one task `check` runs, and its other steps use only [`SETUP_ACTIONS`]), or
+//!   is listed in [`JOBS_NOT_IN_CHECK`] with the reason. A task's arguments, and a step's
+//!   `working-directory` or `shell`, are not read.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
@@ -26,6 +29,23 @@ use super::{Finding, Snapshot, re};
 
 regex!(MISE_RUN, r"(?:^|[\s;&|(`'\x22])mise\s+run\s+");
 regex!(TASK_NAME, r"^[A-Za-z0-9:_-]+$");
+// A composite action of another repository: `OWNER/REPO/.github/actions/NAME@REF`.
+regex!(
+    REMOTE_ACTION,
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/actions/([^@]+)@"
+);
+
+/// The actions a covered job may use besides its `mise run` steps: they set the job up and run
+/// no check (`uses:` up to its `@`; `./` is read as `$/`).
+pub const SETUP_ACTIONS: &[&str] = &[
+    "actions/checkout",
+    "$/.github/actions/setup-ci",
+    "$/.github/actions/setup-mise",
+    "$/.github/actions/setup-rust",
+];
+
+/// The pull request events whose workflows `check` must cover.
+const PULL_REQUEST_EVENTS: &[&str] = &["pull_request", "pull_request_target", "merge_group"];
 
 /// The options of `mise run` that take a value (the next word, unless written `--x=value`).
 const MISE_RUN_VALUES: &[&str] = &[
@@ -235,13 +255,28 @@ pub fn locks(s: &Snapshot) -> Vec<Finding> {
     out
 }
 
-/// The local composite action a step uses (`$/.github/actions/NAME` or `./.github/actions/NAME`).
+/// The composite action a step uses (`$/.github/actions/NAME`, `./.github/actions/NAME` or
+/// `OWNER/REPO/.github/actions/NAME@REF`).
 fn local_action(step: &YValue) -> Option<String> {
     let uses = step.get("uses").and_then(scalar)?;
-    let rest = uses
+    let rest = match uses
         .strip_prefix("$/.github/actions/")
-        .or_else(|| uses.strip_prefix("./.github/actions/"))?;
+        .or_else(|| uses.strip_prefix("./.github/actions/"))
+    {
+        Some(rest) => rest,
+        None => REMOTE_ACTION.captures(&uses)?.get(1)?.as_str(),
+    };
     Some(rest.trim_end_matches('/').to_owned())
+}
+
+/// Whether `uses` is one of [`SETUP_ACTIONS`].
+fn setup_action(uses: &str) -> bool {
+    let name = uses.split_once('@').map_or(uses, |(n, _)| n);
+    let name = name.trim_end_matches('/');
+    let name = name
+        .strip_prefix("./")
+        .map_or_else(|| name.to_owned(), |r| format!("$/{r}"));
+    SETUP_ACTIONS.contains(&name.as_str())
 }
 
 fn steps(def: &YValue) -> impl Iterator<Item = &YValue> {
@@ -308,6 +343,16 @@ pub fn layering(s: &Snapshot) -> Vec<Finding> {
                 .filter_map(local_action)
                 .any(|a| mise.contains(&a));
             any_mise |= uses_mise;
+            for step in steps(def) {
+                if let Some(action) = local_action(step).filter(|a| mise.contains(a))
+                    && let Some(env) = mise_env(step).filter(|e| e != "ci")
+                {
+                    out.push(finding(format!(
+                        "{path}: job {job}'s {action} step sets MISE_ENV: {env}, so mise.ci.toml \
+                         would not apply"
+                    )));
+                }
+            }
             let own = mise_env(def);
             let step_ci = steps(def).any(|st| mise_env(st).as_deref() == Some("ci"));
             if uses_mise && own.as_ref().or(top.as_ref()).map(String::as_str) != Some("ci") {
@@ -369,13 +414,8 @@ fn check_tasks(mise_toml: &str) -> Result<BTreeSet<String>, Finding> {
 
 /// The events a workflow runs on (`on:` as a name, a list or a mapping).
 fn triggers(doc: &YValue) -> Vec<String> {
-    // YAML 1.1 reads a bare `on` key as true.
-    let on = doc
-        .as_mapping()
-        .into_iter()
-        .flatten()
-        .find(|(k, _)| matches!(scalar(k).as_deref(), Some("on" | "true")))
-        .map(|(_, v)| v);
+    // The YAML parser reads a bare `on` key as the string, not as YAML 1.1's true.
+    let on = doc.get("on");
     match on {
         Some(YValue::Sequence(list)) => list.iter().filter_map(scalar).collect(),
         Some(YValue::Mapping(m)) => m.keys().filter_map(scalar).collect(),
@@ -391,6 +431,13 @@ fn uncovered(def: &YValue, check: &BTreeSet<String>) -> Vec<String> {
     let mut runs = 0;
     for step in steps(def) {
         let Some(script) = step.get("run").and_then(scalar) else {
+            if let Some(uses) = step.get("uses").and_then(scalar)
+                && !setup_action(&uses)
+            {
+                why.push(format!(
+                    "uses `{uses}`, which is not one of sync's SETUP_ACTIONS"
+                ));
+            }
             continue;
         };
         runs += 1;
@@ -399,9 +446,12 @@ fn uncovered(def: &YValue, check: &BTreeSet<String>) -> Vec<String> {
                 continue;
             }
             let tasks = mise_run_tasks(line);
+            // One task: `:::` would add another, and an expression any command.
             let plain = line.starts_with("mise run ")
                 && !line.contains([';', '&', '|', '`', '>', '<'])
-                && !line.contains("$(");
+                && !line.contains("$(")
+                && !line.contains(":::")
+                && !line.contains("${{");
             match tasks.first() {
                 Some(task) if plain && !check.contains(task) => {
                     why.push(format!(
@@ -429,14 +479,20 @@ pub fn check_covers_ci(s: &Snapshot, exceptions: &[(&str, &str, &str)]) -> Vec<F
     let mut out = Vec::new();
     // (workflow, job, covered) of every job of a pull_request workflow.
     let mut jobs = Vec::new();
+    // Workflows that are not YAML: layering reports them, and their entries are not stale.
+    let mut unread = BTreeSet::new();
     for (path, text) in &s.workflows {
         if !path.starts_with(".github/workflows/") {
             continue;
         }
         let Ok(doc) = yaml(path, text) else {
-            continue; // layering reports it
+            unread.insert(path.as_str());
+            continue;
         };
-        if !triggers(&doc).iter().any(|t| t == "pull_request") {
+        if !triggers(&doc)
+            .iter()
+            .any(|t| PULL_REQUEST_EVENTS.contains(&t.as_str()))
+        {
             continue;
         }
         for (job, def) in entries(&doc, "jobs") {
@@ -456,6 +512,7 @@ pub fn check_covers_ci(s: &Snapshot, exceptions: &[(&str, &str, &str)]) -> Vec<F
     }
     for (path, job, _) in exceptions {
         match jobs.iter().find(|(p, j, _)| p == path && j == job) {
+            None if unread.contains(path) => {}
             None => out.push(finding(format!(
                 "stale entry in sync's JOBS_NOT_IN_CHECK: {path} has no job {job} in a \
                  pull_request workflow; remove it"
@@ -634,6 +691,10 @@ mod tests {
             workflows/release-tag.yml | * | jobs:\n  a:\n    env:\n      MISE_ENV: ci\n    steps:\n      - uses: "$/.github/actions/setup-mise"\n  b:\n    env:\n      MISE_ENV: "ci"\n    steps: []\n | release-tag.yml: job b sets MISE_ENV: ci but sets no mise up
             workflows/release-tag.yml | * | jobs:\n  b:\n    steps:\n      - env:\n          MISE_ENV: ci\n        run: "true"\n | release-tag.yml: job b sets MISE_ENV: ci but sets no mise up
             workflows/release-tag.yml | * | jobs: [ | release-tag.yml: not YAML
+            workflows/ci.yml | setup-ci\n | setup-ci\n        env:\n          MISE_ENV: dev\n | ci.yml: job a's setup-ci step sets MISE_ENV: dev
+            workflows/ci.yml | setup-ci\n | setup-ci\n        env:\n          MISE_ENV: ci\n | 
+            workflows/release-tag.yml | * | jobs:\n  a:\n    steps:\n      - uses: owner/repo/.github/actions/setup-mise@develop\n | release-tag.yml: job a sets mise up but
+            workflows/release-tag.yml | * | x: &e\n  MISE_ENV: ci\njobs:\n  a:\n    env:\n      <<: *e\n    steps:\n      - uses: $/.github/actions/setup-mise\n | 
         "#,
         );
     }
@@ -663,6 +724,15 @@ mod tests {
             mise | { task = "test" }, | { task = "test" },\n  "echo done", | 
             mise | [tasks.check] | [tasks.checks] | mise.toml has no [tasks.check] run
             ci.yml | * | | has no job b in a pull_request workflow; remove it
+            workflows/ci.yml | * | jobs: [ | ci.yml: not YAML
+            workflows/ci.yml | mise run fmt | 'mise run fmt ::: x' | job a has a step that is not `mise run` of a check task (`mise run fmt ::: x`)
+            workflows/ci.yml | mise run fmt | mise run fmt ${{ inputs.extra }} | job a has a step that is not
+            workflows/ci.yml | - run: mise run fmt | - uses: $/.github/actions/build-image\n      - run: mise run fmt | ci.yml: job a uses `$/.github/actions/build-image`, which is not one of sync's SETUP_ACTIONS
+            workflows/ci.yml | - run: mise run fmt | - uses: github/codeql-action/analyze@v4\n      - run: mise run fmt | job a uses `github/codeql-action/analyze@v4`
+            workflows/ci.yml | - run: mise run fmt | - uses: actions/checkout@abc # v7\n      - uses: ./.github/actions/setup-rust/\n      - run: mise run fmt | 
+            workflows/security.yml | - run: mise run sync | - run: mise run sync\n  b:\n    steps:\n      - run: cargo xtask x | security.yml: job b has a step that is not `mise run` of a check task (`cargo xtask x`)
+            workflows/release-tag.yml | * | on: pull_request_target\njobs:\n  x:\n    steps:\n      - run: cargo xtask cooldown\n | release-tag.yml: job x has a step that is not
+            workflows/release-tag.yml | * | on:\n  merge_group:\njobs:\n  x:\n    steps:\n      - run: cargo xtask cooldown\n | release-tag.yml: job x has a step that is not
         "#,
         );
     }
@@ -689,6 +759,23 @@ mod tests {
             mise_run_tasks("mise run -C dir --timeout 5 test && mise run fmt"),
             ["test", "fmt"]
         );
+    }
+
+    /// The parser reads a bare `on` key as the string `on` (YAML 1.2), not as YAML 1.1's true.
+    #[test]
+    fn a_bare_on_key_is_read() {
+        let doc: YValue = yaml_serde::from_str(
+            "on: pull_request
+",
+        )
+        .unwrap_or(YValue::Null);
+        assert_eq!(triggers(&doc), ["pull_request"]);
+        let doc: YValue = yaml_serde::from_str(
+            "true: pull_request
+",
+        )
+        .unwrap_or(YValue::Null);
+        assert!(triggers(&doc).is_empty());
     }
 
     /// `run`'s rule set has each rule of this module.

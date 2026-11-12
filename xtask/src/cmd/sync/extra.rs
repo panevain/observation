@@ -321,9 +321,13 @@ pub fn packages(s: &Snapshot) -> Vec<Finding> {
     out
 }
 
-/// A YAML file, or why it is not one.
+/// A YAML file with its merge keys (`<<: *anchor`) applied, or why it is not one.
 pub(super) fn yaml(path: &str, text: &str) -> Result<YValue, String> {
-    yaml_serde::from_str(text).map_err(|e| format!("{path}: not YAML: {e}"))
+    let mut doc: YValue =
+        yaml_serde::from_str(text).map_err(|e| format!("{path}: not YAML: {e}"))?;
+    doc.apply_merge()
+        .map_err(|e| format!("{path}: not YAML: {e}"))?;
+    Ok(doc)
 }
 
 /// A YAML scalar as text (`None` for a mapping, a sequence or null).
@@ -1193,6 +1197,20 @@ mod tests {
         }
     }
 
+    /// A workflow that is not YAML is reported once, though several rules read it.
+    #[test]
+    fn a_workflow_that_is_not_yaml_is_reported_once() {
+        let mut s = base();
+        field(&mut s, "ci").push_str("  x: [\n");
+        let found: Vec<String> = super::super::all(&s)
+            .findings
+            .iter()
+            .map(ToString::to_string)
+            .filter(|f| f.contains("not YAML"))
+            .collect();
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
     #[test]
     fn image_lists_agree() {
         rows(
@@ -1258,6 +1276,8 @@ mod tests {
             dependabot | * | updates: []\n | no update docker (/) && no update rust-toolchain (/fuzz)
             dependabot | * |  | dependabot.yml is missing
             dependabot | * | updates: [ | dependabot.yml: not YAML
+            dependabot | * | x: &cd\n  default-days: 7\nupdates:\n  - package-ecosystem: cargo\n    directory: /\n    cooldown:\n      <<: *cd\n  - package-ecosystem: docker\n    directory: /\n  - package-ecosystem: rust-toolchain\n    directory: /fuzz\n | 
+            dependabot | * | x: &cd\n  default-days: 3\nupdates:\n  - package-ecosystem: cargo\n    directory: /\n    cooldown:\n      <<: *cd\n  - package-ecosystem: docker\n    directory: /\n  - package-ecosystem: rust-toolchain\n    directory: /fuzz\n | cargo (/) cooldown default-days has '3'
             bump-pins | COOLDOWN_DAYS = 7 | COOLDOWN_DAYS = 7  # a week | 
             mise | "7d" | "1w" | minimum_release_age (days) has '<nothing>'
             bump-pins | COOLDOWN_DAYS = 7 | COOLDOWN_DAYS = 7\nCOOLDOWN_DAYS = 7 | COOLDOWN_DAYS has '<nothing>'
