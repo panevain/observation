@@ -118,6 +118,29 @@ jobs:
             echo "prerelease=${prerelease}"
             echo "sha=$(git rev-parse HEAD)"
           } >> "${GITHUB_OUTPUT}"
+      # The release's edits, made here so that the bot jobs below build and run nothing: the
+      # version and both lockfiles, and for a stable release the dated changelog, as a patch
+      # that they check and apply (prepare adds the treemap from its own artifact).
+      - name: Edits
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+          XTASK: ${{ steps.xtask.outputs.path }}
+        run: |
+          set -euo pipefail
+          "${XTASK}" --repo . release version set -- "${VERSION}"
+          [ "${PRERELEASE}" = true ] || "${XTASK}" --repo . release changelog --version "${VERSION}"
+          mkdir -p "${RUNNER_TEMP}/release"
+          git diff --binary > "${RUNNER_TEMP}/release/release.patch"
+          git diff --stat
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.plan.outputs.version != ''
+        with:
+          name: release
+          path: ${{ runner.temp }}/release/release.patch
+          if-no-files-found: error
+          retention-days: 14
 
   # The bundle-size chart for the release, committed on the release branch below (stable
   # releases only: a pre-release ships develop's chart).
@@ -213,24 +236,43 @@ jobs:
           refuse "${VERSION} is not a version this run may release (${allowed[*]})"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: treemap
-          path: ${{ runner.temp }}/treemap
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
-      - name: Bump version, lockfile, changelog and treemap
+          name: release
+          path: ${{ runner.temp }}/release
+      - name: Apply the plan's edits
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
+          PATCH: ${{ runner.temp }}/release/release.patch
+          ALLOWED: 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md'
+        # The same step in prepare and pretag, each with its own list (the version, the lockfiles and the changelog).
         run: |
           set -euo pipefail
-          # Still the script, not `cargo xtask release version set`: this job mints the bot
-          # token, so it compiles nothing. The release-prep split moves these edits into an
-          # unprivileged job and deletes set-version.sh (workspace-version.sh stays: release-tag.yml
-          # compiles nothing and reads the version with it).
-          scripts/set-version.sh "${VERSION}"
-          python3 scripts/release-plan.py changelog --repo . --version "${VERSION}"
-          cp "${RUNNER_TEMP}/treemap/wasm-bundle-treemap.svg" docs/images/wasm-bundle-treemap.svg
-          git diff --stat
-      # Minted after the build steps above, so nothing they ran can read it.
+          # plan builds code, so its patch is checked here, with git alone, before the token is
+          # minted: every entry must change the text of an existing regular file whose whole
+          # path is on ALLOWED. No file added, deleted, renamed or copied, no mode or type change
+          # (a symlink or gitlink), no binary patch; anything else fails. What those files now
+          # say is not judged here.
+          tab=$'\t'
+          refuse() { echo "::error::$1"; exit 1; }
+          ! grep -qE '^(GIT binary patch|Binary files .* differ)$' "${PATCH}" || refuse "the patch holds a binary change"
+          tr -d '\000' < "${PATCH}" | cmp -s - "${PATCH}" || refuse "the patch holds a NUL byte"
+          # Before applying: one "added<TAB>deleted<TAB>path" line per entry and no summary line
+          # (create, delete, rename, copy, mode change, rewrite); "-" counts mean a binary entry.
+          stat="$(git apply --numstat --summary "${PATCH}")"
+          bad="$(grep -vxE "[0-9]+${tab}[0-9]+${tab}(${ALLOWED})" <<<"${stat}" || true)"
+          [ -n "${stat}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
+          git apply --index "${PATCH}"
+          # After: each staged entry modifies a regular file, mode 100644 before and after.
+          staged="$(git diff --cached --raw --no-renames --no-abbrev)"
+          bad="$(grep -vxE ":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M${tab}(${ALLOWED})" <<<"${staged}" || true)"
+          [ -n "${staged}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
+          git diff --cached --stat
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: treemap
+          path: ${{ runner.temp }}/treemap
+      - name: Treemap
+        run: cp "${RUNNER_TEMP}/treemap/wasm-bundle-treemap.svg" docs/images/wasm-bundle-treemap.svg
+      # Minted after the checks above; nothing in this job builds or runs code from the tree but
+      # scripts/ci-git.sh.
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -239,28 +281,29 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Open pull request
+      - name: Commit
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           BOT: ${{ steps.bot.outputs.app-slug }}
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          branch="release/${VERSION}"
           scripts/ci-git.sh identity "${BOT}"
-          git switch -c "${branch}"
+          git switch -c "release/${VERSION}"
           git -c core.hooksPath=/dev/null commit -am "release: ${VERSION}"
-          scripts/ci-git.sh push "${branch}"
-          if ! url="$(gh pr create --base main --head "${branch}" \
-            --title "release: ${VERSION}" \
-            --body "Release ${VERSION}, opened by Prepare release. It merges itself (merge commit) when the checks pass: release-tag.yml then tags \`main\` as v${VERSION}, Release publishes the images and the GitHub release, and a back-merge PR into \`develop\` is opened. To hold the release, disable auto-merge on this PR.")"; then
-            # Branch rulesets forbid force-pushes, so a leftover branch would block a re-run.
-            echo "could not open the pull request; removing ${branch} so the workflow can be re-run." >&2
-            scripts/ci-git.sh delete "${branch}"
-            exit 1
-          fi
-          echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
-          gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url}; merge it by hand when it is green."
+      - name: Open pull request
+        uses: $/.github/actions/open-pr
+        with:
+          token: ${{ steps.bot.outputs.token }}
+          branch: release/${{ needs.plan.outputs.version }}
+          base: main
+          title: "release: ${{ needs.plan.outputs.version }}"
+          body: "Release ${{ needs.plan.outputs.version }}, opened by Prepare release. It merges itself (merge commit) when the checks pass: release-tag.yml then tags `main` as v${{ needs.plan.outputs.version }}, Release publishes the images and the GitHub release, and a back-merge PR into `develop` is opened. To hold the release, disable auto-merge on this PR."
+          # Branch rulesets forbid force-pushes, so a leftover branch would block a re-run.
+          delete-branch-on-failure: true
+          summary: true
+          auto-merge: merge
+          auto-merge-warning: "; merge it by hand when it is green."
 
   # Pre-releases: a version-bump commit on top of develop, reachable only from its tag.
   # Release (release.yml) checks that the tag's parent is on develop and that the commit only
@@ -342,18 +385,39 @@ jobs:
             [ "${a}" != "${base}" ] || exit 0
           done
           refuse "${VERSION} is not a version this run may release (${allowed[*]})"
-      - name: Install toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal --no-self-update
-      - name: Bump version and lockfiles
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+      - name: Apply the plan's edits
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
+          PATCH: ${{ runner.temp }}/release/release.patch
+          ALLOWED: 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock'
+        # The same step in prepare and pretag, each with its own list (the version and the lockfiles: .config/release.toml's prerelease list, which Release checks the tag against).
         run: |
           set -euo pipefail
-          # Still the script (this job mints the bot token, so it compiles nothing) until the
-          # release-prep split moves this edit into an unprivileged job and deletes it.
-          scripts/set-version.sh "${VERSION}"
-          git diff --stat
-      # Minted after the build steps above, so nothing they ran can read it.
+          # plan builds code, so its patch is checked here, with git alone, before the token is
+          # minted: every entry must change the text of an existing regular file whose whole
+          # path is on ALLOWED. No file added, deleted, renamed or copied, no mode or type change
+          # (a symlink or gitlink), no binary patch; anything else fails. What those files now
+          # say is not judged here.
+          tab=$'\t'
+          refuse() { echo "::error::$1"; exit 1; }
+          ! grep -qE '^(GIT binary patch|Binary files .* differ)$' "${PATCH}" || refuse "the patch holds a binary change"
+          tr -d '\000' < "${PATCH}" | cmp -s - "${PATCH}" || refuse "the patch holds a NUL byte"
+          # Before applying: one "added<TAB>deleted<TAB>path" line per entry and no summary line
+          # (create, delete, rename, copy, mode change, rewrite); "-" counts mean a binary entry.
+          stat="$(git apply --numstat --summary "${PATCH}")"
+          bad="$(grep -vxE "[0-9]+${tab}[0-9]+${tab}(${ALLOWED})" <<<"${stat}" || true)"
+          [ -n "${stat}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
+          git apply --index "${PATCH}"
+          # After: each staged entry modifies a regular file, mode 100644 before and after.
+          staged="$(git diff --cached --raw --no-renames --no-abbrev)"
+          bad="$(grep -vxE ":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M${tab}(${ALLOWED})" <<<"${staged}" || true)"
+          [ -n "${staged}" ] && [ -z "${bad}" ] || refuse "unexpected changes: ${bad:-none}"
+          git diff --cached --stat
+      # Minted after the checks above; nothing in this job builds or runs code from the tree but
+      # scripts/ci-git.sh.
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prints the workspace version (`version` in Cargo.toml's [workspace.package]) and fails unless it
-# is semver (X.Y.Z, or X.Y.Z-pre for a pre-release). scripts/set-version.sh writes it.
-# Stays a script: release-tag.yml, which compiles nothing, reads the version it tags with it.
+# is semver (X.Y.Z, or X.Y.Z-pre for a pre-release). `cargo xtask release version set` writes it.
+# Stays a script: release-tag.yml, which compiles nothing, reads the version it tags with it, and
+# release-prep's bot jobs read develop's version with it when they check the plan.
 # `cargo xtask release version get` reads the same value (xtask/parity/release_version.rs).
 # Usage: scripts/workspace-version.sh [FILE [NAME]]
 #   FILE defaults to Cargo.toml; - reads stdin. NAME is what an error calls it (default FILE).

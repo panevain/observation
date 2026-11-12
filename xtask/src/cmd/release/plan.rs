@@ -476,7 +476,8 @@ mod tests {
     }
 
     /// The steps of release-prep.yml's bot jobs (prepare, then pretag) that check plan's outputs
-    /// in plain shell before using them: each `run` text named `name`, with the KIND it sets.
+    /// in plain shell before using them: each `run` text named `name`, with the KIND or ALLOWED
+    /// it sets.
     fn bot_job_steps(name: &str) -> Vec<(String, String)> {
         let wf = ok(fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/release-prep.yml"),
@@ -495,6 +496,12 @@ mod tests {
                 assert!(!l.starts_with("- "), "no run in the step at line {}", i + 1);
                 if let Some(k) = l.strip_prefix("KIND: ") {
                     k.clone_into(&mut kind);
+                }
+                if let Some(a) = l
+                    .strip_prefix("ALLOWED: '")
+                    .and_then(|a| a.strip_suffix('\''))
+                {
+                    a.clone_into(&mut kind);
                 }
                 if l == "run: |" {
                     let body: Vec<&str> = lines[j + 1..]
@@ -923,5 +930,195 @@ mod tests {
             assert_eq!(run_check(&forms[0].1, &dir, vars).0, code, "{sha:?}");
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    /// prepare and pretag apply plan's patch only after checking it with git: every entry must
+    /// modify an existing regular file on the job's list. Each scenario is a change made in a
+    /// small repository, taken as `git diff --binary` and undone, then given to the step.
+    #[test]
+    fn the_bot_jobs_apply_only_a_patch_of_listed_files() {
+        let steps = bot_job_steps("Apply the plan's edits");
+        let lists: Vec<&str> = steps.iter().map(|(a, _)| a.as_str()).collect();
+        let prerelease = r"Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock";
+        let stable = format!(r"{prerelease}|CHANGELOG\.md");
+        assert_eq!(lists, [stable.as_str(), prerelease]);
+        assert_eq!(
+            steps[0].1, steps[1].1,
+            "prepare and pretag check differently"
+        );
+
+        let tmp = ok(tempfile::tempdir());
+        let dir = tmp.path().join("repo");
+        ok(fs::create_dir(&dir));
+        let mut repo = Repo {
+            dir: dir.clone(),
+            commits: 0,
+        };
+        repo.git(&["init", "-q", "-b", "develop"]);
+        let files = [
+            "Cargo.toml",
+            "Cargo.lock",
+            "fuzz/Cargo.lock",
+            "CHANGELOG.md",
+            "README.md",
+        ];
+        let mut all: BTreeMap<String, String> = files
+            .iter()
+            .map(|f| ((*f).to_owned(), format!("{f}\n")))
+            .collect();
+        all.insert("Cargo.toml.bak".into(), "x\n".into());
+        repo.write(&all);
+        repo.commit("init");
+        let patch = tmp.path().join("release.patch");
+        let edit = |path: &str| {
+            let p = dir.join(path);
+            let text = ok(fs::read_to_string(&p));
+            ok(fs::write(p, text + "changed\n"));
+        };
+        // A patch written by hand: its header names README.md on one side and Cargo.toml on the
+        // other. git apply reads it as a change to Cargo.toml (numstat passes) and deletes
+        // README.md, which only the check after applying sees.
+        const TWO_NAMES: &str = "a header naming two files";
+        let two_names = "diff --git a/README.md b/Cargo.toml\nindex 1111111..2222222 100644\n\
+                         --- a/README.md\n+++ b/Cargo.toml\n@@ -1 +1,2 @@\n README.md\n+changed\n";
+        let run = |name: &str, change: &dyn Fn(), allowed: &str| {
+            change();
+            let diff = git_out_raw(&dir, &["diff", "--binary"]);
+            ok(fs::write(
+                &patch,
+                if name == TWO_NAMES {
+                    two_names.as_bytes()
+                } else {
+                    &diff
+                },
+            ));
+            git_out(&dir, &["reset", "-q", "--hard"]);
+            git_out(&dir, &["clean", "-qfd"]);
+            let out = ok(Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", &steps[0].1])
+                .current_dir(&dir)
+                .envs(ENV)
+                .env("PATCH", &patch)
+                .env("ALLOWED", allowed)
+                .output());
+            let staged = git_out(&dir, &["diff", "--cached", "--name-only"]);
+            git_out(&dir, &["reset", "-q", "--hard"]);
+            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+            (out.status.code(), staged, stdout)
+        };
+        // (name, the change, the job's list, the files staged when it is applied)
+        type PatchCase<'a> = (&'a str, Box<dyn Fn() + 'a>, &'a str, Option<&'a str>);
+        let cases: Vec<PatchCase> = vec![
+            (
+                "the version and lockfiles",
+                Box::new(|| files[..3].iter().for_each(|f| edit(f))),
+                prerelease,
+                Some("Cargo.lock\nCargo.toml\nfuzz/Cargo.lock"),
+            ),
+            (
+                "the changelog, stable",
+                Box::new(|| edit("CHANGELOG.md")),
+                &stable,
+                Some("CHANGELOG.md"),
+            ),
+            (
+                "the changelog, pre-release",
+                Box::new(|| edit("CHANGELOG.md")),
+                prerelease,
+                None,
+            ),
+            (
+                "another file",
+                Box::new(|| {
+                    edit("Cargo.toml");
+                    edit("README.md")
+                }),
+                &stable,
+                None,
+            ),
+            (
+                "a path that starts with a listed one",
+                Box::new(|| edit("Cargo.toml.bak")),
+                &stable,
+                None,
+            ),
+            (
+                "a new file",
+                Box::new(|| {
+                    ok(fs::create_dir_all(dir.join("x")));
+                    ok(fs::write(dir.join("x/Cargo.lock"), "n\n"));
+                    git_out(&dir, &["add", "-N", "x/Cargo.lock"]);
+                }),
+                &stable,
+                None,
+            ),
+            (
+                "a deleted file",
+                Box::new(|| ok(fs::remove_file(dir.join("Cargo.lock")))),
+                &stable,
+                None,
+            ),
+            (
+                "a mode change",
+                Box::new(|| {
+                    use std::os::unix::fs::PermissionsExt;
+                    ok(fs::set_permissions(
+                        dir.join("Cargo.toml"),
+                        fs::Permissions::from_mode(0o755),
+                    ));
+                    edit("Cargo.toml");
+                }),
+                &stable,
+                None,
+            ),
+            (
+                "a symlink",
+                Box::new(|| {
+                    ok(fs::remove_file(dir.join("Cargo.lock")));
+                    ok(std::os::unix::fs::symlink(
+                        "/etc/passwd",
+                        dir.join("Cargo.lock"),
+                    ));
+                }),
+                &stable,
+                None,
+            ),
+            (
+                "a binary change",
+                Box::new(|| ok(fs::write(dir.join("Cargo.lock"), b"a\0b\n"))),
+                &stable,
+                None,
+            ),
+            (TWO_NAMES, Box::new(|| ()), &stable, None),
+            ("nothing", Box::new(|| ()), &stable, None),
+        ];
+        let mut problems = Vec::new();
+        for (name, change, allowed, want) in &cases {
+            let (code, staged, stdout) = run(name, change.as_ref(), allowed);
+            let good = match want {
+                Some(files) => code == Some(0) && staged == *files,
+                // An empty patch makes git apply itself fail; everything else is refused by name.
+                None if *name == "nothing" => code.is_some_and(|c| c != 0) && staged.is_empty(),
+                // (A refusal after `git apply --index` leaves the index changed; the job stops there.)
+                None => code == Some(1) && stdout.starts_with("::error::"),
+            };
+            if !good {
+                problems.push(format!(
+                    "{name}: exit {code:?}, staged {staged:?}, {stdout:?}"
+                ));
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    fn git_out_raw(dir: &Path, args: &[&str]) -> Vec<u8> {
+        let out = ok(Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .envs(ENV)
+            .output());
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        out.stdout
     }
 }

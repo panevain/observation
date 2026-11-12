@@ -249,7 +249,7 @@ jobs:
           set -euo pipefail
           version="${TAG#v}"
           # Pre-releases (X.Y.Z-dev.N) have no section of their own: their notes are what is
-          # still under [Unreleased] (scripts/release-plan.py leaves it in place).
+          # still under [Unreleased] (`cargo xtask release changelog` leaves it in place).
           section="${version}"
           if [[ "${version}" == *-* ]] && ! grep -qF "## [${version}]" CHANGELOG.md; then section="Unreleased"; fi
           {

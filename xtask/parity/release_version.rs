@@ -1,12 +1,12 @@
-//! `cargo xtask release version get|set` against scripts/workspace-version.sh and
-//! scripts/set-version.sh, both run for real: the scripts as they are in the tree, the port as
-//! the built binary, each in its own temporary repository built from the same case, with the
-//! real cargo. Release-prep's two bot jobs still run set-version.sh, and release-tag.yml, which
-//! compiles nothing, reads the version with workspace-version.sh for good, so the two must not
-//! drift: same exit status, stdout, stderr (paths aside), lockfiles and Cargo.toml, and where the
-//! script fails the port fails. It needs GNU sed (set-version.sh uses `sed -i -E`), as on the CI
-//! runners. Also here: the same two readers on this repository's Cargo.toml, and release-tag's
-//! tag kind (a shell `case` in the workflow), run by bash.
+//! `cargo xtask release version get` against scripts/workspace-version.sh, both run for real:
+//! the script as it is in the tree, the port as the built binary, each in its own temporary
+//! repository built from the same case. release-tag.yml, which compiles nothing, and
+//! release-prep's bot jobs read the version with workspace-version.sh for good, so the two must
+//! not drift: same exit status, stdout and stderr (paths aside), and where the script fails the
+//! port fails. (`version set` was compared with set-version.sh here until that script's last
+//! caller moved to the port; the golden in release-version/ still holds what it did.) Also here:
+//! the same two readers on this repository's Cargo.toml, and release-tag's tag kind (a shell
+//! `case` in the workflow), run by bash.
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write as _;
@@ -116,20 +116,15 @@ fn port_and_scripts_agree_on_every_case() {
     let mut problems = Vec::new();
     let mut compared = 0;
     // A stand-in cargo that fails cannot be had with the real one; the golden covers those.
-    for case in cases.case.iter().filter(|c| c.cargo_fails.is_none()) {
+    let gets = cases.case.iter().filter(|c| c.command == "get");
+    for case in gets.filter(|c| c.cargo_fails.is_none()) {
         let (a, b) = (ok(tempfile::tempdir()), ok(tempfile::tempdir()));
         populate(&cases, case, a.path());
         populate(&cases, case, b.path());
-        let script = match case.command.as_str() {
-            "get" => "workspace-version.sh",
-            _ => "set-version.sh",
-        };
-        for s in ["workspace-version.sh", "set-version.sh"] {
-            let to = a.path().join("scripts").join(s);
-            write(&to, b"");
-            ok(fs::copy(scripts.join(s), &to));
-        }
-        let mut sh = Command::new(format!("scripts/{script}"));
+        let to = a.path().join("scripts/workspace-version.sh");
+        write(&to, b"");
+        ok(fs::copy(scripts.join("workspace-version.sh"), &to));
+        let mut sh = Command::new("scripts/workspace-version.sh");
         sh.args(&case.args);
         let mut port = Command::new(env!("CARGO_BIN_EXE_xtask"));
         port.arg("--repo")
@@ -161,7 +156,7 @@ fn port_and_scripts_agree_on_every_case() {
             ));
         }
     }
-    assert!(compared > 40, "only {compared} cases ran");
+    assert!(compared > 30, "only {compared} cases ran");
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 

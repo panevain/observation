@@ -46,9 +46,7 @@ inputs:
   delete-branch-on-failure:
     description: >-
       true to delete the pushed branch when the pull request cannot be opened (so that a re-run
-      can push it again where rulesets forbid force-pushes); the step still fails. No caller
-      yet: kept for release-prep's bot job, which deletes its branch on failure today and moves
-      to this action in the release-prep split
+      can push it again where rulesets forbid force-pushes); the step still fails (release-prep)
     required: false
     default: "false"
   summary:

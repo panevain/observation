@@ -20,7 +20,7 @@ flate2 = "1.1"
 [dev-dependencies]
 tempfile = "3.27"
 
-# The scripts against the built binary, while both exist (see the file). Outside tests/, whose
+# workspace-version.sh against the built binary (see the file). Outside tests/, whose
 # fixture trees hold .rs files that are data, not test targets.
 [[test]]
 name = "release_version"

@@ -1,6 +1,7 @@
 //! `release version get` and `release version set`: the workspace version in the root
 //! `Cargo.toml`'s `[workspace.package]`, as `scripts/workspace-version.sh` and
-//! `scripts/set-version.sh` read and write it (see [`crate::core::manifest`] for which lines).
+//! `scripts/set-version.sh` (since removed) read and write it (see [`crate::core::manifest`] for
+//! which lines).
 //!
 //! Messages, output and the files written are the scripts'. Where the scripts failed, these
 //! fail too; the differences, all failures, are listed in `release-version/cases.toml`
