@@ -169,7 +169,7 @@ mod tests {
             "Cargo.toml\r\n",
             "cargo.toml\n",
             "Dockerfile\n\nDockerfile\n",
-            "\"caf\\303\\251\"\n",
+            "\"m\\303\\274de\"\n",
             "Cargo.toml\nCargo.toml\n",
         ] {
             let ours = ok(unexpected(input.as_bytes(), &allowed));
@@ -209,7 +209,7 @@ mod tests {
     fn refuses_input_that_is_not_text() {
         let allowed = hotfix();
         assert!(unexpected(b"Cargo.toml\0\n", &allowed).is_err());
-        assert!(unexpected(b"caf\xe9\n", &allowed).is_err());
+        assert!(unexpected(b"m\xfcde\n", &allowed).is_err());
     }
 
     #[test]
