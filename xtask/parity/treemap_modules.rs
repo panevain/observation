@@ -13,6 +13,7 @@
 //!   larger than zlib's on a real rustc release module, and as much as 469 B (1.9%) larger here;
 //! - `fails`: the script fails (a traceback, or "not a wasm module"), and so does the port;
 //! - `usage`: both refuse the command line with exit status 2;
+//! - for both, neither prints anything on stdout (no table), and the port writes no SVG;
 //! - `recursion`: the script crashes in its v0 demangler (RecursionError) and the port succeeds
 //!   (it takes the script's fallback for that symbol: see `xtask::core::demangle`);
 //! - `stricter`: the script succeeds and the port fails: the differences the port declares.
@@ -767,6 +768,7 @@ fn port_and_script_agree_on_every_module() {
         let port_exit = port.status.code().unwrap_or(-1);
         let port_out = String::from_utf8_lossy(&port.stdout).into_owned();
         let port_err = String::from_utf8_lossy(&port.stderr).into_owned();
+        let nothing_out = script.stdout.is_empty() && port_out.is_empty() && svg("p").is_none();
         let expect = match c.expect {
             "rule" if script.exit == 0 => "same",
             "rule" => "fails",
@@ -808,13 +810,15 @@ fn port_and_script_agree_on_every_module() {
                     && svg_ok
                     && script.stderr == port_err
             }
-            // The script's own message is kept; a traceback is not compared.
+            // The script's own message is kept; a traceback is not compared. Neither prints the
+            // table, and the port writes no SVG.
             "fails" => {
                 script.exit == 1
                     && port_exit == 1
                     && (script.stderr.starts_with("crash: ") || script.stderr == port_err)
+                    && nothing_out
             }
-            "usage" => script.exit == 2 && port_exit == 2,
+            "usage" => script.exit == 2 && port_exit == 2 && nothing_out,
             "recursion" => script.stderr == "crash: RecursionError" && port_exit == 0,
             "stricter" => script.exit == 0 && port_exit != 0,
             _ => false,
