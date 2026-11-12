@@ -12,8 +12,10 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use observation_core::bundle::{AreaBundle, build_bundle};
 use observation_core::geo::BBox;
+use observation_core::regions::{RegionView, RegionsSnapshot};
 use observation_core::terrain::Terrain;
-use observation_regions_api::testing::FakeRegionAgent;
+use observation_regions_api::QueryResult;
+use observation_regions_api::testing::{AgentCall, FakeRegionAgent};
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
@@ -595,4 +597,132 @@ async fn a_stored_file_that_is_not_a_current_bundle_is_never_served() {
         r.map.assert_drained();
         r.terrain.assert_drained();
     }
+}
+
+/// A rig whose agent is online with a ready region holding the test box,
+/// imported at `imported_unix`.
+async fn rig_with_region(imported_unix: u64) -> (Rig, FakeRegionAgent) {
+    let agent = FakeRegionAgent::new();
+    let regions = Arc::new(Regions::new(Arc::new(agent.clone()), false));
+    let region = RegionView {
+        id: "us/washington".into(),
+        name: "Washington".into(),
+        ready: true,
+        bbox: BBox::new(45.5, -124.8, 49.0, -116.9).ok(),
+        data_timestamp: None,
+        imported_unix: Some(imported_unix),
+        last_attempt_unix: None,
+        auto_refresh: true,
+        refresh_days: None,
+        next_refresh_unix: None,
+        disk_bytes: None,
+        job: None,
+        last_error: None,
+        last_error_unix: None,
+    };
+    agent.snapshot_reply(Ok(RegionsSnapshot {
+        version: 1,
+        regions: vec![region],
+        ..RegionsSnapshot::default()
+    }));
+    regions.poll_once().await.unwrap();
+    let store = mem_store();
+    (rig_on(store.clone(), store, Some(regions)), agent)
+}
+
+/// Overpass JSON as a region answers it, dated 2023-11-14T22:00:00Z.
+fn local_result() -> QueryResult {
+    QueryResult {
+        body: r#"{"osm3s":{"timestamp_osm_base":"2023-11-14T22:00:00Z"},"elements":[]}"#.into(),
+        osm_base_unix: None,
+    }
+}
+
+/// A local region's data builds the bundle without Overpass, so the
+/// starter gets the charge back.
+#[tokio::test(start_paused = true)]
+async fn a_local_regions_data_is_used_and_the_charge_refunded() {
+    let recorder = MetricCounts::default();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    let (r, agent) = rig_with_region(T - 86_400).await;
+    r.terrain.reply(Ok(Terrain::default()));
+    agent.query_reply(Ok(Some(local_result())));
+    let bytes = r.service.get(bbox(), client(1)).await.unwrap();
+    let bundle = AreaBundle::decode(&bytes).unwrap();
+    assert_eq!(bundle.osm_base_unix, Some(1_699_999_200));
+    assert!(matches!(
+        agent.calls().last(),
+        Some(AgentCall::Query { timeout, .. }) if *timeout == Duration::from_secs(15)
+    ));
+    assert_eq!(r.map.calls(), 0);
+    assert_eq!(
+        recorder.counters(REGION_QUERY),
+        vec![("outcome=ok".to_owned(), 1)]
+    );
+    assert_eq!(bundle_counts(&recorder), vec![result("built", 1)]);
+    assert_eq!(tokens_left(&r.service, client(1)), 10);
+    agent.assert_drained();
+}
+
+/// A local region that fails or has nothing for the box leaves the build
+/// to Overpass, charged; the terrain comes first, so a terrain failure
+/// asks neither.
+#[tokio::test(start_paused = true)]
+async fn a_local_region_that_fails_or_has_nothing_leaves_overpass_charged() {
+    for (local, label) in [
+        (
+            Err("agent answered 500 Internal Server Error: ".to_owned()),
+            "error",
+        ),
+        (Ok(None), "not_covered"),
+    ] {
+        let recorder = MetricCounts::default();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let (r, agent) = rig_with_region(T - 86_400).await;
+        r.terrain.reply(Ok(Terrain::default()));
+        agent.query_reply(local);
+        r.map.reply(Ok(data()));
+        r.service.get(bbox(), client(1)).await.unwrap();
+        assert_eq!(r.map.calls(), 1, "{label}");
+        assert_eq!(
+            recorder.counters(REGION_QUERY),
+            vec![(format!("outcome={label}"), 1)]
+        );
+        assert_eq!(bundle_counts(&recorder), vec![result("built", 1)]);
+        assert_eq!(tokens_left(&r.service, client(1)), 9, "{label}");
+        agent.assert_drained();
+        r.map.assert_drained();
+    }
+
+    let recorder = MetricCounts::default();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    let (r, agent) = rig_with_region(T - 86_400).await;
+    r.terrain
+        .reply(Err(ApiError::Upstream("elevation failed".into())));
+    assert!(r.service.get(bbox(), client(1)).await.is_err());
+    assert_eq!(agent.calls().len(), 1, "only the snapshot");
+    assert_eq!(r.map.calls(), 0);
+    assert!(recorder.counters(REGION_QUERY).is_empty());
+    assert_eq!(tokens_left(&r.service, client(1)), 9);
+}
+
+/// A bundle stored before the region holding its box was imported is
+/// rebuilt (from the region); one stored since is fresh.
+#[tokio::test(start_paused = true)]
+async fn bundles_older_than_the_regions_import_are_rebuilt() {
+    let (r, agent) = rig_with_region(T - 60).await;
+    let old = other_bundle();
+    seed(&r.store, &old, Duration::from_secs(60));
+    assert_eq!(
+        r.service.get(bbox(), client(1)).await.unwrap(),
+        old,
+        "stored at the import: fresh"
+    );
+    seed(&r.store, &old, Duration::from_secs(61));
+    r.terrain.reply(Ok(Terrain::default()));
+    agent.query_reply(Ok(Some(local_result())));
+    let rebuilt = r.service.get(bbox(), client(1)).await.unwrap();
+    assert_ne!(rebuilt, old);
+    assert_eq!(stored(&r.store).await, Some(rebuilt));
+    agent.assert_drained();
 }

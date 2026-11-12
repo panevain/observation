@@ -213,6 +213,9 @@ fn might_hold(r: &RegionView, bbox: &BBox) -> bool {
 }
 
 #[cfg(test)]
+mod follower_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
