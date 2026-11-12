@@ -4,13 +4,17 @@
 
 use std::sync::Arc;
 
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use observation_core::geo::BBox;
 use observation_core::terrain::{DEM_TILE_PX, DemTile, Terrain, dem_tiles_for, terrain_from_dem};
 use observation_core::tiles::TileId;
+use observation_upstream::HttpClient;
 
-use crate::cache::Cache;
+use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::ports::{TerrainSource, TileStore};
 use crate::tiles::TileProxy;
 
 /// Where bundles get their terrain from.
@@ -23,12 +27,17 @@ pub struct Elevation {
 
 impl Elevation {
     /// `client` must already carry the project `User-Agent` and a timeout.
-    pub fn new(client: reqwest::Client, config: &Config, cache: Arc<Cache>) -> Self {
+    pub fn new(
+        client: Arc<dyn HttpClient>,
+        config: &Config,
+        cache: Arc<dyn TileStore>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             proxy: config
                 .dem_url
                 .clone()
-                .map(|t| TileProxy::elevation(client, t, is_terrarium, config, cache)),
+                .map(|t| TileProxy::elevation(client, t, is_terrarium, config, cache, clock)),
             attribution: config.dem_attribution.clone(),
         }
     }
@@ -62,6 +71,12 @@ impl Elevation {
         })
         .await
         .map_err(|e| ApiError::Internal(format!("elevation task failed: {e}")))?
+    }
+}
+
+impl TerrainSource for Elevation {
+    fn terrain<'a>(&'a self, bbox: &'a BBox) -> BoxFuture<'a, Result<Terrain, ApiError>> {
+        Elevation::terrain(self, bbox).boxed()
     }
 }
 
@@ -156,3 +171,6 @@ pub(crate) mod tests {
         assert!(decode_tile(id, &small).is_err());
     }
 }
+
+#[cfg(test)]
+mod terrain_tests;

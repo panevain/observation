@@ -1,6 +1,7 @@
 //! [`GuardedHttp`]: the production [`HttpClient`], a reqwest client built
 //! with the guards of [`client_builder`](crate::client_builder).
 
+use std::fmt;
 use std::time::Duration;
 
 use futures_util::FutureExt;
@@ -18,7 +19,7 @@ use crate::{Redirects, client_builder, read_capped};
 /// redirects its [`Redirects`] policy allows.
 #[derive(Debug, Clone)]
 pub struct GuardedHttp {
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
 }
 
 /// Configures a [`GuardedHttp`]; only settings that cannot weaken the guards
@@ -46,18 +47,16 @@ impl GuardedHttp {
         }
         let resp = builder.send().await.map_err(transport_error)?;
         let status = resp.status();
+        let reason = reason_of(&resp);
         let headers = resp.headers().clone();
         let body = if req.skips_body(status) {
             // Dropped unread.
-            match resp.content_length() {
-                Some(0) => Body::Complete(Default::default()),
-                _ => Body::TooLarge,
-            }
+            req.unread_body(status, resp.content_length())
         } else {
             // Read here, under the request's own deadline, as reqwest's timeout covers the body.
             match read_capped(resp, req.cap_for(status))
                 .await
-                .map_err(transport_error)?
+                .map_err(|e| body_error(e).in_body_of(status))?
             {
                 Some(bytes) => Body::Complete(bytes),
                 None => Body::TooLarge,
@@ -65,6 +64,7 @@ impl GuardedHttp {
         };
         Ok(HttpResponse {
             status,
+            reason,
             headers,
             body,
         })
@@ -88,10 +88,22 @@ impl GuardedHttpBuilder {
         Self(self.0.connect_timeout(timeout))
     }
 
-    pub fn build(self) -> Result<GuardedHttp, reqwest::Error> {
+    pub fn build(self) -> Result<GuardedHttp, BuildError> {
         Ok(GuardedHttp {
             client: self.0.build()?,
         })
+    }
+}
+
+/// A [`GuardedHttp`] could not be built (the TLS backend failed to start).
+/// It reads, and debug-prints, as reqwest's error.
+#[derive(thiserror::Error)]
+#[error(transparent)]
+pub struct BuildError(#[from] reqwest::Error);
+
+impl fmt::Debug for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
     }
 }
 
@@ -101,10 +113,29 @@ impl HttpClient for GuardedHttp {
     }
 }
 
+/// The reply's own reason phrase, which hyper keeps only when it is not the
+/// status's canonical one. hyper passes on only ASCII phrases (an other
+/// phrase arrives empty), so the conversion loses nothing.
+pub(crate) fn reason_of(resp: &reqwest::Response) -> Option<String> {
+    resp.extensions()
+        .get::<hyper::ext::ReasonPhrase>()
+        .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned())
+}
+
+/// [`transport_error`] for a failure while reading the body, where a
+/// timeout is a [`TransportErrorKind::BodyTimeout`].
+pub(crate) fn body_error(e: reqwest::Error) -> TransportError {
+    let mut error = transport_error(e);
+    if error.kind == TransportErrorKind::Timeout {
+        error.kind = TransportErrorKind::BodyTimeout;
+    }
+    error
+}
+
 /// Classifies a reqwest error. A timeout while connecting stays apart from
 /// one after connecting: the host was never reached, which is not the same
 /// as being slow.
-fn transport_error(e: reqwest::Error) -> TransportError {
+pub(crate) fn transport_error(e: reqwest::Error) -> TransportError {
     let kind = if e.is_timeout() && e.is_connect() {
         TransportErrorKind::ConnectTimeout
     } else if e.is_timeout() {
@@ -117,4 +148,26 @@ fn transport_error(e: reqwest::Error) -> TransportError {
         TransportErrorKind::Other
     };
     TransportError::new(kind, e.without_url().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A build failure reads and debug-prints as reqwest's own error, so
+    /// the server's and the agent's start-up errors are worded as before.
+    #[test]
+    fn build_errors_read_as_reqwest_words_them() {
+        let ours = GuardedHttp::builder(false, Redirects::None)
+            .user_agent("bad\nagent")
+            .build()
+            .unwrap_err();
+        let theirs = reqwest::Client::builder()
+            .user_agent("bad\nagent")
+            .build()
+            .unwrap_err();
+        assert_eq!(ours.to_string(), theirs.to_string());
+        assert_eq!(format!("{ours:?}"), format!("{theirs:?}"));
+        assert!(!ours.to_string().is_empty());
+    }
 }

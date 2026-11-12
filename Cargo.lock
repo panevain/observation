@@ -4761,9 +4761,12 @@ name = "observation-regions"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
+ "futures-util",
+ "http",
  "observation-core",
+ "observation-regions-api",
  "observation-upstream",
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -4776,6 +4779,16 @@ dependencies = [
 [[package]]
 name = "observation-regions-api"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http",
+ "observation-core",
+ "observation-upstream",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
 
 [[package]]
 name = "observation-server"
@@ -4787,9 +4800,10 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "observation-core",
+ "observation-regions-api",
+ "observation-server",
  "observation-upstream",
  "png",
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -4813,9 +4827,13 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
  "reqwest",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
 ]
 
@@ -5481,7 +5499,6 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
- "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

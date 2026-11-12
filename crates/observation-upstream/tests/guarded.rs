@@ -253,7 +253,90 @@ async fn a_stalled_body_times_out() {
         )
         .await
         .unwrap_err();
-    assert_eq!(err.kind, TransportErrorKind::Timeout, "{}", err.message);
+    assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
+    assert_eq!(
+        err.status,
+        Some(http::StatusCode::OK),
+        "the head had arrived"
+    );
+}
+
+/// A status whose body the request does not want comes back at once,
+/// unread, though its body stalls.
+#[tokio::test]
+async fn an_unwanted_body_is_not_read() {
+    let port =
+        serve_stalled("HTTP/1.1 206 Partial Content\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let resp = lax()
+        .send(
+            HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100)
+                .body_only_for(http::StatusCode::OK)
+                .timeout(Duration::from_secs(30)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status, http::StatusCode::PARTIAL_CONTENT);
+    assert_eq!(resp.body, Body::TooLarge);
+}
+
+/// The one status whose body is skipped comes back at once, unread, though
+/// its body stalls; another error status is read under its cap.
+#[tokio::test]
+async fn a_skipped_status_is_not_read() {
+    let skipped = |port: u16| {
+        HttpRequest::get(format!("http://127.0.0.1:{port}/"), 100)
+            .skip_body_of(http::StatusCode::NOT_FOUND)
+            .timeout(Duration::from_secs(30))
+    };
+    let port = serve_stalled("HTTP/1.1 404 Not Found\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let resp = lax().send(skipped(port)).await.unwrap();
+    assert_eq!(resp.status, http::StatusCode::NOT_FOUND);
+    assert_eq!(resp.body, Body::TooLarge);
+    let port =
+        serve_stalled("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let err = lax()
+        .send(skipped(port).timeout(Duration::from_millis(300)))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
+    assert_eq!(err.status, Some(http::StatusCode::INTERNAL_SERVER_ERROR));
+}
+
+/// Under `skip_error_bodies` an error status comes back at once, unread,
+/// though its body stalls; a 3xx is read, under the main cap.
+#[tokio::test]
+async fn skipped_error_bodies_are_not_read_but_redirects_are() {
+    let skipping = |port: u16| {
+        HttpRequest::get(format!("http://127.0.0.1:{port}/"), 10)
+            .skip_error_bodies()
+            .timeout(Duration::from_millis(300))
+    };
+    for head in [
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 10\r\n\r\nabcd",
+        "HTTP/1.1 503 Back Soon\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n",
+    ] {
+        let port = serve_stalled(head).await;
+        let started = Instant::now();
+        let resp = lax().send(skipping(port)).await.unwrap();
+        assert!(started.elapsed() < Duration::from_millis(300), "{head}");
+        assert_eq!(resp.body, Body::Skipped, "{head}");
+    }
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789",
+    )
+    .await;
+    let resp = lax().send(skipping(port)).await.unwrap();
+    assert_eq!(resp.status, http::StatusCode::FOUND);
+    assert_eq!(resp.bytes().unwrap(), "0123456789");
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 11\r\nConnection: close\r\n\r\n0123456789A",
+    )
+    .await;
+    let resp = lax().send(skipping(port)).await.unwrap();
+    assert_eq!(resp.body, Body::TooLarge, "a 3xx gets the main cap");
+    let port = serve_stalled("HTTP/1.1 302 Found\r\nContent-Length: 10\r\n\r\nabcd").await;
+    let err = lax().send(skipping(port)).await.unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::BodyTimeout, "{}", err.message);
 }
 
 #[tokio::test]
@@ -282,6 +365,7 @@ async fn refused_connections_are_connect_errors() {
         .await
         .unwrap_err();
     assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
+    assert_eq!(err.status, None, "no response");
     drop(socket);
 }
 
@@ -376,4 +460,114 @@ async fn proxy_variables_are_ignored_while_filtering() {
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{text}");
     assert!(text.contains("1 passed"), "{text}");
+}
+
+/// Answers every request with `response`, which need not be UTF-8.
+async fn serve_bytes(response: &'static [u8]) -> u16 {
+    serve(move |mut sock, _| async move {
+        let _ = sock.write_all(response).await;
+    })
+    .await
+    .0
+}
+
+#[tokio::test]
+async fn status_errors_read_as_reqwest_words_them() {
+    let plain = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (response, own_reason) in [
+        (&b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"[..], false),
+        (b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", false),
+        (b"HTTP/1.1 404 Gone \"Fishing\"\t\\ x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true),
+        // Not ASCII: hyper keeps an empty phrase, and reqwest prints it so.
+        (b"HTTP/1.1 410 Gone \xff\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true),
+        (b"HTTP/1.1 503 Back Soon\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true),
+    ] {
+        let url = format!("http://127.0.0.1:{}/x", serve_bytes(response).await);
+        let resp = lax().get_stream(&url).await.unwrap();
+        assert_eq!(resp.reason.is_some(), own_reason, "{resp:?}");
+        let ours = observation_upstream::status_error(resp.status, resp.reason.as_deref());
+        // The port carries the same phrase.
+        let sent = lax()
+            .send(HttpRequest::get(&url, 100).skip_error_bodies())
+            .await
+            .unwrap();
+        assert_eq!((sent.status, &sent.reason), (resp.status, &resp.reason));
+        assert_eq!(sent.body, Body::Skipped);
+        let theirs = plain
+            .get(&url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap_err()
+            .without_url()
+            .to_string();
+        assert_eq!(ours, theirs);
+    }
+    assert_eq!(
+        observation_upstream::status_error(reqwest::StatusCode::NOT_FOUND, None),
+        "HTTP status client error (404 Not Found)"
+    );
+}
+
+#[tokio::test]
+async fn streams_are_read_piece_by_piece_with_no_cap() {
+    // Far past every cap the port applies: get_stream applies none.
+    let port = serve_endless(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        chunk(),
+    )
+    .await;
+    let mut resp = lax()
+        .get_stream(&format!("http://127.0.0.1:{port}/"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.content_length(), None);
+    let mut read = 0;
+    while read < 4 << 20 {
+        read += resp.body.chunk().await.unwrap().unwrap().len();
+    }
+
+    let (port, _) = serve_fixed(
+        "HTTP/1.1 302 Found\r\nLocation: http://a.example/\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmoved",
+    )
+    .await;
+    let mut resp = lax()
+        .get_stream(&format!("http://127.0.0.1:{port}/"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 302, "returned, not followed");
+    assert_eq!(resp.headers["location"], "http://a.example/");
+    assert_eq!(resp.body.content_length(), Some(5));
+    let mut body = Vec::new();
+    while let Some(piece) = resp.body.chunk().await.unwrap() {
+        body.extend_from_slice(&piece);
+    }
+    assert_eq!(body, b"moved");
+}
+
+#[tokio::test]
+async fn a_broken_stream_is_a_body_error_with_its_status() {
+    let (port, _) =
+        serve_fixed("HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc").await;
+    let mut resp = lax()
+        .get_stream(&format!("http://127.0.0.1:{port}/"))
+        .await
+        .unwrap();
+    let err = loop {
+        match resp.body.chunk().await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("the short body ended cleanly"),
+            Err(e) => break e,
+        }
+    };
+    assert_eq!(err.kind, TransportErrorKind::Body, "{}", err.message);
+    // reqwest's own text, which the import's "the download failed: …" carries.
+    assert_eq!(err.message, "error decoding response body");
+    assert_eq!(err.status, Some(reqwest::StatusCode::OK));
+
+    let err = lax().get_stream("http://127.0.0.1:1/").await.unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::Connect, "{}", err.message);
+    assert!(!err.message.contains("127.0.0.1"), "{}", err.message);
 }
