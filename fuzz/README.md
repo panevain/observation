@@ -26,7 +26,7 @@ cd fuzz && cargo fuzz run scene_json corpus/scene_json seeds/scene_json -- -max_
 
 To reproduce a crash, run `cargo fuzz run <target> artifacts/<target>/crash-...`. To print it as structured input, run `cargo fuzz fmt <target> <file>`. When you fix a finding, add a unit test next to the fix as well (see `occlusion.rs` and `coverage.rs`).
 
-CI (`.github/workflows/fuzz.yml`) runs every target for 30 s on pull requests that touch the fuzzed crates, the root `Cargo.toml` or `fuzz/`, and on pushes to `develop`, for 10 min nightly, and for a chosen duration on manual dispatch. Crashing inputs are uploaded as a workflow artifact.
+CI (`.github/workflows/fuzz.yml`) runs every target for 30 s on pull requests that touch the fuzzed crates, the root `Cargo.toml` or `fuzz/`, and on pushes to `develop`, for 10 min nightly (1 min for `bbox_query`, 2 for `job_decode` and 15 for `coverage_geometry`, as `mise run fuzz --nightly` sets them), and for a chosen duration on manual dispatch. Crashing inputs are uploaded as a workflow artifact.
 
 ## Findings so far
 
