@@ -207,7 +207,7 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         wasm: PathBuf,
         /// Print the N largest crates and the totals (0: nothing).
-        #[arg(long, value_name = "N", default_value = "0", value_parser = table_arg)]
+        #[arg(long, value_name = "N", default_value = "0", allow_negative_numbers = true, value_parser = table_arg)]
         table: usize,
         /// The raw size to print instead of the measured one (0: measured).
         #[arg(long, value_name = "BYTES", allow_negative_numbers = true, value_parser = xtask::core::py::int_arg)]
@@ -279,6 +279,22 @@ fn main() -> ExitCode {
                 clap::error::ErrorKind::MissingRequiredArgument,
                 "security-patch needs --repo <DIR> (a scratch checkout: the check edits its \
                  Cargo.lock)",
+            )
+            .exit();
+    }
+    // argparse takes no `--` anywhere in the script's command line (exit status 2); clap would
+    // skip one silently.
+    if matches!(cli.command, Command::Treemap { .. })
+        && std::env::args_os()
+            .skip_while(|a| a != "treemap")
+            .skip(1)
+            .any(|a| a == "--")
+    {
+        use clap::CommandFactory as _;
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::UnknownArgument,
+                "treemap takes no `--` (unrecognized arguments: --)",
             )
             .exit();
     }

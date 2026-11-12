@@ -441,8 +441,8 @@ pub fn int_arg(text: &str) -> Result<i128, String> {
     if digits.len() > 4300 {
         return Err(invalid());
     }
-    let value: i128 = digits.parse().map_err(|_| invalid())?;
-    Ok(if negative { -value } else { value })
+    let sign = if negative { "-" } else { "" };
+    format!("{sign}{digits}").parse().map_err(|_| invalid())
 }
 
 /// `json.dumps()` of a string with the default `ensure_ascii`: `"` and `\` escaped, `\n`, `\r`,

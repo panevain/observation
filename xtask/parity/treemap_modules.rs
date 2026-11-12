@@ -7,13 +7,19 @@
 //! malformed ones; and a small module cut at every length and with each byte set to 0x00 and to
 //! 0xFF. Each case expects:
 //! - `same`: both succeed with the same stdout and stderr, except the gzip figure, which the
-//!   port measures with another deflate implementation: it must be within 2% + 64 bytes of the
-//!   script's (exact when `--shipped-gzip` gives it);
+//!   port measures with another deflate implementation (both zlib at level 9; the unit tests of
+//!   `cmd::treemap` check the port's framing, level and input): it must be within 4% + 32 bytes
+//!   of the script's (exact when `--shipped-gzip` gives it). miniz_oxide's level 9 is up to 3.3%
+//!   larger than zlib's on a real rustc release module, and as much as 469 B (1.9%) larger here;
 //! - `fails`: the script fails (a traceback, or "not a wasm module"), and so does the port;
 //! - `usage`: both refuse the command line with exit status 2;
 //! - `recursion`: the script crashes in its v0 demangler (RecursionError) and the port succeeds
 //!   (it takes the script's fallback for that symbol: see `xtask::core::demangle`);
-//! - `stricter`: the script succeeds and the port fails: the differences the port declares.
+//! - `stricter`: the script succeeds and the port fails: the differences the port declares;
+//! - `next-pr`: the script fails and the port succeeds, until the next change of the port: the
+//!   script requires `--out` and draws the SVG before it prints the table, which divides by zero
+//!   when one item is about 2^54 bytes or more next to small ones; the port takes no `--out` and
+//!   draws nothing yet. The change that ports the drawing expects these rows to be identical.
 //!
 //! The cut and changed modules expect whatever the script does: `same` or `fails`.
 use std::path::Path;
@@ -194,6 +200,8 @@ struct Case {
     expect: &'static str,
     args: Vec<String>,
     module: Option<Vec<u8>>,
+    /// Whether the script is given `--out` (it requires it; the port takes none yet).
+    out: bool,
 }
 
 fn case(name: &str, expect: &'static str, args: &[&str], module: Option<Vec<u8>>) -> Case {
@@ -202,7 +210,40 @@ fn case(name: &str, expect: &'static str, args: &[&str], module: Option<Vec<u8>>
         expect,
         args: args.iter().map(|s| (*s).to_owned()).collect(),
         module,
+        out: true,
     }
+}
+
+/// A module of tens of KB whose bodies compress about as much as code does: the gzip figures
+/// are compared at a size where a change of level or input would show.
+fn large_module() -> Vec<u8> {
+    let n = 400;
+    let mut seed = 12_345u32;
+    let bodies: Vec<Vec<u8>> = (0..n)
+        .map(|i| {
+            let size = 40 + (i * 53) % 120;
+            let code: Vec<u8> = (0..size)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    [0x20u8, 0x21, 0x28, 0x36, 0x41, 0x6A, 0x10, 0x0B, 0x02, 0x00]
+                        [(seed >> 16) as usize % 10]
+                        .wrapping_add((seed >> 28) as u8 & 1)
+                })
+                .collect();
+            [leb(size as u64), code].concat()
+        })
+        .collect();
+    let named: Vec<(u64, &[u8])> = (0..n)
+        .map(|i| (i as u64, NAMES[i % 16].as_bytes()))
+        .collect();
+    [
+        b"\0asm\x01\0\0\0".to_vec(),
+        section(1, &[1, 0x60, 0, 0]),
+        section(3, &vec_of(&vec![leb(0); n])),
+        section(10, &vec_of(&bodies)),
+        names(&named),
+    ]
+    .concat()
 }
 
 fn cases() -> Vec<Case> {
@@ -300,6 +341,54 @@ fn cases() -> Vec<Case> {
             &["--table", "3", "--shipped-gzip", &"9".repeat(5000)],
             Some(full.clone()),
         ),
+        case("table -0", "same", &["--table", "-0"], Some(full.clone())),
+        case("table _1", "usage", &["--table", "_1"], Some(full.clone())),
+        case("table 1_", "usage", &["--table", "1_"], Some(full.clone())),
+        case(
+            "a trailing --",
+            "usage",
+            &["--table", "3", "--"],
+            Some(full.clone()),
+        ),
+        case(
+            "-- before the options",
+            "usage",
+            &["--", "--table", "3"],
+            Some(full.clone()),
+        ),
+        case(
+            "-- as a value",
+            "usage",
+            &["--table", "--", "3"],
+            Some(full.clone()),
+        ),
+        case(
+            "gzip 0 is measured",
+            "same",
+            &["--table", "3", "--shipped-gzip", "0"],
+            Some(full.clone()),
+        ),
+        case(
+            "raw i128 min",
+            "same",
+            &[
+                "--table",
+                "3",
+                "--shipped-raw",
+                "-170141183460469231731687303715884105728",
+            ],
+            Some(full.clone()),
+        ),
+        case(
+            "a module of tens of KB",
+            "same",
+            &["--table", "20"],
+            Some(large_module()),
+        ),
+        Case {
+            out: false,
+            ..case("no --out", "next-pr", &t, Some(full.clone()))
+        },
         case("no such file", "fails", &t, None),
         case("empty file", "fails", &t, Some(vec![])),
         case("magic only", "same", &t, Some(b"\0asm".to_vec())),
@@ -415,6 +504,36 @@ fn cases() -> Vec<Case> {
         ),
         with("custom section name past the end", "same", vec![0, 1, 9]),
     ]);
+    // A cut-off last section whose declared size is 2^e: the script's SVG layout divides by zero
+    // at some sizes (not all: the float rounding decides), next to one function or one segment.
+    let func = [
+        section(1, &[1, 0x60, 0, 0]),
+        section(3, &[1, 0]),
+        section(10, &[1, 2, 0, 0x0B]),
+        names(&[(0, b"core::fmt::write")]),
+    ]
+    .concat();
+    let data = [
+        section(5, &[1, 0, 1]),
+        section(11, &[1, 1, 3, b'a', b'b', b'c']),
+    ]
+    .concat();
+    for (body, e, expect) in [
+        (&func, 50, "same"),
+        (&func, 54, "next-pr"),
+        (&func, 56, "same"),
+        (&func, 60, "next-pr"),
+        (&func, 63, "next-pr"),
+        (&data, 54, "same"),
+        (&data, 56, "next-pr"),
+    ] {
+        let name = format!("a last section of 2^{e} bytes, cut off");
+        cases.push(with(
+            &name,
+            expect,
+            [body.clone(), vec![1], leb(1u64 << e)].concat(),
+        ));
+    }
     // Names the port treats differently from the script, each in an otherwise valid module.
     for (name, expect, sym) in [
         (
@@ -470,11 +589,13 @@ fn port_and_script_agree_on_every_module() {
         }
         let wasm = wasm.display().to_string();
         let out = dir.path().join("out.svg").display().to_string();
-        let script: Vec<String> = [
-            vec!["--wasm".to_owned(), wasm.clone(), "--out".to_owned(), out],
-            c.args.clone(),
-        ]
-        .concat();
+        let out = if c.out {
+            vec!["--out".to_owned(), out]
+        } else {
+            vec![]
+        };
+        let script: Vec<String> =
+            [vec!["--wasm".to_owned(), wasm.clone()], out, c.args.clone()].concat();
         script_lines.push_str(&ok(serde_json::to_string(&script)));
         script_lines.push('\n');
         port_args.push(
@@ -522,12 +643,16 @@ fn port_and_script_agree_on_every_module() {
             "same" => {
                 let (s, sg) = split_gzip(&script.stdout);
                 let (p, pg) = split_gzip(&port_out);
-                let given = c.args.iter().any(|a| a == "--shipped-gzip");
+                // `--shipped-gzip 0` is not given: the figure is measured.
+                let given = c
+                    .args
+                    .windows(2)
+                    .any(|w| w[0] == "--shipped-gzip" && w[1] != "0");
                 let gzip_ok = match (sg, pg) {
                     (Some(s), Some(p)) if !given => {
                         gzip_diff = gzip_diff.max(p as i64 - s as i64);
                         gzip_diff_min = gzip_diff_min.min(p as i64 - s as i64);
-                        s.abs_diff(p) <= s / 50 + 64
+                        s.abs_diff(p) <= s / 25 + 32
                     }
                     (s, p) => s == p,
                 };
@@ -542,6 +667,7 @@ fn port_and_script_agree_on_every_module() {
             "usage" => script.exit == 2 && port_exit == 2,
             "recursion" => script.stderr == "crash: RecursionError" && port_exit == 0,
             "stricter" => script.exit == 0 && port_exit != 0,
+            "next-pr" => script.exit != 0 && port_exit == 0,
             _ => false,
         };
         if !good {

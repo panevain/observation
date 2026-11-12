@@ -81,13 +81,16 @@ pub fn top_table(per_crate: &HashMap<String, u128>, total: u128, n: usize) -> St
     lines.join("\n")
 }
 
-/// `len(zlib.compress(module, 9))`, with flate2's backend.
-fn zlib_size(module: &[u8]) -> Result<u128> {
+/// `zlib.compress(module, 9)`, with flate2's backend: zlib framing, level 9.
+pub fn zlib(module: &[u8]) -> Result<Vec<u8>> {
     let mut z = ZlibEncoder::new(Vec::new(), Compression::new(9));
     z.write_all(module)
         .and_then(|()| z.finish())
-        .map(|v| v.len() as u128)
         .map_err(|e| Error::new(format!("gzip: {e}")))
+}
+
+fn zlib_size(module: &[u8]) -> Result<u128> {
+    zlib(module).map(|v| v.len() as u128)
 }
 
 pub fn run(args: &Args) -> Result<Output> {
@@ -118,4 +121,57 @@ pub fn run(args: &Args) -> Result<Output> {
         );
     }
     Ok(Output { stdout, stderr })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read as _;
+
+    use super::*;
+
+    fn ok<T, E: std::fmt::Display>(r: std::result::Result<T, E>) -> T {
+        r.unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// The script's `zlib.compress(…, 9)`: zlib framing whose header says deflate with a 32 KiB
+    /// window (0x78) at "maximum compression" (FLEVEL 3: 0xDA), and the input back.
+    #[test]
+    fn compresses_as_zlib_at_level_9() {
+        let noise: Vec<u8> = (0..20_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        for input in [&b""[..], b"\0asm\x01\0\0\0", &[7; 5000], &noise] {
+            let z = ok(zlib(input));
+            assert_eq!(z.get(..2), Some(&[0x78, 0xDA][..]), "{} bytes", input.len());
+            let mut back = Vec::new();
+            ok(flate2::read::ZlibDecoder::new(z.as_slice()).read_to_end(&mut back));
+            assert_eq!(back, input);
+        }
+    }
+
+    /// The figure printed is that of the whole shipped module (its first 8 bytes included).
+    #[test]
+    fn prints_the_zlib_size_of_the_shipped_module() {
+        let module = [
+            &b"\0asm\x01\0\0\0"[..],
+            &[1, 4, 1, 0x60, 0, 0],
+            &[3, 2, 1, 0],
+            &[10, 4, 1, 2, 0, 0x0B],
+            &[0, 5, 4, b'n', b'o', b'p', b'e'],
+        ]
+        .concat();
+        let dir = ok(tempfile::tempdir());
+        let wasm = dir.path().join("m.wasm");
+        ok(std::fs::write(&wasm, &module));
+        let args = Args {
+            wasm,
+            table: 1,
+            ..Args::default()
+        };
+        let shipped = ok(wasm::analyse(&module)).shipped;
+        assert_eq!(shipped.len(), module.len() - 7);
+        let want = format!("gzip -9 {} B\n", size(ok(zlib_size(&shipped))));
+        let out = ok(run(&args)).stdout;
+        assert!(out.ends_with(&want), "{out:?} should end with {want:?}");
+    }
 }
