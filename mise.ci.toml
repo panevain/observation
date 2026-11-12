@@ -166,7 +166,7 @@ description = "Run every fuzz target for SECONDS (default 30), from fuzz/corpus/
 dir = "{{config_root}}/fuzz"
 usage = '''
 arg "[seconds]" default="30" help="Seconds to fuzz each target"
-flag "--nightly" help="The nightly run's times: bbox_query 60 s, whose coverage stops growing within a minute (a small parser at ~250k execs/s), and coverage_geometry 900 s (a few hundred execs/s)"
+flag "--nightly" help="The nightly run's times: bbox_query 60 s, whose coverage stops growing within a minute (a small parser at ~250k execs/s), job_decode 120 s, whose coverage is 99% of a 3-minute run's after 10 s (~37k execs/s), and coverage_geometry 900 s (a few hundred execs/s); catalog_ron keeps SECONDS, as its coverage still grows after 3 minutes"
 '''
 run = '''
 secs="${usage_seconds}"
@@ -179,6 +179,7 @@ for t in $(cargo fuzz list); do
   if [ "${usage_nightly:-false}" = true ]; then
     case "${t}" in
       bbox_query) t_secs=60 ;;
+      job_decode) t_secs=120 ;;
       coverage_geometry) t_secs=900 ;;
     esac
   fi
