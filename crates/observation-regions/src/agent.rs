@@ -8,7 +8,7 @@ use observation_upstream::{BoundedQueue, GuardedHttp, Redirects};
 use crate::catalog::Catalog;
 use crate::config::Config;
 use crate::import::{self, Tools};
-use crate::ports::{Download, QueryRunner, Toolchain};
+use crate::ports::{Download, ExtractDownload, QueryRunner, Toolchain};
 use crate::query::Osm3sQuery;
 use crate::registry::{self, Registry};
 use crate::tools::OsmTools;
@@ -42,7 +42,8 @@ pub enum StartError {
 /// What the agent talks to: see [`Agent::from_parts`].
 #[derive(Debug, Clone)]
 pub struct Ports {
-    /// For the extract list and the boundaries.
+    /// For the extract list and the boundaries. Temporary: they move to the
+    /// HTTP port next, and reqwest leaves this API.
     pub client: reqwest::Client,
     pub download: Arc<dyn Download>,
     pub toolchain: Arc<dyn Toolchain>,
@@ -67,7 +68,7 @@ impl Ports {
             .build()?;
         Ok(Self {
             client,
-            download: Arc::new(download),
+            download: Arc::new(ExtractDownload(download)),
             toolchain: Arc::new(OsmTools {
                 osmium: config.osmium.clone(),
                 overpass_bin: config.overpass_bin.clone(),
@@ -175,3 +176,6 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

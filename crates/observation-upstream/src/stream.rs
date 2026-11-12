@@ -64,7 +64,12 @@ impl GuardedHttp {
 /// The text reqwest's `error_for_status` gives a 4xx or 5xx reply (without
 /// the URL): `HTTP status client error (404 Not Found)`, with the reply's
 /// own `reason` phrase in place of the canonical one when it sent one.
+/// `status` must be a 4xx or 5xx, as for reqwest.
 pub fn status_error(status: StatusCode, reason: Option<&[u8]>) -> String {
+    debug_assert!(
+        status.is_client_error() || status.is_server_error(),
+        "{status} is not an error status"
+    );
     let class = if status.is_client_error() {
         "client"
     } else {
@@ -116,6 +121,16 @@ mod tests {
         assert_eq!(
             status_error(StatusCode::IM_A_TEAPOT, None),
             "HTTP status client error (418 I'm a teapot)"
+        );
+        // The class changes between 499 and 500.
+        let status = |code| StatusCode::from_u16(code).unwrap();
+        assert_eq!(
+            status_error(status(499), None),
+            "HTTP status client error (499 <unknown status code>)"
+        );
+        assert_eq!(
+            status_error(status(500), Some(b"Oops")),
+            "HTTP status server error (500 Oops)"
         );
     }
 }

@@ -1,7 +1,7 @@
 //! The agent's outside world: the extract download and the programs it runs
 //! on an import and a query. The import and the query route see only these
 //! traits, so tests can run them on fakes. The production implementations
-//! are [`GuardedHttp`] (below), `tools.rs` and `query.rs`.
+//! are `ExtractDownload` (below), `tools.rs` and `query.rs`.
 
 use std::fmt;
 use std::path::Path;
@@ -39,10 +39,16 @@ pub trait DownloadBody: Send + fmt::Debug {
     fn chunk(&mut self) -> BoxFuture<'_, Result<Option<Bytes>, TransportError>>;
 }
 
-impl Download for GuardedHttp {
+/// The production [`Download`]: [`GuardedHttp::get_stream`], whose body has
+/// no cap and no deadline. Private to this crate, so that no other crate
+/// reaches an uncapped stream through the port.
+#[derive(Debug, Clone)]
+pub(crate) struct ExtractDownload(pub(crate) GuardedHttp);
+
+impl Download for ExtractDownload {
     fn get<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<DownloadResponse, TransportError>> {
         async move {
-            let resp = self.get_stream(url).await?;
+            let resp = self.0.get_stream(url).await?;
             Ok(DownloadResponse {
                 status: resp.status,
                 reason: resp.reason,
