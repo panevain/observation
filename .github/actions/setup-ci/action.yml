@@ -1,0 +1,51 @@
+name: Set up a CI job
+description: >-
+  The start most ci.yml jobs repeat: check out this commit without persisting the token, then
+  setup-mise, then setup-rust (in that order: setup-mise exports the CARGO_* and RUST*
+  environment that is part of rust-cache's key). Both keep their defaults for what is not an
+  input here: mise-action's cache on, its shims on PATH, and the root rust-toolchain.toml. The
+  job needs no checkout of its own: $/ resolves this action and the two it calls at the
+  running commit.
+
+inputs:
+  tools:
+    description: Tools for mise to install (setup-mise's tools); empty installs none
+    required: false
+    default: ""
+  components:
+    description: Extra Rust components, space-separated (setup-rust's components)
+    required: false
+    default: ""
+  cache-key:
+    description: rust-cache's shared-key (setup-rust's cache-key); empty for no cache
+    required: false
+    default: ""
+  cache-workspaces:
+    description: rust-cache's workspaces (setup-rust's cache-workspaces)
+    required: false
+    default: ". -> target"
+  cache-directories:
+    description: rust-cache's cache-directories (setup-rust's cache-directories)
+    required: false
+    default: ""
+  cache-save:
+    description: Save the Rust cache (from develop only); false to only restore it
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: $/.github/actions/setup-mise
+      with:
+        tools: ${{ inputs.tools }}
+    - uses: $/.github/actions/setup-rust
+      with:
+        components: ${{ inputs.components }}
+        cache-key: ${{ inputs.cache-key }}
+        cache-workspaces: ${{ inputs.cache-workspaces }}
+        cache-directories: ${{ inputs.cache-directories }}
+        cache-save: ${{ inputs.cache-save }}
