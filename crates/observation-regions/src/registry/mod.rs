@@ -409,12 +409,24 @@ mod tests {
         let (id, job) = reg.next_job().await;
         assert!(reg.started(&id, job, spawn_dummy()));
         clock.advance(Duration::from_secs(100));
-        reg.finish(&id, job, Some(Ok(imported(dir.path(), "europe__monaco-1"))));
+        // Bounds that are not exact in `f32`, so a narrowing on the way shows.
+        let monaco = Imported {
+            bbox: BBox::new(43.72, 7.4, 43.76, 7.44).ok(),
+            ..imported(dir.path(), "europe__monaco-1")
+        };
+        reg.finish(&id, job, Some(Ok(monaco)));
         reg.change_settings(&id, Some(false), Some(Some(30)))
             .unwrap();
         reg.enqueue("andorra", "Andorra").unwrap();
         let written = std::fs::read_to_string(dir.path().join("regions.json")).unwrap();
         assert_eq!(written, GOLDEN_REGIONS_JSON);
+        // The snapshot sends the same bounds, digit for digit.
+        let snapshot = reg.snapshot();
+        let monaco = snapshot.regions.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(
+            serde_json::to_string(&monaco.bbox).unwrap(),
+            r#"{"south":43.72,"west":7.4,"north":43.76,"east":7.44}"#
+        );
         // And it reads back as written.
         drop(reg);
         let reopened = Registry::open(dir.path(), 1, 7, clock).unwrap();
@@ -448,10 +460,10 @@ mod tests {
     "name": "Monaco",
     "db_dir": "europe__monaco-1",
     "bbox": {
-      "south": 0.0,
-      "west": 0.0,
-      "north": 1.0,
-      "east": 1.0
+      "south": 43.72,
+      "west": 7.4,
+      "north": 43.76,
+      "east": 7.44
     },
     "data_timestamp": "2026-01-01T00:00:00Z",
     "imported_unix": 1700000100,

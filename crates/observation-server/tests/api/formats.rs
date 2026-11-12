@@ -15,6 +15,8 @@ fn text(body: &[u8]) -> &str {
     std::str::from_utf8(body).unwrap()
 }
 
+/// Literal but for `version`, the crate's own (`CARGO_PKG_VERSION`), so a
+/// release does not break it.
 #[tokio::test(start_paused = true)]
 async fn the_config_body_is_these_bytes() {
     let app = TestApp::builder().build();
