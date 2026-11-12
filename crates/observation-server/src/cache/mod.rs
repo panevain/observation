@@ -398,16 +398,25 @@ mod tests {
             }
         }
         let alphabet = ['0', '7', '-', '.', '_', '/', '\\', 'a', '%', ' ', '\0', 'é'];
-        // Mostly safe characters too, so that the length rule decides often.
+        // Mostly safe characters too, so that the length rule decides often,
+        // and with `.` so that the `..` rule does.
         let safe = ['0', '7', '-', '_', '.'];
+        let mut dots_decided = 0;
         for i in 0..20_000 {
             let len = rng.below(140) as usize;
-            let chars: &[char] = if i % 2 == 0 { &alphabet } else { &safe[..4] };
+            let chars: &[char] = match i % 3 {
+                0 => &alphabet,
+                1 => &safe[..4],
+                _ => &safe,
+            };
             let key: String = (0..len).map(|_| *rng.pick(chars)).collect();
             let plain = key
                 .chars()
                 .all(|c| c.is_ascii_digit() || matches!(c, '-' | '.' | '_'));
             let want = (1..=128).contains(&key.len()) && !key.contains("..") && plain;
+            if (1..=128).contains(&key.len()) && plain && key.contains("..") {
+                dots_decided += 1;
+            }
             assert_eq!(is_safe_key(&key), want, "{key:?}");
             if want {
                 let name = format!("{key}.obsb");
@@ -418,6 +427,7 @@ mod tests {
                 );
             }
         }
+        assert!(dots_decided > 1000, "`..` decided {dots_decided} times");
     }
 
     /// The disk store with the freshness rules on top, as the bundle service

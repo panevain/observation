@@ -388,7 +388,9 @@ mod tests {
     }
 
     /// `max-age=N` is found among any other directives, in any case, quoted
-    /// or not, for every `N`; without it there is none; nothing panics.
+    /// or not, for every `N` up to `u64::MAX`; without it, or with a value
+    /// past `u64::MAX`, negative, empty or not whole, there is none (the
+    /// tile then expires by `Expires` or the minimum); nothing panics.
     #[test]
     fn max_age_is_found_among_any_directives() {
         let mut rng = crate::test_rng::Rng::new(5);
@@ -401,9 +403,10 @@ mod tests {
             "private=\"x\"",
         ];
         for _ in 0..5000 {
-            let n = match rng.below(3) {
+            let n = match rng.below(4) {
                 0 => rng.below(1000),
                 1 => rng.u64(),
+                2 => 0,
                 _ => u64::MAX,
             };
             let key = *rng.pick(&["max-age", "Max-Age", "MAX-AGE"]);
@@ -421,6 +424,9 @@ mod tests {
             let sep = *rng.pick(&[",", ", ", " ,  "]);
             assert_eq!(max_age(&directives.join(sep)), Some(n), "{directives:?}");
             assert_eq!(max_age(&without), None, "{without:?}");
+            let bad = *rng.pick(&["18446744073709551616", "-1", "", "1.5"]);
+            let with_bad = format!("{without}{sep}{key}={bad}");
+            assert_eq!(max_age(&with_bad), None, "{with_bad:?}");
             let noise: String = (0..rng.below(40))
                 .map(|_| *rng.pick(&['m', 'a', '=', ',', '"', ' ', '9', '-']))
                 .collect();

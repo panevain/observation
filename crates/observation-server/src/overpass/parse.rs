@@ -298,7 +298,10 @@ mod tests {
     use super::*;
 
     /// A closed ring cut into pieces, shuffled and some reversed, is
-    /// stitched back into that one ring; without one piece it is dropped.
+    /// stitched back into that one ring, its points in the ring's cyclic
+    /// order; without one piece it is dropped. Neither the first point nor
+    /// the direction is promised (they follow the last piece given), and
+    /// the caller places holes by an even-odd test, which ignores both.
     #[test]
     fn rings_cut_into_pieces_are_stitched_back() {
         let mut rng = crate::test_rng::Rng::new(9);
@@ -325,21 +328,23 @@ mod tests {
             }
             rng.shuffle(&mut pieces);
             let key = |p: &LatLon| (p.lat.to_bits(), p.lon.to_bits());
-            let mut want: Vec<_> = ring[..n].iter().map(key).collect();
-            want.sort_unstable();
+            let want: Vec<_> = ring[..n].iter().map(key).collect();
 
             let rings = stitch_rings(pieces.clone());
             assert_eq!(rings.len(), 1, "{pieces:?}");
             let got = &rings[0];
-            assert_eq!(got.len(), n + 1);
+            assert_eq!(got.len(), n + 1, "{pieces:?}");
             assert_eq!(key(&got[0]), key(&got[n]), "closed");
-            let mut points: Vec<_> = got[..n].iter().map(key).collect();
-            points.sort_unstable();
-            assert_eq!(points, want);
+            // From where `got` starts in `ring`, forward or backward.
+            let start = want.iter().position(|p| *p == key(&got[0])).unwrap();
+            let forward: Vec<_> = (0..n).map(|i| want[(start + i) % n]).collect();
+            let backward: Vec<_> = (0..n).map(|i| want[(start + n - i) % n]).collect();
+            let points: Vec<_> = got[..n].iter().map(key).collect();
+            assert!(points == forward || points == backward, "{pieces:?}");
 
             if pieces.len() > 1 {
                 pieces.remove(rng.below(pieces.len() as u64) as usize);
-                assert!(stitch_rings(pieces).is_empty());
+                assert!(stitch_rings(pieces.clone()).is_empty(), "{pieces:?}");
             }
         }
     }

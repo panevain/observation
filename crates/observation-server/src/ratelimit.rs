@@ -321,9 +321,15 @@ mod tests {
                 inside,
                 "{net}/{prefix} {ip}"
             );
-            assert_eq!(block.contains(IpAddr::V6(ip.to_ipv6_mapped())), inside);
+            assert_eq!(
+                block.contains(IpAddr::V6(ip.to_ipv6_mapped())),
+                inside,
+                "{net}/{prefix} {ip}"
+            );
             let mapped = Cidr::parse(&format!("::ffff:{net}/{}", 96 + prefix));
             assert_eq!(mapped, Some(block));
+            let short = format!("::ffff:{net}/{}", prefix * 3 % 96);
+            assert_eq!(Cidr::parse(&short), None, "{short}");
             assert_eq!(Cidr::parse(&format!("{net}/{}", 33 + rng.below(200))), None);
         }
         for _ in 0..4000 {

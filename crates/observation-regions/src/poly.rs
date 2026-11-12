@@ -177,6 +177,7 @@ mod tests {
     use super::*;
 
     /// A seeded xorshift64* value in `[lo, hi)`: the same inputs every run.
+    /// The same generator as `observation-server`'s `test_rng`; keep them alike.
     fn uniform(state: &mut u64, lo: f64, hi: f64) -> f64 {
         *state ^= *state >> 12;
         *state ^= *state << 25;
@@ -228,14 +229,39 @@ mod tests {
                 uniform(&mut st, hs, hn - 1e-3),
                 uniform(&mut st, hw, he - 1e-3),
             );
-            assert!(!b.contains_bbox(&bx(cs, cw, cs + 1e-4, cw + 1e-4)));
-            assert!(!b.contains_bbox(&bx(lo, cw, hs + 1e-4, cw + 1e-4)));
+            assert!(
+                !b.contains_bbox(&bx(cs, cw, cs + 1e-4, cw + 1e-4)),
+                "{s} {w} {n} {e}"
+            );
+            assert!(
+                !b.contains_bbox(&bx(lo, cw, hs + 1e-4, cw + 1e-4)),
+                "{s} {w} {n} {e}"
+            );
             // Around the whole hole, corners clear of it.
             let (aw, ae) = ((w + hw) / 2.0, (he + e) / 2.0);
-            assert!(!b.contains_bbox(&bx(lo, aw, (hn + n) / 2.0, ae)));
+            assert!(
+                !b.contains_bbox(&bx(lo, aw, (hn + n) / 2.0, ae)),
+                "{s} {w} {n} {e}"
+            );
+            // Touching counts as crossing: a box whose north edge lies on the
+            // hole's south edge, one with a corner on the hole's south-west
+            // vertex, and one whose south edge lies on the outer edge are not
+            // inside.
+            assert!(
+                !b.contains_bbox(&bx(lo, cw, hs, cw + 1e-4)),
+                "{s} {w} {n} {e}"
+            );
+            assert!(!b.contains_bbox(&bx(lo, aw, hs, hw)), "{s} {w} {n} {e}");
+            assert!(!b.contains_bbox(&bx(s, left, hi, right)), "{s} {w} {n} {e}");
             // Across the outer edge, and outside.
-            assert!(!b.contains_bbox(&bx(lo, e - 1e-4, hi, e + 1e-4)));
-            assert!(!b.contains_bbox(&bx(s - 0.2, w, s - 0.1, e)));
+            assert!(
+                !b.contains_bbox(&bx(lo, e - 1e-4, hi, e + 1e-4)),
+                "{s} {w} {n} {e}"
+            );
+            assert!(
+                !b.contains_bbox(&bx(s - 0.2, w, s - 0.1, e)),
+                "{s} {w} {n} {e}"
+            );
         }
     }
 
