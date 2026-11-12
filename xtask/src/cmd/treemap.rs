@@ -311,4 +311,68 @@ mod tests {
         let out = ok(run(&args)).stdout;
         assert!(out.ends_with(&want), "{out:?} should end with {want:?}");
     }
+
+    /// scripts/wasm-size-report.sh draws the SVG with this command, once, with these options:
+    /// the module, the SVG, the stage, the commit and date, and the table of the 15 largest
+    /// crates. Nothing but the treemap job runs the report script, so this pins its command line.
+    #[test]
+    fn the_report_script_runs_this_command_with_its_options() {
+        let script = ok(std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/wasm-size-report.sh"),
+        ));
+        let lines: Vec<&str> = script.lines().map(str::trim).collect();
+        let calls: Vec<usize> = (0..lines.len())
+            .filter(|&i| !lines[i].starts_with('#') && lines[i].contains("xtask treemap"))
+            .collect();
+        assert_eq!(
+            calls.len(),
+            1,
+            "one call of `cargo xtask treemap`: {calls:?}"
+        );
+        let mut command = String::new();
+        for line in &lines[calls[0]..] {
+            let (text, more) = line
+                .strip_suffix('\\')
+                .map_or((*line, false), |t| (t, true));
+            command.push_str(text);
+            command.push(' ');
+            if !more {
+                break;
+            }
+        }
+        let words: Vec<&str> = command.split_whitespace().collect();
+        assert_eq!(
+            words,
+            [
+                "cargo",
+                "xtask",
+                "treemap",
+                "--wasm",
+                "\"$module\"",
+                "--out",
+                "\"$out_svg\"",
+                "--stage",
+                "\"$stage\"",
+                "--commit",
+                "\"$(git",
+                "rev-parse",
+                "--short=9",
+                "HEAD)\"",
+                "--date",
+                "\"$(git",
+                "log",
+                "-1",
+                "--format=%cs",
+                "HEAD)\"",
+                "--table",
+                "15",
+            ]
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| !l.starts_with('#') && l.contains("wasm-size-treemap.py")),
+            "the report script no longer runs scripts/wasm-size-treemap.py"
+        );
+    }
 }
