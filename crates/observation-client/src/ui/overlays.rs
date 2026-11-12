@@ -116,7 +116,9 @@ pub fn camera_toolbar(
                                 |k| format!("{} ({k})", a.label()),
                             );
                             let button = egui::Button::new(
-                                RichText::new(a.icon()).size(t.font.title).color(color),
+                                RichText::new(super::actions::icon(a))
+                                    .size(t.font.title)
+                                    .color(color),
                             )
                             .frame_when_inactive(false)
                             .min_size(vec2(t.layout.hit_target, t.layout.hit_target));

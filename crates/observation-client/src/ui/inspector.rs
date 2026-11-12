@@ -10,15 +10,17 @@ use super::widgets::{
 use crate::addresses::{NO_ADDRESS, address_label};
 use crate::cameras::camera_color;
 use crate::icons;
-use crate::state::{Editor, InspectorTab, OverlayMode, Panels, Tool, select, terrain_of};
+use crate::state::{
+    Editor, InspectorTab, OverlayMode, Panels, Tool, TrackModels, TrackScene, select, terrain_of,
+};
 use crate::theme::{NO_FILL, Tokens, strong_family, to_rgb};
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea, TextEdit};
+use observation_client_model::commands::{self, EditCtx, Tracked};
+use observation_client_model::document::Models;
 use observation_core::camera::{
-    ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, CatalogError, DoriLevel,
-    Lighting, MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, forward_from_yaw_pitch,
-    is_https_url,
+    ASSUMED_IR_RANGE_M, CameraKind, CameraModel, CameraPlacement, DoriLevel, Lighting,
+    MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, forward_from_yaw_pitch, is_https_url,
 };
-use observation_core::scene::MAX_CUSTOM_MODELS;
 
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
@@ -534,7 +536,8 @@ fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                     CameraAction::ToggleEnabled,
                     CameraAction::Delete,
                 ] {
-                    let mut button = egui::Button::new(format!("{}  {}", a.icon(), a.label()));
+                    let mut button =
+                        egui::Button::new(format!("{}  {}", actions::icon(a), a.label()));
                     if let Some(k) = a.shortcut() {
                         button = button.shortcut_text(k);
                     }
@@ -925,7 +928,7 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             CameraAction::Focus,
             CameraAction::Duplicate,
         ] {
-            let text = format!("{}  {}", a.icon(), a.label());
+            let text = format!("{}  {}", actions::icon(a), a.label());
             let tip = a
                 .shortcut()
                 .map_or_else(|| a.label().to_owned(), |k| format!("{} ({k})", a.label()));
@@ -935,7 +938,10 @@ fn camera_details(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         }
         let del = CameraAction::Delete;
         if ui
-            .add(danger(t, &format!("{}  {}", del.icon(), del.label())))
+            .add(danger(
+                t,
+                &format!("{}  {}", actions::icon(del), del.label()),
+            ))
             .on_hover_text("Delete (Del)")
             .clicked()
         {
@@ -1352,85 +1358,33 @@ fn custom_model(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 .map(Draft::editing)
                 .unwrap_or_default();
         }
-        Some(DraftAction::Add) => add_custom_model(d, &mut draft),
-        Some(DraftAction::Save) => save_custom_model(d, draft.model.clone()),
-        Some(DraftAction::Delete) => delete_custom_model(d, &draft.model.id),
+        Some(DraftAction::Add) => edit_models(d, &mut |ctx, models| {
+            // Go on editing the added model, so a second click cannot add a copy.
+            if let Some(model) = commands::add_custom_model(ctx, models, draft.model.clone()) {
+                draft = Draft::editing(model);
+            }
+        }),
+        Some(DraftAction::Save) => edit_models(d, &mut |ctx, models| {
+            commands::save_custom_model(ctx, models, draft.model.clone());
+        }),
+        Some(DraftAction::Delete) => edit_models(d, &mut |ctx, models| {
+            commands::delete_custom_model(ctx, models, &draft.model.id);
+        }),
         None => {}
     }
     ui.data_mut(|m| m.insert_temp(id, draft));
 }
 
-/// Adds the draft as a new custom model and goes on to edit it, so a second
-/// click cannot add a copy.
-fn add_custom_model(d: &mut UiData, draft: &mut Draft) {
-    // A scene with more could not be restored or imported.
-    if d.models.custom.len() >= MAX_CUSTOM_MODELS {
-        d.toasts.error(format!(
-            "Cannot add this model: a scene holds at most {MAX_CUSTOM_MODELS} custom models. Delete one you no longer use first"
-        ));
-        return;
-    }
-    let mut model = draft.model.clone();
-    model.id = d.models.new_custom_id(&model.name);
-    match model.validate() {
-        Ok(()) => {
-            d.editor.place_model = model.id.clone();
-            d.toasts.info(format!(
-                "Added “{}” — it is now the model for new cameras",
-                model.name
-            ));
-            d.models.custom.push(model.clone());
-            d.scene.touch();
-            *draft = Draft::editing(model);
-        }
-        Err(e) => d
-            .toasts
-            .error(format!("Cannot add this model: {}", invalid_reason(e))),
-    }
-}
-
-/// Updates the custom model in place, keeping its id: placed cameras refer
-/// to it by id.
-fn save_custom_model(d: &mut UiData, model: CameraModel) {
-    if let Err(e) = model.validate() {
-        d.toasts
-            .error(format!("Cannot save this model: {}", invalid_reason(e)));
-        return;
-    }
-    let name = model.display_name();
-    if d.models.update_custom(model) {
-        d.toasts.info(format!("Saved “{name}”"));
-        d.scene.touch();
-    }
-}
-
-/// Deletes an unused custom model; refuses one that cameras still use, so
-/// no camera is left without a model.
-fn delete_custom_model(d: &mut UiData, id: &str) {
-    let Some(name) = d.models.custom_model(id).map(CameraModel::display_name) else {
-        return;
-    };
-    let users = d.scene.cameras_using(id);
-    if users > 0 {
-        let users = if users == 1 {
-            "1 camera uses it".to_owned()
-        } else {
-            format!("{users} cameras use it")
-        };
-        d.toasts.error(format!(
-            "Cannot delete “{name}”: {users}. Give them another model or delete them first"
-        ));
-        return;
-    }
-    d.models.remove_custom(id);
-    d.scene.touch();
-}
-
-/// Why a model failed validation, in the user's terms.
-fn invalid_reason(e: CatalogError) -> String {
-    match e {
-        // The generated id means nothing to the user; the reason does.
-        CatalogError::Invalid { why, .. } => why,
-        e => e.to_string(),
-    }
+/// Runs a custom-model command; the scene and the models are marked changed
+/// only if it writes to them.
+fn edit_models(d: &mut UiData, f: &mut dyn FnMut(&mut EditCtx, &mut dyn Tracked<Models>)) {
+    f(
+        &mut EditCtx {
+            doc: &mut TrackScene(&mut d.scene),
+            editor: &mut d.editor,
+            panels: &mut d.panels,
+            toasts: &mut d.toasts,
+        },
+        &mut TrackModels(&mut d.models),
+    );
 }

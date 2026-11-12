@@ -133,6 +133,21 @@ impl Tracked<Document> for TrackScene<'_, '_> {
     }
 }
 
+/// The camera models for a custom-model command, marked changed only when
+/// the command writes to them.
+#[derive(Debug)]
+pub struct TrackModels<'a, 'w>(pub &'a mut ResMut<'w, Models>);
+
+impl Tracked<document::Models> for TrackModels<'_, '_> {
+    fn get(&self) -> &document::Models {
+        self.0
+    }
+
+    fn get_mut(&mut self) -> &mut document::Models {
+        self.0
+    }
+}
+
 /// The currently loaded area and its analysis layers.
 #[derive(Resource)]
 pub struct Area {

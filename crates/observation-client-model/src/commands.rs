@@ -1,16 +1,21 @@
-//! What the tools and keys do to the document and the editing state: a
-//! click or a drag with each tool, drawing a region, and the keyboard
-//! shortcuts.
+//! What the tools, keys and buttons do to the document and the editing
+//! state: a click or a drag with each tool, drawing a region, the keyboard
+//! shortcuts, the camera commands and the custom models.
 //!
-//! The client finds what the pointer is over and which keys went down, and
-//! calls these with an [`EditCtx`] built from its resources.
+//! The client finds what the pointer is over, which keys went down and
+//! which button was clicked, and calls these with an [`EditCtx`] built from
+//! its resources.
 
 use crate::document::{Document, Models};
 use crate::editor::{Editor, OverlayMode, Panels, Tool, select};
 use crate::toasts::Toasts;
-use observation_core::camera::{CameraPlacement, yaw_pitch_from_forward};
+use observation_core::camera::{
+    CameraModel, CameraPlacement, CatalogError, yaw_pitch_from_forward,
+};
 use observation_core::coverage::{MAX_REGION_POINTS, Region};
 use observation_core::glam::{Vec2, Vec3};
+use observation_core::scene::MAX_CUSTOM_MODELS;
+use observation_core::terrain::Terrain;
 
 /// Cameras are mounted this far in front of the surface they are placed on.
 pub const MOUNT_OFFSET_M: f32 = 0.15;
@@ -18,8 +23,8 @@ pub const MOUNT_OFFSET_M: f32 = 0.15;
 /// State whose write access is noticed. The client's resources record a
 /// change on write access, and a change re-runs coverage, painting and
 /// autosave, so a command takes [`Self::get_mut`] only where it writes.
-/// A plain [`Document`] is its own `Tracked`, for callers that track
-/// nothing or have already taken write access.
+/// A plain [`Document`] or [`Models`] is its own `Tracked`, for callers
+/// that track nothing or have already taken write access.
 pub trait Tracked<T> {
     /// Read access; never marks anything changed.
     fn get(&self) -> &T;
@@ -35,6 +40,16 @@ impl Tracked<Document> for Document {
     }
 
     fn get_mut(&mut self) -> &mut Document {
+        self
+    }
+}
+
+impl Tracked<Models> for Models {
+    fn get(&self) -> &Models {
+        self
+    }
+
+    fn get_mut(&mut self) -> &mut Models {
         self
     }
 }
@@ -283,12 +298,181 @@ pub fn mount(hit: Hit, mount_height: f32) -> (Vec3, Option<f32>) {
     }
 }
 
+/// A command on one camera, from the inspector, the camera list's context
+/// menu or the floating toolbar next to the selected camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraAction {
+    Select,
+    Focus,
+    Aim,
+    Move,
+    Duplicate,
+    ToggleEnabled,
+    Delete,
+}
+
+impl CameraAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Select => "Select",
+            Self::Focus => "Focus",
+            Self::Aim => "Aim",
+            Self::Move => "Move",
+            Self::Duplicate => "Duplicate",
+            Self::ToggleEnabled => "Include in coverage",
+            Self::Delete => "Delete",
+        }
+    }
+
+    pub fn shortcut(self) -> Option<&'static str> {
+        match self {
+            Self::Focus => Some("F"),
+            Self::Aim => Some("A"),
+            Self::Move => Some("M"),
+            Self::Delete => Some("Del"),
+            _ => None,
+        }
+    }
+}
+
+/// Runs `action` on camera `id`. Actions other than Delete and
+/// ToggleEnabled also select it. Returns whether it asked to focus the view
+/// on the camera, which the client does.
+pub fn camera_action(ctx: &mut EditCtx, terrain: &Terrain, id: u32, action: CameraAction) -> bool {
+    let Some(c) = ctx.doc.get().camera(id).cloned() else {
+        return false;
+    };
+    let editor = &mut *ctx.editor;
+    let panels = &mut *ctx.panels;
+    match action {
+        CameraAction::Select => select(editor, panels, id),
+        CameraAction::Focus => {
+            select(editor, panels, id);
+            return true;
+        }
+        CameraAction::Aim => {
+            select(editor, panels, id);
+            editor.tool = Tool::Aim;
+        }
+        CameraAction::Move => {
+            select(editor, panels, id);
+            editor.tool = Tool::Move;
+        }
+        CameraAction::Duplicate => {
+            let mut copy = c;
+            copy.label = String::new();
+            // A metre east, at the same height above the ground.
+            let [x, _, z] = copy.position;
+            copy.position = terrain.moved_to(copy.position, x + 1.0, z);
+            let new = ctx.doc.get_mut().add_camera(copy);
+            select(editor, panels, new);
+        }
+        CameraAction::ToggleEnabled => {
+            if let Some(c) = ctx.doc.get_mut().camera_mut(id) {
+                c.enabled = !c.enabled;
+            }
+        }
+        CameraAction::Delete => {
+            ctx.doc.get_mut().remove_camera(id);
+            if editor.selected == Some(id) {
+                editor.selected = None;
+                if editor.tool.needs_selection() {
+                    editor.tool = Tool::Select;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Adds `model` as a new custom model under a fresh id and makes it the
+/// model for new cameras. Returns the added model, to go on editing it so
+/// a second click cannot add a copy.
+pub fn add_custom_model(
+    ctx: &mut EditCtx,
+    models: &mut dyn Tracked<Models>,
+    mut model: CameraModel,
+) -> Option<CameraModel> {
+    // A scene with more could not be restored or imported.
+    if models.get().custom.len() >= MAX_CUSTOM_MODELS {
+        ctx.toasts.error(format!(
+            "Cannot add this model: a scene holds at most {MAX_CUSTOM_MODELS} custom models. Delete one you no longer use first"
+        ));
+        return None;
+    }
+    model.id = models.get().new_custom_id(&model.name);
+    match model.validate() {
+        Ok(()) => {
+            ctx.editor.place_model = model.id.clone();
+            ctx.toasts.info(format!(
+                "Added “{}” — it is now the model for new cameras",
+                model.name
+            ));
+            models.get_mut().custom.push(model.clone());
+            ctx.doc.get_mut().touch();
+            Some(model)
+        }
+        Err(e) => {
+            ctx.toasts
+                .error(format!("Cannot add this model: {}", invalid_reason(e)));
+            None
+        }
+    }
+}
+
+/// Updates the custom model in place, keeping its id: placed cameras refer
+/// to it by id.
+pub fn save_custom_model(ctx: &mut EditCtx, models: &mut dyn Tracked<Models>, model: CameraModel) {
+    if let Err(e) = model.validate() {
+        ctx.toasts
+            .error(format!("Cannot save this model: {}", invalid_reason(e)));
+        return;
+    }
+    let name = model.display_name();
+    if models.get_mut().update_custom(model) {
+        ctx.toasts.info(format!("Saved “{name}”"));
+        ctx.doc.get_mut().touch();
+    }
+}
+
+/// Deletes an unused custom model; refuses one that cameras still use, so
+/// no camera is left without a model.
+pub fn delete_custom_model(ctx: &mut EditCtx, models: &mut dyn Tracked<Models>, id: &str) {
+    let Some(name) = models.get().custom_model(id).map(CameraModel::display_name) else {
+        return;
+    };
+    let users = ctx.doc.get().cameras_using(id);
+    if users > 0 {
+        let users = if users == 1 {
+            "1 camera uses it".to_owned()
+        } else {
+            format!("{users} cameras use it")
+        };
+        ctx.toasts.error(format!(
+            "Cannot delete “{name}”: {users}. Give them another model or delete them first"
+        ));
+        return;
+    }
+    models.get_mut().remove_custom(id);
+    ctx.doc.get_mut().touch();
+}
+
+/// Why a model failed validation, in the user's terms.
+fn invalid_reason(e: CatalogError) -> String {
+    match e {
+        // The generated id means nothing to the user; the reason does.
+        CatalogError::Invalid { why, .. } => why,
+        e => e.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::editor::InspectorTab;
     use crate::toasts::ToastKind;
-    use observation_core::camera::{CameraKind, Catalog};
+    use observation_core::camera::{CUSTOM_ID_PREFIX, CameraKind, Catalog};
+    use observation_core::terrain::FLAT;
 
     #[derive(Default)]
     struct Fixture {
@@ -611,30 +795,33 @@ mod tests {
     }
 
     /// Counts write access, which the client's resources record as a change.
-    struct Counting {
-        doc: Document,
+    struct Counting<T> {
+        value: T,
         writes: usize,
     }
 
-    impl Tracked<Document> for Counting {
-        fn get(&self) -> &Document {
-            &self.doc
+    impl<T> Counting<T> {
+        fn new(value: T) -> Self {
+            Self { value, writes: 0 }
+        }
+    }
+
+    impl<T> Tracked<T> for Counting<T> {
+        fn get(&self) -> &T {
+            &self.value
         }
 
-        fn get_mut(&mut self) -> &mut Document {
+        fn get_mut(&mut self) -> &mut T {
             self.writes += 1;
-            &mut self.doc
+            &mut self.value
         }
     }
 
     #[test]
     fn keys_take_write_access_only_to_delete_or_finish() {
         let mut f = Fixture::default().with_camera();
-        let mut doc = Counting {
-            doc: std::mem::take(&mut f.doc),
-            writes: 0,
-        };
-        let press = |f: &mut Fixture, doc: &mut Counting, keys: &[Key]| {
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
+        let press = |f: &mut Fixture, doc: &mut Counting<Document>, keys: &[Key]| {
             let mut ctx = EditCtx {
                 doc,
                 editor: &mut f.editor,
@@ -652,7 +839,280 @@ mod tests {
         assert_eq!(doc.writes, 1);
         press(&mut f, &mut doc, &[Key::Escape]);
         press(&mut f, &mut doc, &[Key::Erase]);
-        assert_eq!((doc.writes, doc.doc.cameras.len()), (2, 0));
+        assert_eq!((doc.writes, doc.value.cameras.len()), (2, 0));
+    }
+
+    /// Runs a camera action on a counted copy of the fixture's document.
+    /// Returns (focus asked, write accesses).
+    fn act(f: &mut Fixture, id: u32, action: CameraAction) -> (bool, usize) {
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
+        let mut ctx = EditCtx {
+            doc: &mut doc,
+            editor: &mut f.editor,
+            panels: &mut f.panels,
+            toasts: &mut f.toasts,
+        };
+        let focus = camera_action(&mut ctx, &FLAT, id, action);
+        f.doc = doc.value;
+        (focus, doc.writes)
+    }
+
+    #[test]
+    fn selecting_actions_select_and_only_focus_asks_for_the_view() {
+        let mut f = Fixture::default().with_camera();
+        f.editor.selected = None;
+        assert_eq!(act(&mut f, 1, CameraAction::Select), (false, 0));
+        assert_eq!(
+            (f.editor.selected, f.panels.inspector_tab),
+            (Some(1), InspectorTab::Camera)
+        );
+        f.panels.inspector_tab = InspectorTab::Cameras;
+        assert_eq!(act(&mut f, 1, CameraAction::Focus), (true, 0));
+        assert_eq!(f.panels.inspector_tab, InspectorTab::Camera);
+        assert_eq!(act(&mut f, 1, CameraAction::Aim), (false, 0));
+        assert_eq!(f.editor.tool, Tool::Aim);
+        assert_eq!(act(&mut f, 1, CameraAction::Move), (false, 0));
+        assert_eq!(f.editor.tool, Tool::Move);
+        // A camera that is gone: nothing at all.
+        f.editor.tool = Tool::Select;
+        assert_eq!(act(&mut f, 9, CameraAction::Delete), (false, 0));
+        assert_eq!((f.doc.cameras.len(), f.editor.selected), (1, Some(1)));
+    }
+
+    #[test]
+    fn duplicating_puts_an_unlabelled_copy_a_metre_east_and_selects_it() {
+        let mut f = Fixture::default().with_camera();
+        f.doc.cameras[0].label = "Porch".to_owned();
+        f.doc.cameras[0].yaw_deg = 30.0;
+        assert_eq!(act(&mut f, 1, CameraAction::Duplicate), (false, 1));
+        let [a, b] = f.doc.cameras.as_slice() else {
+            panic!("two cameras")
+        };
+        assert_eq!((b.id, b.label.as_str()), (2, "Camera 2"));
+        assert_eq!(b.position, [1.0, 3.0, 0.0]);
+        assert_eq!((b.yaw_deg, b.model_id.as_str()), (30.0, "m"));
+        assert_eq!(a.label, "Porch");
+        assert_eq!(f.editor.selected, Some(2));
+    }
+
+    #[test]
+    fn toggling_includes_or_leaves_out_without_selecting() {
+        let mut f = Fixture::default().with_camera();
+        f.editor.selected = None;
+        assert_eq!(act(&mut f, 1, CameraAction::ToggleEnabled), (false, 1));
+        assert!(!f.doc.cameras[0].enabled);
+        act(&mut f, 1, CameraAction::ToggleEnabled);
+        assert!(f.doc.cameras[0].enabled);
+        assert_eq!(f.editor.selected, None);
+    }
+
+    #[test]
+    fn deleting_the_selected_camera_from_the_list_goes_back_to_select() {
+        let mut f = Fixture::default().with_camera().with_camera();
+        f.editor.selected = Some(1);
+        f.editor.tool = Tool::Aim;
+        // Another camera: the selection and the tool stay.
+        assert_eq!(act(&mut f, 2, CameraAction::Delete), (false, 1));
+        assert_eq!((f.editor.selected, f.editor.tool), (Some(1), Tool::Aim));
+        act(&mut f, 1, CameraAction::Delete);
+        assert!(f.doc.cameras.is_empty());
+        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Select));
+        // Tools that need no selection stay on.
+        let mut f = Fixture::default().with_camera();
+        f.editor.tool = Tool::Region;
+        act(&mut f, 1, CameraAction::Delete);
+        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Region));
+    }
+
+    fn draft() -> CameraModel {
+        CameraModel {
+            id: String::new(),
+            vendor: String::new(),
+            name: "My camera".to_owned(),
+            kind: CameraKind::Bullet,
+            hfov_deg: 110.0,
+            vfov_deg: 60.0,
+            resolution: [2560, 1440],
+            ir_range_m: Some(10.0),
+            source: None,
+            notes: None,
+        }
+    }
+
+    /// Runs a custom-model command on counted copies of the document and
+    /// `models`. Returns its result and the (document, models) write
+    /// accesses.
+    fn with_models<R>(
+        f: &mut Fixture,
+        models: &mut Models,
+        run: impl FnOnce(&mut EditCtx, &mut dyn Tracked<Models>) -> R,
+    ) -> (R, (usize, usize)) {
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
+        let mut counted = Counting::new(std::mem::replace(models, super::tests::models()));
+        let mut ctx = EditCtx {
+            doc: &mut doc,
+            editor: &mut f.editor,
+            panels: &mut f.panels,
+            toasts: &mut f.toasts,
+        };
+        let out = run(&mut ctx, &mut counted);
+        f.doc = doc.value;
+        *models = counted.value;
+        (out, (doc.writes, counted.writes))
+    }
+
+    #[test]
+    fn adding_a_model_gives_it_a_fresh_id_and_places_it_next() {
+        let mut f = Fixture::default();
+        let mut m = models();
+        let (added, writes) =
+            with_models(&mut f, &mut m, |ctx, m| add_custom_model(ctx, m, draft()));
+        let id = format!("{CUSTOM_ID_PREFIX}my-camera-1");
+        assert_eq!(added.map(|m| m.id), Some(id.clone()));
+        assert_eq!(writes, (1, 1));
+        assert_eq!(m.custom.len(), 1);
+        assert_eq!(m.custom[0].id, id);
+        assert_eq!(f.editor.place_model, id);
+        assert_eq!(
+            f.toasts(),
+            [(
+                ToastKind::Info,
+                "Added “My camera” — it is now the model for new cameras"
+            )]
+        );
+        // The same name again gets the next free id.
+        let (added, _) = with_models(&mut f, &mut m, |ctx, m| add_custom_model(ctx, m, draft()));
+        assert_eq!(
+            added.map(|m| m.id),
+            Some(format!("{CUSTOM_ID_PREFIX}my-camera-2"))
+        );
+    }
+
+    #[test]
+    fn adding_refuses_a_bad_model_and_one_past_the_limit() {
+        let mut f = Fixture::default();
+        let mut m = models();
+        let bad = CameraModel {
+            hfov_deg: 0.5,
+            ..draft()
+        };
+        let (added, writes) = with_models(&mut f, &mut m, |ctx, m| add_custom_model(ctx, m, bad));
+        assert_eq!((added, writes), (None, (0, 0)));
+        assert_eq!(
+            f.toasts(),
+            [(
+                ToastKind::Error,
+                "Cannot add this model: horizontal field of view is 0.5°, but must be 1° to 360°"
+            )]
+        );
+
+        let mut f = Fixture::default();
+        for n in 0..MAX_CUSTOM_MODELS {
+            m.custom.push(CameraModel {
+                id: format!("{CUSTOM_ID_PREFIX}m-{n}"),
+                ..draft()
+            });
+        }
+        let (added, writes) =
+            with_models(&mut f, &mut m, |ctx, m| add_custom_model(ctx, m, draft()));
+        assert_eq!((added, writes), (None, (0, 0)));
+        assert_eq!(m.custom.len(), MAX_CUSTOM_MODELS);
+        assert_eq!(f.editor.place_model, Editor::default().place_model);
+        assert_eq!(
+            f.toasts(),
+            [(
+                ToastKind::Error,
+                format!(
+                    "Cannot add this model: a scene holds at most {MAX_CUSTOM_MODELS} custom models. Delete one you no longer use first"
+                )
+                .as_str()
+            )]
+        );
+    }
+
+    #[test]
+    fn saving_updates_the_model_in_place() {
+        let mut f = Fixture::default();
+        let mut m = models();
+        let id = format!("{CUSTOM_ID_PREFIX}my-camera-1");
+        m.custom.push(CameraModel {
+            id: id.clone(),
+            ..draft()
+        });
+        let edited = CameraModel {
+            id: id.clone(),
+            vendor: "Acme".to_owned(),
+            hfov_deg: 90.0,
+            ..draft()
+        };
+        let ((), writes) = with_models(&mut f, &mut m, |ctx, m| save_custom_model(ctx, m, edited));
+        assert_eq!(writes, (1, 1));
+        assert_eq!(
+            (m.custom[0].id.as_str(), m.custom[0].hfov_deg),
+            (id.as_str(), 90.0)
+        );
+        assert_eq!(f.toasts(), [(ToastKind::Info, "Saved “Acme My camera”")]);
+
+        // Invalid: refused before any write.
+        let mut f = Fixture::default();
+        let bad = CameraModel {
+            id: id.clone(),
+            resolution: [8, 8],
+            ..draft()
+        };
+        let ((), writes) = with_models(&mut f, &mut m, |ctx, m| save_custom_model(ctx, m, bad));
+        assert_eq!(writes, (0, 0));
+        assert_eq!(m.custom[0].hfov_deg, 90.0);
+        assert_eq!(
+            f.toasts(),
+            [(
+                ToastKind::Error,
+                "Cannot save this model: resolution 8 × 8 is too small; each side needs at least 16 px"
+            )]
+        );
+
+        // A model that is gone: the models are written to, nothing else.
+        let mut f = Fixture::default();
+        let gone = CameraModel {
+            id: format!("{CUSTOM_ID_PREFIX}gone-1"),
+            ..draft()
+        };
+        let ((), writes) = with_models(&mut f, &mut m, |ctx, m| save_custom_model(ctx, m, gone));
+        assert_eq!(writes, (0, 1));
+        assert!(f.toasts.is_empty());
+    }
+
+    #[test]
+    fn deleting_a_model_refuses_while_cameras_use_it() {
+        let mut f = Fixture::default().with_camera().with_camera();
+        let mut m = models();
+        m.custom.push(CameraModel {
+            id: "m".to_owned(),
+            ..draft()
+        });
+        let ((), writes) = with_models(&mut f, &mut m, |ctx, m| delete_custom_model(ctx, m, "m"));
+        assert_eq!((writes, m.custom.len()), ((0, 0), 1));
+        f.doc.remove_camera(2);
+        with_models(&mut f, &mut m, |ctx, m| delete_custom_model(ctx, m, "m"));
+        assert_eq!(
+            f.toasts(),
+            [
+                (
+                    ToastKind::Error,
+                    "Cannot delete “My camera”: 2 cameras use it. Give them another model or delete them first"
+                ),
+                (
+                    ToastKind::Error,
+                    "Cannot delete “My camera”: 1 camera uses it. Give them another model or delete them first"
+                ),
+            ]
+        );
+        f.doc.remove_camera(1);
+        let ((), writes) = with_models(&mut f, &mut m, |ctx, m| delete_custom_model(ctx, m, "m"));
+        assert_eq!((writes, m.custom.len()), ((1, 1), 0));
+        // Unknown: nothing.
+        let ((), writes) = with_models(&mut f, &mut m, |ctx, m| delete_custom_model(ctx, m, "m"));
+        assert_eq!(writes, (0, 0));
     }
 
     #[test]
@@ -660,10 +1120,7 @@ mod tests {
         let mut f = Fixture::default().with_camera();
         f.editor.selected = None;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
-        let mut doc = Counting {
-            doc: std::mem::take(&mut f.doc),
-            writes: 0,
-        };
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
         for tool in [Tool::Select, Tool::Aim, Tool::Move] {
             f.editor.tool = tool;
             let mut ctx = EditCtx {
@@ -675,9 +1132,9 @@ mod tests {
             super::keys(&mut ctx, &|k| [Key::Erase, Key::Finish].contains(&k));
         }
         assert_eq!(doc.writes, 0);
-        assert_eq!(doc.doc.cameras.len(), 1);
+        assert_eq!(doc.value.cameras.len(), 1);
         assert_eq!(f.editor.region_draft.len(), 3);
-        assert!(doc.doc.region.is_none() && f.toasts.is_empty());
+        assert!(doc.value.region.is_none() && f.toasts.is_empty());
     }
 
     #[test]
