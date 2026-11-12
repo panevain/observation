@@ -1,53 +1,16 @@
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use axum::Router;
-use axum::body::{Body, Bytes};
-use axum::http::{Request, StatusCode, header};
-use axum::routing::get;
+use axum::http::{Method, StatusCode, header};
+use observation_server::testing::TestApp;
+use observation_upstream::testing::{FakeHttp, FakeReply};
 
-use crate::harness::{get_uri, harness, json, send};
-use crate::mocks::{PNG, spawn, spawn_tiles};
+use crate::harness::{get_uri, json, tile_png, tile_url};
+use crate::mocks::PNG;
 
-#[tokio::test]
-async fn tiles_are_proxied_once_and_cached() {
-    let (mock, url) = spawn_tiles(3600).await;
-    let h = harness("http://127.0.0.1:9/o", &url);
-    let req = Request::builder()
-        .uri("/api/tiles/17/20/30.png")
-        .header(header::REFERER, "https://example.test/app")
-        .body(Body::empty())
-        .unwrap();
-    let (status, headers, body) = send(&h.app, req).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(headers[header::CONTENT_TYPE], "image/png");
-    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=604800");
-    assert_eq!(body.as_ref(), PNG);
-    assert!(mock.user_agents.lock().unwrap()[0].contains("observation/"));
-    assert_eq!(
-        mock.referers.lock().unwrap().as_slice(),
-        ["https://example.test/app"]
-    );
-
-    let (status, _, body) = get_uri(&h.app, "/api/tiles/17/20/30.png").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.as_ref(), PNG);
-    assert_eq!(
-        mock.hits.load(Ordering::SeqCst),
-        1,
-        "second request must be served from disk"
-    );
-
-    let root = h.cache.path().join("tiles/17/20");
-    assert!(root.join("30.png").is_file() && root.join("30.json").is_file());
-    let meta = json(&std::fs::read(root.join("30.json")).unwrap());
-    assert_eq!(meta["etag"], "\"tile-etag\"");
-}
-
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn invalid_tiles_are_404_without_upstream_calls() {
-    let (mock, url) = spawn_tiles(3600).await;
-    let h = harness("http://127.0.0.1:9/o", &url);
+    let tiles = FakeHttp::new();
+    let app = TestApp::builder().tiles(tiles.clone()).build();
     for uri in [
         "/api/tiles/20/0/0.png",
         "/api/tiles/2/4/0.png",
@@ -58,108 +21,73 @@ async fn invalid_tiles_are_404_without_upstream_calls() {
         "/api/tiles/2/-1/0.png",
         "/api/tiles/2/0/..png",
     ] {
-        let (status, _, body) = get_uri(&h.app, uri).await;
+        let (status, _, body) = get_uri(&app.router, uri).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
         assert!(json(&body)["error"].is_string(), "{uri}");
     }
-    assert_eq!(mock.hits.load(Ordering::SeqCst), 0);
+    assert!(tiles.requests().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn expired_tiles_are_revalidated_and_stale_served_on_failure() {
-    let (mock, url) = spawn_tiles(0).await;
-    let h = harness("http://127.0.0.1:9/o", &url);
-
-    let (status, _, body) = get_uri(&h.app, "/api/tiles/5/3/4.png").await;
-    assert_eq!((status, body.as_ref()), (StatusCode::OK, PNG));
-    // max-age=0 and no minimum TTL in tests: the next request revalidates.
-    let (status, _, body) = get_uri(&h.app, "/api/tiles/5/3/4.png").await;
-    assert_eq!((status, body.as_ref()), (StatusCode::OK, PNG));
-    assert_eq!(mock.hits.load(Ordering::SeqCst), 2);
-    assert_eq!(
-        mock.conditional.lock().unwrap().as_slice(),
-        [None, Some("\"tile-etag\"".to_owned())]
+    let tiles = FakeHttp::new();
+    let at = tile_url(5, 3, 4);
+    tiles.on(Method::GET, &at, tile_png(0));
+    tiles.on(
+        Method::GET,
+        &at,
+        FakeReply::status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, "\"tile-etag\"")
+            .header(header::CACHE_CONTROL, "max-age=0"),
     );
+    let boom = || FakeReply::status(StatusCode::INTERNAL_SERVER_ERROR).body("boom");
+    tiles.on(Method::GET, &at, boom());
+    tiles.on(Method::GET, &tile_url(5, 3, 5), boom());
+    // No minimum TTL, as the socket harness had it, so max-age=0 counts.
+    let app = TestApp::builder()
+        .tiles(tiles.clone())
+        .config(|c| c.tile_min_ttl = Duration::ZERO)
+        .build();
+
+    let (status, _, body) = get_uri(&app.router, "/api/tiles/5/3/4.png").await;
+    assert_eq!((status, body.as_ref()), (StatusCode::OK, PNG));
+    // max-age=0 and no minimum TTL: the next request revalidates.
+    let (status, _, body) = get_uri(&app.router, "/api/tiles/5/3/4.png").await;
+    assert_eq!((status, body.as_ref()), (StatusCode::OK, PNG));
+    assert_eq!(tiles.requests().len(), 2);
+    let conditional: Vec<_> = tiles
+        .requests()
+        .iter()
+        .map(|r| {
+            r.headers()
+                .get(header::IF_NONE_MATCH)
+                .map(|v| v.to_str().unwrap().to_owned())
+        })
+        .collect();
+    assert_eq!(conditional, [None, Some("\"tile-etag\"".to_owned())]);
 
     // Upstream down: the stale copy is served instead of an error.
-    mock.fail.store(true, Ordering::SeqCst);
-    let (status, _, body) = get_uri(&h.app, "/api/tiles/5/3/4.png").await;
+    let (status, _, body) = get_uri(&app.router, "/api/tiles/5/3/4.png").await;
     assert_eq!((status, body.as_ref()), (StatusCode::OK, PNG));
     // ...but a tile we never had is a 502.
-    let (status, _, _) = get_uri(&h.app, "/api/tiles/5/3/5.png").await;
+    let (status, _, _) = get_uri(&app.router, "/api/tiles/5/3/5.png").await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
-#[tokio::test]
-async fn tile_redirects_are_not_followed() {
-    let (target, template) = spawn_tiles(3600).await;
-    let target_url = template
-        .replace("{z}", "1")
-        .replace("{x}", "0")
-        .replace("{y}", "0");
-    let router = Router::new().route(
-        "/{z}/{x}/{y}",
-        get(move || {
-            let to = target_url.clone();
-            async move { (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, to)]) }
-        }),
-    );
-    let addr = spawn(router).await;
-    let h = harness(
-        "http://127.0.0.1:9/o",
-        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
-    );
-    let (status, _, _) = get_uri(&h.app, "/api/tiles/1/0/0.png").await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert_eq!(target.hits.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn upstream_tiles_must_be_png() {
-    let router = Router::new().route(
-        "/{z}/{x}/{y}",
-        get(|| async {
-            (
-                [(header::CONTENT_TYPE, "text/html")],
-                "<html>blocked</html>",
-            )
-        }),
+    let cache = tempfile::tempdir().unwrap();
+    let tiles = FakeHttp::new();
+    tiles.on(
+        Method::GET,
+        &tile_url(1, 0, 0),
+        FakeReply::ok("<html>blocked</html>").header(header::CONTENT_TYPE, "text/html"),
     );
-    let addr = spawn(router).await;
-    let h = harness(
-        "http://127.0.0.1:9/o",
-        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
-    );
-    let (status, _, _) = get_uri(&h.app, "/api/tiles/1/0/0.png").await;
+    let app = TestApp::builder()
+        .tiles(tiles)
+        .disk_cache(cache.path())
+        .build();
+    let (status, _, _) = get_uri(&app.router, "/api/tiles/1/0/0.png").await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(!h.cache.path().join("tiles").exists());
-}
-
-#[tokio::test]
-async fn endless_tile_bodies_are_cut_off() {
-    // A chunked body that never ends: buffering it whole would only stop at the
-    // client timeout (and after eating memory); the streaming cap stops at 2 MiB.
-    let router = Router::new().route(
-        "/{z}/{x}/{y}",
-        get(|| async {
-            let first = futures_util::stream::once(async { Ok(Bytes::from_static(PNG)) });
-            let rest = futures_util::stream::repeat_with(|| {
-                Ok::<_, std::io::Error>(Bytes::from(vec![0u8; 64 * 1024]))
-            });
-            Body::from_stream(futures_util::StreamExt::chain(first, rest))
-        }),
-    );
-    let addr = spawn(router).await;
-    let h = harness(
-        "http://127.0.0.1:9/o",
-        &format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
-    );
-    let (status, _, _) = tokio::time::timeout(
-        Duration::from_secs(10),
-        get_uri(&h.app, "/api/tiles/1/0/0.png"),
-    )
-    .await
-    .expect("oversized body is rejected while streaming");
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(!h.cache.path().join("tiles").exists());
+    assert!(!cache.path().join("tiles").exists());
 }

@@ -3,12 +3,14 @@ use axum::http::{Request, StatusCode, header};
 use observation_core::bundle::{AreaBundle, BUNDLE_CONTENT_TYPE};
 use observation_core::provenance::format_utc;
 
-use crate::harness::{get_uri, json, offline, send};
+use observation_server::testing::TestApp;
 
-#[tokio::test]
+use crate::harness::{get_uri, json, send};
+
+#[tokio::test(start_paused = true)]
 async fn healthz_and_security_headers() {
-    let h = offline();
-    let (status, headers, body) = get_uri(&h.app, "/healthz").await;
+    let app = TestApp::builder().build();
+    let (status, headers, body) = get_uri(&app.router, "/healthz").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_ref(), b"ok");
     assert_eq!(headers["x-content-type-options"], "nosniff");
@@ -26,15 +28,15 @@ async fn healthz_and_security_headers() {
     );
 
     // Error responses carry them too.
-    let (status, headers, _) = get_uri(&h.app, "/api/area").await;
+    let (status, headers, _) = get_uri(&app.router, "/api/area").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(headers["x-frame-options"], "DENY");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn config_endpoint() {
-    let h = offline();
-    let (status, headers, body) = get_uri(&h.app, "/api/config").await;
+    let app = TestApp::builder().build();
+    let (status, headers, body) = get_uri(&app.router, "/api/config").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         headers[header::CONTENT_TYPE]
@@ -51,9 +53,9 @@ async fn config_endpoint() {
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn bad_bboxes_are_400() {
-    let h = offline();
+    let app = TestApp::builder().build();
     for uri in [
         "/api/area",
         "/api/area?bbox=",
@@ -65,7 +67,7 @@ async fn bad_bboxes_are_400() {
         "/api/area?bbox=47.0,-122.3,47.1,-122.2",
         "/api/area?bbox=47.0,-122.0,47.00001,-121.99999",
     ] {
-        let (status, _, body) = get_uri(&h.app, uri).await;
+        let (status, _, body) = get_uri(&app.router, uri).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
         assert!(
             json(&body)["error"].as_str().is_some_and(|e| !e.is_empty()),
@@ -74,21 +76,21 @@ async fn bad_bboxes_are_400() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn oversized_box_error_names_the_size_and_the_limit() {
-    let h = offline();
+    let app = TestApp::builder().build();
     // About 11 km wide and tall.
-    let (status, _, body) = get_uri(&h.app, "/api/area?bbox=47.0,-122.3,47.1,-122.2").await;
+    let (status, _, body) = get_uri(&app.router, "/api/area?bbox=47.0,-122.3,47.1,-122.2").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let msg = json(&body)["error"].as_str().unwrap().to_owned();
     assert!(msg.contains("wide") && msg.contains("tall"), "{msg}");
     assert!(msg.contains("20 to 500 m"), "{msg}");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn demo_is_a_decodable_bundle() {
-    let h = offline();
-    let (status, headers, body) = get_uri(&h.app, "/api/demo").await;
+    let app = TestApp::builder().build();
+    let (status, headers, body) = get_uri(&app.router, "/api/demo").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_TYPE], BUNDLE_CONTENT_TYPE);
     let b = AreaBundle::decode(&body).unwrap();
@@ -103,15 +105,15 @@ async fn demo_is_a_decodable_bundle() {
     assert_ne!(b.osm_fingerprint, 0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn bundles_are_compressed_on_request() {
-    let h = offline();
+    let app = TestApp::builder().build();
     let req = Request::builder()
         .uri("/api/demo")
         .header(header::ACCEPT_ENCODING, "gzip")
         .body(Body::empty())
         .unwrap();
-    let (status, headers, body) = send(&h.app, req).await;
+    let (status, headers, body) = send(&app.router, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_ENCODING], "gzip");
     assert_eq!(&body[..2], &[0x1f, 0x8b]);

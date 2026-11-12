@@ -1,8 +1,18 @@
 use axum::http::{StatusCode, header};
 
-use crate::harness::{get_uri, harness_with, json};
+use observation_server::testing::TestApp;
 
-#[tokio::test]
+use crate::harness::{get_uri, json};
+
+/// The app serving the client from `dir`.
+fn static_app(dir: &std::path::Path) -> TestApp {
+    let dir = dir.to_owned();
+    TestApp::builder()
+        .config(move |c| c.static_dir = dir)
+        .build()
+}
+
+#[tokio::test(start_paused = true)]
 async fn static_files_spa_fallback_and_cache_headers() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -21,15 +31,10 @@ async fn static_files_spa_fallback_and_cache_headers() {
         "import init from './coverage-worker.js';await init();",
     )
     .unwrap();
-    let h = harness_with(
-        "http://127.0.0.1:9/o",
-        "http://127.0.0.1:9/{z}/{x}/{y}.png",
-        dir,
-        |_| {},
-    );
+    let app = static_app(dir.path());
 
     for uri in ["/", "/index.html", "/some/client/route"] {
-        let (status, headers, body) = get_uri(&h.app, uri).await;
+        let (status, headers, body) = get_uri(&app.router, uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}");
         assert!(
             String::from_utf8_lossy(&body).contains("<title>Observation</title>"),
@@ -46,7 +51,7 @@ async fn static_files_spa_fallback_and_cache_headers() {
         assert_eq!(headers["x-content-type-options"], "nosniff");
     }
 
-    let (status, headers, body) = get_uri(&h.app, "/app-50916e44830ffe5e_bg.wasm").await;
+    let (status, headers, body) = get_uri(&app.router, "/app-50916e44830ffe5e_bg.wasm").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_TYPE], "application/wasm");
     assert_eq!(
@@ -55,7 +60,7 @@ async fn static_files_spa_fallback_and_cache_headers() {
     );
     assert_eq!(body.as_ref(), b"\0asm\x01\0\0\0");
 
-    let (status, headers, _) = get_uri(&h.app, "/app-50916e44830ffe5e.js").await;
+    let (status, headers, _) = get_uri(&app.router, "/app-50916e44830ffe5e.js").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         headers[header::CACHE_CONTROL],
@@ -63,22 +68,17 @@ async fn static_files_spa_fallback_and_cache_headers() {
     );
 
     // Files without trunk's content hash, such as the web worker's, are revalidated.
-    let (status, headers, _) = get_uri(&h.app, "/coverage-worker_loader.js").await;
+    let (status, headers, _) = get_uri(&app.router, "/coverage-worker_loader.js").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn unknown_api_paths_are_json_404_not_the_spa() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("index.html"), "<title>Observation</title>").unwrap();
-    let h = harness_with(
-        "http://127.0.0.1:9/o",
-        "http://127.0.0.1:9/{z}/{x}/{y}.png",
-        dir,
-        |_| {},
-    );
-    let (status, _, body) = get_uri(&h.app, "/api/nope").await;
+    let app = static_app(dir.path());
+    let (status, _, body) = get_uri(&app.router, "/api/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(json(&body)["error"].is_string());
 }

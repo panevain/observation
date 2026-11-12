@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use observation_server::config::Config;
 use observation_server::{AppState, app};
 use observation_upstream::testing::{FakeHttp, FakeReply};
@@ -101,4 +101,19 @@ pub(crate) fn flat_app(
         .config(|c| c.dem_url = None)
         .config(tweak)
         .build()
+}
+
+/// The production tile server's URL for `z/x/y`.
+pub(crate) fn tile_url(z: u32, x: u32, y: u32) -> String {
+    format!("https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+}
+
+/// A tile as the socket mock served it: a PNG with an ETag, a
+/// Last-Modified date and `max-age`.
+pub(crate) fn tile_png(max_age: u64) -> FakeReply {
+    FakeReply::ok(crate::mocks::PNG)
+        .header(header::CONTENT_TYPE, "image/png")
+        .header(header::ETAG, "\"tile-etag\"")
+        .header(header::LAST_MODIFIED, "Mon, 01 Jan 2024 00:00:00 GMT")
+        .header(header::CACHE_CONTROL, format!("max-age={max_age}"))
 }

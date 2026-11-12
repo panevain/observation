@@ -6,6 +6,8 @@ mod basics;
 mod elevation;
 mod harness;
 mod limits;
+// Also compiled into `tests/adapters.rs`, which alone uses the socket tile mock.
+#[allow(dead_code)]
 mod mocks;
 mod overpass;
 mod regions;
