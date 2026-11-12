@@ -3,7 +3,7 @@
 //! since the latest release that changed shipped files. A pre-release leaves the file alone.
 //!
 //! Output, messages and the file written are the script's. Where the script failed, this fails
-//! too; the differences, all failures, are listed in `release-changelog/cases.toml` (`differs`).
+//! too; the differences, all failures, are listed in `release-plan/cases.toml` (`differs`).
 
 use std::path::Path;
 

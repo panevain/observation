@@ -697,6 +697,22 @@ subject = "Two"
 files = { "Cargo.lock" = "f\n" }
 
 [[case]]
+name = "changelog: a link-reference block at the end"
+command = "changelog"
+args = ["--version", "0.2.0"]
+cargo = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+changelog = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a\n\n## [0.1.0] - 2026-01-01\n\n- First.\n\n[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n[0.1.0]: https://example.com/releases/tag/v0.1.0\n"
+init_tags = ["v0.1.0"]
+
+[[case]]
+name = "changelog: link references inside the Unreleased section"
+command = "changelog"
+args = ["--version", "0.2.0"]
+cargo = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+changelog = "# C\n\n## [Unreleased]\n\n### Added\n\n- a\n\n[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n"
+init_tags = ["v0.1.0"]
+
+[[case]]
 name = "changelog: Unreleased at the end of the file"
 command = "changelog"
 args = ["--version", "0.2.0"]

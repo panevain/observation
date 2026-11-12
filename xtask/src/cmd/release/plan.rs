@@ -393,7 +393,7 @@ mod tests {
                 .position(|a| a == name)
                 .map(|i| case.args[i + 1].clone())
         };
-        let clock = FixedClock(ok(Timestamp::parse("2026-11-12T10:00:00Z").ok_or("time")));
+        let clock = FixedClock(ok(Timestamp::parse("2026-01-05T23:30:00Z").ok_or("time")));
         let prerelease = flag("--prerelease").unwrap_or_default();
         let result = match (case.command.as_str(), flag("--version")) {
             ("plan", _) if !["", "dev"].contains(&prerelease.as_str()) => None,
@@ -450,6 +450,12 @@ mod tests {
                 ("exit 0", 0, Some("stricter")) => "passes, but is listed as stricter",
                 ("exit 0", 0, _) if !same => "passes with different output",
                 ("exit 0", 0, _) => "",
+                ("exit 0", _, Some("stricter"))
+                    if case.command == "changelog"
+                        && after != case.changelog.clone().unwrap_or_default() =>
+                {
+                    "fails, but changed CHANGELOG.md"
+                }
                 ("exit 0", _, Some("stricter")) => "",
                 ("exit 0", _, _) => "fails where the script passed (not listed as stricter)",
                 (_, 0, _) => "PASSES WHERE THE SCRIPT FAILED",

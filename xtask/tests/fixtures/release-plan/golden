@@ -636,7 +636,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-12
+## [0.2.0] - 2026-01-05
 
 ### Added
 
@@ -659,7 +659,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-12
+## [0.2.0] - 2026-01-05
 
 ### Added
 
@@ -678,7 +678,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-12
+## [0.1.1] - 2026-01-05
 
 ### Changed
 
@@ -700,7 +700,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-12
+## [0.1.1] - 2026-01-05
 
 ### Changed
 
@@ -719,7 +719,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-12
+## [0.1.1] - 2026-01-05
 
 ### Changed
 
@@ -738,7 +738,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-12
+## [0.1.1] - 2026-01-05
 
 ### Changed
 
@@ -769,7 +769,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-11-12
+## [0.1.0] - 2026-01-05
 
 ### Changed
 
@@ -792,7 +792,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-12
+## [0.1.1] - 2026-01-05
 
 ### Changed
 
@@ -812,7 +812,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-12
+## [0.2.0] - 2026-01-05
 
 ### Changed
 
@@ -824,6 +824,46 @@ exit 0
 
 - First.
 -- end
+== changelog: a link-reference block at the end
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- a
+
+## [0.1.0] - 2026-01-01
+
+- First.
+
+[Unreleased]: https://example.com/compare/v0.1.0...HEAD
+[0.1.0]: https://example.com/releases/tag/v0.1.0
+-- end
+== changelog: link references inside the Unreleased section
+exit 0
+-- stdout
+-- stderr
+-- CHANGELOG.md
+# C
+
+## [Unreleased]
+
+## [0.2.0] - 2026-01-05
+
+### Added
+
+- a
+
+[Unreleased]: https://example.com/compare/v0.1.0...HEAD
+
+-- end
 == changelog: Unreleased at the end of the file
 exit 0
 -- stdout
@@ -833,7 +873,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-12
+## [0.2.0] - 2026-01-05
 
 ### Added
 - a
@@ -848,7 +888,7 @@ exit 0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-12
+## [0.2.0] - 2026-01-05
 
 ### Added
 
@@ -910,7 +950,7 @@ exit 0
 
 ## [Unreleased]
 
-## [١.0.0] - 2026-11-12
+## [١.0.0] - 2026-01-05
 
 ### Added
 
