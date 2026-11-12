@@ -1118,6 +1118,9 @@ name = "observation-upstream"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "form_urlencoded",
+ "futures-util",
+ "http",
  "reqwest",
  "thiserror",
  "tokio",
