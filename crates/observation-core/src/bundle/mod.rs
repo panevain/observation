@@ -11,8 +11,8 @@
 mod format;
 mod query;
 
-pub use crate::osm::build::build_bundle;
-pub use crate::osm::features::{OsmAddressPoint, OsmBuilding, OsmRoad};
+pub use crate::osm::build::{BuildMeta, build, build_bundle};
+pub use crate::osm::features::{OsmAddressPoint, OsmBuilding, OsmFeatures, OsmRoad};
 pub use crate::osm::fingerprint::osm_fingerprint;
 pub use crate::osm::tags::{FOOT_WAYS, road_width_m};
 pub use crate::road::Road;

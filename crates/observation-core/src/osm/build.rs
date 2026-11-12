@@ -1,7 +1,6 @@
 //! The pipeline from OSM features to a bundle.
 
-use super::features::{OsmAddressPoint, OsmBuilding, OsmRoad};
-use super::fingerprint::osm_fingerprint;
+use super::features::{OsmAddressPoint, OsmBuilding, OsmFeatures, OsmRoad};
 use super::tags::names_addresses;
 use crate::address::{AddressPoint, building_of};
 use crate::building::{Footprint, MeshData, extrude};
@@ -11,8 +10,18 @@ use crate::road::Road;
 use crate::terrain::Terrain;
 use crate::util::planar::ring_bounds;
 
+/// Facts about a bundle that do not come from its features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildMeta<'a> {
+    /// The data credits shown with the area.
+    pub attribution: &'a str,
+    /// When the bundle was built, Unix seconds.
+    pub generated_unix: u64,
+}
+
 /// Projects, extrudes and packs OSM features into a bundle, standing each
-/// building on the lowest ground under it.
+/// building on the lowest ground under it: [`build`] with its inputs as
+/// separate arguments.
 pub fn build_bundle(
     bbox: BBox,
     buildings: &[OsmBuilding],
@@ -23,7 +32,30 @@ pub fn build_bundle(
     generated_unix: u64,
     osm_base_unix: Option<u64>,
 ) -> AreaBundle {
-    let osm_fingerprint = osm_fingerprint(&bbox, buildings, roads, addresses);
+    let features = OsmFeatures {
+        buildings,
+        roads,
+        addresses,
+        osm_base_unix,
+    };
+    let attribution = attribution.into();
+    let meta = BuildMeta {
+        attribution: &attribution,
+        generated_unix,
+    };
+    build(bbox, &features, terrain, meta)
+}
+
+/// Projects, extrudes and packs OSM features into a bundle, standing each
+/// building on the lowest ground under it.
+pub fn build(bbox: BBox, features: &OsmFeatures, terrain: Terrain, meta: BuildMeta) -> AreaBundle {
+    let OsmFeatures {
+        buildings,
+        roads,
+        addresses,
+        osm_base_unix,
+    } = *features;
+    let osm_fingerprint = features.fingerprint(&bbox);
     let origin = bbox.center();
     let proj = Projection::new(origin);
     let to_w = |p: &LatLon| {
@@ -111,8 +143,8 @@ pub fn build_bundle(
         mesh,
         addresses,
         terrain,
-        attribution: attribution.into(),
-        generated_unix,
+        attribution: meta.attribution.to_owned(),
+        generated_unix: meta.generated_unix,
         osm_base_unix,
         osm_fingerprint,
     }
@@ -122,7 +154,34 @@ pub fn build_bundle(
 mod tests {
     use super::*;
     use crate::bundle::BundleError;
+    use crate::osm::fingerprint::osm_fingerprint;
     use crate::testing::sample_bundle_on as sample_on;
+
+    #[test]
+    fn build_bundle_is_build_with_separate_arguments() {
+        use crate::testing::{rich_bbox, rich_bundle, rich_features, rich_terrain};
+        let (buildings, roads, addresses) = rich_features();
+        let features = OsmFeatures {
+            buildings: &buildings,
+            roads: &roads,
+            addresses: &addresses,
+            osm_base_unix: Some(1_793_475_782),
+        };
+        let meta = BuildMeta {
+            attribution: "© OpenStreetMap contributors",
+            generated_unix: 1_793_500_000,
+        };
+        let built = build(rich_bbox(), &features, rich_terrain(), meta);
+        assert_eq!(built.encode(), rich_bundle().encode());
+        assert_eq!(built.osm_fingerprint, features.fingerprint(&rich_bbox()));
+        assert_eq!(
+            built.osm_fingerprint,
+            osm_fingerprint(&rich_bbox(), &buildings, &roads, &addresses)
+        );
+        assert_eq!(built.osm_base_unix, Some(1_793_475_782));
+        assert_eq!(built.generated_unix, 1_793_500_000);
+        assert_eq!(built.attribution, "© OpenStreetMap contributors");
+    }
 
     #[test]
     fn buildings_stand_on_the_lowest_ground_under_them() {
