@@ -14,6 +14,8 @@ use std::hash::{Hash, Hasher};
 
 use crate::editor::OverlayMode;
 
+pub mod backend;
+
 #[derive(Debug, Default)]
 pub struct CoverageState {
     /// Each camera's cache key and sight lines.

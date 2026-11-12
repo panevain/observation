@@ -1,12 +1,13 @@
 //! The native build's side of [`crate::platform`]: no network, no storage,
-//! downloads written to the working directory, and a dark colour scheme.
+//! downloads written to the working directory, a dark colour scheme and no
+//! coverage worker.
 
 use std::sync::Arc;
 
 use super::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, Platform, SaveFailure,
 };
-use observation_client_model::platform::Reply;
+use observation_client_model::platform::{JobChannel, Reply};
 
 pub fn platform() -> Platform {
     let store = Arc::new(NullStore);
@@ -24,6 +25,13 @@ pub fn platform() -> Platform {
 
 /// There is no HTML loading screen natively.
 pub fn hide_loader() {}
+
+// The coverage worker.
+
+/// There are no workers natively: coverage is computed on the main thread.
+pub fn coverage_worker() -> Option<Box<dyn JobChannel>> {
+    None
+}
 
 // Networking.
 

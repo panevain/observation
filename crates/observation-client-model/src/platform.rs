@@ -1,6 +1,6 @@
 //! What the client needs from the page it runs in, as traits: HTTP and
 //! server-sent events, key-value storage, file download and upload, the wall
-//! clock and the system colour scheme.
+//! clock, the system colour scheme and the coverage worker.
 //!
 //! The client implements each trait once for the browser and once for native
 //! builds (`observation-client`'s `platform` module); tests use the fakes in
@@ -131,4 +131,19 @@ pub trait ColorScheme: Send + Sync + 'static {
     /// the page lives. It may never be called: the native build has no
     /// setting to follow, and a browser may not report changes.
     fn watch(&self, on: Box<dyn Fn(bool) + Send>);
+}
+
+/// A message link to the background worker that computes coverage (a Web
+/// Worker in the browser; the native build has none and computes inline).
+///
+/// Unlike the other ports it holds the worker itself, which is tied to the
+/// thread that started it: no `Send` bound, and the client keeps it in a
+/// non-send resource.
+pub trait JobChannel {
+    /// Posts one encoded request, or says why it could not.
+    fn post(&mut self, bytes: &[u8]) -> Result<(), String>;
+    /// The next message received and not taken yet: the worker's bytes, or
+    /// why it stopped (an error event: a script that failed to load, a
+    /// panic). `None` once every message so far has been taken.
+    fn receive(&mut self) -> Option<Reply>;
 }

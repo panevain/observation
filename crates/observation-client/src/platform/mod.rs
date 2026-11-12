@@ -4,9 +4,9 @@
 //! in `native.rs`, each implementing the same traits.
 //!
 //! [`PlatformPlugin`] inserts them as the one [`Platform`] resource, before
-//! any other plugin is built. Apart from the coverage backend's worker link
-//! (`coverage/backend.rs`), which moves with the coverage changes, this is
-//! the only module of the library that tests `target_arch`.
+//! any other plugin is built. The coverage worker, which is tied to the main
+//! thread, is not in it: [`coverage_worker`] starts one for the coverage
+//! plugin. This is the only module of the library that tests `target_arch`.
 
 use std::sync::Arc;
 
@@ -25,12 +25,11 @@ use native as imp;
 #[cfg(target_arch = "wasm32")]
 use web as imp;
 
+/// Starts this build's coverage worker, if it has one.
+pub use imp::coverage_worker;
 /// The loading screen is part of the page, not a port: this Startup system
 /// removes it.
 pub use imp::hide_loader;
-/// For the coverage backend's worker link, until it is a port too.
-#[cfg(target_arch = "wasm32")]
-pub use web::js_cause;
 
 /// The page the app runs in, one port per concern. Read-only: systems call
 /// through `Res<Platform>`, and resources clone the ports they keep.

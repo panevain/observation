@@ -1,6 +1,6 @@
 //! The browser build's side of [`crate::platform`]: `fetch`, `EventSource`,
 //! `localStorage` and `sessionStorage`, file download and upload, the colour
-//! scheme media query and the page's loading screen.
+//! scheme media query, the page's loading screen and the coverage worker.
 
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use super::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, Platform, SaveFailure,
 };
 use bevy::log::warn;
-use observation_client_model::platform::Reply;
+use observation_client_model::platform::{JobChannel, Reply};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
@@ -407,4 +407,95 @@ fn watch_scheme(on: Box<dyn Fn(bool) + Send>) {
     // The handler (and the query it holds, which must stay alive to keep
     // firing) lives as long as the page.
     on_change.forget();
+}
+
+// The coverage worker.
+
+/// The loader trunk writes for the worker (`data-loader-shim` in
+/// `web/index.html`). Worker output is named after the binary, without a
+/// content hash, so the server has browsers revalidate these files.
+const LOADER_URL: &str = "/coverage-worker_loader.js";
+
+/// Starts the `coverage-worker` binary in a Web Worker, or logs why it could
+/// not (coverage is then computed on the main thread).
+pub fn coverage_worker() -> Option<Box<dyn JobChannel>> {
+    WorkerLink::spawn().map(|link| Box::new(link) as Box<dyn JobChannel>)
+}
+
+/// The Web Worker and the handlers that pass its messages on. Owned by the
+/// coverage backend alone, which drops it when the worker fails.
+struct WorkerLink {
+    worker: web_sys::Worker,
+    rx: crossbeam_channel::Receiver<Reply>,
+    // Called by the browser until dropped (after being detached, in `drop`).
+    _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_error: Closure<dyn FnMut(web_sys::Event)>,
+}
+
+impl WorkerLink {
+    fn spawn() -> Option<Self> {
+        use web_sys::{ErrorEvent, Event, MessageEvent, Worker, WorkerOptions, WorkerType};
+        let options = WorkerOptions::new();
+        options.set_type(WorkerType::Module);
+        options.set_name("coverage");
+        let worker = match Worker::new_with_options(LOADER_URL, &options) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!(
+                    "could not start the coverage worker ({}); computing coverage on the main thread",
+                    js_cause(&e)
+                );
+                return None;
+            }
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let on_message = {
+            let tx = tx.clone();
+            Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
+                // The receiver lives as long as the handler.
+                let _ = tx.send(Ok(js_sys::Uint8Array::new(&e.data()).to_vec()));
+            })
+        };
+        // A script that fails to load or an uncaught error (a panic) in the worker.
+        let on_error = Closure::<dyn FnMut(Event)>::new(move |e: Event| {
+            let message = e
+                .dyn_ref::<ErrorEvent>()
+                .map(ErrorEvent::message)
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| format!("{LOADER_URL} could not be loaded"));
+            let _ = tx.send(Err(message));
+        });
+        worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        worker.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        Some(Self {
+            worker,
+            rx,
+            _on_message: on_message,
+            _on_error: on_error,
+        })
+    }
+}
+
+impl JobChannel for WorkerLink {
+    /// Posts a message, transferring (not copying) its buffer.
+    fn post(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let msg = js_sys::Uint8Array::from(bytes);
+        let transfer = js_sys::Array::of1(&msg.buffer());
+        self.worker
+            .post_message_with_transfer(&msg, &transfer)
+            .map_err(|e| js_cause(&e))
+    }
+
+    fn receive(&mut self) -> Option<Reply> {
+        self.rx.try_recv().ok()
+    }
+}
+
+impl Drop for WorkerLink {
+    fn drop(&mut self) {
+        // Detach the handlers before their closures are freed.
+        self.worker.set_onmessage(None);
+        self.worker.set_onerror(None);
+        self.worker.terminate();
+    }
 }

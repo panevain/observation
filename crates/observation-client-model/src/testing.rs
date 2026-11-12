@@ -7,8 +7,14 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::platform::{
-    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, Reply, SaveFailure,
+    Clock, ColorScheme, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore, Reply,
+    SaveFailure,
 };
+use observation_core::coverage::StaticLayers;
+use observation_core::coverage_job::{JobRequest, JobResponse};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
 
 /// Locks a fake's state; a test that panicked while holding it has failed already.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -376,6 +382,126 @@ impl<T> crate::commands::Tracked<T> for Counting<T> {
     fn get_mut(&mut self) -> &mut T {
         self.writes += 1;
         &mut self.value
+    }
+}
+
+/// A coverage worker the test plays: it records what is posted and hands
+/// back the messages the test queues. Clones share the script, so the test
+/// keeps one while the backend owns another.
+#[derive(Debug, Clone, Default)]
+pub struct ScriptedJobChannel(Rc<RefCell<Script>>);
+
+#[derive(Debug, Default)]
+struct Script {
+    posted: Vec<Vec<u8>>,
+    inbox: VecDeque<Reply>,
+    refuse: Option<String>,
+}
+
+impl ScriptedJobChannel {
+    /// Every request posted so far, decoded, oldest first.
+    pub fn posted(&self) -> Vec<JobRequest> {
+        let script = self.0.borrow();
+        let decode = |b: &Vec<u8>| JobRequest::decode(b).expect("the client posts requests");
+        script.posted.iter().map(decode).collect()
+    }
+
+    /// Queues an answer from the worker.
+    pub fn answer(&self, response: &JobResponse) {
+        self.queue(Ok(response.encode()));
+    }
+
+    /// Queues a raw message, or an error event (`Err`).
+    pub fn queue(&self, reply: Reply) {
+        self.0.borrow_mut().inbox.push_back(reply);
+    }
+
+    /// From now on every post fails with `why` (or succeeds again with `None`);
+    /// a refused post is not recorded.
+    pub fn refuse_posts(&self, why: Option<&str>) {
+        self.0.borrow_mut().refuse = why.map(str::to_owned);
+    }
+}
+
+impl JobChannel for ScriptedJobChannel {
+    fn post(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let mut script = self.0.borrow_mut();
+        if let Some(why) = &script.refuse {
+            return Err(why.clone());
+        }
+        script.posted.push(bytes.to_vec());
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Option<Reply> {
+        self.0.borrow_mut().inbox.pop_front()
+    }
+}
+
+/// A coverage worker that answers as `coverage-worker` does, in-process:
+/// `Ready` first, then each request in turn (an area's layers are built from
+/// its inputs; a job of another generation is `Stale`). As from a browser
+/// worker, answers arrive in a later receiving pass than the one their
+/// request was posted in (a pass ends when `receive` says `None`).
+pub struct LoopbackJobChannel {
+    area: Option<(u32, StaticLayers)>,
+    inbox: VecDeque<Reply>,
+    /// Answers not delivered yet: they arrive when the next pass starts.
+    next: VecDeque<Reply>,
+    /// A receiving pass has started and not ended.
+    in_pass: bool,
+}
+
+impl std::fmt::Debug for LoopbackJobChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoopbackJobChannel")
+            .field("generation", &self.area.as_ref().map(|(g, _)| g))
+            .field("inbox", &self.inbox.len())
+            .field("next", &self.next.len())
+            .finish()
+    }
+}
+
+impl Default for LoopbackJobChannel {
+    fn default() -> Self {
+        Self {
+            area: None,
+            inbox: VecDeque::from([Ok(JobResponse::Ready.encode())]),
+            next: VecDeque::new(),
+            in_pass: false,
+        }
+    }
+}
+
+impl JobChannel for LoopbackJobChannel {
+    fn post(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let response = match JobRequest::decode(bytes) {
+            Ok(JobRequest::LoadArea { generation, inputs }) => {
+                self.area = Some((generation, inputs.build()));
+                return Ok(());
+            }
+            Ok(JobRequest::Compute(job)) => match &self.area {
+                Some((g, layers)) if *g == job.generation => JobResponse::Done(job.run(layers)),
+                _ => JobResponse::Stale {
+                    generation: job.generation,
+                    camera_id: job.camera_id,
+                    key: job.key,
+                },
+            },
+            Err(e) => JobResponse::Failed(e.to_string()),
+        };
+        self.next.push_back(Ok(response.encode()));
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Option<Reply> {
+        if !self.in_pass {
+            self.inbox.append(&mut self.next);
+            self.in_pass = true;
+        }
+        let reply = self.inbox.pop_front();
+        self.in_pass = reply.is_some();
+        reply
     }
 }
 

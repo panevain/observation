@@ -5,17 +5,20 @@
 //! are computed once, out to the camera's longest range over the detail
 //! levels, with each cell's distance, so every detail level and Day/Night
 //! follows by distance alone: switching them recomputes nothing. The
-//! computing itself happens in [`backend`]: a Web Worker in the browser.
-
-mod backend;
+//! computing itself happens in the [`CoverageBackend`]: a Web Worker in the
+//! browser.
 
 use crate::input::OrbitCamera;
-use crate::state::{Area, Editor, Models, OverlayMode, Panels, Scene, Tool, terrain_of};
+use crate::platform::{self, Platform};
+use crate::state::{
+    Area, Editor, FACADE_CELL_M, GROUND_CELL_M, Models, OverlayMode, Panels, Scene, Tool,
+    terrain_of,
+};
 use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
-use backend::CoverageBackend;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use observation_client_model::coverage::backend::{self, WorkerNote};
 use observation_client_model::coverage::{self, Rung, Scope, apply, key};
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::{CoverageParams, RegionMask};
@@ -26,12 +29,22 @@ use std::hash::{Hash, Hasher};
 #[derive(Default, Resource, Deref, DerefMut)]
 pub struct CoverageState(coverage::CoverageState);
 
+/// Where coverage jobs run, as a non-send resource: in the browser it owns
+/// the worker, which is tied to the main thread.
+#[derive(Deref, DerefMut)]
+pub struct CoverageBackend(backend::CoverageBackend);
+
 pub struct CoveragePlugin;
 
 impl Plugin for CoveragePlugin {
     fn build(&self, app: &mut App) {
+        // The worker starts now, at build, so it has loaded by the time the
+        // first area arrives.
+        let platform = Platform::of(app.world());
+        let backend =
+            backend::CoverageBackend::new(platform::coverage_worker(), platform.clock.clone());
         app.init_resource::<CoverageState>()
-            .init_non_send::<CoverageBackend>()
+            .insert_non_send(CoverageBackend(backend))
             .insert_gizmo_config(
                 RegionGizmos,
                 GizmoConfig {
@@ -86,10 +99,18 @@ fn update_coverage(
     if area.is_changed() {
         // `Area` is only ever inserted, so this is a new area (on_area_loaded
         // has reset the state).
-        backend.load_area(&area.bundle);
+        backend.load_area(&area.bundle, GROUND_CELL_M, FACADE_CELL_M);
     }
     let layers = &area.layers;
-    let results = backend.drain(layers);
+    let (results, notes) = backend.drain(layers);
+    for note in notes {
+        match note {
+            WorkerNote::Ready => info!("coverage worker ready"),
+            WorkerNote::Failed(e) => {
+                warn!("coverage worker failed ({e}); computing coverage on the main thread");
+            }
+        }
+    }
     if results.is_empty() && !scene.is_changed() && !models.is_changed() && !state.rungs.is_empty()
     {
         return;
@@ -489,17 +510,24 @@ fn hatch(inner: Rect, outer: Rect, spacing: f32, mut line: impl FnMut(Vec2, Vec2
 mod tests {
     use super::*;
 
-    use crate::state::{FACADE_CELL_M, GROUND_CELL_M, Models};
+    use crate::state::Models;
+    use observation_client_model::testing::{FakeClock, LoopbackJobChannel};
     use observation_core::bundle::{OsmRoad, build_bundle};
     use observation_core::camera::{CameraKind, Catalog, DoriLevel, Lighting};
     use observation_core::coverage::{CoverageCounts, CoverageStats, Region, StaticLayers};
     use observation_core::geo::{BBox, LatLon};
     use observation_core::scene::AreaRef;
     use observation_core::terrain::Terrain;
+    use std::sync::Arc;
 
     /// An app running [`update_coverage`] on a straight street with two
     /// cameras looking along it, computing inline.
     fn app() -> App {
+        app_on(backend::CoverageBackend::default())
+    }
+
+    /// The same, with jobs run by `backend`.
+    fn app_on(backend: backend::CoverageBackend) -> App {
         let bbox = BBox::new(51.5, -0.001, 51.5009, 0.001).unwrap();
         let road = OsmRoad {
             osm_id: 1,
@@ -547,14 +575,14 @@ mod tests {
                 layers,
             })
             .init_resource::<CoverageState>()
-            .init_non_send::<CoverageBackend>()
+            .insert_non_send(CoverageBackend(backend))
             .add_systems(Update, update_coverage);
         app.update();
         app
     }
 
     fn submitted(app: &App) -> usize {
-        app.world().non_send::<CoverageBackend>().submitted
+        app.world().non_send::<CoverageBackend>().submitted()
     }
 
     /// The figures for the current settings, computed from scratch.
@@ -667,6 +695,41 @@ mod tests {
             .enabled = false;
         set(&mut app, |p| p.dori = DoriLevel::Custom);
         assert_eq!(stats(&app), whole);
+        assert_eq!(submitted(&app), 6);
+    }
+
+    /// Through a worker (one that answers as `coverage-worker` does), the
+    /// figures and the jobs per edit are those computed inline, a frame later.
+    #[test]
+    fn the_worker_gives_the_inline_figures_with_the_same_jobs() {
+        let worker = backend::CoverageBackend::new(
+            Some(Box::new(LoopbackJobChannel::default())),
+            Arc::new(FakeClock::at(0.0)),
+        );
+        let (mut inline, mut app) = (app(), app_on(worker));
+        let stats = |app: &App| app.world().resource::<CoverageState>().stats;
+        assert_eq!(submitted(&app), 2, "sent as on the inline path");
+        assert_eq!(stats(&app).street_seen_m2, 0.0, "not back yet");
+        app.update();
+        assert_eq!(stats(&app), stats(&inline));
+        assert_eq!(stats(&app), direct(&app));
+
+        let edits: [fn(&mut CoverageParams); 3] = [
+            |p| p.dori = DoriLevel::Identify,
+            |p| {
+                p.dori = DoriLevel::Custom;
+                p.custom_ppm = 10.0;
+            },
+            |p| p.subject_height_m = 1.6,
+        ];
+        for edit in edits {
+            set(&mut inline, edit);
+            set(&mut app, edit);
+            app.update();
+            assert_eq!(submitted(&app), submitted(&inline));
+            assert_eq!(stats(&app), stats(&inline));
+            assert_eq!(stats(&app), direct(&app));
+        }
         assert_eq!(submitted(&app), 6);
     }
 
