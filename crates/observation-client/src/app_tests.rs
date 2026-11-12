@@ -6,7 +6,8 @@
 //! and egui resources the systems read are inserted empty). The server is a
 //! [`FakeHttp`] that holds each request until the test answers it, the
 //! browser's storage is a [`MemoryStore`], and coverage jobs go through a
-//! [`LoopbackJobChannel`], which answers as the worker does, a frame later.
+//! [`LoopbackJobChannel`], which answers as the worker does, a frame later
+//! (for a narrower cone, see [`NarrowWorker`]).
 //!
 //! Each frame advances real time by more than `Time<Virtual>`'s largest
 //! step, so the two clocks differ: the autosave interval runs on virtual
@@ -25,6 +26,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy_egui::{EguiGlobalSettings, input::EguiWantsInput};
 use observation_client_model::coverage::backend;
 use observation_client_model::persist::{STORAGE_KEY, SaveState};
+use observation_client_model::platform::{JobChannel, Reply};
 use observation_client_model::testing::{
     FakeClock, FakeColorScheme, FakeFiles, FakeHttp, LoopbackJobChannel, MemoryStore, StoreOp,
 };
@@ -32,6 +34,7 @@ use observation_client_model::toasts::{ToastAction, ToastKind};
 use observation_client_model::vm::StatusVm;
 use observation_core::bundle::{AreaBundle, OsmRoad, build_bundle};
 use observation_core::camera::{CameraKind, CameraModel, CameraPlacement};
+use observation_core::coverage_job::JobRequest;
 use observation_core::geo::{BBox, LatLon};
 use observation_core::scene::{AreaRef, SceneFile};
 use observation_core::terrain::Terrain;
@@ -43,6 +46,28 @@ const FRAME: Duration = Duration::from_millis(400);
 
 /// Frames of virtual time (250 ms each) in one autosave interval (1.5 s).
 const INTERVAL_FRAMES: usize = 6;
+
+/// The loopback worker, but each job is run for a cone half as wide (its
+/// range unchanged, so the answer still counts as covering it): its answers
+/// differ from what the backend computes in place when it falls back.
+#[derive(Debug, Default)]
+struct NarrowWorker(LoopbackJobChannel);
+
+impl JobChannel for NarrowWorker {
+    fn post(&mut self, bytes: &[u8]) -> Result<(), String> {
+        match JobRequest::decode(bytes) {
+            Ok(JobRequest::Compute(mut job)) => {
+                job.cone.tan_half_h *= 0.5;
+                self.0.post(&JobRequest::Compute(job).encode())
+            }
+            _ => self.0.post(bytes),
+        }
+    }
+
+    fn receive(&mut self) -> Option<Reply> {
+        self.0.receive()
+    }
+}
 
 struct Harness {
     app: App,
@@ -80,8 +105,8 @@ impl Harness {
             .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME))
             .add_plugins(ClientPlugins);
         // Single-threaded, as on the web: systems with no order between
-        // them run in one fixed order, not the parallel executor's of the
-        // moment (with which an area showed one frame earlier or later).
+        // them (only commuting pairs are left so) run in one fixed order,
+        // not the parallel executor's of the moment.
         for label in [
             Startup.intern(),
             First.intern(),
@@ -96,7 +121,7 @@ impl Harness {
         }
         // The worker path, as in the browser (the native build has none).
         **app.world_mut().non_send_mut::<CoverageBackend>() = backend::CoverageBackend::new(
-            Some(Box::new(LoopbackJobChannel::default())),
+            Some(Box::new(NarrowWorker::default())),
             Arc::new(FakeClock::at(0.0)),
         );
         Self { app, http, store }
@@ -302,23 +327,34 @@ fn a_saved_scene_is_restored_loaded_covered_edited_and_saved_again() {
     assert_eq!(h.submitted(), 2);
     assert_eq!(h.street(), "0%", "the worker has not answered yet");
 
-    // The worker answers on the next frame (computed in place, the figure
-    // would have shown with the submission).
+    // The worker answers on the next frame. Its answers are for narrower
+    // cones: computed in place the figure would be 49% (and would have shown
+    // with the submission).
     h.frames(1);
-    assert_eq!(h.street(), "49%");
+    assert_eq!(h.street(), "43%", "the worker's answers");
     assert_eq!(h.submitted(), 2);
     assert_eq!(h.status().save, None, "not saved yet");
 
     // The next autosave writes the loaded scene.
     let ops = h.until_written();
     assert_eq!(ops, [StoreOp::Set(STORAGE_KEY.to_owned(), h.scene_json())]);
-    assert_eq!(h.stored().cameras.len(), 2);
+    // What restore put back is the saved scene; the load only adds where the
+    // area's data comes from.
+    let mut written = h.stored();
+    assert!(written.provenance.is_some());
+    written.provenance = None;
+    assert_eq!(
+        written.to_json(),
+        saved_scene(),
+        "the restored scene, unchanged"
+    );
     let first = h.saved_at();
     assert_eq!(h.status().save.expect("saved").text, "Saved");
 
-    // Unchanged, the scene is not written again.
+    // Unchanged, the scene is not written again, and the stamp stays.
     h.frames(INTERVAL_FRAMES);
     assert_eq!(h.store.ops(), []);
+    assert_eq!(h.save_state(), SaveState::Saved(first));
 
     // An edit: Delete removes the selected camera, and its coverage with
     // it, without a new job.
@@ -331,7 +367,10 @@ fn a_saved_scene_is_restored_loaded_covered_edited_and_saved_again() {
         (last.text.as_str(), &last.action),
         ("Deleted East", &Some(ToastAction::Undo))
     );
-    assert_eq!(h.street(), "24%");
+    // The two cameras mirror each other at either end of the street and
+    // their stretches do not overlap, so the one left covers half of the
+    // 43% (each figure is rounded).
+    assert_eq!(h.street(), "22%");
     assert_eq!(h.submitted(), 2);
 
     // The next autosave writes the edited scene.
