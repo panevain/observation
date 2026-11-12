@@ -6,58 +6,33 @@
 //! Undoing across an area change reloads that area and keeps the restored
 //! cameras.
 
-use crate::state::{LoadArea, Loading, Models, Scene, Snapshot, ToastAction, Tool, UiState};
+use crate::state::{
+    Editor, LoadArea, Loading, Models, Scene, Toasts, TrackModels, TrackScene, UiState,
+};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy_egui::input::EguiWantsInput;
-use observation_core::camera::CameraModel;
+use observation_client_model::history;
 
-/// Steps kept in each direction.
-const MAX_STEPS: usize = 100;
+pub use observation_client_model::history::HistoryOp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HistoryOp {
-    Undo,
-    Redo,
-}
+/// The undo history, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct History(history::History);
 
-#[derive(Default, Resource)]
-pub struct History {
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
-    /// The document as of the last recorded step; `None` until the first area
-    /// has loaded, so the start-up restore is not an undoable step.
-    last: Option<Snapshot>,
-    last_revision: u64,
-}
-
-impl History {
-    pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
-    }
-
-    /// What undoing would revert, for tooltips.
-    pub fn undo_label(&self) -> Option<String> {
-        Some(describe(self.undo.last()?, self.last.as_ref()?))
-    }
-
-    /// What redoing would reapply, for tooltips.
-    pub fn redo_label(&self) -> Option<String> {
-        Some(describe(self.last.as_ref()?, self.redo.last()?))
-    }
-}
+/// Undo or redo, asked for by a shortcut or the UI. Like any request, it is
+/// dropped while an edit is in progress or an area is in flight.
+#[derive(Debug, Clone, Copy, Message)]
+pub struct HistoryCommand(pub HistoryOp);
 
 pub struct HistoryPlugin;
 
 impl Plugin for HistoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<History>()
+            .add_message::<HistoryCommand>()
             .add_systems(Update, (shortcuts, record).chain());
     }
 }
@@ -73,7 +48,7 @@ fn shortcuts(
     mut events: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<EguiWantsInput>,
-    mut ui: ResMut<UiState>,
+    mut commands: MessageWriter<HistoryCommand>,
 ) {
     if wants.wants_any_keyboard_input() {
         events.clear();
@@ -91,197 +66,193 @@ fn shortcuts(
         let Key::Character(c) = &e.logical_key else {
             continue;
         };
-        match c.to_lowercase().as_str() {
-            "z" if shift => ui.history_request = Some(HistoryOp::Redo),
-            "z" => ui.history_request = Some(HistoryOp::Undo),
-            "y" => ui.history_request = Some(HistoryOp::Redo),
-            _ => {}
-        }
+        let op = match c.to_lowercase().as_str() {
+            "z" if shift => HistoryOp::Redo,
+            "z" => HistoryOp::Undo,
+            "y" => HistoryOp::Redo,
+            _ => continue,
+        };
+        commands.write(HistoryCommand(op));
     }
 }
 
+/// Records settled edits and runs the last undo or redo asked for.
 #[allow(clippy::too_many_arguments)]
 pub fn record(
     mut history: ResMut<History>,
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
     mut ui: ResMut<UiState>,
+    mut editor: ResMut<Editor>,
+    mut toasts: ResMut<Toasts>,
     loading: Res<Loading>,
     mouse: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
     wants: Res<EguiWantsInput>,
+    mut commands: MessageReader<HistoryCommand>,
     mut load: MessageWriter<LoadArea>,
 ) {
-    let h = &mut *history;
-    // An edit in progress (a drag, a focused text field) or an area in
-    // flight: neither record nor jump, or the half-done edit would be lost.
-    let busy = mouse.get_pressed().next().is_some()
+    // An edit in progress (a drag, a focused text field) or an area in flight.
+    let editing = mouse.get_pressed().next().is_some()
         || touches.iter().next().is_some()
         || wants.wants_any_keyboard_input()
-        || loading.area.is_some()
-        // Cameras from a flat-ground scene, still waiting for their area to
-        // lift them onto the terrain: recording them would let an undo sink them.
-        || scene.on_flat_ground;
-    if busy {
-        ui.history_request = None;
-        // The first snapshot can be taken mid-load: the start-up restore must
-        // be undoable to if the user replaces it before its area arrives.
-        if h.last.is_none() && scene.area.is_some() && !scene.on_flat_ground {
-            h.last = Some(scene.snapshot(&models));
-            h.last_revision = scene.revision;
-        }
+        || loading.area().is_some();
+    if !history.observe(&scene, &models, editing, &mut toasts) {
+        commands.clear();
         return;
     }
-
-    // Record a settled edit before any jump, so it is part of the history.
-    if scene.revision != h.last_revision && scene.area.is_some() {
-        let now = scene.snapshot(&models);
-        h.last_revision = scene.revision;
-        match h.last.take() {
-            None => h.last = Some(now),
-            Some(last) if last == now => h.last = Some(last),
-            Some(last) => {
-                // An offered Undo belongs to the step before this one.
-                ui.toasts
-                    .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
-                if let Some(text) = destructive(&last, &now) {
-                    ui.info_with(text, ToastAction::Undo);
-                }
-                h.undo.push(last);
-                if h.undo.len() > MAX_STEPS {
-                    h.undo.remove(0);
-                }
-                h.redo.clear();
-                h.last = Some(now);
-            }
-        }
-    }
-
-    let Some(op) = ui.history_request.take() else {
+    // The last request wins.
+    let Some(&HistoryCommand(op)) = commands.read().last() else {
         return;
     };
-    let (from, to) = match op {
-        HistoryOp::Undo => (&mut h.undo, &mut h.redo),
-        HistoryOp::Redo => (&mut h.redo, &mut h.undo),
-    };
-    // Check both before taking either: an empty stack must not drop `last`.
-    if from.is_empty() || h.last.is_none() {
-        return;
-    }
-    let (Some(target), Some(current)) = (from.pop(), h.last.take()) else {
+    let Some(outcome) = history.step(
+        op,
+        &mut TrackScene(&mut scene),
+        &mut TrackModels(&mut models),
+        &mut editor,
+        &mut toasts,
+    ) else {
         return;
     };
-    let (verb, what) = match op {
-        HistoryOp::Undo => ("Undid", describe(&target, &current)),
-        HistoryOp::Redo => ("Redid", describe(&current, &target)),
-    };
-    // Any offered Undo now points at a different step.
-    ui.toasts
-        .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
-    ui.info(format!("{verb}: {what}"));
-    if target.area != current.area
-        && let Some(area) = target.area
-    {
-        load.write(LoadArea {
-            area,
-            keep_cameras: true,
-        });
+    if let Some(area) = outcome.reload {
+        load.write(LoadArea::new(area, true));
     }
-    to.push(current);
-    scene.restore(&target, &mut models);
     // The notice described a restored or imported file; once undo or redo
     // moves away from that step it no longer describes the scene.
     ui.data_change = None;
-    // UI state that pointed into the old document.
-    if ui.selected.is_some_and(|id| scene.camera(id).is_none()) {
-        ui.selected = None;
-    }
-    if ui.selected.is_none() && ui.tool.needs_selection() {
-        ui.tool = Tool::Select;
-    }
-    h.last = Some(target);
-    h.last_revision = scene.revision;
 }
 
-/// A step that removes work worth offering an Undo for, described.
-fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
-    let lost = before
-        .cameras
-        .iter()
-        .filter(|c| !after.cameras.iter().any(|a| a.id == c.id))
-        .count();
-    if before.area != after.area && lost > 0 {
-        return Some(format!("New area loaded; {lost} camera(s) removed"));
-    }
-    match lost {
-        0 => deleted_model(before, after).map(|m| format!("Deleted model {}", m.display_name())),
-        1 => before
-            .cameras
-            .iter()
-            .find(|c| !after.cameras.iter().any(|a| a.id == c.id))
-            .map(|c| format!("Deleted {}", c.label)),
-        n => Some(format!("{n} cameras removed")),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::message::Messages;
+    use observation_core::camera::{CameraPlacement, Catalog};
+    use observation_core::provenance::DataChange;
+    use observation_core::scene::AreaRef;
 
-/// The custom model a step deleted, if deleting it is all the step did (as
-/// the inspector does; an import that drops a model changes more).
-fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a CameraModel> {
-    // Exhaustive, so a new field cannot be left out of the comparison.
-    let Snapshot {
-        area,
-        origin,
-        cameras,
-        params,
-        region,
-        custom_models: b,
-    } = before;
-    let a = &after.custom_models;
-    let rest_equal = *area == after.area
-        && *origin == after.origin
-        && *cameras == after.cameras
-        && *params == after.params
-        && *region == after.region;
-    if !rest_equal || b.len() != a.len() + 1 {
-        return None;
+    /// The history systems over the resources they use, with the demo area
+    /// loaded and one camera added as an undoable step.
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(Models::new(Catalog::default()))
+            .init_resource::<Scene>()
+            .init_resource::<UiState>()
+            .init_resource::<Editor>()
+            .init_resource::<Toasts>()
+            .init_resource::<Loading>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Touches>()
+            .init_resource::<EguiWantsInput>()
+            .add_message::<KeyboardInput>()
+            .add_message::<LoadArea>()
+            .add_plugins(HistoryPlugin);
+        {
+            let mut scene = app.world_mut().resource_mut::<Scene>();
+            scene.area = Some(AreaRef::Demo);
+            scene.touch();
+        }
+        app.update();
+        app.world_mut()
+            .resource_mut::<Scene>()
+            .add_camera(CameraPlacement {
+                id: 0,
+                label: "Porch".to_owned(),
+                model_id: "m".to_owned(),
+                position: [0.0, 3.0, 0.0],
+                yaw_deg: 0.0,
+                pitch_deg: 0.0,
+                roll_deg: 0.0,
+                color: None,
+                enabled: true,
+                group: None,
+            });
+        app.update();
+        assert!(app.world().resource::<History>().can_undo());
+        app
     }
-    // The first difference is the deleted model; the rest must follow in order.
-    let i = b.iter().zip(a).take_while(|(x, y)| x == y).count();
-    b.get(i).filter(|_| b.get(i + 1..) == a.get(i..))
-}
 
-/// A short name for the change from `before` to `after`.
-fn describe(before: &Snapshot, after: &Snapshot) -> String {
-    if before.area != after.area {
-        return "area change".to_owned();
+    fn command(app: &mut App, op: HistoryOp) {
+        app.world_mut()
+            .resource_mut::<Messages<HistoryCommand>>()
+            .write(HistoryCommand(op));
     }
-    let added: Vec<_> = after
-        .cameras
-        .iter()
-        .filter(|c| !before.cameras.iter().any(|b| b.id == c.id))
-        .collect();
-    let removed: Vec<_> = before
-        .cameras
-        .iter()
-        .filter(|c| !after.cameras.iter().any(|a| a.id == c.id))
-        .collect();
-    match (added.as_slice(), removed.as_slice()) {
-        ([c], []) => return format!("add {}", c.label),
-        ([], [c]) => return format!("delete {}", c.label),
-        ([], []) => {}
-        _ => return "camera changes".to_owned(),
+
+    fn undo(app: &mut App) {
+        command(app, HistoryOp::Undo);
     }
-    let changed: Vec<_> = after
-        .cameras
-        .iter()
-        .filter(|c| before.cameras.iter().any(|b| b.id == c.id && b != *c))
-        .collect();
-    match changed.as_slice() {
-        [c] => format!("edit {}", c.label),
-        [] if before.region != after.region => "region change".to_owned(),
-        [] if before.params != after.params => "analysis settings".to_owned(),
-        [] if before.custom_models != after.custom_models => "custom model".to_owned(),
-        [] => "change".to_owned(),
-        _ => "camera changes".to_owned(),
+
+    fn cameras(app: &App) -> usize {
+        app.world().resource::<Scene>().cameras.len()
+    }
+
+    #[test]
+    fn a_command_undoes_on_the_next_run_and_clears_the_data_notice() {
+        let mut app = app();
+        app.world_mut().resource_mut::<UiState>().data_change = Some(DataChange {
+            saved: Some(1),
+            now: Some(2),
+            saved_app: String::new(),
+            now_app: String::new(),
+        });
+        // As the UI does: written after this frame's `record`, seen by the next.
+        undo(&mut app);
+        app.update();
+        assert_eq!(cameras(&app), 0);
+        assert_eq!(app.world().resource::<UiState>().data_change, None);
+        assert!(app.world().resource::<Messages<LoadArea>>().is_empty());
+        // Read once: it does not undo again.
+        app.update();
+        assert!(!app.world().resource::<History>().can_undo());
+        assert!(app.world().resource::<History>().can_redo());
+    }
+
+    #[test]
+    fn a_command_is_dropped_while_busy_not_delayed() {
+        let mut app = app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        undo(&mut app);
+        app.update();
+        assert_eq!(cameras(&app), 1);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
+        app.update();
+        assert_eq!(cameras(&app), 1, "the request was dropped");
+        assert!(app.world().resource::<History>().can_undo());
+    }
+
+    #[test]
+    fn of_two_commands_in_one_frame_the_last_wins_and_both_are_used_up() {
+        // Redo then Undo: Redo alone has nothing to do, so only the last
+        // one can explain the undo.
+        let mut app = app();
+        command(&mut app, HistoryOp::Redo);
+        undo(&mut app);
+        app.update();
+        assert_eq!(cameras(&app), 0);
+        // Undo then Redo: the camera is back only if Redo was not dropped
+        // for coming second, and the next frame finds nothing left to run.
+        let mut app = app_with_redo();
+        undo(&mut app);
+        command(&mut app, HistoryOp::Redo);
+        app.update();
+        assert_eq!(cameras(&app), 1);
+        app.update();
+        assert_eq!(cameras(&app), 1);
+        assert!(app.world().resource::<History>().can_undo());
+        assert!(!app.world().resource::<History>().can_redo());
+    }
+
+    /// As [`app`], with the camera undone so a redo is offered.
+    fn app_with_redo() -> App {
+        let mut app = app();
+        undo(&mut app);
+        app.update();
+        assert_eq!(cameras(&app), 0);
+        app
     }
 }

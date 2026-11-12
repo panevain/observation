@@ -16,10 +16,10 @@ use observation_core::building::infer_heights;
 use observation_core::bundle::{OsmAddressPoint, OsmBuilding, OsmRoad, road_width_m};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::parse_utc;
+use observation_upstream::{BoundedQueue, QueueError};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::sync::Semaphore;
 
 use crate::config::Config;
 use crate::error::ApiError;
@@ -356,9 +356,8 @@ pub struct OverpassClient {
     client: reqwest::Client,
     /// Interpreters tried in order; transient failures move on to the next one.
     urls: Vec<String>,
-    in_flight: Semaphore,
-    /// Requests waiting for `in_flight`; bounded so distinct boxes can't build a backlog.
-    waiting: std::sync::atomic::AtomicUsize,
+    /// One request in flight; the waiters are bounded so distinct boxes can't build a backlog.
+    queue: BoundedQueue,
     /// Per interpreter: no requests to it until then, after it answered 429 or 504.
     cooldown_until: Mutex<Vec<Option<Instant>>>,
     retry_wait: Duration,
@@ -373,15 +372,6 @@ pub struct OverpassClient {
 /// Most Overpass requests allowed to queue behind the one in flight.
 const MAX_WAITING: usize = 3;
 
-/// Decrements the waiting counter when dropped.
-struct WaitGuard<'a>(&'a std::sync::atomic::AtomicUsize);
-
-impl Drop for WaitGuard<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
 impl OverpassClient {
     /// `client` must already carry the project `User-Agent`.
     pub fn new(client: reqwest::Client, config: &Config) -> Self {
@@ -393,8 +383,7 @@ impl OverpassClient {
             client,
             cooldown_until: Mutex::new(vec![None; urls.len()]),
             urls,
-            in_flight: Semaphore::new(1),
-            waiting: std::sync::atomic::AtomicUsize::new(0),
+            queue: BoundedQueue::new(1, MAX_WAITING),
             retry_wait: config.overpass_retry_wait,
             cooldown: config.overpass_cooldown,
             attempt_timeout: config.overpass_timeout,
@@ -424,22 +413,12 @@ impl OverpassClient {
     async fn fetch_inner(&self, bbox: &BBox, started: Instant) -> Result<OsmData, ApiError> {
         let deadline = started + self.budget;
         self.check_cooldown()?;
-        let guard = WaitGuard(&self.waiting);
-        if self
-            .waiting
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            >= MAX_WAITING
-        {
-            return Err(ApiError::RateLimited {
+        let _permit = self.queue.enter().await.map_err(|e| match e {
+            QueueError::Full => ApiError::RateLimited {
                 retry_after_secs: 10,
-            });
-        }
-        let _permit = self
-            .in_flight
-            .acquire()
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        drop(guard);
+            },
+            QueueError::Closed(e) => ApiError::Internal(e.to_string()),
+        })?;
         // We may have queued behind a request that got us rate limited.
         self.check_cooldown()?;
 
