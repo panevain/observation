@@ -4749,6 +4749,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "observation-core",
+ "observation-regions-api",
  "observation-upstream",
  "reqwest",
  "serde",
@@ -4763,6 +4764,15 @@ dependencies = [
 [[package]]
 name = "observation-regions-api"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http",
+ "observation-core",
+ "observation-upstream",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "observation-server"

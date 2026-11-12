@@ -34,8 +34,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use observation_core::geo::BBox;
 use observation_core::regions::{
-    RegionAction, RegionsSnapshot, SizesRequest, bearer_matches, is_valid_region_id,
+    ActionKind, RegionAction, RegionsSnapshot, SizesRequest, bearer_matches, is_valid_region_id,
 };
+use observation_regions_api::paths;
 use observation_upstream::{BoundedQueue, QueueError};
 use serde::Deserialize;
 use serde_json::json;
@@ -230,14 +231,14 @@ fn err(status: StatusCode, msg: impl Into<String>) -> AgentError {
 /// The agent's routes.
 pub fn app(agent: Arc<Agent>) -> Router {
     let api = Router::new()
-        .route("/regions", get(regions))
-        .route("/catalog", get(catalog_list))
-        .route("/catalog/sizes", post(catalog_sizes))
-        .route("/regions/import", post(import_region))
-        .route("/regions/cancel", post(cancel_region))
-        .route("/regions/delete", post(delete_region))
-        .route("/regions/settings", post(region_settings))
-        .route("/interpreter", post(interpreter))
+        .route(paths::REGIONS, get(regions))
+        .route(paths::CATALOG, get(catalog_list))
+        .route(paths::CATALOG_SIZES, post(catalog_sizes))
+        .route(paths::action(ActionKind::Import), post(import_region))
+        .route(paths::action(ActionKind::Cancel), post(cancel_region))
+        .route(paths::action(ActionKind::Delete), post(delete_region))
+        .route(paths::action(ActionKind::Settings), post(region_settings))
+        .route(paths::INTERPRETER, post(interpreter))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&agent),
             require_token,
