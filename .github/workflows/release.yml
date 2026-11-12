@@ -54,7 +54,7 @@ jobs:
           XTASK: ${{ steps.xtask.outputs.path }}
         # xtask built from the tag, as above; the allowed files (.config/release.toml's
         # prerelease list) come from the parent, never from the tag being checked.
-        run: '"${XTASK}" release verify-tag --tag "${TAG}" --sha "${GITHUB_SHA}"'
+        run: '"${XTASK}" release verify-tag --sha "${GITHUB_SHA}" -- "${TAG}"'
       - name: No unaccepted advisory
         run: mise run deny advisories
 

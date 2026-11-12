@@ -1,7 +1,9 @@
 //! release.yml's `verify` step before `release verify-tag` (kept below as it was) against the
 //! step as it is now (cut out of release.yml), both run with bash and the built binary in
 //! scenario repositories: the same stdout, stderr and exit status, except where a scenario says
-//! how they differ.
+//! how they differ. Both sides call the same built binary for the version and the file list, so
+//! a change to that shared code (`release version get`, `release unexpected-files`) moves both
+//! alike: those are pinned by their own tests, and this test also fixes which scenarios pass.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -235,6 +237,16 @@ fn the_step_checks_as_it_did_and_never_passes_where_it_failed() {
             None,
         ),
         scenario(
+            "pre-release with paths that extend listed ones",
+            "v1.3.0-dev.1",
+            "develop",
+            pre,
+            &[("Cargo.toml.bak", "x\n"), ("fuzz/Cargo.lock2", "x\n")],
+            None,
+        ),
+        scenario("tag --help", "--help", "main", "1.3.0", &[], None),
+        scenario("tag -x", "-x", "main", "1.3.0", &[], None),
+        scenario(
             "pre-release changes README",
             "v1.3.0-dev.1",
             "develop",
@@ -281,7 +293,10 @@ fn the_step_checks_as_it_did_and_never_passes_where_it_failed() {
         let new = run(&new_step(), s);
         let same = match s.differs {
             None => old == new,
-            Some("message") => old.0 != Some(0) && new.0 != Some(0),
+            // Both fail with git's message; only the exit status differs (128, then 1).
+            Some("message") => {
+                old.1 == new.1 && old.2 == new.2 && (old.0, new.0) == (Some(128), Some(1))
+            }
             Some(other) => panic!("unknown differs {other}"),
         };
         let passes = PASS.contains(&s.name);

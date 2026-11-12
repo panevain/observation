@@ -108,12 +108,11 @@ enum ReleaseCommand {
     /// pre-release: its parent is on origin/develop and it changes only the files on the
     /// parent's .config/release.toml prerelease list).
     VerifyTag {
-        /// The tag being published.
-        #[arg(long, value_name = "TAG")]
-        tag: String,
         /// The tagged commit's full id ($GITHUB_SHA).
         #[arg(long, value_name = "COMMIT")]
         sha: String,
+        /// The tag being published (after `--`, so that no tag is read as an option).
+        tag: String,
     },
     /// The workspace version (`version` in Cargo.toml's [workspace.package]).
     #[command(subcommand)]

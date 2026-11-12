@@ -213,11 +213,11 @@ mod tests {
             dir.path(),
             "v1.3.0-dev.1",
             SHA,
-            &pre("Cargo.toml\nREADME.md\n.config/release.toml\n"),
+            &pre("Cargo.toml\nREADME.md\n.config/release.toml\nCargo.toml.bak\n"),
             false,
         ));
         let want = "::error::v1.3.0-dev.1 changes more than the version: README.md\n\
-            .config/release.toml\n";
+            .config/release.toml\nCargo.toml.bak\n";
         assert_eq!((v.stdout.as_str(), v.failed), (want, true));
     }
 
