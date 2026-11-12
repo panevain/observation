@@ -9,7 +9,6 @@ use observation_core::provenance::DataChange;
 use observation_core::scene::AreaRef;
 use observation_core::terrain::{FLAT, Terrain};
 
-use crate::platform::SaveFailure;
 use observation_client_model::commands::Tracked;
 use observation_client_model::document::{self, Document};
 use observation_client_model::editor;
@@ -38,8 +37,6 @@ impl Default for AddressJump {
 pub struct UiState {
     /// Frame the selected camera in the 3D view (consumed by the input systems).
     pub focus_request: bool,
-    /// Whether the last autosave reached browser storage.
-    pub save: SaveState,
     /// Wall-clock seconds since start-up, for "saved just now" and the
     /// loading timer.
     pub now: f64,
@@ -56,7 +53,6 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             focus_request: false,
-            save: SaveState::Pending,
             now: 0.0,
             jump_to_address: false,
             data_change: None,
@@ -67,17 +63,6 @@ impl Default for UiState {
 /// The toasts on screen, as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
 pub struct Toasts(toasts::Toasts);
-
-/// Outcome of the autosave, shown in the status bar.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SaveState {
-    /// Nothing written yet this session.
-    Pending,
-    /// Written at this many seconds since start-up.
-    Saved(f64),
-    /// The browser refused the write.
-    Failed(SaveFailure),
-}
 
 /// The editing state (tool, selection, Place model, region draft, picked
 /// address), as a resource.

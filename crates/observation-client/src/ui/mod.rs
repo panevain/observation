@@ -75,6 +75,7 @@ fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>, mut toasts: ResMu
 pub struct UiData<'w> {
     pub tokens: Res<'w, Tokens>,
     pub ui: ResMut<'w, UiState>,
+    pub save: Res<'w, crate::persist::Autosave>,
     pub editor: ResMut<'w, Editor>,
     pub panels: ResMut<'w, Panels>,
     pub hover: ResMut<'w, Hover>,

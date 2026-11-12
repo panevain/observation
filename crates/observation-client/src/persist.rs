@@ -2,30 +2,18 @@
 
 use crate::platform::{KeyValueStore, Platform};
 use crate::state::{
-    AddressJump, Editor, LoadArea, Models, Panels, SaveState, Scene, Toasts, UiState,
+    AddressJump, Editor, LoadArea, Models, Panels, Scene, Toasts, TrackModels, TrackScene,
 };
 use crate::theme::UiFont;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use observation_client_model::persist::{
+    ADDRESS_JUMP_KEY, Autosaver, EXPORT_NAME, FONT_KEY, RestoreOutcome, SCENE_ACCEPT, SCENE_MIME,
+};
 use observation_core::scene::SceneFile;
-
-const STORAGE_KEY: &str = "observation.scene.v1";
-/// The chosen UI font (a [`UiFont::key`]).
-const FONT_KEY: &str = "observation.font";
-/// Whether an Address tool click scrolls the camera list (`on` or `off`).
-const ADDRESS_JUMP_KEY: &str = "observation.address-jump";
-/// File name of an exported scene.
-const EXPORT_NAME: &str = "observation-scene.json";
-/// What an exported scene is, and what the import dialog offers.
-const SCENE_MIME: &str = "application/json";
-const SCENE_ACCEPT: &str = ".json,application/json";
-/// Seconds between autosave checks.
-const AUTOSAVE_INTERVAL: f32 = 1.5;
 
 #[derive(Resource)]
 pub struct Persist {
-    last_saved: String,
-    timer: f32,
     /// The text of a picked file, or why it could not be read.
     import_tx: Sender<Result<String, String>>,
     import_rx: Receiver<Result<String, String>>,
@@ -35,13 +23,15 @@ impl Default for Persist {
     fn default() -> Self {
         let (import_tx, import_rx) = unbounded();
         Self {
-            last_saved: String::new(),
-            timer: 0.0,
             import_tx,
             import_rx,
         }
     }
 }
+
+/// The scene's autosave and how its last write went, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Autosave(Autosaver);
 
 /// Requests from the UI.
 #[derive(Debug, Clone, Copy, Message)]
@@ -55,6 +45,7 @@ pub struct PersistPlugin;
 impl Plugin for PersistPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Persist>()
+            .init_resource::<Autosave>()
             .add_message::<PersistAction>()
             .add_systems(Startup, restore)
             .add_systems(
@@ -113,27 +104,13 @@ fn restore(
     mut toasts: ResMut<Toasts>,
     platform: Res<Platform>,
 ) {
-    match platform
-        .local
-        .get(STORAGE_KEY)
-        .map(|s| SceneFile::from_json(&s))
-    {
-        Some(Ok(file)) => {
-            let area = file.area;
-            scene.load_file(file, &mut models);
-            load.write(LoadArea::new(area, true));
-        }
-        Some(Err(e)) => {
-            toasts.error_sticky(format!(
-                "Your saved scene could not be restored: {e}. Starting with the demo street instead"
-            ));
-            load.write(LoadArea::demo());
-        }
-        None => {
-            panels.help_open = true;
-            load.write(LoadArea::demo());
-        }
-    }
+    let area = RestoreOutcome::read(&*platform.local).apply(
+        &mut TrackScene(&mut scene),
+        &mut TrackModels(&mut models),
+        &mut panels,
+        &mut toasts,
+    );
+    load.write(area.into());
 }
 
 fn autosave(
@@ -141,31 +118,16 @@ fn autosave(
     real: Res<Time<Real>>,
     scene: Res<Scene>,
     models: Res<Models>,
-    mut p: ResMut<Persist>,
-    mut ui: ResMut<UiState>,
+    mut saver: ResMut<Autosave>,
     platform: Res<Platform>,
 ) {
-    p.timer += time.delta_secs();
-    if p.timer < AUTOSAVE_INTERVAL {
+    if !saver.due(time.delta_secs()) {
         return;
     }
-    p.timer = 0.0;
     let Some(file) = scene.to_file(&models) else {
         return;
     };
-    let json = file.to_json();
-    if json != p.last_saved {
-        match platform.local.set(STORAGE_KEY, &json) {
-            Ok(()) => {
-                ui.save = SaveState::Saved(real.elapsed_secs_f64());
-                p.last_saved = json;
-            }
-            Err(why) => {
-                // Leave `last_saved` alone so the next check tries again.
-                ui.save = SaveState::Failed(why);
-            }
-        }
-    }
+    saver.save(file.to_json(), real.elapsed_secs_f64(), &*platform.local);
 }
 
 fn handle_actions(

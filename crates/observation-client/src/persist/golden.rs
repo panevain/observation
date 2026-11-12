@@ -18,16 +18,15 @@
 //! `color_index`, no `roll_deg`, a gap in the ids), not a byte copy of a file
 //! an old build wrote; it is never rewritten.
 
-use super::{ADDRESS_JUMP_KEY, FONT_KEY, PersistAction, PersistPlugin, STORAGE_KEY};
+use super::{Autosave, PersistAction, PersistPlugin};
 use crate::platform::SaveFailure;
 use crate::platform::{KeyValueStore, Platform, PlatformPlugin};
-use crate::state::{
-    Editor, LoadArea, Models, Panels, SaveState, Scene, ToastKind, Toasts, UiState,
-};
+use crate::state::{Editor, LoadArea, Models, Panels, Scene, ToastKind, Toasts};
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use observation_client_model::document::Snapshot;
+use observation_client_model::persist::{ADDRESS_JUMP_KEY, FONT_KEY, STORAGE_KEY, SaveState};
 use observation_client_model::testing::{
     FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore, StoreOp,
 };
@@ -344,7 +343,7 @@ impl Harness {
     }
 
     fn save_state(&self) -> SaveState {
-        self.app.world().resource::<UiState>().save
+        self.app.world().resource::<Autosave>().status()
     }
 }
 

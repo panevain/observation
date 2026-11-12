@@ -5,10 +5,11 @@ use super::widgets::{RailKind, hint, keycap, rail_button, secondary};
 use crate::history::{HistoryCommand, HistoryOp};
 use crate::icons;
 use crate::persist::PersistAction;
-use crate::state::{LoadArea, SaveState, Tool};
+use crate::state::{LoadArea, Tool};
 use crate::theme::{UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
+use observation_client_model::persist::SaveState;
 use observation_core::scene::AreaRef;
 use observation_core::terrain::{TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL};
 
@@ -303,7 +304,7 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
 /// Whether the scene is safely in this browser's storage.
 fn save_status(ui: &mut egui::Ui, d: &UiData) {
     let t = *d.tokens;
-    let (icon, text, color, tip) = match d.ui.save {
+    let (icon, text, color, tip) = match d.save.status() {
         SaveState::Saved(at) => {
             let ago = (d.ui.now - at).max(0.0);
             let when = if ago < 60.0 {
