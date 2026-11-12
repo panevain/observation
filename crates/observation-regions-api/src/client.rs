@@ -243,3 +243,6 @@ impl RegionAgent for HttpRegionAgent {
         .boxed()
     }
 }
+
+#[cfg(test)]
+mod tests;
