@@ -105,9 +105,9 @@ jobs:
           echo "### Tagged v${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
       # git-flow's back-merge, from a branch of its own so that conflicts can be resolved on it
       # (main itself is protected). Auto-merge (merge commit) completes it once checks pass.
-      - name: Back-merge into develop
+      - name: Back-merge branch
+        id: backmerge
         env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
@@ -115,11 +115,16 @@ jobs:
             echo "develop already contains v${VERSION}."
             exit 0
           fi
-          branch="backmerge/v${VERSION}"
-          git switch -c "${branch}" "${GITHUB_SHA}"
-          scripts/ci-git.sh push "${branch}"
-          url="$(gh pr create --base develop --head "${branch}" \
-            --title "Back-merge v${VERSION} into develop" \
-            --body "Brings the v${VERSION} release commits from \`main\` back into \`develop\` (git-flow). Merges itself with a merge commit when the checks pass; if it conflicts (usually CHANGELOG.md or Cargo.lock), merge \`develop\` into \`${branch}\`, resolve, and push.")"
-          echo "${url}"
-          gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url} (conflicts?); merge it by hand."
+          git switch -c "backmerge/v${VERSION}" "${GITHUB_SHA}"
+          echo "needed=true" >> "${GITHUB_OUTPUT}"
+      - name: Back-merge into develop
+        if: steps.backmerge.outputs.needed == 'true'
+        uses: $/.github/actions/open-pr
+        with:
+          token: ${{ steps.bot.outputs.token }}
+          branch: backmerge/v${{ needs.plan.outputs.version }}
+          base: develop
+          title: Back-merge v${{ needs.plan.outputs.version }} into develop
+          body: "Brings the v${{ needs.plan.outputs.version }} release commits from `main` back into `develop` (git-flow). Merges itself with a merge commit when the checks pass; if it conflicts (usually CHANGELOG.md or Cargo.lock), merge `develop` into `backmerge/v${{ needs.plan.outputs.version }}`, resolve, and push."
+          auto-merge: merge
+          auto-merge-warning: " (conflicts?); merge it by hand."

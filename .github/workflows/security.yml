@@ -115,6 +115,24 @@ jobs:
   # `days` old: Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec
   # vulnerabilities at the base are exempt (cargo-audit finds those). Skipped outside pull
   # requests.
+  #
+  # The check that judges the pull request is the base's (HEAD^1, the base branch's commit
+  # that the merge commit was made on), never the pull request's own: xtask/Cargo.lock is one
+  # of the lockfiles it judges, so building the pull request's xtask would compile and run
+  # the very crates in question before the verdict. A base from before the port has the
+  # script, which runs from a directory outside this tree with `python3 -I`, so that no module
+  # in this tree can stand in for one it imports; otherwise the base's xtask is built in a
+  # worktree of the base, uncached, and run on this tree. A pull request that changes the
+  # check is judged by the check it replaces; its own tests run in ci.yml's test job.
+  #
+  # Nothing in this tree is built or run before the verdict, and no mise config of this tree
+  # is read: cargo-audit is installed from the base's mise config (mise.ci.lock), with neither
+  # mise's environment nor its shims reaching the check, and the base's toolchain is installed
+  # with rustup. What the pull request still decides is this job's definition (this file and
+  # the setup-mise action it uses), as for every pull_request workflow, and the configuration
+  # (.config/cargo-cooldown.toml, where exemptions are added with a reason), by design. A
+  # Dependabot pull request changes neither. The files the check reads from this tree must
+  # not be symbolic links.
   cargo-cooldown:
     name: cargo-cooldown
     if: github.event_name == 'pull_request'
@@ -128,10 +146,55 @@ jobs:
           persist-credentials: false
           # The pull request's merge commit and its first parent, the base branch.
           fetch-depth: 2
+      - name: Check out the base
+        run: git worktree add --detach "${RUNNER_TEMP}/base" HEAD^1
       - uses: $/.github/actions/setup-mise
         with:
           tools: cargo-audit
-      - run: mise run cooldown --base HEAD^1
+          dir: ${{ runner.temp }}/base
+          cache: "false"
+          shims: "false"
+          env: "false"
+      - name: Cooldown (the base's check, on this tree)
+        env:
+          BASE_TREE: ${{ runner.temp }}/base
+          TARGET_DIR: ${{ runner.temp }}/base-target
+          SCRIPT_DIR: ${{ runner.temp }}/base-script
+          # Runs the base's script with this tree as the root it would take from its own path.
+          RUN_SCRIPT: |
+            import importlib.util, pathlib, sys
+            script, root = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
+            spec = importlib.util.spec_from_file_location("cooldown", script)
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            m.ROOT, m.CONFIG = root, root / ".config" / "cargo-cooldown.toml"
+            sys.argv = [script, *sys.argv[3:]]
+            m.main()
+        run: |
+          set -euo pipefail
+          for p in .config .config/cargo-cooldown.toml Cargo.lock fuzz fuzz/Cargo.lock xtask xtask/Cargo.lock; do
+            if [ -L "${p}" ]; then
+              echo "::error::${p} is a symbolic link; the cooldown check reads only this tree's own files"
+              exit 1
+            fi
+          done
+          audit="$(cd "${BASE_TREE}" && mise which cargo-audit)"
+          PATH="$(dirname "${audit}"):${PATH}"
+          export PATH
+          if [ -f "${BASE_TREE}/scripts/check-cargo-cooldown.py" ]; then
+            mkdir -p "${SCRIPT_DIR}"
+            cp "${BASE_TREE}/scripts/check-cargo-cooldown.py" "${SCRIPT_DIR}/"
+            cd "${SCRIPT_DIR}"
+            /usr/bin/python3 -I -c "${RUN_SCRIPT}" check-cargo-cooldown.py "${GITHUB_WORKSPACE}" \
+              --base HEAD^1 --summary "${GITHUB_STEP_SUMMARY}"
+          else
+            # Built inside the base's tree, so that its rust-toolchain.toml and
+            # .cargo/config.toml apply.
+            (cd "${BASE_TREE}" &&
+              rustup toolchain install --profile minimal --no-self-update &&
+              cargo build --locked --quiet --manifest-path xtask/Cargo.toml --target-dir "${TARGET_DIR}")
+            "${TARGET_DIR}/debug/xtask" --repo "${GITHUB_WORKSPACE}" cooldown --base HEAD^1 --summary "${GITHUB_STEP_SUMMARY}"
+          fi
 
   trivy:
     name: trivy (image + repo)

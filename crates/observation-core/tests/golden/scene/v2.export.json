@@ -1,0 +1,141 @@
+{
+  "format": "observation-scene",
+  "version": 2,
+  "area": {
+    "kind": "osm",
+    "bbox": {
+      "south": -0.0005,
+      "west": 9.9994,
+      "north": 0.0005,
+      "east": 10.0006
+    }
+  },
+  "origin": {
+    "lat": 0.0,
+    "lon": 10.0
+  },
+  "cameras": [
+    {
+      "id": 1,
+      "label": "Porch",
+      "model_id": "acme-bullet-4k",
+      "position": [
+        3.5,
+        4.25,
+        21.0
+      ],
+      "yaw_deg": 0.0,
+      "pitch_deg": -15.0,
+      "roll_deg": 0.0,
+      "color": [
+        200,
+        64,
+        32
+      ],
+      "enabled": true,
+      "group": "Garage side"
+    },
+    {
+      "id": 2,
+      "label": "Shadowing model",
+      "model_id": "custom-bullet-4k-3",
+      "position": [
+        -10.0,
+        2.6,
+        20.0
+      ],
+      "yaw_deg": 45.0,
+      "pitch_deg": -10.0,
+      "roll_deg": 0.0,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "label": "Duplicate id",
+      "model_id": "custom-yard-1",
+      "position": [
+        0.0,
+        3.0,
+        -30.0
+      ],
+      "yaw_deg": 180.0,
+      "pitch_deg": -25.0,
+      "roll_deg": 0.0,
+      "enabled": true
+    }
+  ],
+  "custom_models": [
+    {
+      "id": "custom-yard-1",
+      "vendor": "",
+      "name": "Yard",
+      "kind": "Floodlight",
+      "hfov_deg": 140.0,
+      "vfov_deg": 75.0,
+      "resolution": [
+        1920,
+        1080
+      ],
+      "ir_range_m": 9.0,
+      "source": "https://example.com/yard",
+      "notes": null
+    },
+    {
+      "id": "custom-yard-copy-2",
+      "vendor": "",
+      "name": "Yard Copy",
+      "kind": "Floodlight",
+      "hfov_deg": 140.0,
+      "vfov_deg": 75.0,
+      "resolution": [
+        1920,
+        1080
+      ],
+      "ir_range_m": null,
+      "source": null,
+      "notes": "Planted link"
+    },
+    {
+      "id": "custom-bullet-4k-3",
+      "vendor": "Acme",
+      "name": "Bullet 4K",
+      "kind": "Bullet",
+      "hfov_deg": 98.0,
+      "vfov_deg": 52.0,
+      "resolution": [
+        3840,
+        2160
+      ],
+      "ir_range_m": null,
+      "source": null,
+      "notes": null
+    }
+  ],
+  "params": {
+    "dori": "Custom",
+    "lighting": "Day",
+    "subject_height_m": 1.0,
+    "custom_ppm": 80.0
+  },
+  "region": {
+    "points": [
+      [
+        -20.0,
+        -20.0
+      ],
+      [
+        20.0,
+        -20.0
+      ],
+      [
+        20.0,
+        25.0
+      ],
+      [
+        -20.0,
+        25.0
+      ]
+    ],
+    "enabled": false
+  }
+}

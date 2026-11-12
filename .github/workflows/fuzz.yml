@@ -56,7 +56,8 @@ jobs:
       - uses: $/.github/actions/setup-mise
       # cargo-fuzz is built from crates.io (mise.ci.toml) with the root rust-toolchain.toml's
       # toolchain, which mise must have installed itself (a toolchain installed by rustup alone
-      # does not count). Restored from mise's cache, cargo-fuzz is already there.
+      # does not count). setup-mise installs nothing here (no `tools`), so the action saves no
+      # cache this job could restore, and cargo-fuzz is built on every run.
       - name: Install cargo-fuzz
         run: |
           set -euo pipefail
@@ -115,21 +116,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      contents: read # the hedge checkout below
       issues: write # open or comment on the crash issue
     steps:
+      # GitHub documents that a `$/` action needs no checkout. This sparse checkout (and the
+      # contents: read above) is a deliberate hedge until a run in this repository has shown the
+      # composite below resolving without one; then both can be dropped.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/upsert-issue
       - name: Open or update the crash issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          title="Fuzz: the nightly run found a crash"
-          body="The nightly fuzz run failed: ${RUN_URL}. Crashing inputs are in its fuzz-artifacts artifact (kept 30 days); reproduce with \`cargo fuzz run <target> <file>\` in fuzz/."
-          n="$(gh issue list --repo "${REPO}" --state open --search "in:title \"${title}\"" --json number,title \
-            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
-          if [ -n "${n}" ]; then
-            gh issue comment "${n}" --repo "${REPO}" --body "${body}"
-          else
-            gh issue create --repo "${REPO}" --title "${title}" --body "${body}"
-          fi
+        uses: $/.github/actions/upsert-issue
+        with:
+          token: ${{ github.token }}
+          title: "Fuzz: the nightly run found a crash"
+          body: "The nightly fuzz run failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Crashing inputs are in its fuzz-artifacts artifact (kept 30 days); reproduce with `cargo fuzz run <target> <file>` in fuzz/."
+          existing: comment

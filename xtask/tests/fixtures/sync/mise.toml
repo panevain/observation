@@ -1,0 +1,19 @@
+min_version = { hard = "2026.7.15", soft = "2026.10.25" }
+
+[tools]
+trunk = "0.22.1"
+cargo-nextest = { version = "0.9.150", version_prefix = "cargo-nextest-" }
+typos = "1.51.1"
+
+[tasks.verify]
+tools.cosign = "3.1.4"
+run = "verify"
+
+[tasks.up]
+tools.fnox = "1.46.0"
+tools.cosign = "3.1.4"
+run = "up"
+
+[tasks.fonts]
+tools = { uv = "0.13.5" }
+run = "fonts"

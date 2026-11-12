@@ -1,0 +1,134 @@
+== clean
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old-enough` | 2.1.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== too new, and new lockfiles
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `abc` | 0.3.0 | 2026-11-10 | 0 d | TOO NEW |
+| `fresh` | 1.0.1 | 2026-11-04 | 6 d | TOO NEW |
+
+
+**2 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exemptions
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `anyver` | 3.0.0 | 2026-11-11 | 0 d | exempt: every version |
+| `gone` | 0.1.0 | 2026-11-11 | 0 d | TOO NEW |
+| `pinned` | 1.0.0 | 2026-11-09 | 2 d | exempt: fixes #12; reviewed the diff |
+| `today` | 1.0.0 | 2026-11-11 | 0 d | exempt: ends today |
+
+- the exemption for gone 0.1.0 expired on 2026-11-10; remove it
+- cargo-audit is not on PATH, so security fixes are not recognised; they need an exemption
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== security fix
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `twice` | 0.4.1 | 2026-11-10 | 1 d | TOO NEW |
+| `vuln` | 1.2.5 | 2026-11-10 | 1 d | security fix (RUSTSEC-2026-0101) |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== yanked version
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `pulled` | 0.9.0 | 2025-05-05 | 555 d | ok |
+
+-- stderr
+== index 404 and the API fallback
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ghost` | 0.1.0 | ? | unknown | NOT FOUND on crates.io |
+| `nopubtime` | 1.0.0 | 2017-02-20 | 3550 d | ok |
+| `unindexed` | 2.0.0 | 2026-11-10 | 0 d | TOO NEW |
+
+
+**2 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== network error
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== index server error
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.HTTPError: HTTP Error 503: recorded
+== no cargo-audit
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old-enough` | 2.1.0 | 2026-01-01 | 314 d | ok |
+
+- cargo-audit is not on PATH, so security fixes are not recognised; they need an exemption
+
+-- stderr
+== cargo-audit printed no JSON
+exit 1
+-- stdout
+-- stderr
+error: couldn't fetch advisory database
+cargo-audit produced no JSON
+== nothing added
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+- the exemption for x expired on 2020-01-01; remove it
+
+-- stderr
+== unknown base
+exit 1
+-- stdout
+-- stderr
+--base no-such-rev: not a commit in this repository (fetch it first?)
+== exemption without a reason
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: every exemption needs a name and a reason: {'name': 'x', 'version': '1.0', 'until': datetime.date(2026, 12, 1)}
+== days not a number
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days

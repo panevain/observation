@@ -15,6 +15,10 @@ on:
         description: Open the hotfix even when no advisory or image finding needs one (re-pins the base images)
         type: boolean
         default: false
+      dry_run:
+        description: Dry run (the checks, summary and artifacts only; no branch, pull request or tag)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -111,7 +115,7 @@ jobs:
   open-pr:
     name: open hotfix PR
     needs: prepare
-    if: needs.prepare.outputs.ready == 'true'
+    if: needs.prepare.outputs.ready == 'true' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: bot
@@ -134,7 +138,7 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Open pull request
+      - name: Commit
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           BOT: ${{ steps.bot.outputs.app-slug }}
@@ -142,13 +146,17 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '${VERSION}'"; exit 1; }
-          branch="hotfix/${VERSION}"
           git apply --index "${RUNNER_TEMP}/hotfix/hotfix.patch"
           scripts/ci-git.sh identity "${BOT}"
-          git switch -c "${branch}"
+          git switch -c "hotfix/${VERSION}"
           git -c core.hooksPath=/dev/null commit -m "hotfix: ${VERSION} (security updates)"
-          scripts/ci-git.sh push "${branch}"
-          url="$(gh pr create --base main --head "${branch}" --title "hotfix: ${VERSION}" \
-            --body-file "${RUNNER_TEMP}/hotfix/body.md")"
-          echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
-          gh pr merge --auto --merge "${url}"
+      - name: Open pull request
+        uses: $/.github/actions/open-pr
+        with:
+          token: ${{ steps.bot.outputs.token }}
+          branch: hotfix/${{ needs.prepare.outputs.version }}
+          base: main
+          title: "hotfix: ${{ needs.prepare.outputs.version }}"
+          body-file: ${{ runner.temp }}/hotfix/body.md
+          summary: true
+          auto-merge: merge

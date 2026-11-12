@@ -19,4 +19,5 @@
 /.claude/settings.local.json
 /CLAUDE.local.md
 /lcov.info
+/coverage.json
 __pycache__/

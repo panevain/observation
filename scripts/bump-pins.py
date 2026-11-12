@@ -4,7 +4,7 @@
 CI's cosign), the CI mise version (setup-mise, mise.toml's min_version and the Dockerfile's mise
 image), Overpass in the Dockerfile and the Rust toolchain (rust-toolchain.toml, which mise.lock
 follows; Dependabot moves fuzz/'s nightly). Used by pins.yml (weekly), which then runs
-`mise run lock` and `mise run sync` and opens a PR.
+`mise run lock` and the sync check (`xtask sync`) and opens a PR.
 
 A release is taken once it is COOLDOWN_DAYS old (as Dependabot's cooldown does), and only a
 stable one. Overpass publishes no checksums, so its tarball is hashed here; mise records the

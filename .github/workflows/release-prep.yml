@@ -33,6 +33,10 @@ on:
         type: choice
         options: [none, dev]
         default: none
+      dry_run:
+        description: Dry run (the checks, summary and artifacts only; no branch, pull request or tag)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -118,6 +122,7 @@ jobs:
   prepare:
     name: open release PR
     needs: [plan, treemap]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # The bot app's key lives in this environment (develop, main and v* tags only). The app
@@ -185,7 +190,7 @@ jobs:
   pretag:
     name: tag pre-release
     needs: plan
-    if: needs.plan.outputs.prerelease == 'true'
+    if: needs.plan.outputs.prerelease == 'true' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # The app pushes the tag (it may create v* tags), so the push starts Release.
