@@ -6,72 +6,44 @@ use crate::theme::{Tokens, strong_family};
 use crate::ui::UiData;
 use crate::ui::widgets::{bar, hint, section_title, stat};
 use bevy_egui::egui::{self, RichText};
-use observation_core::camera::{DoriLevel, Lighting};
+use observation_client_model::vm::{CoverageSummaryVm, settings_line};
 
 /// Always in view above the tabs: the figures, the region they are limited
 /// to, what they leave out, the analysis settings they depend on and the
 /// date of the map data under them (and whether it changed since a restored
 /// or imported scene was saved).
 pub(super) fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
-    let in_region = d.scene.region.as_ref().is_some_and(|r| r.is_active());
+    let vm = CoverageSummaryVm::new(&d.scene, &d.coverage);
     ui.horizontal(|ui| {
-        ui.label(section_title(
-            t,
-            if in_region {
-                "Coverage inside region"
-            } else {
-                "Coverage"
-            },
-        ));
+        ui.label(section_title(t, vm.title));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            region_menu(ui, d, t, in_region);
+            region_menu(ui, d, t, vm.in_region);
         });
     });
     crate::ui::provenance::data_change_notice(ui, t, &mut d.ui);
-    let s = d.coverage.stats;
-    if d.scene.cameras.is_empty() {
-        hint(
+    match &vm.figures {
+        None => hint(
             ui,
             t,
             "No cameras yet: the figures appear once you place one.",
-        );
-    } else {
-        ui.columns(3, |c| {
-            stat(&mut c[0], t, s.street_fraction(), "of street seen", t.text);
-            stat(
-                &mut c[1],
-                t,
-                s.street_multi_fraction(),
-                "by 2+ cameras",
-                t.text,
-            );
-            stat(&mut c[2], t, s.facade_fraction(), "of walls seen", t.text);
-        });
-        bar(ui, t, s.street_fraction(), t.coverage_color(1));
-        ladder(ui, d, t);
-        hint(
-            ui,
-            t,
-            &format!(
-                "{:.0} m² of {:.0} m² street surface · {:.0} m² open ground seen",
-                s.street_seen_m2, s.street_m2, s.open_ground_seen_m2
-            ),
-        );
-        crate::ui::provenance::caveats(ui, t);
+        ),
+        Some(figures) => {
+            let [street, multi, walls] = figures.stats;
+            ui.columns(3, |c| {
+                stat(&mut c[0], t, street.0, street.1, t.text);
+                stat(&mut c[1], t, multi.0, multi.1, t.text);
+                stat(&mut c[2], t, walls.0, walls.1, t.text);
+            });
+            bar(ui, t, figures.street, t.coverage_color(1));
+            ladder(ui, d, t, &vm);
+            hint(ui, t, &figures.areas);
+            crate::ui::provenance::caveats(ui, t);
+        }
     }
-    let p = d.scene.params;
-    let dori = match p.dori {
-        DoriLevel::Custom => format!("Custom {:.0} px/m", p.custom_ppm),
-        l => l.label().to_owned(),
-    };
-    let light = match p.lighting {
-        Lighting::Day => "Day",
-        Lighting::Night => "Night",
-    };
     let text = format!(
-        "{}  {dori} · {light} · {:.2} m high",
+        "{}  {}",
         icons::SLIDERS_HORIZONTAL,
-        p.subject_height_m
+        settings_line(&d.scene.params)
     );
     if ui
         .add(
@@ -92,51 +64,35 @@ pub(super) fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
 /// The street seen at every detail level under the current lighting, from
 /// Detect down to Identify (and Custom when selected), with the selected level
 /// highlighted. Clicking a level selects it.
-fn ladder(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
+fn ladder(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, vm: &CoverageSummaryVm) {
     // Nothing counted yet (no area loaded).
-    if d.coverage.ladder().next().is_none() {
+    if vm.ladder.is_empty() {
         return;
     }
-    let p = d.scene.params;
-    let light = match p.lighting {
-        Lighting::Day => "by day",
-        Lighting::Night => "at night",
-    };
     let mut pick = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        hint(ui, t, &format!("Street seen {light}: "));
-        for (i, (level, stats)) in d.coverage.ladder().enumerate() {
+        hint(ui, t, &vm.ladder_lead);
+        for (i, rung) in vm.ladder.iter().enumerate() {
             if i > 0 {
                 hint(ui, t, " · ");
             }
-            let name = match level {
-                DoriLevel::Custom => format!("Custom {:.0} px/m", p.pixels_per_metre()),
-                l => l.label().to_owned(),
-            };
-            let text = format!("{name} {:.0}%", stats.street_fraction() * 100.0);
-            let selected = level == p.dori;
-            let mut rich = RichText::new(text).size(t.font.caption);
-            rich = if selected {
+            let mut rich = RichText::new(&rung.text).size(t.font.caption);
+            rich = if rung.selected {
                 rich.family(strong_family()).color(t.accent)
             } else {
                 rich.color(t.text_muted)
             };
-            let tip = if selected {
-                format!("The figures above are at {name}")
-            } else {
-                format!("Show the figures and overlay at {name}")
-            };
             if ui
                 .add(egui::Button::new(rich).frame(false))
-                .on_hover_text(tip)
+                .on_hover_text(&rung.tip)
                 .clicked()
             {
-                pick = Some(level);
+                pick = Some(rung.level);
             }
         }
     });
-    if let Some(level) = pick.filter(|l| *l != p.dori) {
+    if let Some(level) = pick.filter(|l| *l != d.scene.params.dori) {
         d.scene.params.dori = level;
         d.scene.touch();
     }

@@ -8,7 +8,7 @@ use crate::theme::{NO_FILL, Tokens, strong_family};
 use crate::ui::UiData;
 use crate::ui::actions::{self, CameraAction};
 use bevy_egui::egui::{self, RichText};
-use observation_core::camera::CameraModel;
+use observation_client_model::vm::CameraListVm;
 
 /// In place of an empty list: what to do first.
 pub(super) fn empty_state(ui: &mut egui::Ui, t: &Tokens) {
@@ -49,8 +49,6 @@ pub(super) fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let mut hovered = None;
     ui.spacing_mut().item_spacing.y = 2.0;
     let groups = d.addresses.groups(&d.scene.cameras);
-    // Headings only help once something has an address or a group.
-    let headed = !matches!(groups.as_slice(), [(None, _)] | []);
     // The address picked with the Address tool: its group is shaded, and
     // scrolled into view once after a click.
     let picked = picked_group(d, &groups);
@@ -58,31 +56,33 @@ pub(super) fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     if jump {
         d.ui.jump_to_address = false;
     }
-    for (group, cameras) in &groups {
-        let is_picked = group.is_some() && *group == picked;
-        // The picked address keeps its heading, which is what gets shaded.
-        let heading = headed && (cameras.len() > 1 || is_picked);
-        if heading {
-            let heading = group_heading(ui, t, *group, cameras.len(), is_picked);
-            if is_picked && jump {
+    let vm = CameraListVm::new(
+        &groups,
+        picked,
+        &d.models,
+        d.editor.selected,
+        d.hover.hover_scene,
+    );
+    for group in &vm.groups {
+        if group.heading {
+            let heading = group_heading(ui, t, group.name, group.rows.len(), group.picked);
+            if group.picked && jump {
                 heading.scroll_to_me(Some(egui::Align::TOP));
             }
         }
-        let subtitle = (headed && !heading).then(|| group.unwrap_or(NO_ADDRESS));
-        for &c in cameras {
-            let model = d
-                .models
-                .get(&c.model_id)
-                .map_or_else(|| "Unknown model".to_owned(), CameraModel::display_name);
+        let subtitle = group.subtitled.then(|| group.name.unwrap_or(NO_ADDRESS));
+        for r in &group.rows {
+            let c = r.camera;
+            let model = &r.model;
             let row = CameraRow {
                 label: &c.label,
-                model: &model,
+                model,
                 subtitle,
                 glyph: icons::kind(d.models.kind_of(&c.model_id)),
                 color: camera_color(&d.scene, c, &d.models, t),
                 enabled: c.enabled,
-                selected: d.editor.selected == Some(c.id),
-                highlighted: d.hover.hover_scene == Some(c.id),
+                selected: r.selected,
+                highlighted: r.highlighted,
             };
             let (resp, eye) = camera_row(ui, t, &row);
             if resp.hovered() || eye.hovered() {
@@ -94,7 +94,7 @@ pub(super) fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
                 // Also for the selected row: back to its settings.
                 action = Some((c.id, CameraAction::Select));
             }
-            resp.on_hover_text(&model).context_menu(|ui| {
+            resp.on_hover_text(model).context_menu(|ui| {
                 for a in [
                     CameraAction::Select,
                     CameraAction::Focus,
