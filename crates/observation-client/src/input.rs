@@ -254,7 +254,7 @@ fn keyboard(
         panels: &mut panels,
         toasts: &mut toasts,
     };
-    if commands::keys(&mut ctx, &pressed) {
+    if commands::keys(&mut ctx, &pressed, browser_modifier(&keys)) {
         ui.focus_request = true;
     }
     if std::mem::take(&mut ui.focus_request)
@@ -265,6 +265,19 @@ fn keyboard(
         o.focus = Vec3::from_array(c.position).with_y(0.0);
         o.distance = o.distance.min(60.0);
     }
+}
+
+/// Whether Ctrl, Cmd (Super) or Alt is held: the tool and panel shortcuts
+/// then leave the key to the browser. Shift is not one of them.
+fn browser_modifier(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.any_pressed([
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ])
 }
 
 /// The keys of a shortcut.
@@ -725,4 +738,58 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
     let right = Vec3::new(c, 0.0, -s);
     let fwd = Vec3::new(-s, 0.0, -c);
     orbit.focus += (-right * delta.x + fwd * delta.y) * scale;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use observation_client_model::commands::Key;
+
+    #[test]
+    fn ctrl_cmd_and_alt_count_as_browser_modifiers_but_shift_does_not() {
+        for (key, expected) in [
+            (KeyCode::ControlLeft, true),
+            (KeyCode::ControlRight, true),
+            (KeyCode::SuperLeft, true),
+            (KeyCode::SuperRight, true),
+            (KeyCode::AltLeft, true),
+            (KeyCode::AltRight, true),
+            (KeyCode::ShiftLeft, false),
+            (KeyCode::ShiftRight, false),
+        ] {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            keys.press(key);
+            keys.press(KeyCode::KeyR);
+            assert_eq!(browser_modifier(&keys), expected, "{key:?}");
+        }
+    }
+
+    /// The page hands these keys to the browser while a modifier is held;
+    /// its list must match the keys of the shortcuts that then do nothing.
+    #[test]
+    fn the_page_leaves_exactly_the_yielding_shortcut_keys_to_the_browser() {
+        let page = include_str!("../../../web/index.html");
+        let line = page
+            .lines()
+            .find(|l| l.contains("const BROWSER_KEYS"))
+            .expect("web/index.html lists BROWSER_KEYS");
+        let mut listed: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
+        let mut expected: Vec<String> = Tool::ALL
+            .into_iter()
+            .map(Key::Tool)
+            .chain([
+                Key::Escape,
+                Key::Finish,
+                Key::Erase,
+                Key::Help,
+                Key::Focus,
+                Key::Overlay,
+            ])
+            .filter(|k| k.yields_to_modifiers())
+            .flat_map(|k| key_codes(k).iter().map(|c| format!("{c:?}")))
+            .collect();
+        listed.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(listed, expected);
+    }
 }

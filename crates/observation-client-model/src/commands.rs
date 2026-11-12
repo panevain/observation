@@ -108,10 +108,26 @@ pub enum Key {
     Overlay,
 }
 
-/// Runs the shortcuts whose keys `pressed` says went down this frame.
-/// Returns whether one asked to focus the view on the selected camera,
-/// which the client does.
-pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool) -> bool {
+impl Key {
+    /// The tool and panel shortcuts, plain keys that the browser also uses
+    /// with Ctrl, Cmd or Alt (Ctrl+R reloads, Ctrl+P prints, Ctrl+F finds):
+    /// they do nothing while one of those is held, and the page leaves those
+    /// keys to the browser (web/index.html). Esc, Enter, Delete and
+    /// Backspace work as without the modifier.
+    pub fn yields_to_modifiers(self) -> bool {
+        matches!(
+            self,
+            Self::Tool(_) | Self::Help | Self::Focus | Self::Overlay
+        )
+    }
+}
+
+/// Runs the shortcuts whose keys `pressed` says went down this frame;
+/// `modifier_held` is whether Ctrl, Cmd (Meta) or Alt is held, but not
+/// Shift (see [`Key::yields_to_modifiers`]). Returns whether one asked to
+/// focus the view on the selected camera, which the client does.
+pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: bool) -> bool {
+    let pressed = |key: Key| !(modifier_held && key.yields_to_modifiers()) && pressed(key);
     for tool in Tool::ALL {
         if pressed(Key::Tool(tool)) {
             ctx.editor.tool = tool;
@@ -522,7 +538,7 @@ mod tests {
         }
 
         fn press(&mut self, keys: &[Key]) -> bool {
-            super::keys(&mut self.ctx(), &|k| keys.contains(&k))
+            super::keys(&mut self.ctx(), &|k| keys.contains(&k), false)
         }
     }
 
@@ -851,7 +867,7 @@ mod tests {
                 panels: &mut f.panels,
                 toasts: &mut f.toasts,
             };
-            super::keys(&mut ctx, &|k| keys.contains(&k));
+            super::keys(&mut ctx, &|k| keys.contains(&k), false);
         };
         press(&mut f, &mut doc, &[]);
         press(&mut f, &mut doc, &[Key::Focus, Key::Help, Key::Overlay]);
@@ -1152,7 +1168,7 @@ mod tests {
                 panels: &mut f.panels,
                 toasts: &mut f.toasts,
             };
-            super::keys(&mut ctx, &|k| [Key::Erase, Key::Finish].contains(&k));
+            super::keys(&mut ctx, &|k| [Key::Erase, Key::Finish].contains(&k), false);
         }
         assert_eq!(doc.writes, 0);
         assert_eq!(doc.value.cameras.len(), 1);
@@ -1181,5 +1197,57 @@ mod tests {
         assert_eq!(f.editor.tool, Tool::Address);
         f.press(&[Key::Tool(Tool::Region), Key::Tool(Tool::Place)]);
         assert_eq!(f.editor.tool, Tool::Region);
+    }
+
+    #[test]
+    fn tool_and_panel_keys_do_nothing_while_a_modifier_is_held() {
+        let mut f = Fixture::default().with_camera();
+        let all = [Key::Tool(Tool::Region), Key::Help, Key::Overlay, Key::Focus];
+        let focus = super::keys(&mut f.ctx(), &|k| all.contains(&k), true);
+        assert!(!focus);
+        assert_eq!(f.editor.tool, Tool::Select);
+        assert!(!f.panels.help_open);
+        assert_eq!(f.panels.overlay, OverlayMode::Overlap);
+        for tool in Tool::ALL {
+            super::keys(&mut f.ctx(), &|k| k == Key::Tool(tool), true);
+            assert_eq!(f.editor.tool, Tool::Select, "{tool:?}");
+        }
+        // Without the modifier they work as before.
+        assert!(super::keys(&mut f.ctx(), &|k| all.contains(&k), false));
+        assert_eq!(f.editor.tool, Tool::Region);
+    }
+
+    #[test]
+    fn esc_enter_and_delete_work_with_a_modifier_held() {
+        let mut f = Fixture::default().with_camera();
+        f.editor.tool = Tool::Region;
+        f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
+        super::keys(&mut f.ctx(), &|k| k == Key::Finish, true);
+        assert!(f.doc.region.is_some());
+        super::keys(&mut f.ctx(), &|k| k == Key::Erase, true);
+        assert!(f.doc.cameras.is_empty());
+        f.panels.help_open = true;
+        super::keys(&mut f.ctx(), &|k| k == Key::Escape, true);
+        assert!(!f.panels.help_open);
+    }
+
+    #[test]
+    fn only_the_tool_and_panel_keys_yield_to_modifiers() {
+        let yielding: Vec<Key> = Tool::ALL
+            .into_iter()
+            .map(Key::Tool)
+            .chain([
+                Key::Escape,
+                Key::Finish,
+                Key::Erase,
+                Key::Help,
+                Key::Focus,
+                Key::Overlay,
+            ])
+            .filter(|k| k.yields_to_modifiers())
+            .collect();
+        let mut expected: Vec<Key> = Tool::ALL.into_iter().map(Key::Tool).collect();
+        expected.extend([Key::Help, Key::Focus, Key::Overlay]);
+        assert_eq!(yielding, expected);
     }
 }
