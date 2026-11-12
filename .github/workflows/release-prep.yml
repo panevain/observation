@@ -337,6 +337,7 @@ jobs:
           echo "${url}" | tee -a "${GITHUB_STEP_SUMMARY}"
           gh pr merge --auto --merge "${url}" || echo "::warning::could not enable auto-merge on ${url}; merge it by hand when it is green."
 
+  # Never add a cache restore or an artifact download here: this job tags, and `plan` builds.
   # Pre-releases: a version-bump commit on top of develop, reachable only from its tag.
   # Release (release.yml) checks that the tag's parent is on develop and that the commit only
   # moves versions, then publishes it as a GitHub pre-release.
