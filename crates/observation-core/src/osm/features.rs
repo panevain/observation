@@ -8,8 +8,13 @@ use crate::geo::{BBox, LatLon};
 /// hands them over, and the date of the OSM data they come from.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct OsmFeatures<'a> {
+    /// Buildings as parsed, in the order the bundle keeps (façade cell
+    /// indices follow it).
     pub buildings: &'a [OsmBuilding],
+    /// Roads as parsed; those with fewer than two points are left out of
+    /// the bundle.
     pub roads: &'a [OsmRoad],
+    /// Address nodes, each matched to the building it falls in.
     pub addresses: &'a [OsmAddressPoint],
     /// When the OSM data was last updated (Overpass's `osm_base`), Unix
     /// seconds, if known.
