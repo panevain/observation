@@ -141,6 +141,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn grid_for_uses_the_bundle_projection() {
+        // A bundle whose origin is not its bbox centre (a decoded bundle may
+        // carry any origin): the grid is laid out in the bundle's own frame.
+        let mut bundle = crate::testing::sample_bundle();
+        let c = bundle.bbox.center();
+        bundle.origin = crate::geo::LatLon::new(c.lat + 0.0005, c.lon - 0.0005);
+        let proj = bundle.projection();
+        let corner = |lat, lon| {
+            let w = proj.to_world(crate::geo::LatLon::new(lat, lon));
+            Vec2::new(w[0] as f32, w[1] as f32)
+        };
+        let nw = corner(bundle.bbox.north, bundle.bbox.west);
+        let se = corner(bundle.bbox.south, bundle.bbox.east);
+        let grid = StaticLayers::grid_for(&bundle, 1.0);
+        assert_eq!(grid, GroundGrid::covering(nw, se, 1.0));
+        // About 55 m east and south of where a centred projection puts it.
+        let centred = crate::geo::Projection::new(c).world_extent(&bundle.bbox).0;
+        let shift = grid.min - centred;
+        assert!(
+            (shift.x - 34.6).abs() < 1.0 && (shift.y - 55.6).abs() < 1.0,
+            "{shift}"
+        );
+    }
+
+    #[test]
     fn masks() {
         let l = layers();
         let street = l.street_mask.iter().filter(|b| **b).count();
