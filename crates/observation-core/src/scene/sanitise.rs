@@ -366,6 +366,25 @@ mod tests {
             SceneFile::from_json(&s.to_json()),
             Err(SceneError::TooNew(_))
         ));
+        // Inside a step, too: two limits broken in one step, the first
+        // check reports.
+        let mut s = scene();
+        s.format = "other".into();
+        s.version = SCENE_VERSION + 1;
+        assert!(matches!(
+            SceneFile::from_json(&s.to_json()),
+            Err(SceneError::Format(_))
+        ));
+        let mut s = scene();
+        s.cameras = vec![s.cameras[0].clone(); MAX_CAMERAS + 1];
+        s.custom_models = vec![custom_model("custom-a-1"); MAX_CUSTOM_MODELS + 1];
+        let both = SceneFile::from_json(&s.to_json()).unwrap_err().to_string();
+        assert!(both.contains("257 cameras"), "{both}");
+        let mut s = scene();
+        s.params.subject_height_m = 99.0;
+        s.params.custom_ppm = 0.0;
+        let both = SceneFile::from_json(&s.to_json()).unwrap_err().to_string();
+        assert!(both.contains("subject height"), "{both}");
         // Without the earlier problems, the custom model is refused last.
         let mut s = scene();
         s.custom_models = vec![CameraModel {
