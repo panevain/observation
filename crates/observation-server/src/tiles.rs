@@ -162,7 +162,7 @@ impl TileProxy {
                     )));
                 };
                 self.count("revalidated");
-                if let Err(e) = TileStore::revalidated(&*self.cache, self.set, id, &meta).await {
+                if let Err(e) = self.cache.revalidated(self.set, id, &meta).await {
                     tracing::warn!(error = %e, ?id, server = self.server(), "could not refresh tile metadata");
                 }
                 Ok(Tile::fresh(c.bytes))
