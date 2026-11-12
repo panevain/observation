@@ -12,7 +12,7 @@ use crate::toasts::Toasts;
 use observation_core::camera::{
     CameraModel, CameraPlacement, CatalogError, yaw_pitch_from_forward,
 };
-use observation_core::coverage::{MAX_REGION_POINTS, Region};
+use observation_core::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
 use observation_core::glam::{Vec2, Vec3};
 use observation_core::scene::MAX_CUSTOM_MODELS;
 use observation_core::terrain::Terrain;
@@ -477,6 +477,48 @@ pub fn delete_custom_model(ctx: &mut EditCtx, models: &mut dyn Tracked<Models>, 
     ctx.doc.get_mut().touch();
 }
 
+/// Sets what the figures count (detail level, lighting, subject height),
+/// as the Analysis tab and the Coverage card's ladder do. Writes, and starts
+/// a new revision, only when the parameters differ.
+pub fn set_params(doc: &mut dyn Tracked<Document>, params: CoverageParams) {
+    if doc.get().params != params {
+        let doc = doc.get_mut();
+        doc.params = params;
+        doc.touch();
+    }
+}
+
+/// Removes the region the figures are limited to, if there is one.
+pub fn clear_region(doc: &mut dyn Tracked<Document>) {
+    if doc.get().region.is_some() {
+        let doc = doc.get_mut();
+        doc.region = None;
+        doc.touch();
+    }
+}
+
+/// Limits the figures to the region, or stops doing so, if there is one.
+/// The Coverage card calls it only when its checkbox changed.
+pub fn set_region_enabled(doc: &mut dyn Tracked<Document>, enabled: bool) {
+    if doc.get().region.is_some() {
+        let doc = doc.get_mut();
+        if let Some(r) = &mut doc.region {
+            r.enabled = enabled;
+        }
+        doc.touch();
+    }
+}
+
+/// Writes back the inspector's edited copy of camera `id`, only when it
+/// differs from the camera (`camera_mut` starts a new revision).
+pub fn update_camera(doc: &mut dyn Tracked<Document>, id: u32, edited: CameraPlacement) {
+    if doc.get().camera(id).is_some_and(|old| *old != edited)
+        && let Some(slot) = doc.get_mut().camera_mut(id)
+    {
+        *slot = edited;
+    }
+}
+
 /// Why a model failed validation, in the user's terms.
 fn invalid_reason(e: CatalogError) -> String {
     match e {
@@ -492,7 +534,7 @@ mod tests {
     use crate::editor::InspectorTab;
     use crate::testing::Counting;
     use crate::toasts::ToastKind;
-    use observation_core::camera::{CUSTOM_ID_PREFIX, CameraKind, Catalog};
+    use observation_core::camera::{CUSTOM_ID_PREFIX, CameraKind, Catalog, DoriLevel};
     use observation_core::terrain::FLAT;
 
     #[derive(Default)]
@@ -1227,5 +1269,92 @@ mod tests {
         let mut expected: Vec<Key> = Tool::ALL.into_iter().map(Key::Tool).collect();
         expected.extend([Key::Help, Key::Focus, Key::Overlay]);
         assert_eq!(yielding, expected);
+    }
+
+    /// A document behind a write counter, with one camera and an enabled
+    /// region, at revision `r` once set up.
+    fn counted() -> (Counting<Document>, u64) {
+        let mut f = Fixture::default().with_camera();
+        f.doc.region = Some(Region {
+            points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            enabled: true,
+        });
+        let r = f.doc.revision;
+        (Counting::new(f.doc), r)
+    }
+
+    #[test]
+    fn set_params_writes_only_new_parameters_and_starts_a_revision() {
+        let (mut doc, r) = counted();
+        let same = doc.value.params;
+        set_params(&mut doc, same);
+        assert_eq!(
+            (doc.writes, doc.value.revision),
+            (0, r),
+            "unchanged: no write"
+        );
+
+        let mut params = same;
+        params.dori = DoriLevel::Identify;
+        params.subject_height_m = 1.6;
+        set_params(&mut doc, params);
+        assert_eq!(doc.value.params, params);
+        assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
+    }
+
+    #[test]
+    fn clear_region_removes_it_once() {
+        let (mut doc, r) = counted();
+        clear_region(&mut doc);
+        assert_eq!(doc.value.region, None);
+        assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
+
+        clear_region(&mut doc);
+        assert_eq!((doc.writes, doc.value.revision), (1, r + 1), "nothing left");
+    }
+
+    #[test]
+    fn set_region_enabled_turns_the_limit_off_and_on() {
+        let (mut doc, r) = counted();
+        set_region_enabled(&mut doc, false);
+        assert_eq!(doc.value.region.as_ref().map(|g| g.enabled), Some(false));
+        assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
+        set_region_enabled(&mut doc, true);
+        assert_eq!(doc.value.region.as_ref().map(|g| g.enabled), Some(true));
+        assert_eq!((doc.writes, doc.value.revision), (2, r + 2));
+
+        doc.value.region = None;
+        set_region_enabled(&mut doc, true);
+        assert_eq!(doc.value.region, None, "no region to enable");
+        assert_eq!((doc.writes, doc.value.revision), (2, r + 2));
+    }
+
+    #[test]
+    fn update_camera_writes_back_only_an_edited_copy() {
+        let (mut doc, r) = counted();
+        let id = doc.value.cameras[0].id;
+        let copy = doc.value.cameras[0].clone();
+        update_camera(&mut doc, id, copy.clone());
+        assert_eq!(
+            (doc.writes, doc.value.revision),
+            (0, r),
+            "unchanged: no write"
+        );
+
+        let edited = CameraPlacement {
+            label: "Porch".to_owned(),
+            yaw_deg: 90.0,
+            ..copy
+        };
+        update_camera(&mut doc, id, edited.clone());
+        assert_eq!(doc.value.camera(id), Some(&edited));
+        assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
+
+        update_camera(&mut doc, id + 1, edited);
+        assert_eq!(
+            (doc.writes, doc.value.revision),
+            (1, r + 1),
+            "no such camera"
+        );
     }
 }

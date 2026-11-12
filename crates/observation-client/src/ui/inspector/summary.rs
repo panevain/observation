@@ -1,11 +1,12 @@
 //! The coverage summary above the tabs.
 
 use crate::icons;
-use crate::state::{InspectorTab, Tool};
+use crate::state::{InspectorTab, Tool, TrackScene};
 use crate::theme::{Tokens, strong_family};
 use crate::ui::UiData;
 use crate::ui::widgets::{bar, hint, section_title, stat};
 use bevy_egui::egui::{self, RichText};
+use observation_client_model::commands;
 use observation_client_model::vm::{CoverageSummaryVm, settings_line};
 
 /// Always in view above the tabs: the figures, the region they are limited
@@ -92,9 +93,10 @@ fn ladder(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, vm: &CoverageSummaryVm)
             }
         }
     });
-    if let Some(level) = pick.filter(|l| *l != d.scene.params.dori) {
-        d.scene.params.dori = level;
-        d.scene.touch();
+    if let Some(level) = pick {
+        let mut params = d.scene.params;
+        params.dori = level;
+        commands::set_params(&mut TrackScene(&mut d.scene), params);
     }
 }
 
@@ -130,11 +132,9 @@ fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
         {
             d.editor.tool = Tool::Region;
         } else if ui.button("Clear").clicked() {
-            d.scene.region = None;
-            d.scene.touch();
-        } else if toggled && let Some(r) = &mut d.scene.region {
-            r.enabled = on;
-            d.scene.touch();
+            commands::clear_region(&mut TrackScene(&mut d.scene));
+        } else if toggled {
+            commands::set_region_enabled(&mut TrackScene(&mut d.scene), on);
         }
     })
     .response

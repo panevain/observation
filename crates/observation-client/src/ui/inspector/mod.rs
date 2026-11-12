@@ -17,9 +17,10 @@ use super::widgets::{
 };
 use crate::addresses::address_label;
 use crate::icons;
-use crate::state::{Editor, InspectorTab, OverlayMode, Panels, Tool, select};
+use crate::state::{Editor, InspectorTab, OverlayMode, Panels, Tool, TrackScene, select};
 use crate::theme::Tokens;
 use bevy_egui::egui::{self, DragValue, RichText, ScrollArea};
+use observation_client_model::commands;
 use observation_core::camera::{
     CameraPlacement, DoriLevel, Lighting, MAX_CUSTOM_PPM, MIN_CUSTOM_PPM,
 };
@@ -236,10 +237,7 @@ fn analysis_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             }
         }
     });
-    if p != d.scene.params {
-        d.scene.params = p;
-        d.scene.touch();
-    }
+    commands::set_params(&mut TrackScene(&mut d.scene), p);
     subsection(ui, t, "Overlay colours");
     segmented(
         ui,
