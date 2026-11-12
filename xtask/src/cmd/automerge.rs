@@ -13,11 +13,13 @@
 //!   it off; and each Dependabot pull request with auto-merge on that changes `xtask/`.
 //!
 //! Unlike the script, a pull request that changes anything under `xtask/` (dependabot.yml's
-//! `/xtask` cargo directory) never merges itself: xtask builds this very check, so an update to
-//! its dependencies always gets a person's review. Such a pull request is left alone, or put on
-//! hold if auto-merge is on. Which files it changes is read from GitHub (`files`,
-//! `changedFiles`), never from its title; when GitHub lists fewer files than it counts, the
-//! pull request is treated as changing `xtask/`.
+//! `/xtask` cargo directory) never merges itself: xtask builds this very check, so a change to
+//! its source or its Cargo dependencies (the code compiled into the check) gets a person's
+//! review. Updates to the actions and tools the workflow itself runs (setup-mise, the mise
+//! binary, the toolchain) are not covered: they merge as they did under the script. Such an
+//! `xtask/` pull request is left alone, or put on hold if auto-merge is on. Which files it
+//! changes is read from GitHub (`files`, `changedFiles`), never from its title; when GitHub
+//! lists fewer files than it counts, the pull request is treated as changing `xtask/`.
 //!
 //! It reads pull request metadata through `gh` only, and checks out nothing. Pull request data
 //! is read on Python's terms where the script read it: where the script raised on a shape (a
