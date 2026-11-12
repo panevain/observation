@@ -10,15 +10,16 @@
 //!   image loop, and the image tables of scripts/security-patch.py and `security-patch check`
 //!   name the same images, at the same registry path and Dockerfile stages. Every `ghcr.io/`
 //!   reference in release.yml, compose.yaml and mise.toml is a released image (or the release
-//!   prefix and a variable); compose.yaml builds each service from its image's release stage;
-//!   every `build-image` target is a stage; a layer cache release.yml reads is written somewhere.
+//!   prefix and a variable); a compose.yaml service that builds names its image's release stage
+//!   as its target; every `build-image` target is a stage; a layer cache release.yml reads is
+//!   written somewhere. Stage names are compared exactly, as the Dockerfile spells them.
 //! - Cooldown: .config/cargo-cooldown.toml's `days` is every Dependabot `*-days` cooldown (and
-//!   cargo, github-actions and npm must have one), mise's `minimum_release_age` and
-//!   scripts/bump-pins.py's `COOLDOWN_DAYS`.
-//!
-//! YAML files are read with a YAML parser, so quoting, comments and flow style do not matter.
+//!   every update has a `default-days`, but those in `NO_COOLDOWN`), mise's
+//!   `minimum_release_age` and scripts/bump-pins.py's `COOLDOWN_DAYS`.
 //! - `testing`: a crate's `testing` feature is enabled only from `[dev-dependencies]` (fuzz/ is
 //!   outside the workspace and may enable it).
+//!
+//! YAML files are read with a YAML parser, so quoting, comments and flow style do not matter.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
@@ -66,9 +67,22 @@ regex!(
 );
 regex!(BUMP_PINS_DAYS, r"^COOLDOWN_DAYS = (\S+?)\s*(?:#.*)?$");
 
-/// The Dependabot ecosystems that must have a cooldown (`docker` has none on purpose: base
-/// images get no security updates, so their digests move daily).
-pub const COOLDOWN_ECOSYSTEMS: &[&str] = &["cargo", "github-actions", "npm"];
+/// The Dependabot updates that have no cooldown on purpose, as (ecosystem, directories, why).
+/// Every other update must have a `default-days`; an entry here that names no update, or one
+/// that has a cooldown, is a finding.
+pub const NO_COOLDOWN: &[(&str, &str, &str)] = &[
+    (
+        "docker",
+        "/",
+        "base images get no Dependabot security updates, so their daily digest refreshes are \
+         how Debian fixes arrive",
+    ),
+    (
+        "rust-toolchain",
+        "/fuzz",
+        "the fuzz targets' dated nightly, which builds only the fuzz runs, nothing that ships",
+    ),
+];
 
 pub const RELEASE: &str = ".github/workflows/release.yml";
 pub const PRUNE: &str = ".github/workflows/prune-images.yml";
@@ -598,9 +612,9 @@ pub fn images(s: &Snapshot) -> Vec<Finding> {
         let mut seen = BTreeSet::new();
         for c in GHCR.captures_iter(text) {
             let owner = format!("ghcr.io/{}", &c[1]);
-            let path = format!("{owner}{}", &c[2]);
+            let path = format!("{owner}{}", c[2].trim_end_matches('.'));
             let known = if !c[3].is_empty() {
-                owner == prefix
+                owner == prefix && c[2].is_empty()
             } else {
                 released.iter().any(|r| r.path == path)
             };
@@ -623,11 +637,15 @@ pub fn images(s: &Snapshot) -> Vec<Finding> {
             Ok(doc) => {
                 for (service, def) in entries(&doc, "services") {
                     let service = scalar(service).unwrap_or_default();
-                    let Some(target) = def
-                        .get("build")
-                        .and_then(|b| b.get("target"))
-                        .and_then(scalar)
-                    else {
+                    let Some(build) = def.get("build") else {
+                        continue;
+                    };
+                    // Without a target, compose builds the Dockerfile's last stage.
+                    let Some(target) = build.get("target").and_then(scalar) else {
+                        out.push(finding(format!(
+                            "{COMPOSE}: service {service} builds with no build.target (the \
+                             Dockerfile's last stage): name its image's release stage"
+                        )));
                         continue;
                     };
                     if !stages.contains(&target) {
@@ -730,32 +748,54 @@ pub fn cooldown(s: &Snapshot) -> Vec<Finding> {
         match yaml(DEPENDABOT, &s.dependabot) {
             Err(why) => out.push(finding(why)),
             Ok(doc) => {
-                let mut has = BTreeSet::new();
+                let mut exempted = BTreeSet::new();
                 let updates = doc.get("updates").and_then(YValue::as_sequence);
                 for update in updates.into_iter().flatten() {
                     let eco = update
                         .get("package-ecosystem")
                         .and_then(scalar)
                         .unwrap_or_default();
+                    let dirs = match update.get("directories").and_then(YValue::as_sequence) {
+                        Some(dirs) => dirs.iter().filter_map(scalar).collect::<Vec<_>>(),
+                        None => update
+                            .get("directory")
+                            .and_then(scalar)
+                            .into_iter()
+                            .collect(),
+                    }
+                    .join(", ");
+                    let mut has = false;
                     for (key, value) in entries(update, "cooldown") {
                         let key = scalar(key).unwrap_or_default();
                         if key.ends_with("-days") {
-                            if key == "default-days" {
-                                has.insert(eco.clone());
-                            }
+                            has |= key == "default-days";
                             copies.push((
-                                format!("{DEPENDABOT} {eco} cooldown {key}"),
+                                format!("{DEPENDABOT} {eco} ({dirs}) cooldown {key}"),
                                 days_text(value),
                             ));
                         }
                     }
+                    let exempt = NO_COOLDOWN
+                        .iter()
+                        .position(|&(e, d, _)| e == eco && d == dirs);
+                    match (has, exempt) {
+                        (false, None) => out.push(finding(format!(
+                            "{DEPENDABOT}: update {eco} ({dirs}) has no cooldown default-days \
+                             (sync requires one of every update but those in NO_COOLDOWN)"
+                        ))),
+                        (true, Some(_)) => out.push(finding(format!(
+                            "{DEPENDABOT}: update {eco} ({dirs}) has a cooldown: remove it from \
+                             sync's NO_COOLDOWN"
+                        ))),
+                        _ => {}
+                    }
+                    exempted.extend(exempt);
                 }
-                for eco in COOLDOWN_ECOSYSTEMS {
-                    if !has.contains(*eco) {
+                for (i, (eco, dirs, _)) in NO_COOLDOWN.iter().enumerate() {
+                    if !exempted.contains(&i) {
                         out.push(finding(format!(
-                            "{DEPENDABOT}: package-ecosystem {eco} has no cooldown default-days \
-                             (sync requires one for {})",
-                            COOLDOWN_ECOSYSTEMS.join(", ")
+                            "{DEPENDABOT}: no update {eco} ({dirs}), which sync's NO_COOLDOWN \
+                             exempts from a cooldown"
                         )));
                     }
                 }
@@ -955,10 +995,12 @@ mod tests {
     const SCRIPT: &str = "IMAGES = {\n    # name: (path, stage, rebuild fixes all)\n\
         \x20   \"observation\": (\"ghcr.io/panevain/observation\", \"runtime-base\", False),\n\
         \x20   \"observation-regions\": (\"ghcr.io/panevain/observation-regions\", \"regions\", True),\n}\n";
-    const DEPENDABOT_YML: &str = "updates:\n  - package-ecosystem: cargo\n    cooldown:\n      default-days: 7\n\
-        \x20 - package-ecosystem: github-actions\n    cooldown:\n      default-days: 7\n\
-        \x20 - package-ecosystem: docker\n\
-        \x20 - package-ecosystem: npm\n    cooldown:\n      # semver-major-days: 30\n      default-days: 7\n";
+    const DEPENDABOT_YML: &str = "updates:\n  - package-ecosystem: cargo\n    directories: [\"/\", \"/fuzz\"]\n\
+        \x20   cooldown:\n      default-days: 7\n\
+        \x20 - package-ecosystem: github-actions\n    directory: /\n    cooldown:\n      default-days: 7\n\
+        \x20 - package-ecosystem: rust-toolchain\n    directory: /fuzz\n\
+        \x20 - package-ecosystem: docker\n    directory: /\n\
+        \x20 - package-ecosystem: npm\n    directory: /web\n    cooldown:\n      # semver-major-days: 30\n      default-days: 7\n";
     const COMPOSE_YAML: &str = "services:\n  observation:\n\
         \x20   image: ${OBS_IMAGE:-ghcr.io/panevain/observation:${OBS_VERSION:-latest}}\n\
         \x20   build:\n      context: .\n      target: runtime\n  regions:\n\
@@ -1183,6 +1225,12 @@ mod tests {
             security-patch | IMAGES = { | IMAGES = dict( | no `IMAGES = {` line
             security-patch | IMAGES = { | IMAGES = {\n}\nOTHER = { | IMAGES has '<nothing>' && security_patch::IMAGES differs
             prune | package: | packages: | prune-images.yml has 0 jobs with a package matrix
+            compose | build:\n      target: regions | build: . | service regions builds with no build.target
+            compose | build:\n      target: regions | build:\n      context: . | service regions builds with no build.target
+            compose | target: regions | target: Regions | service regions builds target Regions, not a Dockerfile stage && but its image ghcr.io/panevain/observation-regions is released from target regions
+            ci | target: regions | target: Regions | ci.yml: job docker builds target Regions, not a Dockerfile stage
+            release | ghcr.io/panevain/${name} | ghcr.io/panevain/observation-${name} | release.yml: ghcr.io/panevain/observation-$ is not an image
+            mise | [vars] | # The build-tools stage is ghcr.io/jdx/mise.\n[vars] | mise.toml: ghcr.io/jdx/mise is not an image
             security-patch | * |  | security-patch.py is missing
         "#,
         );
@@ -1192,14 +1240,21 @@ mod tests {
     fn cooldowns_agree() {
         rows(
             r#"
-            cooldown | days = 7 | days = 5 | cargo cooldown default-days has '7' && github-actions cooldown default-days has '7' && npm cooldown default-days has '7' && minimum_release_age (days) has '7' && COOLDOWN_DAYS has '7'
-            dependabot | default-days: 7\n  - | default-days: 3\n  - | cargo cooldown default-days has '3', expected '7 (.config/cargo-cooldown.toml days)'
-            dependabot | default-days: 7\n  - | default-days: 7\n      semver-major-days: 30\n  - | cargo cooldown semver-major-days has '30'
-            dependabot | default-days: 7\n  - | default-days: 3 # three\n  - | cargo cooldown default-days has '3'
-            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | cooldown: { default-days: 3 }\n  - package-ecosystem: github | cargo cooldown default-days has '3'
-            dependabot | default-days: 7\n  - | default-days: "7"\n  - | cargo cooldown default-days has '"7"'
-            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | \n  - package-ecosystem: github | package-ecosystem cargo has no cooldown default-days
-            dependabot | * | updates: []\n | ecosystem cargo has no && ecosystem github-actions has no && ecosystem npm has no
+            cooldown | days = 7 | days = 5 | cargo (/, /fuzz) cooldown default-days has '7' && github-actions (/) cooldown default-days has '7' && npm (/web) cooldown default-days has '7' && minimum_release_age (days) has '7' && COOLDOWN_DAYS has '7'
+            dependabot | default-days: 7\n  - | default-days: 3\n  - | cargo (/, /fuzz) cooldown default-days has '3', expected '7 (.config/cargo-cooldown.toml days)'
+            dependabot | default-days: 7\n  - | default-days: 7\n      semver-major-days: 30\n  - | cargo (/, /fuzz) cooldown semver-major-days has '30'
+            dependabot | default-days: 7\n  - | default-days: 3 # three\n  - | cargo (/, /fuzz) cooldown default-days has '3'
+            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | cooldown: { default-days: 3 }\n  - package-ecosystem: github | cargo (/, /fuzz) cooldown default-days has '3'
+            dependabot | default-days: 7\n  - | default-days: "7"\n  - | cargo (/, /fuzz) cooldown default-days has '"7"'
+            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | \n  - package-ecosystem: github | update cargo (/, /fuzz) has no cooldown default-days
+            dependabot | cooldown:\n      default-days: 7\n  - package-ecosystem: github | cooldown:\n      semver-major-days: 7\n  - package-ecosystem: github | update cargo (/, /fuzz) has no cooldown default-days
+            dependabot | | \n  - package-ecosystem: cargo\n    directory: /xtask\n | update cargo (/xtask) has no cooldown default-days
+            dependabot | | \n  - package-ecosystem: cargo\n    directory: /xtask\n    cooldown:\n      default-days: 3\n | cargo (/xtask) cooldown default-days has '3'
+            dependabot | | \n  - package-ecosystem: pip\n    directory: /\n | update pip (/) has no cooldown default-days
+            dependabot | | \n  - package-ecosystem: docker\n    directory: /tools\n | update docker (/tools) has no cooldown default-days
+            dependabot | directory: /fuzz | directory: /fuzz\n    cooldown:\n      default-days: 7 | update rust-toolchain (/fuzz) has a cooldown: remove it from sync's NO_COOLDOWN
+            dependabot | directory: /fuzz | directory: /fuzz2 | update rust-toolchain (/fuzz2) has no cooldown && no update rust-toolchain (/fuzz), which sync's NO_COOLDOWN
+            dependabot | * | updates: []\n | no update docker (/) && no update rust-toolchain (/fuzz)
             dependabot | * |  | dependabot.yml is missing
             dependabot | * | updates: [ | dependabot.yml: not YAML
             bump-pins | COOLDOWN_DAYS = 7 | COOLDOWN_DAYS = 7  # a week | 
