@@ -142,8 +142,9 @@ jobs:
           retention-days: 14
 
   # Each crate's line coverage against its floor in .config/coverage.toml (a crate below its
-  # floor fails; one with no floor warns). Not a required check. Pull requests only, as the
-  # informational job above runs on pushes; same packages (mise.toml's coverage_excludes).
+  # floor fails; one with no floor warns). A required check (.github/rulesets). Pull requests
+  # only, as the informational job above runs on pushes; same packages (mise.toml's
+  # coverage_excludes).
   coverage-floor:
     name: coverage (per-crate floor)
     if: github.event_name == 'pull_request'
