@@ -1,11 +1,10 @@
 name: Set up a CI job
 description: >-
-  The start most ci.yml jobs repeat: check out this commit without persisting the token, then
-  setup-mise, then setup-rust (in that order: setup-mise exports the CARGO_* and RUST*
-  environment that is part of rust-cache's key). Both keep their defaults for what is not an
-  input here: mise-action's cache on, its shims on PATH, and the root rust-toolchain.toml. The
-  job needs no checkout of its own: $/ resolves this action and the two it calls at the
-  running commit.
+  The setup most ci.yml jobs repeat after their checkout: setup-mise, then setup-rust (in that
+  order: setup-mise exports the CARGO_* and RUST* environment that is part of rust-cache's
+  key). Both keep their defaults for what is not an input here: mise-action's cache on, its
+  shims on PATH, and the root rust-toolchain.toml. Call it after actions/checkout, as every
+  local action in the workflows is.
 
 inputs:
   tools:
@@ -36,9 +35,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        persist-credentials: false
     - uses: $/.github/actions/setup-mise
       with:
         tools: ${{ inputs.tools }}

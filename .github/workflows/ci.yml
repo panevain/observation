@@ -35,6 +35,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: $/.github/actions/setup-ci
       - run: mise run fmt
 
@@ -45,6 +48,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # xtask/ is a second workspace, which the task lints too: its target/ is cached with the
       # root one.
       - uses: $/.github/actions/setup-ci
@@ -62,6 +68,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: $/.github/actions/setup-ci
         with:
           cache-key: wasm-clippy
@@ -74,6 +83,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The task tests xtask/ too, a second workspace: its target/ is cached with the root one.
       # The coverage jobs restore this cache, so they name the same workspaces.
       - uses: $/.github/actions/setup-ci
@@ -96,6 +108,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Restores the test job's cache (registry and dependencies) and never saves one of its
       # own: an instrumented build for an informational job is not worth ~1 GB of cache quota.
       # Same workspaces as the test job, or rust-cache would not find its cache.
@@ -137,6 +152,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The test job's cache, restored and never saved (as the informational job does).
       - uses: $/.github/actions/setup-ci
         with:
@@ -158,6 +176,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The token check is an xtask command; only xtask's own workspace is built and cached.
       - uses: $/.github/actions/setup-ci
         with:
@@ -194,6 +215,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # trunk comes from mise.toml, checksum-verified via mise.lock.
       # The size budget is an xtask command: xtask/'s target/ is cached with the root one.
       - uses: $/.github/actions/setup-ci
