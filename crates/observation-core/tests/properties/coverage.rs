@@ -410,16 +410,13 @@ fn true_counts(
 proptest! {
     #![proptest_config(config(16))]
 
-    /// The counters are `u8`: adding saturates at 255, but taking a camera
-    /// away always subtracts one, so with more than 255 cameras on a cell its
-    /// count drifts low and a cell some camera still sees can read as unseen.
-    /// The smallest case (as shrunk): one camera's sight added 256 times and
-    /// removed once. Its cells read 254, though 255 cameras still see them.
-    /// Removed 255 times instead, they read 0 though one camera sees them.
-    /// Once fixed, the kept figures must also still equal a one-pass count
-    /// across the 255/256 boundary.
+    /// More than 255 cameras on a cell: the shown counts stop at 255, but
+    /// taking cameras away must still leave the true count (capped at 255),
+    /// and the kept figures must equal a one-pass count across the 255/256
+    /// boundary. When the counters themselves were `u8`, one camera's sight
+    /// added 256 times and removed once read 254, though 255 cameras still
+    /// saw those cells; removed 255 times, 0, though one camera did.
     #[test]
-    #[ignore = "fixed in claude/fix-core-coverage-count-saturation"]
     fn prop_tally_counts_more_than_255_cameras(
         cam in road_camera(0.0),
         region in region(),

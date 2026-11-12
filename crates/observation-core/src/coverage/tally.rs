@@ -1,12 +1,59 @@
 //! Per-cell camera counts, and figures kept up to date with them.
 
 use super::{CoverageStats, RegionMask, Sight, StaticLayers, Visibility};
+use std::collections::HashMap;
 
 /// Per-cell count of cameras that see it.
+///
+/// `ground` and `facade` are the counts as shown, capped at 255. The cameras
+/// beyond 255 on a cell are kept too, so taking cameras away from a cell
+/// more than 255 cameras see leaves the right figure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoverageCounts {
     pub ground: Vec<u8>,
     pub facade: Vec<u8>,
+    /// Cameras beyond the 255 shown, for each ground cell that has any.
+    over_ground: HashMap<usize, u16>,
+    /// The same for façade patches.
+    over_facade: HashMap<usize, u16>,
+}
+
+/// One camera more (`UP`) or fewer on cell `i`; returns its shown count
+/// before and after. Only a cell already showing 255 touches `over`.
+#[inline]
+fn bump<const UP: bool>(shown: &mut [u8], over: &mut HashMap<usize, u16>, i: usize) -> (u8, u8) {
+    let before = shown[i];
+    if before == u8::MAX && beyond_255::<UP>(over, i) {
+        return (before, before);
+    }
+    shown[i] = if UP {
+        before + 1
+    } else {
+        before.saturating_sub(1)
+    };
+    (before, shown[i])
+}
+
+/// For a cell showing 255: counts one camera more (`UP`) or fewer among
+/// those beyond 255, and returns whether that absorbed the change (always
+/// when adding; when removing, only if there were any).
+#[cold]
+#[inline(never)]
+fn beyond_255<const UP: bool>(over: &mut HashMap<usize, u16>, i: usize) -> bool {
+    if UP {
+        let n = over.entry(i).or_insert(0);
+        *n = n.saturating_add(1);
+        return true;
+    }
+    let Some(n) = over.get_mut(&i) else {
+        return false;
+    };
+    // Entries are removed at zero, so `n` is at least 1.
+    *n -= 1;
+    if *n == 0 {
+        over.remove(&i);
+    }
+    true
 }
 
 impl CoverageCounts {
@@ -14,25 +61,39 @@ impl CoverageCounts {
         Self {
             ground: vec![0; layers.grid().len()],
             facade: vec![0; layers.facades().len()],
+            over_ground: HashMap::new(),
+            over_facade: HashMap::new(),
         }
     }
 
     pub fn add(&mut self, v: &Visibility) {
         for &i in &v.ground {
-            self.ground[i as usize] = self.ground[i as usize].saturating_add(1);
+            self.ground_step::<true>(i as usize);
         }
         for &i in &v.facade {
-            self.facade[i as usize] = self.facade[i as usize].saturating_add(1);
+            self.facade_step::<true>(i as usize);
         }
     }
 
     pub fn remove(&mut self, v: &Visibility) {
         for &i in &v.ground {
-            self.ground[i as usize] = self.ground[i as usize].saturating_sub(1);
+            self.ground_step::<false>(i as usize);
         }
         for &i in &v.facade {
-            self.facade[i as usize] = self.facade[i as usize].saturating_sub(1);
+            self.facade_step::<false>(i as usize);
         }
+    }
+
+    /// One camera more (`UP`) or fewer on ground cell `i`; the shown count
+    /// before and after.
+    fn ground_step<const UP: bool>(&mut self, i: usize) -> (u8, u8) {
+        bump::<UP>(&mut self.ground, &mut self.over_ground, i)
+    }
+
+    /// One camera more (`UP`) or fewer on façade patch `i`; the shown count
+    /// before and after.
+    fn facade_step<const UP: bool>(&mut self, i: usize) -> (u8, u8) {
+        bump::<UP>(&mut self.facade, &mut self.over_facade, i)
     }
 }
 
@@ -82,6 +143,8 @@ impl Tally {
             CoverageCounts {
                 ground: Vec::new(),
                 facade: Vec::new(),
+                over_ground: HashMap::new(),
+                over_facade: HashMap::new(),
             },
         );
         (self.street, self.street_seen, self.street_seen_multi) = (0, 0, 0);
@@ -111,7 +174,7 @@ impl Tally {
         s: &Sight,
         range: f32,
     ) {
-        self.step(layers, region, s, range, |c| c.saturating_add(1));
+        self.step::<true>(layers, region, s, range);
     }
 
     /// Takes away the cells `s` sees out to `range`.
@@ -122,28 +185,27 @@ impl Tally {
         s: &Sight,
         range: f32,
     ) {
-        self.step(layers, region, s, range, |c| c.saturating_sub(1));
+        self.step::<false>(layers, region, s, range);
     }
 
-    fn step(
+    fn step<const UP: bool>(
         &mut self,
         layers: &StaticLayers,
         region: Option<&RegionMask>,
         s: &Sight,
         range: f32,
-        f: impl Fn(u8) -> u8,
     ) {
+        // The figures only depend on whether a count is at least 1 or 2,
+        // which the shown count tells as well as the exact one.
         for i in s.ground_within(range) {
             let i = i as usize;
-            let before = self.counts.ground[i];
-            self.counts.ground[i] = f(before);
-            self.ground_moved(layers, region, i, before, self.counts.ground[i]);
+            let (before, after) = self.counts.ground_step::<UP>(i);
+            self.ground_moved(layers, region, i, before, after);
         }
         for i in s.facade_within(range) {
             let i = i as usize;
-            let before = self.counts.facade[i];
-            self.counts.facade[i] = f(before);
-            self.facade_moved(layers, region, i, before, self.counts.facade[i]);
+            let (before, after) = self.counts.facade_step::<UP>(i);
+            self.facade_moved(layers, region, i, before, after);
         }
     }
 
@@ -205,6 +267,57 @@ mod tests {
     use crate::coverage::Region;
     use crate::frustum::ViewCone;
     use glam::Vec3;
+
+    #[test]
+    fn counts_stay_exact_beyond_255_cameras() {
+        let l = layers();
+        let cone = ViewCone::from_angles(
+            Vec3::new(0.0, 2.5, 10.0),
+            0.0,
+            -10.0,
+            0.0,
+            100.0,
+            60.0,
+            40.0,
+        );
+        let sight = l.sight(&cone, 1.0);
+        let vis = sight.within(cone.range);
+        let (g, f) = (vis.ground[0] as usize, vis.facade[0] as usize);
+        for cameras in [255usize, 256, 300] {
+            let mut counts = CoverageCounts::new(&l);
+            let mut tally = Tally::new(&l, None);
+            for _ in 0..cameras {
+                counts.add(&vis);
+                tally.add_within(&l, None, &sight, cone.range);
+            }
+            assert_eq!(
+                (counts.ground[g], counts.facade[f]),
+                (255, 255),
+                "{cameras}"
+            );
+            assert_eq!(tally.counts(), &counts, "{cameras}");
+            // Take away all but one: the cells are still seen, by one camera.
+            for left in (1..cameras).rev() {
+                counts.remove(&vis);
+                tally.remove_within(&l, None, &sight, cone.range);
+                let shown = left.min(255) as u8;
+                assert_eq!(
+                    (counts.ground[g], counts.facade[f]),
+                    (shown, shown),
+                    "{cameras} -> {left}"
+                );
+            }
+            assert_eq!(tally.counts(), &counts, "{cameras}");
+            assert_eq!(
+                tally.stats(&l),
+                CoverageStats::compute(&l, &counts),
+                "{cameras}"
+            );
+            assert!(tally.stats(&l).open_ground_seen_m2 > 0.0, "{cameras}");
+            counts.remove(&vis);
+            assert_eq!((counts.ground[g], counts.facade[f]), (0, 0), "{cameras}");
+        }
+    }
 
     #[test]
     fn tally_keeps_the_figures_a_full_pass_gives() {

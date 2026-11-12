@@ -92,6 +92,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- Coverage counts stay right in scenes where every one of 256 cameras sees the same spot. The per-spot count stopped at 255, but each camera taken away (disabled, deleted, moved off) still lowered it by one, so such spots then showed fewer cameras than saw them, and once enough cameras were taken away a spot one camera still saw showed as unseen and dropped out of the coverage figures. The exact count is now kept behind the shown one, which still tops out at 255.
 - While the Region tool is on, the edge of the loaded area is drawn in red and the map beyond it is tinted and hatched. Corners clicked out there move to the edge, which used to look like part of the map refused corners for no reason (#71).
 - Selecting a camera no longer widens the inspector: a long model name is cut short in the model list's button, and the **Group** field takes only the width its pin button leaves, which also stops the button being cut off.
 - The demo street now has its 205 address nodes: the fixture had been recorded before the converter kept them, so many houses there had no address in the camera list or the Address tool.
