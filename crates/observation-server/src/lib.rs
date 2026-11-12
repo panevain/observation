@@ -113,7 +113,8 @@ impl AppState {
 
     /// The state over `ports`, with the services built on them and the demo
     /// bundle dated by the ports' clock. Spawns nothing: the cache trim and
-    /// the region poller are [`AppState::new`]'s.
+    /// the region poller are [`AppState::new`]'s. `config` must already be
+    /// validated ([`Config::validate`]), as [`AppState::new`] does first.
     pub fn from_ports(config: Config, ports: Ports) -> Self {
         let Ports {
             overpass_http,

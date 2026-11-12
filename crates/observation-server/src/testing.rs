@@ -570,6 +570,13 @@ impl metrics::Recorder for MetricCounts {
 /// unless [`TestAppBuilder::config`] changes it. Nothing is spawned: a test
 /// polls the agent itself (`state.regions()`).
 ///
+/// It leaves out what only the production adapters do: real sockets, TLS,
+/// the address filter and proxy handling, the redirect policy, the
+/// User-Agent, the client timeouts, the disk cache's eviction (the memory
+/// stores never evict) and the background trim and poller. Those are tested
+/// in `wiring`'s tests, `tests/` (on the real `AppState::new`) and
+/// `observation-upstream/tests/guarded.rs`.
+///
 /// Dropping it checks that every fake was drained: no request went
 /// unscripted and no reply was left unused.
 #[derive(Debug)]

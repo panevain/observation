@@ -11,6 +11,10 @@ use crate::clock::{Clock, SystemClock};
 use crate::config::Config;
 use crate::{AppState, Ports, StateError};
 
+/// The tile client's timeout, for map and elevation tiles alike: tile
+/// requests set none of their own.
+pub(crate) const TILE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// The production ports.
 pub(crate) struct Production {
     pub(crate) ports: Ports,
@@ -34,7 +38,7 @@ pub(crate) fn production_ports(config: &Config) -> Result<Production, StateError
     let tile_http: Arc<dyn HttpClient> = Arc::new(
         upstream()
             .user_agent(&user_agent)
-            .timeout(Duration::from_secs(20))
+            .timeout(TILE_TIMEOUT)
             .build()?,
     );
     // Opened before the agent's client is built, as before.
@@ -91,3 +95,6 @@ pub(crate) fn spawn_background(state: &AppState) {
         tokio::spawn(Arc::clone(regions).run_poller());
     }
 }
+
+#[cfg(test)]
+mod tests;
