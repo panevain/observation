@@ -176,6 +176,69 @@ fn segments_cross(a: LatLon, b: LatLon, c: LatLon, d: LatLon) -> bool {
 mod tests {
     use super::*;
 
+    /// A seeded xorshift64* value in `[lo, hi)`: the same inputs every run.
+    fn uniform(state: &mut u64, lo: f64, hi: f64) -> f64 {
+        *state ^= *state >> 12;
+        *state ^= *state << 25;
+        *state ^= *state >> 27;
+        let x = state.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11;
+        lo + (hi - lo) * x as f64 / (1u64 << 53) as f64
+    }
+
+    /// The `.poly` text of the rectangle `(s, w, n, e)`, with the rectangle
+    /// `hole` cut out of it.
+    fn rectangle(r: (f64, f64, f64, f64), hole: (f64, f64, f64, f64)) -> String {
+        let ring = |(s, w, n, e): (f64, f64, f64, f64)| {
+            format!(" {w} {s}\n {e} {s}\n {e} {n}\n {w} {n}\n {w} {s}\nEND\n")
+        };
+        format!("box\n1\n{}!2\n{}END\n", ring(r), ring(hole))
+    }
+
+    /// For any rectangle with a hole: its bounds are the rectangle's; a box
+    /// inside it and clear of the hole is inside; a box in the hole, across
+    /// the hole's edge, across the outer edge or outside is not.
+    #[test]
+    fn rectangles_with_holes_hold_exactly_the_boxes_clear_of_the_hole() {
+        let mut st = 0x9e37_79b9_7f4a_7c15;
+        for _ in 0..2000 {
+            let (s, w) = (
+                // Up to 85°, the Web Mercator limit of the bounds.
+                uniform(&mut st, -84.0, 75.0),
+                uniform(&mut st, -170.0, 150.0),
+            );
+            let (n, e) = (
+                s + uniform(&mut st, 1.0, 10.0),
+                w + uniform(&mut st, 1.0, 10.0),
+            );
+            // The hole: the middle third of the rectangle.
+            let (hs, hn) = (s + (n - s) / 3.0, n - (n - s) / 3.0);
+            let (hw, he) = (w + (e - w) / 3.0, e - (e - w) / 3.0);
+            let b = Boundary::parse(&rectangle((s, w, n, e), (hs, hw, hn, he))).unwrap();
+            assert_eq!(b.bbox(), BBox::new(s, w, n, e).ok());
+
+            let bx = |s: f64, w: f64, n: f64, e: f64| BBox::new(s, w, n, e).unwrap();
+            // South of the hole, anywhere across the rectangle's width.
+            let lo = uniform(&mut st, s + 1e-6, hs - 2e-6);
+            let hi = uniform(&mut st, lo + 1e-7, hs - 1e-6);
+            let left = uniform(&mut st, w + 1e-6, e - 2e-6);
+            let right = uniform(&mut st, left + 1e-7, e - 1e-6);
+            assert!(b.contains_bbox(&bx(lo, left, hi, right)), "{s} {w} {n} {e}");
+            // In the hole, and across its south edge.
+            let (cs, cw) = (
+                uniform(&mut st, hs, hn - 1e-3),
+                uniform(&mut st, hw, he - 1e-3),
+            );
+            assert!(!b.contains_bbox(&bx(cs, cw, cs + 1e-4, cw + 1e-4)));
+            assert!(!b.contains_bbox(&bx(lo, cw, hs + 1e-4, cw + 1e-4)));
+            // Around the whole hole, corners clear of it.
+            let (aw, ae) = ((w + hw) / 2.0, (he + e) / 2.0);
+            assert!(!b.contains_bbox(&bx(lo, aw, (hn + n) / 2.0, ae)));
+            // Across the outer edge, and outside.
+            assert!(!b.contains_bbox(&bx(lo, e - 1e-4, hi, e + 1e-4)));
+            assert!(!b.contains_bbox(&bx(s - 0.2, w, s - 0.1, e)));
+        }
+    }
+
     /// A 10° square (0..10, 0..10) with a 2° hole at 4..6, plus an island at 20..21.
     const POLY: &str = "test
 1

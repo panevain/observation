@@ -297,6 +297,53 @@ fn point_in_ring(p: LatLon, ring: &[LatLon]) -> bool {
 mod tests {
     use super::*;
 
+    /// A closed ring cut into pieces, shuffled and some reversed, is
+    /// stitched back into that one ring; without one piece it is dropped.
+    #[test]
+    fn rings_cut_into_pieces_are_stitched_back() {
+        let mut rng = crate::test_rng::Rng::new(9);
+        for _ in 0..2000 {
+            let n = 3 + rng.below(10) as usize;
+            let mut ring: Vec<LatLon> = (0..n)
+                .map(|i| LatLon {
+                    lat: i as f64 + rng.f64(0.0, 0.5),
+                    lon: rng.f64(-1.0, 1.0),
+                })
+                .collect();
+            ring.push(ring[0]);
+            let mut cuts: Vec<usize> = (1..n).filter(|_| rng.below(3) == 0).collect();
+            cuts.insert(0, 0);
+            cuts.push(n);
+            let mut pieces: Vec<Vec<LatLon>> = cuts
+                .windows(2)
+                .map(|w| ring[w[0]..=w[1]].to_vec())
+                .collect();
+            for p in &mut pieces {
+                if rng.below(2) == 0 {
+                    p.reverse();
+                }
+            }
+            rng.shuffle(&mut pieces);
+            let key = |p: &LatLon| (p.lat.to_bits(), p.lon.to_bits());
+            let mut want: Vec<_> = ring[..n].iter().map(key).collect();
+            want.sort_unstable();
+
+            let rings = stitch_rings(pieces.clone());
+            assert_eq!(rings.len(), 1, "{pieces:?}");
+            let got = &rings[0];
+            assert_eq!(got.len(), n + 1);
+            assert_eq!(key(&got[0]), key(&got[n]), "closed");
+            let mut points: Vec<_> = got[..n].iter().map(key).collect();
+            points.sort_unstable();
+            assert_eq!(points, want);
+
+            if pieces.len() > 1 {
+                pieces.remove(rng.below(pieces.len() as u64) as usize);
+                assert!(stitch_rings(pieces).is_empty());
+            }
+        }
+    }
+
     fn pts(v: &[(f64, f64)]) -> Vec<LatLon> {
         v.iter().map(|&(a, b)| LatLon::new(a, b)).collect()
     }

@@ -20,6 +20,8 @@ pub mod ports;
 pub mod ratelimit;
 pub mod regions;
 pub mod routes;
+#[cfg(test)]
+mod test_rng;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tiles;

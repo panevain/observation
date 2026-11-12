@@ -378,6 +378,48 @@ mod tests {
         }
     }
 
+    /// Every box's cache key is safe; a key is safe exactly when it is 1 to
+    /// 128 of `0-9 - . _` without `..`; and a safe key's file name is one
+    /// plain path component (it cannot leave the cache directory).
+    #[test]
+    fn safe_keys_are_exactly_plain_file_names() {
+        let mut rng = crate::test_rng::Rng::new(3);
+        for _ in 0..2000 {
+            let south = rng.f64(-85.0, 85.0);
+            let west = rng.f64(-180.0, 179.0);
+            let bbox = observation_core::geo::BBox::new(
+                south,
+                west,
+                south + rng.f64(0.0001, 0.004),
+                west + rng.f64(0.0001, 0.006),
+            );
+            if let Ok(bbox) = bbox {
+                assert!(is_safe_key(&bbox.cache_key()), "{}", bbox.cache_key());
+            }
+        }
+        let alphabet = ['0', '7', '-', '.', '_', '/', '\\', 'a', '%', ' ', '\0', 'é'];
+        // Mostly safe characters too, so that the length rule decides often.
+        let safe = ['0', '7', '-', '_', '.'];
+        for i in 0..20_000 {
+            let len = rng.below(140) as usize;
+            let chars: &[char] = if i % 2 == 0 { &alphabet } else { &safe[..4] };
+            let key: String = (0..len).map(|_| *rng.pick(chars)).collect();
+            let plain = key
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, '-' | '.' | '_'));
+            let want = (1..=128).contains(&key.len()) && !key.contains("..") && plain;
+            assert_eq!(is_safe_key(&key), want, "{key:?}");
+            if want {
+                let name = format!("{key}.obsb");
+                let parts: Vec<_> = Path::new(&name).components().collect();
+                assert!(
+                    matches!(parts[..], [std::path::Component::Normal(_)]),
+                    "{key:?}"
+                );
+            }
+        }
+    }
+
     /// The disk store with the freshness rules on top, as the bundle service
     /// uses them (the rules' boundaries are in `domain::freshness`).
     #[tokio::test]

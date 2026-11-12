@@ -387,6 +387,47 @@ mod tests {
         );
     }
 
+    /// `max-age=N` is found among any other directives, in any case, quoted
+    /// or not, for every `N`; without it there is none; nothing panics.
+    #[test]
+    fn max_age_is_found_among_any_directives() {
+        let mut rng = crate::test_rng::Rng::new(5);
+        let others = [
+            "public",
+            "no-cache",
+            "immutable",
+            "s-maxage=5",
+            "max-stale=9",
+            "private=\"x\"",
+        ];
+        for _ in 0..5000 {
+            let n = match rng.below(3) {
+                0 => rng.below(1000),
+                1 => rng.u64(),
+                _ => u64::MAX,
+            };
+            let key = *rng.pick(&["max-age", "Max-Age", "MAX-AGE"]);
+            let value = if rng.below(2) == 0 {
+                n.to_string()
+            } else {
+                format!("\"{n}\"")
+            };
+            let mut directives: Vec<String> = (0..rng.below(4))
+                .map(|_| (*rng.pick(&others)).to_owned())
+                .collect();
+            let without = directives.join(", ");
+            directives.push(format!("{key}={value}"));
+            rng.shuffle(&mut directives);
+            let sep = *rng.pick(&[",", ", ", " ,  "]);
+            assert_eq!(max_age(&directives.join(sep)), Some(n), "{directives:?}");
+            assert_eq!(max_age(&without), None, "{without:?}");
+            let noise: String = (0..rng.below(40))
+                .map(|_| *rng.pick(&['m', 'a', '=', ',', '"', ' ', '9', '-']))
+                .collect();
+            let _ = max_age(&noise);
+        }
+    }
+
     #[test]
     fn max_age_parsing() {
         assert_eq!(max_age("max-age=7200"), Some(7200));
