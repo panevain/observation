@@ -1,5 +1,6 @@
 //! `release state` and `release gate`: the release state of `origin`, as scripts/release-state.sh
-//! (since removed) printed it, and the three workflow checks that read it, as release-prep.yml,
+//! printed it (release-prep's prepare job runs that script again, in plain
+//! git, before it mints a token), and the three workflow checks that read it, as release-prep.yml,
 //! hotfix.yml and release-watch.yml wrote them inline. Each check is kept as it was: Prepare
 //! release skips, Hotfix fails, Release watch skips, each with its own messages.
 //!

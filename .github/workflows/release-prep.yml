@@ -161,56 +161,132 @@ jobs:
           SHA: ${{ needs.plan.outputs.sha }}
           VERSION: ${{ needs.plan.outputs.version }}
           KIND: stable
+          EVENT: ${{ github.event_name }}
           GIVEN: ${{ inputs.version }}
+          REQUESTED: ${{ inputs.prerelease }}
         # The same step in prepare and pretag (xtask's release plan tests run it).
         run: |
           set -euo pipefail
           refuse() { echo "::error::$1"; exit 1; }
-          # The commit: a full commit id, the one checked out, on develop, and holding the latest
-          # release (refs/remotes/origin/develop and the tags come from the checkout's fetch-depth: 0).
+          # The kind of release comes from what this run asked for, never from the plan: a schedule is
+          # stable; by hand, a given version is a pre-release when it has a -suffix, and otherwise
+          # prerelease=dev asks for one. A plan of the other kind runs the other job, which stops here.
+          case "${EVENT}" in
+            schedule) want=stable ;;
+            workflow_dispatch)
+              if [ -n "${GIVEN}" ]; then
+                want=stable
+                [[ "${GIVEN}" != *-* ]] || want=prerelease
+              else
+                case "${REQUESTED}" in
+                  "" | none) want=stable ;;
+                  dev) want=prerelease ;;
+                  *) refuse "prerelease must be none or dev, not '${REQUESTED}'" ;;
+                esac
+              fi
+              ;;
+            *) refuse "unexpected event '${EVENT}'" ;;
+          esac
+          case "${KIND}" in
+            stable | prerelease) ;;
+            *) refuse "KIND must be stable or prerelease, not '${KIND}'" ;;
+          esac
+          [ "${KIND}" = "${want}" ] || refuse "this run asked for a ${want} release, not a ${KIND} one"
+          # The commit: a full commit id, the one checked out, and on develop (refs/remotes/origin/develop
+          # and the tags come from the checkout's fetch-depth: 0). A stable release also holds the latest
+          # release (its back-merge has landed); a pre-release need not, as before.
           [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || refuse "the plan's sha is not a commit id: '${SHA}'"
           [ "$(git rev-parse HEAD)" = "${SHA}" ] || refuse "HEAD is not the plan's commit ${SHA}"
           git merge-base --is-ancestor "${SHA}" refs/remotes/origin/develop || refuse "${SHA} is not on develop"
+          # X.Y.Z with each number at most 18 digits (so that shell arithmetic cannot wrap), without
+          # leading zeros, into ${normed}.
+          norm() {
+            local x y z
+            IFS=. read -r x y z <<<"$1"
+            [[ ${#x} -le 18 && ${#y} -le 18 && ${#z} -le 18 ]] || refuse "version too large: $1"
+            normed="$((10#${x})).$((10#${y})).$((10#${z}))"
+          }
           latest="$(git tag --list 'v*' | sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' | sort -V | tail -n 1)"
           if [ -n "${latest}" ]; then
-            git merge-base --is-ancestor "refs/tags/v${latest}" "${SHA}" || refuse "${SHA} does not contain v${latest}"
+            if [ "${KIND}" = stable ]; then
+              git merge-base --is-ancestor "refs/tags/v${latest}" "${SHA}" || refuse "${SHA} does not contain v${latest}"
+            fi
+            norm "${latest}"
+            latest="${normed}"
           fi
-          # The version: strict semver, of the kind this job releases, not tagged yet, and one that the
-          # plan could have given: the version given to the run, or else a single bump of the latest
-          # release or develop's own version when that is ahead of it (plus -dev.N for a pre-release).
+          # The version: strict semver, of this job's kind, not tagged yet, and one the planner gives for
+          # this request. Its value is only compared with versions worked out here, never computed with.
           n='(0|[1-9][0-9]*)'
           [[ "${VERSION}" =~ ^${n}\.${n}\.${n}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] || refuse "not a semver version: '${VERSION}'"
           case "${KIND}" in
             stable) [[ "${VERSION}" != *-* ]] || refuse "${VERSION} is a pre-release" ;;
             prerelease) [[ "${VERSION}" == *-* ]] || refuse "${VERSION} is not a pre-release" ;;
-            *) refuse "KIND must be stable or prerelease, not '${KIND}'" ;;
           esac
           ! git rev-parse --quiet --verify "refs/tags/v${VERSION}" >/dev/null || refuse "v${VERSION} already exists"
-          norm() { local x y z; IFS=. read -r x y z <<<"$1"; echo "$((10#${x})).$((10#${y})).$((10#${z}))"; }
-          base="${VERSION}"
+          max() { printf '%s\n' "$1" "$2" | sort -V | tail -n 1; }
           if [ -n "${GIVEN}" ]; then
-            allowed=("${GIVEN}")
-          else
-            allowed=()
+            # The version given to the run and nothing else, if it is newer than the latest release.
+            [ "${VERSION}" = "${GIVEN}" ] || refuse "${VERSION} is not the version given to this run (${GIVEN})"
             if [ -n "${latest}" ]; then
-              latest="$(norm "${latest}")"
-              IFS=. read -r x y z <<<"${latest}"
-              allowed=("$((x + 1)).0.0" "${x}.$((y + 1)).0" "${x}.${y}.$((z + 1))")
+              norm "${GIVEN%%-*}"
+              [ "${normed}" != "${latest}" ] && [ "$(max "${normed}" "${latest}")" = "${normed}" ] ||
+                refuse "${GIVEN} is not newer than the latest release v${latest}"
             fi
-            develop="$(scripts/workspace-version.sh)"
-            develop="$(norm "${develop%%-*}")"
-            if [ -z "${latest}" ] || [ "$(printf '%s\n' "${latest}" "${develop}" | sort -V | tail -n 1)" != "${latest}" ]; then
-              allowed+=("${develop}")
-            fi
-            if [ "${KIND}" = prerelease ]; then
-              [[ "${VERSION}" =~ ^([0-9.]+)-dev\.[1-9][0-9]*$ ]] || refuse "${VERSION} is not X.Y.Z-dev.N"
-              base="${BASH_REMATCH[1]}"
-            fi
+            exit 0
           fi
-          for a in "${allowed[@]}"; do
-            [ "${a}" != "${base}" ] || exit 0
+          # Otherwise the planner's range: with no release yet, develop's own version; else, for each
+          # kind of bump, the bumped latest release or develop's version, whichever is higher (a major
+          # bump only from 1.0.0 on).
+          develop="$(scripts/workspace-version.sh)"
+          norm "${develop%%-*}"
+          develop="${normed}"
+          if [ -z "${latest}" ]; then
+            bases=("${develop}")
+          else
+            IFS=. read -r x y z <<<"${latest}"
+            bases=("$(max "${x}.${y}.$((z + 1))" "${develop}")" "$(max "${x}.$((y + 1)).0" "${develop}")")
+            [ "${x}" -lt 1 ] || bases+=("$(max "$((x + 1)).0.0" "${develop}")")
+          fi
+          base="${VERSION}"
+          if [ "${KIND}" = prerelease ]; then
+            # X.Y.Z-dev.N, N one more than the highest such tag of that X.Y.Z.
+            [[ "${VERSION}" =~ ^([0-9.]+)-dev\.([1-9][0-9]*)$ ]] || refuse "${VERSION} is not X.Y.Z-dev.N"
+            base="${BASH_REMATCH[1]}"
+            number="${BASH_REMATCH[2]}"
+            highest=0
+            while read -r tag; do
+              [ -n "${tag}" ] || continue
+              k="${tag#"v${base}-dev."}"
+              [[ "${k}" =~ ^[0-9]+$ ]] || continue
+              [ "${#k}" -le 18 ] || refuse "pre-release number too large: ${tag}"
+              [ "$((10#${k}))" -le "${highest}" ] || highest="$((10#${k}))"
+            done <<<"$(git tag --list "v${base}-dev.*")"
+            [ "${number}" = "$((highest + 1))" ] || refuse "${VERSION} is not the next pre-release of ${base} (dev.$((highest + 1)))"
+          fi
+          for b in "${bases[@]}"; do
+            [ "${b}" != "${base}" ] || exit 0
           done
-          refuse "${VERSION} is not a version this run may release (${allowed[*]})"
+          refuse "${VERSION} is not a version this run may release (${bases[*]})"
+      # The four reasons a stable release waits, checked again here in plain git: plan said to
+      # go, but it builds code. Each one fails this job instead of skipping.
+      - name: Release state
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::$1"; exit 1; }
+          # In an empty repository with the same origin: the script's shallow fetch of main must
+          # not make this checkout shallow (the changelog below lists commits).
+          scratch="$(mktemp -d "${RUNNER_TEMP}/state.XXXXXX")"
+          git init -q "${scratch}"
+          git -C "${scratch}" remote add origin "$(git remote get-url origin)"
+          (cd "${scratch}" && "${OLDPWD}/scripts/release-state.sh") > "${RUNNER_TEMP}/state"
+          get() { sed -n "s/^$1=//p" "${RUNNER_TEMP}/state"; }
+          latest="$(get latest)"; main="$(get main)"; pending="$(get pending)"; hotfix="$(get hotfix)"
+          # Before the first release main's initial version was never tagged, so that alone
+          # is not a release waiting for its tag.
+          [ "${pending}" = false ] || [ -z "${latest}" ] || refuse "main is at ${main}, which is not tagged yet (a release or hotfix waits for its tag)."
+          [ -z "${latest}" ] || git merge-base --is-ancestor "v${latest}" HEAD || refuse "develop does not contain v${latest} yet (its back-merge is still open)."
+          [ "${hotfix}" = false ] || refuse "A hotfix/* branch exists (a hotfix is in progress)."
+          [ -z "$(git ls-remote --heads origin 'refs/heads/release/*')" ] || refuse "A release/* branch exists (a release is in progress)."
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: treemap
@@ -222,10 +298,9 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          # Still the script, not `cargo xtask release version set`: this job mints the bot
-          # token, so it compiles nothing. The release-prep split moves these edits into an
-          # unprivileged job and deletes set-version.sh (workspace-version.sh stays: release-tag.yml
-          # compiles nothing and reads the version with it).
+          # The tree's own scripts, not xtask: what this job commits goes into a pull request
+          # that merges itself without review, so it is written by a job that builds nothing.
+          # (`cargo xtask release version set` and `release changelog` are tested against them.)
           scripts/set-version.sh "${VERSION}"
           python3 scripts/release-plan.py changelog --repo . --version "${VERSION}"
           cp "${RUNNER_TEMP}/treemap/wasm-bundle-treemap.svg" docs/images/wasm-bundle-treemap.svg
@@ -292,56 +367,112 @@ jobs:
           SHA: ${{ needs.plan.outputs.sha }}
           VERSION: ${{ needs.plan.outputs.version }}
           KIND: prerelease
+          EVENT: ${{ github.event_name }}
           GIVEN: ${{ inputs.version }}
+          REQUESTED: ${{ inputs.prerelease }}
         # The same step in prepare and pretag (xtask's release plan tests run it).
         run: |
           set -euo pipefail
           refuse() { echo "::error::$1"; exit 1; }
-          # The commit: a full commit id, the one checked out, on develop, and holding the latest
-          # release (refs/remotes/origin/develop and the tags come from the checkout's fetch-depth: 0).
+          # The kind of release comes from what this run asked for, never from the plan: a schedule is
+          # stable; by hand, a given version is a pre-release when it has a -suffix, and otherwise
+          # prerelease=dev asks for one. A plan of the other kind runs the other job, which stops here.
+          case "${EVENT}" in
+            schedule) want=stable ;;
+            workflow_dispatch)
+              if [ -n "${GIVEN}" ]; then
+                want=stable
+                [[ "${GIVEN}" != *-* ]] || want=prerelease
+              else
+                case "${REQUESTED}" in
+                  "" | none) want=stable ;;
+                  dev) want=prerelease ;;
+                  *) refuse "prerelease must be none or dev, not '${REQUESTED}'" ;;
+                esac
+              fi
+              ;;
+            *) refuse "unexpected event '${EVENT}'" ;;
+          esac
+          case "${KIND}" in
+            stable | prerelease) ;;
+            *) refuse "KIND must be stable or prerelease, not '${KIND}'" ;;
+          esac
+          [ "${KIND}" = "${want}" ] || refuse "this run asked for a ${want} release, not a ${KIND} one"
+          # The commit: a full commit id, the one checked out, and on develop (refs/remotes/origin/develop
+          # and the tags come from the checkout's fetch-depth: 0). A stable release also holds the latest
+          # release (its back-merge has landed); a pre-release need not, as before.
           [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || refuse "the plan's sha is not a commit id: '${SHA}'"
           [ "$(git rev-parse HEAD)" = "${SHA}" ] || refuse "HEAD is not the plan's commit ${SHA}"
           git merge-base --is-ancestor "${SHA}" refs/remotes/origin/develop || refuse "${SHA} is not on develop"
+          # X.Y.Z with each number at most 18 digits (so that shell arithmetic cannot wrap), without
+          # leading zeros, into ${normed}.
+          norm() {
+            local x y z
+            IFS=. read -r x y z <<<"$1"
+            [[ ${#x} -le 18 && ${#y} -le 18 && ${#z} -le 18 ]] || refuse "version too large: $1"
+            normed="$((10#${x})).$((10#${y})).$((10#${z}))"
+          }
           latest="$(git tag --list 'v*' | sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' | sort -V | tail -n 1)"
           if [ -n "${latest}" ]; then
-            git merge-base --is-ancestor "refs/tags/v${latest}" "${SHA}" || refuse "${SHA} does not contain v${latest}"
+            if [ "${KIND}" = stable ]; then
+              git merge-base --is-ancestor "refs/tags/v${latest}" "${SHA}" || refuse "${SHA} does not contain v${latest}"
+            fi
+            norm "${latest}"
+            latest="${normed}"
           fi
-          # The version: strict semver, of the kind this job releases, not tagged yet, and one that the
-          # plan could have given: the version given to the run, or else a single bump of the latest
-          # release or develop's own version when that is ahead of it (plus -dev.N for a pre-release).
+          # The version: strict semver, of this job's kind, not tagged yet, and one the planner gives for
+          # this request. Its value is only compared with versions worked out here, never computed with.
           n='(0|[1-9][0-9]*)'
           [[ "${VERSION}" =~ ^${n}\.${n}\.${n}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] || refuse "not a semver version: '${VERSION}'"
           case "${KIND}" in
             stable) [[ "${VERSION}" != *-* ]] || refuse "${VERSION} is a pre-release" ;;
             prerelease) [[ "${VERSION}" == *-* ]] || refuse "${VERSION} is not a pre-release" ;;
-            *) refuse "KIND must be stable or prerelease, not '${KIND}'" ;;
           esac
           ! git rev-parse --quiet --verify "refs/tags/v${VERSION}" >/dev/null || refuse "v${VERSION} already exists"
-          norm() { local x y z; IFS=. read -r x y z <<<"$1"; echo "$((10#${x})).$((10#${y})).$((10#${z}))"; }
-          base="${VERSION}"
+          max() { printf '%s\n' "$1" "$2" | sort -V | tail -n 1; }
           if [ -n "${GIVEN}" ]; then
-            allowed=("${GIVEN}")
-          else
-            allowed=()
+            # The version given to the run and nothing else, if it is newer than the latest release.
+            [ "${VERSION}" = "${GIVEN}" ] || refuse "${VERSION} is not the version given to this run (${GIVEN})"
             if [ -n "${latest}" ]; then
-              latest="$(norm "${latest}")"
-              IFS=. read -r x y z <<<"${latest}"
-              allowed=("$((x + 1)).0.0" "${x}.$((y + 1)).0" "${x}.${y}.$((z + 1))")
+              norm "${GIVEN%%-*}"
+              [ "${normed}" != "${latest}" ] && [ "$(max "${normed}" "${latest}")" = "${normed}" ] ||
+                refuse "${GIVEN} is not newer than the latest release v${latest}"
             fi
-            develop="$(scripts/workspace-version.sh)"
-            develop="$(norm "${develop%%-*}")"
-            if [ -z "${latest}" ] || [ "$(printf '%s\n' "${latest}" "${develop}" | sort -V | tail -n 1)" != "${latest}" ]; then
-              allowed+=("${develop}")
-            fi
-            if [ "${KIND}" = prerelease ]; then
-              [[ "${VERSION}" =~ ^([0-9.]+)-dev\.[1-9][0-9]*$ ]] || refuse "${VERSION} is not X.Y.Z-dev.N"
-              base="${BASH_REMATCH[1]}"
-            fi
+            exit 0
           fi
-          for a in "${allowed[@]}"; do
-            [ "${a}" != "${base}" ] || exit 0
+          # Otherwise the planner's range: with no release yet, develop's own version; else, for each
+          # kind of bump, the bumped latest release or develop's version, whichever is higher (a major
+          # bump only from 1.0.0 on).
+          develop="$(scripts/workspace-version.sh)"
+          norm "${develop%%-*}"
+          develop="${normed}"
+          if [ -z "${latest}" ]; then
+            bases=("${develop}")
+          else
+            IFS=. read -r x y z <<<"${latest}"
+            bases=("$(max "${x}.${y}.$((z + 1))" "${develop}")" "$(max "${x}.$((y + 1)).0" "${develop}")")
+            [ "${x}" -lt 1 ] || bases+=("$(max "$((x + 1)).0.0" "${develop}")")
+          fi
+          base="${VERSION}"
+          if [ "${KIND}" = prerelease ]; then
+            # X.Y.Z-dev.N, N one more than the highest such tag of that X.Y.Z.
+            [[ "${VERSION}" =~ ^([0-9.]+)-dev\.([1-9][0-9]*)$ ]] || refuse "${VERSION} is not X.Y.Z-dev.N"
+            base="${BASH_REMATCH[1]}"
+            number="${BASH_REMATCH[2]}"
+            highest=0
+            while read -r tag; do
+              [ -n "${tag}" ] || continue
+              k="${tag#"v${base}-dev."}"
+              [[ "${k}" =~ ^[0-9]+$ ]] || continue
+              [ "${#k}" -le 18 ] || refuse "pre-release number too large: ${tag}"
+              [ "$((10#${k}))" -le "${highest}" ] || highest="$((10#${k}))"
+            done <<<"$(git tag --list "v${base}-dev.*")"
+            [ "${number}" = "$((highest + 1))" ] || refuse "${VERSION} is not the next pre-release of ${base} (dev.$((highest + 1)))"
+          fi
+          for b in "${bases[@]}"; do
+            [ "${b}" != "${base}" ] || exit 0
           done
-          refuse "${VERSION} is not a version this run may release (${allowed[*]})"
+          refuse "${VERSION} is not a version this run may release (${bases[*]})"
       - name: Install toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal --no-self-update
       - name: Bump version and lockfiles
@@ -349,8 +480,8 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          # Still the script (this job mints the bot token, so it compiles nothing) until the
-          # release-prep split moves this edit into an unprivileged job and deletes it.
+          # The tree's own script, not xtask: the tagged commit is published without review, so
+          # it is written by a job that builds nothing.
           scripts/set-version.sh "${VERSION}"
           git diff --stat
       # Minted after the build steps above, so nothing they ran can read it.
