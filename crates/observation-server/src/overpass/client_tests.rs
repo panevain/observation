@@ -22,17 +22,24 @@ const URLS: [&str; 4] = [
     "http://d.example/api/interpreter",
 ];
 
-/// The production timings: 2 s retry pause, 30 s cool-down, 35 s attempts,
-/// an 80 s request (so a 72 s fetch budget).
+/// The production configuration (no environment), with `urls` as the
+/// interpreters.
 fn setup(urls: &[&str]) -> (OverpassClient, FakeHttp) {
-    let mut config = Config::for_tests("cache", "dist", URLS[0], "http://t/");
+    let mut config = Config::from_lookup(|_| None).unwrap();
     config.overpass_urls = urls.iter().map(|u| (*u).to_owned()).collect();
-    config.overpass_retry_wait = Duration::from_secs(2);
-    config.overpass_cooldown = Duration::from_secs(30);
-    config.overpass_timeout = Duration::from_secs(35);
-    config.request_timeout = Duration::from_secs(80);
     let fake = FakeHttp::new();
     (OverpassClient::new(Arc::new(fake.clone()), &config), fake)
+}
+
+/// The timings the tests below are written for: a 2 s retry pause, a 30 s
+/// cool-down, 35 s attempts and an 80 s request (so a 72 s fetch budget).
+#[test]
+fn the_tests_run_on_the_documented_defaults() {
+    let (client, _) = setup(&URLS[..1]);
+    assert_eq!(client.retry_wait, Duration::from_secs(2));
+    assert_eq!(client.cooldown, Duration::from_secs(30));
+    assert_eq!(client.attempt_timeout, Duration::from_secs(35));
+    assert_eq!(client.budget, Duration::from_secs(72));
 }
 
 fn bbox() -> BBox {
@@ -240,6 +247,17 @@ async fn attempts_and_the_whole_fetch_are_timed() {
     let [req] = fake.requests().try_into().unwrap();
     assert_eq!(req.timeout, Some(Duration::from_secs(7)));
     assert_eq!(begun.elapsed(), Duration::from_secs(74));
+
+    // 33 s spent: a full 35 s attempt, the pause, and then 2 s left, which is
+    // under the 3.5 s floor: no second attempt.
+    let (client, fake) = setup(&URLS[..1]);
+    on(&fake, URLS[0], FakeReply::hang());
+    let begun = Instant::now();
+    tokio::time::advance(Duration::from_secs(33)).await;
+    let e = client.fetch_since(&bbox(), begun).await.unwrap_err();
+    assert_eq!(message(&e), TOO_SLOW);
+    assert_eq!(fake.requests().len(), 1);
+    assert_eq!(begun.elapsed(), Duration::from_secs(70));
 }
 
 #[tokio::test(start_paused = true)]
