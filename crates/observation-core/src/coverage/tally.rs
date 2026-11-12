@@ -53,11 +53,6 @@ pub struct Tally {
 }
 
 impl Tally {
-    /// The per-cell camera counts the figures are kept for.
-    pub fn counts(&self) -> &CoverageCounts {
-        &self.counts
-    }
-
     /// No cameras counted yet; the figures are limited to `region` (all cells
     /// if `None`).
     pub fn new(layers: &StaticLayers, region: Option<&RegionMask>) -> Self {
@@ -72,6 +67,11 @@ impl Tally {
         };
         t.limit_to(layers, region);
         t
+    }
+
+    /// The per-cell camera counts the figures are kept for.
+    pub fn counts(&self) -> &CoverageCounts {
+        &self.counts
     }
 
     /// Works the figures out afresh for another region (a pass over every
