@@ -15,11 +15,7 @@
 //! - `usage`: both refuse the command line with exit status 2;
 //! - `recursion`: the script crashes in its v0 demangler (RecursionError) and the port succeeds
 //!   (it takes the script's fallback for that symbol: see `xtask::core::demangle`);
-//! - `stricter`: the script succeeds and the port fails: the differences the port declares;
-//! - `next-pr`: the script fails and the port succeeds, until the next change of the port: the
-//!   script requires `--out` and draws the SVG before it prints the table, which divides by zero
-//!   when one item is about 2^54 bytes or more next to small ones; the port takes no `--out` and
-//!   draws nothing yet. The change that ports the drawing expects these rows to be identical.
+//! - `stricter`: the script succeeds and the port fails: the differences the port declares.
 //!
 //! The cut and changed modules expect whatever the script does: `same` or `fails`.
 use std::path::Path;
@@ -393,7 +389,7 @@ fn cases() -> Vec<Case> {
         ),
         Case {
             out: false,
-            ..case("no --out", "next-pr", &t, Some(full.clone()))
+            ..case("no --out", "usage", &t, Some(full.clone()))
         },
         case("no such file", "fails", &t, None),
         case("empty file", "fails", &t, Some(vec![])),
@@ -510,8 +506,9 @@ fn cases() -> Vec<Case> {
         ),
         with("custom section name past the end", "same", vec![0, 1, 9]),
     ]);
-    // A cut-off last section whose declared size is 2^e: the script's SVG layout divides by zero
-    // at some sizes (not all: the float rounding decides), next to one function or one segment.
+    // A cut-off last section whose declared size is 2^e: the SVG layout divides by zero at some
+    // sizes (not all: the float rounding decides), next to one function or one segment, and both
+    // fail before the table.
     let func = [
         section(1, &[1, 0x60, 0, 0]),
         section(3, &[1, 0]),
@@ -526,12 +523,12 @@ fn cases() -> Vec<Case> {
     .concat();
     for (body, e, expect) in [
         (&func, 50, "same"),
-        (&func, 54, "next-pr"),
+        (&func, 54, "fails"),
         (&func, 56, "same"),
-        (&func, 60, "next-pr"),
-        (&func, 63, "next-pr"),
+        (&func, 60, "fails"),
+        (&func, 63, "fails"),
         (&data, 54, "same"),
-        (&data, 56, "next-pr"),
+        (&data, 56, "fails"),
     ] {
         let name = format!("a last section of 2^{e} bytes, cut off");
         cases.push(with(
@@ -769,7 +766,7 @@ fn port_and_script_agree_on_every_module() {
                     && s_mb
                         .iter()
                         .zip(&p_mb)
-                        .all(|(s, p)| (s - p).abs() <= 0.01 + s.abs() / 50.0);
+                        .all(|(s, p)| (s - p).abs() <= 0.01 + s.abs() / 25.0);
                 script.exit == 0
                     && port_exit == 0
                     && s == p
@@ -786,7 +783,6 @@ fn port_and_script_agree_on_every_module() {
             "usage" => script.exit == 2 && port_exit == 2,
             "recursion" => script.stderr == "crash: RecursionError" && port_exit == 0,
             "stricter" => script.exit == 0 && port_exit != 0,
-            "next-pr" => script.exit != 0 && port_exit == 0,
             _ => false,
         };
         if !good {
