@@ -11,15 +11,14 @@ use crate::clock::{Clock, SystemClock};
 use crate::config::Config;
 use crate::{AppState, Ports, StateError};
 
-/// The production ports, and the disk cache behind both stores, which
-/// [`spawn_background`] trims.
+/// The production ports.
 pub(crate) struct Production {
     pub(crate) ports: Ports,
-    pub(crate) cache: Arc<Cache>,
 }
 
 /// Builds the upstream clients and the region agent client, and opens the
-/// cache. Spawns nothing.
+/// cache and starts trimming it, in that order as before (so a failure to
+/// build the agent's client comes after the trim was started).
 pub(crate) fn production_ports(config: &Config) -> Result<Production, StateError> {
     let user_agent = config.user_agent();
     // No redirects: an upstream must not be able to send us elsewhere.
@@ -49,6 +48,11 @@ pub(crate) fn production_ports(config: &Config) -> Result<Production, StateError
         },
         Arc::clone(&clock),
     ));
+    // Off the request path: a cache from before a cap can be far over it.
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let cache = Arc::clone(&cache);
+        runtime.spawn(async move { cache.trim().await });
+    }
     let agent = match &config.regions_url {
         Some(url) => {
             // No overall timeout: snapshot requests long-poll (each request sets its own).
@@ -74,20 +78,15 @@ pub(crate) fn production_ports(config: &Config) -> Result<Production, StateError
             tile_http,
             agent,
             bundle_store: cache.clone(),
-            tile_store: cache.clone(),
+            tile_store: cache,
             clock,
         },
-        cache,
     })
 }
 
-/// Starts the cache trim and, with a region agent, the poller following it,
-/// in that order. The poller needs a Tokio runtime.
-pub(crate) fn spawn_background(state: &AppState, cache: Arc<Cache>) {
-    // Off the request path: a cache from before a cap can be far over it.
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        runtime.spawn(async move { cache.trim().await });
-    }
+/// With a region agent, starts the poller following it. It needs a Tokio
+/// runtime.
+pub(crate) fn spawn_background(state: &AppState) {
     if let Some(regions) = state.regions() {
         tokio::spawn(Arc::clone(regions).run_poller());
     }

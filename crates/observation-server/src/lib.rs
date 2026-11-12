@@ -100,20 +100,20 @@ pub struct Ports {
 }
 
 impl AppState {
-    /// Builds the HTTP clients, opens the cache and prepares the demo bundle.
-    /// Then starts trimming the cache and, with a region agent configured,
+    /// Builds the HTTP clients, opens the cache (starting its trim) and
+    /// prepares the demo bundle. With a region agent configured, then starts
     /// following its regions (so this must run inside a Tokio runtime).
     pub fn new(config: Config) -> Result<Self, StateError> {
         config.validate()?;
         let production = wiring::production_ports(&config)?;
         let state = Self::from_ports(config, production.ports);
-        wiring::spawn_background(&state, production.cache);
+        wiring::spawn_background(&state);
         Ok(state)
     }
 
     /// The state over `ports`, with the services built on them and the demo
-    /// bundle dated by the ports' clock. Spawns nothing: the region poller
-    /// and the cache trim are [`AppState::new`]'s.
+    /// bundle dated by the ports' clock. Spawns nothing: the cache trim and
+    /// the region poller are [`AppState::new`]'s.
     pub fn from_ports(config: Config, ports: Ports) -> Self {
         let Ports {
             overpass_http,
