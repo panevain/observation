@@ -38,6 +38,26 @@ fn step<'a>(wf: &'a str, name: &str) -> (Vec<&'a str>, &'a str) {
     (lines[start..end].to_vec(), next)
 }
 
+/// The lines of the step right before the step named `name` (comments left out).
+fn previous_step<'a>(wf: &'a str, name: &str) -> Vec<&'a str> {
+    let lines: Vec<&str> = wf.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.trim() == format!("- name: {name}"))
+        .unwrap_or_else(|| panic!("no step {name}"));
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    let at = |l: &str| l.len() - l.trim_start().len();
+    let begin = (0..start)
+        .rev()
+        .find(|&i| at(lines[i]) == indent && lines[i].trim_start().starts_with("- "))
+        .unwrap_or_else(|| panic!("no step before {name}"));
+    lines[begin..start]
+        .iter()
+        .copied()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .collect()
+}
+
 /// A step's `run: |` block, unindented, and the value of `key` in its `env:`.
 fn run_and_env(step: &[&str], key: &str) -> (String, String) {
     let at = step
@@ -89,6 +109,28 @@ fn bot_jobs_commit_only_the_artifact_their_producer_wrote() {
             next, "Bot token",
             "{name}: the check is not right before the token"
         );
+        // Nothing runs between the download and the check: the step before it is the
+        // download of this artifact, into the directory the check reads.
+        let artifact_name = name.trim_end_matches(".yml");
+        let download: Vec<&str> = previous_step(&wf, "Check the artifact")
+            .iter()
+            .map(|l| l.trim())
+            .collect();
+        assert!(
+            download[0].starts_with("- uses: actions/download-artifact@"),
+            "{name}: the step before the check is not the download: {download:?}"
+        );
+        let path = format!("${{{{ runner.temp }}}}/{artifact_name}");
+        assert_eq!(
+            download[1..],
+            [
+                "with:",
+                &format!("name: {artifact_name}"),
+                &format!("path: {path}")
+            ],
+            "{name}"
+        );
+        assert_eq!(run_and_env(&check, "DIR").1, path, "{name}");
         let (run, files) = run_and_env(&check, "FILES");
         let sha_binding = format!("SHA256: ${{{{ needs.{producer}.outputs.sha256 }}}}");
         assert!(

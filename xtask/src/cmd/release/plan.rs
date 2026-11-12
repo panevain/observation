@@ -1015,6 +1015,28 @@ sys.stdout.write(f"exit {code}\n-- stdout\n{so.getvalue()}-- stderr\n{se.getvalu
         }
     }
 
+    /// pretag tags in a run where plan builds xtask, which R2 allows only while pretag restores
+    /// no cache and downloads no artifact: its only actions are the checkout and the app token
+    /// (no download-artifact, actions/cache, setup-mise, setup-rust or other setup action).
+    #[test]
+    fn pretag_uses_only_the_checkout_and_the_token_action() {
+        let used: std::collections::BTreeSet<String> = job_steps("pretag")
+            .iter()
+            .flatten()
+            .filter_map(|l| l.strip_prefix("- ").unwrap_or(l).strip_prefix("uses:"))
+            .map(|u| {
+                let u = u.trim().trim_matches(['"', '\'']);
+                u.split('@').next().unwrap_or(u).to_owned()
+            })
+            .collect();
+        assert_eq!(
+            used,
+            ["actions/checkout", "actions/create-github-app-token"]
+                .map(String::from)
+                .into(),
+        );
+    }
+
     /// prepare's release state step fails where the plan job skipped: main not tagged yet, the
     /// back-merge open, a hotfix/* or release/* branch; it passes when none is the case.
     #[test]
