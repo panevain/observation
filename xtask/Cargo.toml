@@ -20,6 +20,12 @@ flate2 = "1.1"
 [dev-dependencies]
 tempfile = "3.27"
 
+# The scripts against the built binary, while both exist (see the file). Outside tests/, whose
+# fixture trees hold .rs files that are data, not test targets.
+[[test]]
+name = "release_version"
+path = "parity/release_version.rs"
+
 # Dependencies with no user yet: the commands that need them arrive in later changes. Remove in
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
 # the root workspace.

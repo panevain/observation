@@ -58,6 +58,31 @@ enum CoverageCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ReleaseCommand {
+    /// The workspace version (`version` in Cargo.toml's [workspace.package]).
+    #[command(subcommand)]
+    Version(VersionCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum VersionCommand {
+    /// Print the workspace version; fail unless it is X.Y.Z or X.Y.Z-pre.
+    Get {
+        /// The manifest (default: Cargo.toml in the repository; - reads stdin). A relative
+        /// path is taken from the repository.
+        file: Option<String>,
+        /// What an error calls it (default: FILE).
+        name: Option<String>,
+    },
+    /// Set the workspace version, then refresh the workspace crates' entries in Cargo.lock and
+    /// fuzz/Cargo.lock (`cargo update -w`).
+    Set {
+        /// X.Y.Z or X.Y.Z-pre, without the leading v.
+        version: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Dependabot pull requests whose auto-merge to enable or disable.
     #[command(subcommand)]
@@ -82,6 +107,9 @@ enum Command {
     /// Line coverage per crate.
     #[command(subcommand)]
     Coverage(CoverageCommand),
+    /// The release automation's steps.
+    #[command(subcommand)]
+    Release(ReleaseCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
     /// be, or the advisory ignore lists disagree.
     Sync,
@@ -122,6 +150,11 @@ fn append(path: &std::path::Path, text: &str) -> xtask::Result<()> {
         .open(path)
         .and_then(|mut f| f.write_all(text.as_bytes()))
         .map_err(|e| xtask::Error::new(format!("{}: {e}", path.display())))
+}
+
+/// Whether the scripts' `${GITHUB_ACTIONS:+::error::}` applied: set and not empty.
+fn github_actions() -> bool {
+    std::env::var_os("GITHUB_ACTIONS").is_some_and(|v| !v.is_empty())
 }
 
 fn main() -> ExitCode {
@@ -197,6 +230,31 @@ fn main() -> ExitCode {
                 }
                 Ok(out.failed)
             })
+        }
+        Command::Release(ReleaseCommand::Version(VersionCommand::Get { file, name })) => {
+            cmd::release::version::get(
+                &repo,
+                file.as_deref(),
+                name.as_deref(),
+                &mut std::io::stdin().lock(),
+                github_actions(),
+            )
+            .map(|line| {
+                emit(line.as_bytes(), b"");
+                false
+            })
+        }
+        Command::Release(ReleaseCommand::Version(VersionCommand::Set { version })) => {
+            let mut diagnostics = String::new();
+            let result = cmd::release::version::set(
+                &repo,
+                &version,
+                &CargoCli::default(),
+                github_actions(),
+                &mut diagnostics,
+            );
+            emit(b"", diagnostics.as_bytes());
+            result
         }
         Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
             emit(out.stdout.as_bytes(), out.stderr.as_bytes());

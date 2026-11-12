@@ -196,16 +196,19 @@ impl Http for Curl {
     }
 }
 
-/// cargo-audit, as `program` (default: `cargo-audit` from `PATH`).
+/// cargo-audit, as `program` (default: `cargo-audit` from `PATH`), and cargo, as `cargo`
+/// (default: `cargo` from `PATH`, so that rustup picks the toolchain of the directory it runs in).
 #[derive(Debug, Clone)]
 pub struct CargoCli {
     pub program: PathBuf,
+    pub cargo: PathBuf,
 }
 
 impl Default for CargoCli {
     fn default() -> Self {
         Self {
             program: "cargo-audit".into(),
+            cargo: "cargo".into(),
         }
     }
 }
@@ -235,6 +238,19 @@ impl Cargo for CargoCli {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(spawn_error(&cmd, &e)),
         }
+    }
+
+    fn update_workspace(&self, dir: &Path, manifest: Option<&str>) -> Result<bool> {
+        let mut cmd = Command::new(&self.cargo);
+        cmd.current_dir(dir).args(["update", "-w"]);
+        if let Some(manifest) = manifest {
+            cmd.args(["--manifest-path", manifest]);
+        }
+        let status = cmd
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| spawn_error(&cmd, &e))?;
+        Ok(status.success())
     }
 }
 
@@ -373,7 +389,10 @@ mod tests {
         std::fs::create_dir(tmp.path().join("sub")).unwrap_or_else(|e| panic!("{e}"));
         let lock = tmp.path().join("sub/Cargo.lock");
         std::fs::write(&lock, "{}").unwrap_or_else(|e| panic!("{e}"));
-        let cargo = CargoCli { program };
+        let cargo = CargoCli {
+            program,
+            ..CargoCli::default()
+        };
         let out = ok(cargo.audit_json(&lock));
         assert_eq!(
             out,
@@ -384,8 +403,34 @@ mod tests {
         );
         let missing = CargoCli {
             program: tmp.path().join("no-cargo-audit"),
+            ..CargoCli::default()
         };
         assert_eq!(ok(missing.audit_json(&lock)), None);
+    }
+
+    #[test]
+    fn cargo_update_runs_in_the_directory_and_reports_success() {
+        let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let cargo = script(
+            tmp.path(),
+            "cargo",
+            r#"echo "$(pwd) $*" >> log; [ "$*" = "update -w" ]"#,
+        );
+        let cli = CargoCli {
+            cargo,
+            ..CargoCli::default()
+        };
+        assert!(ok(cli.update_workspace(tmp.path(), None)));
+        assert!(!ok(
+            cli.update_workspace(tmp.path(), Some("fuzz/Cargo.toml"))
+        ));
+        let log = std::fs::read_to_string(tmp.path().join("log")).unwrap_or_else(|e| panic!("{e}"));
+        let dir = ok(std::fs::canonicalize(tmp.path()).map_err(|e| Error::new(e.to_string())));
+        let dir = dir.display();
+        assert_eq!(
+            log,
+            format!("{dir} update -w\n{dir} update -w --manifest-path fuzz/Cargo.toml\n")
+        );
     }
 
     #[test]

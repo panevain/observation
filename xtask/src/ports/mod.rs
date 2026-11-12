@@ -45,6 +45,9 @@ pub trait Cargo {
     /// `cargo-audit audit --json` on a lockfile, run beside it (so no repository's
     /// `.cargo/audit.toml` applies), or `None` when cargo-audit is not installed.
     fn audit_json(&self, lockfile: &Path) -> Result<Option<AuditOutput>>;
+    /// `cargo update -w`, with `--manifest-path MANIFEST` when given, run in `dir` with its
+    /// output passed through to this process's. Whether it succeeded.
+    fn update_workspace(&self, dir: &Path, manifest: Option<&str>) -> Result<bool>;
 }
 
 /// The brotli command-line compressor.

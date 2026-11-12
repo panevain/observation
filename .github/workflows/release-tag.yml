@@ -18,11 +18,16 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml's tools, environment and tasks (setup-rust's ci:toolchain).
+env:
+  MISE_ENV: ci
+
 jobs:
   plan:
     name: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # An uncached build of xtask, then the checks.
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read # find the PR that this push merged
@@ -33,6 +38,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # xtask from the pushed main commit, built without a cache (this job decides what is
+      # released). The job's token only reads, and the build step does not get it.
+      - uses: $/.github/actions/setup-mise
+        with:
+          cache: false
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
       - name: Version and kind
         id: plan
         env:
@@ -40,7 +52,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          version="$(scripts/workspace-version.sh)"
+          version="$("${RUNNER_TEMP}/xtask-target/debug/xtask" release version get)"
           if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
             echo "v${version} already exists; nothing to tag."
             exit 0

@@ -120,6 +120,8 @@ pub struct FakeCargo {
     pub audit_installed: bool,
     /// Lockfile text -> what cargo-audit prints for it.
     pub audits: HashMap<String, AuditOutput>,
+    /// Which `update_workspace` call fails (1 for the first); `None`: none does.
+    pub update_fails: Option<usize>,
     pub calls: Calls,
 }
 
@@ -137,6 +139,23 @@ impl Cargo for FakeCargo {
         Ok(Some(json.unwrap_or_else(|| {
             unexpected(&format!("cargo-audit on\n{text}"))
         })))
+    }
+
+    /// Records the call as `cargo update -w [--manifest-path M]`, without the directory.
+    fn update_workspace(&self, _dir: &Path, manifest: Option<&str>) -> Result<bool> {
+        let call = match manifest {
+            Some(m) => format!("cargo update -w --manifest-path {m}"),
+            None => "cargo update -w".to_owned(),
+        };
+        self.calls.record(call);
+        let n = self
+            .calls
+            .0
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("cargo update"))
+            .count();
+        Ok(self.update_fails != Some(n))
     }
 }
 

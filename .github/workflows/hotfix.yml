@@ -40,10 +40,23 @@ jobs:
       version: ${{ steps.state.outputs.next }}
       ready: ${{ steps.ready.outputs.ready }}
     steps:
-      # The scripts come from this workflow's ref (develop); they work on a checkout of main.
+      # The scripts and xtask come from this workflow's ref (develop); they work on a checkout
+      # of main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
+      # directories: without shims, nothing run in main/ resolves its own mise config.
+      # No cache: they are downloaded fresh and checked against mise.ci.lock.
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: cargo-audit trivy
+          cache: false
+          shims: false
+      # xtask is built here, with develop's toolchain, before setup-rust below installs main's
+      # (and removes every other); no cache, as for anything that prepares a release.
+      - uses: $/.github/actions/setup-rust
+      - uses: $/.github/actions/xtask
       - name: Release state
         id: state
         run: |
@@ -60,14 +73,6 @@ jobs:
           ref: main
           path: main
           persist-credentials: false
-      # cargo-audit and Trivy from this ref's mise.ci.toml (develop's), on PATH by their install
-      # directories: without shims, nothing run in main/ resolves its own mise config.
-      # No cache: they are downloaded fresh and checked against mise.ci.lock.
-      - uses: $/.github/actions/setup-mise
-        with:
-          tools: cargo-audit trivy
-          cache: false
-          shims: false
       - uses: $/.github/actions/setup-rust
         with:
           dir: main
@@ -87,7 +92,7 @@ jobs:
             exit 0
           fi
           python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
-          (cd main && ../scripts/set-version.sh "${NEXT}")
+          "${RUNNER_TEMP}/xtask-target/debug/xtask" --repo main release version set "${NEXT}"
           python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
           # A hotfix only moves versions and pins.
           unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"

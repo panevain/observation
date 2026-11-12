@@ -148,6 +148,9 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
+          # Still the script, not `cargo xtask release version set`: this job mints the bot
+          # token, so it compiles nothing. The release-prep split moves these edits into an
+          # unprivileged job and deletes set-version.sh and workspace-version.sh.
           scripts/set-version.sh "${VERSION}"
           python3 scripts/release-plan.py changelog --repo . --version "${VERSION}"
           cp "${RUNNER_TEMP}/treemap/wasm-bundle-treemap.svg" docs/images/wasm-bundle-treemap.svg
@@ -209,6 +212,8 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
+          # Still the script (this job mints the bot token, so it compiles nothing) until the
+          # release-prep split moves this edit into an unprivileged job and deletes it.
           scripts/set-version.sh "${VERSION}"
           git diff --stat
       # Minted after the build steps above, so nothing they ran can read it.
