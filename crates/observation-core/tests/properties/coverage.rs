@@ -117,14 +117,14 @@ pub(crate) fn street() -> impl Strategy<Value = Street> {
 /// A camera somewhere over the street, 1 to 8 m above the ground.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Camera {
-    at: Vec2,
-    above: f32,
-    yaw: f32,
-    pitch: f32,
-    roll: f32,
-    hfov: f32,
-    vfov: f32,
-    range: f32,
+    pub at: Vec2,
+    pub above: f32,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub hfov: f32,
+    pub vfov: f32,
+    pub range: f32,
 }
 
 impl Camera {
