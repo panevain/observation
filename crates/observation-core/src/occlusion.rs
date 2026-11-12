@@ -2,6 +2,7 @@
 //! accelerated by a uniform 2D grid.
 
 use crate::building::Footprint;
+pub use crate::util::planar::point_in_ring;
 use glam::{Vec2, Vec3};
 
 /// Preferred grid cell size, metres.
@@ -57,22 +58,6 @@ impl Prism {
         }
         false
     }
-}
-
-/// Crossing-number test; the ring may or may not repeat its first point.
-/// Takes `Vec2` rings or bundle `[f32; 2]` rings.
-pub fn point_in_ring<P: Copy + Into<Vec2>>(p: Vec2, ring: &[P]) -> bool {
-    let mut inside = false;
-    let n = ring.len();
-    let mut j = n.wrapping_sub(1);
-    for i in 0..n {
-        let (a, b): (Vec2, Vec2) = (ring[i].into(), ring[j].into());
-        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
 }
 
 /// Parameter `t ∈ [0,1]` along `a + t·d` where it crosses segment `p–q`.

@@ -300,6 +300,14 @@ fn golden_scene_v2_sanitise() {
 }
 
 #[test]
+fn golden_scene_v2_region_default() {
+    let s = scene_round_trip("v2_region_default");
+    let region = s.region.expect("a region without `enabled` is kept");
+    assert!(region.enabled, "and is on, as before the field existed");
+    assert_eq!(region.points.len(), 4);
+}
+
+#[test]
 fn golden_scene_v2_provenance_malformed() {
     let s = scene_round_trip("v2_provenance_malformed");
     assert_eq!(s.provenance, None, "a malformed block is dropped whole");

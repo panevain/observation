@@ -11,8 +11,10 @@
 
 use crate::address::Address;
 use crate::building::Footprint;
-use crate::bundle::{AreaBundle, OsmAddressPoint, OsmBuilding, OsmRoad, build_bundle};
+use crate::bundle::AreaBundle;
 use crate::geo::{BBox, LatLon};
+use crate::osm::build::build_bundle;
+use crate::osm::features::{OsmAddressPoint, OsmBuilding, OsmRoad};
 use crate::terrain::Terrain;
 use glam::Vec2;
 

@@ -24,6 +24,7 @@ testing = []
 [dev-dependencies]
 # This crate's own integration tests use the fixture builders.
 observation-core = { path = ".", features = ["testing"] }
+proptest.workspace = true
 
 [lints]
 workspace = true

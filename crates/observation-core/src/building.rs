@@ -1,9 +1,8 @@
-//! Building height inference from OSM tags and footprint extrusion.
+//! Building footprints and their extrusion into a mesh.
 
+pub use crate::osm::tags::{STOREY_M, default_height_for, infer_heights, parse_length_m};
+pub use crate::util::planar::{clean_ring, signed_area2};
 use serde::{Deserialize, Serialize};
-
-/// Assumed storey height, metres.
-pub const STOREY_M: f32 = 3.0;
 
 /// Render/occlusion-ready mesh in the world frame.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -64,104 +63,6 @@ impl Footprint {
     pub fn roof_y(&self) -> f32 {
         self.base_m + self.height_m
     }
-}
-
-/// Parses an OSM length value (`"12"`, `"12 m"`, `"12.5m"`, `"40'"`, `"40 ft"`, `"12'6\""`) to metres.
-pub fn parse_length_m(raw: &str) -> Option<f32> {
-    let s = raw.trim().replace(',', ".");
-    if let Some((ft, rest)) = s.split_once('\'') {
-        let ft: f32 = ft.trim().parse().ok()?;
-        let inches = rest.trim().trim_end_matches('"').trim();
-        let inches: f32 = if inches.is_empty() {
-            0.0
-        } else {
-            inches.parse().ok()?
-        };
-        return Some(ft * 0.3048 + inches * 0.0254);
-    }
-    let lower = s.to_ascii_lowercase();
-    let (num, factor) = if let Some(n) = lower.strip_suffix("ft") {
-        (n, 0.3048)
-    } else if let Some(n) = lower.strip_suffix('m') {
-        (n, 1.0)
-    } else {
-        (lower.as_str(), 1.0)
-    };
-    let v: f32 = num.trim().parse().ok()?;
-    (v.is_finite() && v >= 0.0).then_some(v * factor)
-}
-
-/// Default total height for a `building=*` value when no height tags exist.
-pub fn default_height_for(building: &str) -> f32 {
-    match building {
-        "shed" | "garage" | "garages" | "carport" | "hut" | "roof" | "kiosk" | "cabin" => 3.0,
-        "bungalow" | "static_caravan" => 4.0,
-        "house" | "detached" | "semidetached_house" | "terrace" | "residential" | "farm" => 6.5,
-        "apartments" | "dormitory" | "hotel" => 10.0,
-        "church" | "cathedral" => 12.0,
-        _ => 6.0,
-    }
-}
-
-/// Infers `(min_height, height)` in metres from OSM tags.
-///
-/// Priority: `height` → `building:levels`(+`roof:levels`) → building-type default.
-/// `min_height` / `building:min_level` give the base for building parts.
-pub fn infer_heights<'a>(tag: impl Fn(&str) -> Option<&'a str>) -> (f32, f32) {
-    let levels = |k: &str| {
-        tag(k)
-            .and_then(|v| v.trim().parse::<f32>().ok())
-            .filter(|v| v.is_finite() && *v >= 0.0)
-    };
-    let min = tag("min_height")
-        .and_then(parse_length_m)
-        .or_else(|| levels("building:min_level").map(|l| l * STOREY_M))
-        .unwrap_or(0.0);
-    let height = tag("height")
-        .and_then(parse_length_m)
-        .filter(|h| *h > 0.5)
-        .or_else(|| {
-            levels("building:levels").filter(|l| *l > 0.0).map(|l| {
-                let roof = levels("roof:levels").unwrap_or(0.0);
-                (l + roof) * STOREY_M + if roof == 0.0 { 1.0 } else { 0.0 }
-            })
-        })
-        .unwrap_or_else(|| default_height_for(tag("building").unwrap_or("yes")));
-    let height = height.clamp(1.0, 300.0);
-    (min.min(height - 0.5).max(0.0), height)
-}
-
-/// Removes a closing duplicate point and consecutive duplicates.
-pub fn clean_ring(ring: &[[f32; 2]]) -> Vec<[f32; 2]> {
-    let mut out: Vec<[f32; 2]> = Vec::with_capacity(ring.len());
-    for &p in ring {
-        if out
-            .last()
-            .is_none_or(|q| (q[0] - p[0]).abs() > 1e-4 || (q[1] - p[1]).abs() > 1e-4)
-        {
-            out.push(p);
-        }
-    }
-    while out.len() > 1 {
-        let (f, l) = (out[0], out[out.len() - 1]);
-        if (f[0] - l[0]).abs() <= 1e-4 && (f[1] - l[1]).abs() <= 1e-4 {
-            out.pop();
-        } else {
-            break;
-        }
-    }
-    out
-}
-
-/// Twice the signed area of a ring in the `[x, z]` plane.
-pub fn signed_area2(ring: &[[f32; 2]]) -> f32 {
-    let n = ring.len();
-    (0..n)
-        .map(|i| {
-            let (a, b) = (ring[i], ring[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum()
 }
 
 /// Appends walls and a flat roof (plus underside for raised parts) to `mesh`.
@@ -236,59 +137,6 @@ pub fn extrude(fp: &Footprint, mesh: &mut MeshData) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect()
-    }
-
-    fn infer(t: &HashMap<String, String>) -> (f32, f32) {
-        infer_heights(|k| t.get(k).map(String::as_str))
-    }
-
-    #[test]
-    fn lengths() {
-        assert_eq!(parse_length_m("12"), Some(12.0));
-        assert_eq!(parse_length_m("12.5 m"), Some(12.5));
-        assert!((parse_length_m("10'").unwrap() - 3.048).abs() < 1e-4);
-        assert!((parse_length_m("10 ft").unwrap() - 3.048).abs() < 1e-4);
-        assert!((parse_length_m("5'6\"").unwrap() - 1.6764).abs() < 1e-3);
-        assert_eq!(parse_length_m("tall"), None);
-    }
-
-    #[test]
-    fn height_priority() {
-        assert_eq!(
-            infer(&tags(&[("building", "house"), ("height", "8")])),
-            (0.0, 8.0)
-        );
-        assert_eq!(
-            infer(&tags(&[("building", "house"), ("building:levels", "2")])),
-            (0.0, 7.0)
-        );
-        assert_eq!(
-            infer(&tags(&[
-                ("building", "house"),
-                ("building:levels", "2"),
-                ("roof:levels", "1")
-            ])),
-            (0.0, 9.0)
-        );
-        assert_eq!(infer(&tags(&[("building", "garage")])), (0.0, 3.0));
-        assert_eq!(infer(&tags(&[("building", "yes")])), (0.0, 6.0));
-        assert_eq!(
-            infer(&tags(&[
-                ("building:part", "yes"),
-                ("height", "10"),
-                ("min_height", "4")
-            ])),
-            (4.0, 10.0)
-        );
-    }
-
     fn square(s: f32) -> Vec<[f32; 2]> {
         vec![[0.0, 0.0], [s, 0.0], [s, s], [0.0, s], [0.0, 0.0]]
     }
