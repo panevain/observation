@@ -27,7 +27,8 @@ pub struct Config {
 pub struct AllowedFiles {
     /// What hotfix.yml's `prepare` may change in main (versions and pins).
     pub hotfix: Vec<String>,
-    /// What a pre-release tag's commit may change over its parent (release.yml's `verify`).
+    /// What a pre-release tag's commit may change over its parent (release.yml's `verify` checks
+    /// an inline copy).
     pub prerelease: Vec<String>,
 }
 

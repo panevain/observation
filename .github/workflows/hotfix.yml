@@ -39,6 +39,7 @@ jobs:
     outputs:
       version: ${{ steps.state.outputs.next }}
       ready: ${{ steps.ready.outputs.ready }}
+      sha256: ${{ steps.ready.outputs.sha256 }}
     steps:
       # The scripts come from this workflow's ref (develop); they work on a checkout of main.
       # This job builds nothing: what it writes into main/ becomes a pull request that merges
@@ -92,8 +93,9 @@ jobs:
           python3 scripts/security-patch.py refresh-digests --repo main --out "${out}"
           (cd main && ../scripts/set-version.sh "${NEXT}")
           python3 scripts/security-patch.py changelog --repo main --version "${NEXT}" --out "${out}"
-          # A hotfix only moves versions and pins (.config/release.toml's hotfix list; open-pr
-          # checks the patch again before it commits it).
+          # A hotfix only moves versions and pins: .config/release.toml's hotfix list, written out
+          # here and not checked by `cargo xtask sync`. open-pr, whose copy sync does check,
+          # checks the patch again before it commits it.
           unexpected="$(git -C main diff --name-only | grep -vxE 'Cargo\.toml|Cargo\.lock|fuzz/Cargo\.lock|CHANGELOG\.md|Dockerfile' || true)"
           [ -z "${unexpected}" ] || { echo "::error::unexpected changes: ${unexpected}"; exit 1; }
           git -C main diff --binary > "${out}/hotfix.patch"
@@ -103,6 +105,7 @@ jobs:
             echo "This PR merges itself when its checks pass. Release tag then waits for an approval of the \`release\` environment (Actions > Release tag > Review deployments) before it tags v${NEXT} and publishes."
           } > "${out}/body.md"
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
+          echo "sha256=$(cd "${out}" && sha256sum -- hotfix.patch body.md | sha256sum | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
           echo "ready=true" >> "${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.ready.outputs.ready == 'true'
@@ -134,6 +137,21 @@ jobs:
         with:
           name: hotfix
           path: ${{ runner.temp }}/hotfix
+      # The artifact must be what prepare wrote, which builds nothing: the sha256 of its files,
+      # a value from that job, is compared before anything reads them and before the token.
+      - name: Check the artifact
+        env:
+          DIR: ${{ runner.temp }}/hotfix
+          FILES: hotfix.patch body.md
+          SHA256: ${{ needs.prepare.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::$1"; exit 1; }
+          [[ "${SHA256}" =~ ^[0-9a-f]{64}$ ]] || refuse "bad digest '${SHA256}'"
+          cd "${DIR}"
+          read -ra files <<<"${FILES}"
+          for f in "${files[@]}"; do [ -f "${f}" ] && [ ! -L "${f}" ] || refuse "${f} is not a regular file"; done
+          [ "$(sha256sum -- "${files[@]}" | sha256sum | cut -d' ' -f1)" = "${SHA256}" ] || refuse "the artifact is not the one prepare wrote"
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0

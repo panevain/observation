@@ -497,6 +497,103 @@ mod tests {
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
+    /// scripts/release-state.sh, which release-prep's and hotfix's `prepare` jobs run on their
+    /// token path, against the golden's `state` target, which was captured from it: run with
+    /// bash and a stand-in git answering from each case, it must still give exactly that.
+    #[test]
+    fn the_script_in_the_tree_still_gives_the_golden() {
+        const STUB: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+key = " ".join(sys.argv[1:])
+a = json.load(open(os.environ["GIT_ANSWERS"])).get(key)
+with open(os.environ["GIT_LOG"], "a") as f:
+    f.write(f"git {key}" + ("" if a else " UNEXPECTED") + "\n")
+if not a:
+    sys.exit(99)
+sys.stdout.write(a["stdout"]); sys.exit(a["code"])
+"#;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let dir = root.join("xtask/tests/fixtures/release-state");
+        let cases: Cases = ok(toml::from_str(&ok(std::fs::read_to_string(
+            dir.join("cases.toml"),
+        ))));
+        let want = sections(&ok(std::fs::read_to_string(dir.join("golden"))));
+        let mut problems = Vec::new();
+        let mut ran = 0;
+        for case in cases
+            .case
+            .iter()
+            .filter(|c| c.targets.iter().any(|t| t == "state"))
+        {
+            let tmp = ok(tempfile::tempdir());
+            let t = tmp.path();
+            let stub = t.join("git");
+            ok(std::fs::write(&stub, STUB));
+            use std::os::unix::fs::PermissionsExt as _;
+            ok(std::fs::set_permissions(
+                &stub,
+                std::fs::Permissions::from_mode(0o755),
+            ));
+            let answers: BTreeMap<&str, serde_json::Value> = case
+                .git
+                .iter()
+                .map(|(k, a)| {
+                    (
+                        k.as_str(),
+                        serde_json::json!({"code": a.code, "stdout": a.stdout}),
+                    )
+                })
+                .collect();
+            ok(std::fs::write(
+                t.join("answers.json"),
+                ok(serde_json::to_string(&answers)),
+            ));
+            ok(std::fs::write(t.join("log"), ""));
+            // Copies at the path the golden's messages show, as it was captured.
+            ok(std::fs::create_dir(t.join("scripts")));
+            for script in ["release-state.sh", "workspace-version.sh"] {
+                ok(std::fs::copy(
+                    root.join("scripts").join(script),
+                    t.join("scripts").join(script),
+                ));
+            }
+            let mut cmd = std::process::Command::new("bash");
+            cmd.args(["--noprofile", "--norc", "-eo", "pipefail"])
+                .arg("scripts/release-state.sh")
+                .current_dir(t)
+                .env_clear()
+                .env("PATH", format!("{}:/usr/bin:/bin", t.display()))
+                .env("LC_ALL", "C.UTF-8")
+                .env("HOME", t)
+                .env("GIT_ANSWERS", t.join("answers.json"))
+                .env("GIT_LOG", t.join("log"));
+            if let Some(v) = &case.github_actions {
+                cmd.env("GITHUB_ACTIONS", v);
+            }
+            let out = ok(cmd.output());
+            let got = [
+                format!("exit {}", out.status.code().unwrap_or(-1)),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+                String::new(),
+                String::new(),
+                ok(std::fs::read_to_string(t.join("log"))),
+            ]
+            .map(|s| s.trim_end_matches('\n').to_owned())
+            .to_vec();
+            let key = format!("{} / state", case.name);
+            ran += 1;
+            if want.get(&key) != Some(&got) {
+                problems.push(format!(
+                    "{key}:\n  golden: {:?}\n  script: {got:?}",
+                    want.get(&key)
+                ));
+            }
+        }
+        assert!(ran > 0);
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
     /// bash's `[[ -z "$(...)" ]]` on a branch listing: `$(...)` drops NULs (with a warning) and
     /// trailing newlines, so only those bytes are no output. Checked against bash 5.2.
     #[test]

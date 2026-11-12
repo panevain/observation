@@ -42,6 +42,7 @@ jobs:
     outputs:
       changed: ${{ steps.bump.outputs.changed }}
       automerge: ${{ steps.bump.outputs.automerge }}
+      sha256: ${{ steps.bump.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +82,7 @@ jobs:
             fi
           } > "${out}/body.md"
           cat "${out}/body.md" >> "${GITHUB_STEP_SUMMARY}"
+          echo "sha256=$(cd "${out}" && sha256sum -- pins.patch body.md | sha256sum | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
           echo "changed=true" >> "${GITHUB_OUTPUT}"
           echo "automerge=$(cat "${out}/automerge")" >> "${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -145,6 +147,21 @@ jobs:
         with:
           name: pins
           path: ${{ runner.temp }}/pins
+      # The artifact must be what bump wrote, which builds nothing: the sha256 of its files,
+      # a value from that job, is compared before anything reads them and before the token.
+      - name: Check the artifact
+        env:
+          DIR: ${{ runner.temp }}/pins
+          FILES: pins.patch body.md
+          SHA256: ${{ needs.bump.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::$1"; exit 1; }
+          [[ "${SHA256}" =~ ^[0-9a-f]{64}$ ]] || refuse "bad digest '${SHA256}'"
+          cd "${DIR}"
+          read -ra files <<<"${FILES}"
+          for f in "${files[@]}"; do [ -f "${f}" ] && [ ! -L "${f}" ] || refuse "${f} is not a regular file"; done
+          [ "$(sha256sum -- "${files[@]}" | sha256sum | cut -d' ' -f1)" = "${SHA256}" ] || refuse "the artifact is not the one bump wrote"
       - name: Bot token
         id: bot
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
