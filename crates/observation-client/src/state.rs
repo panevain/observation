@@ -32,33 +32,11 @@ impl Default for AddressJump {
     }
 }
 
-/// Transient UI state.
-#[derive(Debug, Resource)]
-pub struct UiState {
-    /// Frame the selected camera in the 3D view (consumed by the input systems).
-    pub focus_request: bool,
-    /// Wall-clock seconds since start-up, for "saved just now" and the
-    /// loading timer.
-    pub now: f64,
-    /// Scroll the camera list to the picked address's group once (consumed by
-    /// the inspector).
-    pub jump_to_address: bool,
-    /// A restored or imported scene's area came back with different map
-    /// data: shown in the Coverage card until dismissed or another area
-    /// loads.
-    pub data_change: Option<DataChange>,
-}
-
-impl Default for UiState {
-    fn default() -> Self {
-        Self {
-            focus_request: false,
-            now: 0.0,
-            jump_to_address: false,
-            data_change: None,
-        }
-    }
-}
+/// A restored or imported scene's area came back with different map data:
+/// shown in the Coverage card until dismissed or another area loads, and
+/// dropped once undo or redo moves away from that step.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct DataChangeNotice(Option<DataChange>);
 
 /// The toasts on screen, as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]

@@ -20,7 +20,7 @@ pub(super) fn summary(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
             region_menu(ui, d, t, vm.in_region);
         });
     });
-    crate::ui::provenance::data_change_notice(ui, t, &mut d.ui);
+    crate::ui::provenance::data_change_notice(ui, t, &mut d.data_change);
     match &vm.figures {
         None => hint(
             ui,

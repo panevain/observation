@@ -208,7 +208,7 @@ pub fn status_bar(ui: &mut egui::Ui, d: &UiData) {
         d.area.as_ref().map(|a| &a.bundle),
         &d.config.tile_attribution,
         d.save.status(),
-        d.ui.now,
+        d.time.elapsed_secs_f64(),
         &d.coverage.stats,
     );
     ui.horizontal_centered(|ui| {

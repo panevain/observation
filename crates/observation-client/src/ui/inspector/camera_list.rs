@@ -52,9 +52,9 @@ pub(super) fn camera_list(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     // The address picked with the Address tool: its group is shaded, and
     // scrolled into view once after a click.
     let picked = picked_group(d, &groups);
-    let jump = d.ui.jump_to_address;
+    let jump = d.editor.jump_to_address;
     if jump {
-        d.ui.jump_to_address = false;
+        d.editor.jump_to_address = false;
     }
     let vm = CameraListVm::new(
         &groups,

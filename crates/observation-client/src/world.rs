@@ -5,8 +5,8 @@ use crate::input::OrbitCamera;
 use crate::net::Tiles;
 use crate::platform::Platform;
 use crate::state::{
-    Area, AreaLoaded, Editor, FACADE_CELL_M, GROUND_CELL_M, Hover, Models, Scene, Toasts, UiState,
-    grid_bounds,
+    Area, AreaLoaded, DataChangeNotice, Editor, FACADE_CELL_M, GROUND_CELL_M, Hover, Models, Scene,
+    Toasts, grid_bounds,
 };
 use crate::theme::{Tokens, rgba, texel_to_linear, to_bevy};
 use bevy::asset::RenderAssetUsages;
@@ -243,7 +243,7 @@ fn on_area_loaded(
     assets: AreaAssets,
     mut scene: ResMut<Scene>,
     models: Res<Models>,
-    mut ui: ResMut<UiState>,
+    mut notice: ResMut<DataChangeNotice>,
     mut editor: ResMut<Editor>,
     mut hover: ResMut<Hover>,
     mut toasts: ResMut<Toasts>,
@@ -427,8 +427,8 @@ fn on_area_loaded(
     });
 
     // An address picked in the old area means nothing in the new one.
-    ui.jump_to_address = false;
-    ui.data_change = area_load::apply(
+    editor.jump_to_address = false;
+    **notice = area_load::apply(
         &mut scene,
         &mut editor,
         &mut hover,

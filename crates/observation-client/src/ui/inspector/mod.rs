@@ -27,14 +27,14 @@ use observation_core::camera::{
 pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
     let t = *d.tokens;
     follow_selection(&d.editor, &mut d.panels);
-    if d.ui.jump_to_address {
+    if d.editor.jump_to_address {
         let groups = d.addresses.groups(&d.scene.cameras);
         if picked_group(d, &groups).is_some() {
             // Show the list it scrolls.
             d.panels.inspector_tab = InspectorTab::Cameras;
         } else {
             // No camera is listed there: nothing to scroll to.
-            d.ui.jump_to_address = false;
+            d.editor.jump_to_address = false;
         }
     }
     ui.spacing_mut().item_spacing.y = t.space.sm;

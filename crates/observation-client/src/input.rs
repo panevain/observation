@@ -4,7 +4,7 @@ use crate::addresses::address_label;
 use crate::cameras::CameraBody;
 use crate::state::{
     AddressJump, Area, Editor, Hover, Models, Panels, Scene, Toasts, Tool, TrackScene, UiLayout,
-    UiState, terrain_of,
+    terrain_of,
 };
 use crate::world::{AreaLoadSet, BuildingMesh, GROUND_MARGIN_M};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -237,7 +237,6 @@ fn apply_orbit(
 fn keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<EguiWantsInput>,
-    mut ui: ResMut<UiState>,
     mut editor: ResMut<Editor>,
     mut panels: ResMut<Panels>,
     mut toasts: ResMut<Toasts>,
@@ -255,9 +254,14 @@ fn keyboard(
         toasts: &mut toasts,
     };
     if commands::keys(&mut ctx, &pressed, browser_modifier(&keys)) {
-        ui.focus_request = true;
+        editor.focus_request = true;
     }
-    if std::mem::take(&mut ui.focus_request)
+    // A one-shot request: read it, and clear it only when it is set.
+    let focus = editor.focus_request;
+    if focus {
+        editor.focus_request = false;
+    }
+    if focus
         && let Some(c) = editor.selected.and_then(|id| scene.camera(id))
         && let Ok(mut o) = orbit.single_mut()
     {
@@ -329,7 +333,6 @@ fn pointer(
     mut ray_cast: MeshRayCast,
     targets: Targets,
     mut st: ResMut<PointerState>,
-    mut ui: ResMut<UiState>,
     mut editor: ResMut<Editor>,
     mut panels: ResMut<Panels>,
     mut hovering: ResMut<Hover>,
@@ -653,7 +656,7 @@ fn pointer(
                 } else {
                     address_under(&mut cast, pos)
                 };
-                ui.jump_to_address = jump.0 && picked.is_some();
+                editor.jump_to_address = jump.0 && picked.is_some();
                 editor.selected_address = picked;
             } else {
                 let mut hit = cast(pos, false);
@@ -747,6 +750,67 @@ fn pan(orbit: &mut OrbitCamera, delta: Vec2, window_h: f32) {
 mod tests {
     use super::*;
     use observation_client_model::commands::Key;
+    use observation_core::camera::CameraPlacement;
+
+    /// `keyboard` alone, with a camera at (10, 3, 20) selected and the orbit
+    /// camera looking at the origin from 300 m.
+    fn keyboard_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<EguiWantsInput>()
+            .init_resource::<Scene>()
+            .init_resource::<Editor>()
+            .init_resource::<Panels>()
+            .init_resource::<Toasts>()
+            .add_systems(Update, keyboard);
+        let id = app
+            .world_mut()
+            .resource_mut::<Scene>()
+            .add_camera(CameraPlacement {
+                id: 0,
+                label: "Porch".to_owned(),
+                model_id: "m".to_owned(),
+                position: [10.0, 3.0, 20.0],
+                yaw_deg: 0.0,
+                pitch_deg: 0.0,
+                roll_deg: 0.0,
+                color: None,
+                enabled: true,
+                group: None,
+            });
+        app.world_mut().resource_mut::<Editor>().selected = Some(id);
+        app.world_mut().spawn(OrbitCamera::default());
+        app
+    }
+
+    /// The orbit camera's focus and distance.
+    fn orbit(app: &mut App) -> (Vec3, f32) {
+        let mut query = app.world_mut().query::<&OrbitCamera>();
+        let o = query.single(app.world()).expect("one orbit camera");
+        (o.focus, o.distance)
+    }
+
+    #[test]
+    fn a_focus_request_frames_the_selected_camera_once() {
+        let mut app = keyboard_app();
+        app.update();
+        assert_eq!(orbit(&mut app), (Vec3::ZERO, 300.0), "no request, no move");
+
+        app.world_mut().resource_mut::<Editor>().focus_request = true;
+        app.update();
+        assert_eq!(orbit(&mut app), (Vec3::new(10.0, 0.0, 20.0), 60.0));
+        assert!(!app.world().resource::<Editor>().focus_request);
+
+        // Consumed: moving the orbit away again stays put.
+        app.world_mut()
+            .query::<&mut OrbitCamera>()
+            .single_mut(app.world_mut())
+            .expect("one orbit camera")
+            .focus = Vec3::ZERO;
+        app.update();
+        assert_eq!(orbit(&mut app).0, Vec3::ZERO);
+    }
 
     #[test]
     fn ctrl_cmd_and_alt_count_as_browser_modifiers_but_shift_does_not() {

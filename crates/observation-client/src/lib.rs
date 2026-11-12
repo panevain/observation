@@ -78,7 +78,7 @@ impl Plugin for ResourcesPlugin {
             .insert_resource(address_jump)
             .insert_resource(state::Models::new(catalog))
             .init_resource::<state::Scene>()
-            .init_resource::<state::UiState>()
+            .init_resource::<state::DataChangeNotice>()
             .init_resource::<state::Editor>()
             .init_resource::<state::Panels>()
             .init_resource::<state::Hover>()
