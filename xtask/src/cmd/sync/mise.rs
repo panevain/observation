@@ -4,9 +4,12 @@
 //! - Locks: every tool pinned in mise.toml or mise.ci.toml, in `[tools]` or by a task's
 //!   `tools`, has a `[[tools.NAME]]` entry with that `version` in the lockfile beside it
 //!   (mise.lock, mise.ci.lock). CI's strict installs check this only for the tools some job
-//!   installs; fnox, uv and mise.lock's cosign are installed by no job.
-//! - Layering: a workflow that uses setup-mise (directly or through a composite action) sets
-//!   `MISE_ENV: ci`, so that mise.ci.toml applies; one that does not use it does not set it.
+//!   installs; fnox, uv and mise.lock's cosign are installed by no job. Only the `version` is
+//!   compared: not the platform checksums, not lock entries that nothing pins, and not
+//!   mise.dev.toml's pins (`mise run lock` runs under `MISE_ENV=ci`).
+//! - Layering: each job that uses setup-mise (directly or through a composite action) runs
+//!   with `MISE_ENV: ci` from its own or the workflow's `env:`, so that mise.ci.toml applies;
+//!   a job, step or workflow that sets `MISE_ENV: ci` sets mise up. Workflows are read as YAML.
 //! - `check`: every `mise run TASK` in ci.yml and security.yml is a step of mise.toml's `check`
 //!   task, or is listed in [`NOT_IN_CHECK`] with the reason.
 
@@ -15,22 +18,61 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use toml::{Table, Value};
+use yaml_serde::Value as YValue;
 
-use super::extra::{finding, parse};
+use super::extra::{entries, finding, parse, scalar, yaml};
 use super::{Finding, Snapshot, lines, re};
 
-regex!(
-    USES_ACTION,
-    r"^\s*(?:-\s+)?uses:\s*(?:\$|\.)/\.github/actions/([A-Za-z0-9_.-]+)\s*(?:#.*)?$"
-);
-regex!(
-    MISE_ENV_CI,
-    r#"^\s*MISE_ENV:\s*(?:ci|"ci"|'ci')\s*(?:#.*)?$"#
-);
-regex!(
-    MISE_RUN,
-    r"(?:^|[\s;&|(`'\x22])mise\s+run\s+([A-Za-z0-9:_-]+)"
-);
+regex!(MISE_RUN, r"(?:^|[\s;&|(`'\x22])mise\s+run\s+");
+regex!(TASK_NAME, r"^[A-Za-z0-9:_-]+$");
+
+/// The options of `mise run` that take a value (the next word, unless written `--x=value`).
+const MISE_RUN_VALUES: &[&str] = &[
+    "--affected-base",
+    "--affected-head",
+    "-C",
+    "--cd",
+    "-j",
+    "--jobs",
+    "-o",
+    "--output",
+    "--secrets",
+    "-s",
+    "--shell",
+    "-t",
+    "--tool",
+    "--allow-env",
+    "--allow-net",
+    "--allow-read",
+    "--allow-write",
+    "--task-cache",
+    "--timeout",
+    "-E",
+    "--env",
+];
+
+/// The task each `mise run` in `code` names: the first word after `run` that is not an option
+/// of mise's (or an option's value).
+fn mise_run_tasks(code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for m in MISE_RUN.find_iter(code) {
+        let mut words = code[m.end()..].split_whitespace();
+        while let Some(word) = words.next() {
+            if word.starts_with('-') {
+                if MISE_RUN_VALUES.contains(&word) {
+                    words.next();
+                }
+                continue;
+            }
+            let word = word.trim_end_matches([';', ')', '&', '|']);
+            if TASK_NAME.is_match(word) {
+                out.push(word.to_owned());
+            }
+            break;
+        }
+    }
+    out
+}
 
 /// The tasks ci.yml and security.yml run that `mise run check` leaves out, and why. An entry
 /// that neither file runs any more, or that `check` now runs, is a finding.
@@ -44,8 +86,11 @@ pub const NOT_IN_CHECK: &[(&str, &str)] = &[
         "coverage",
         "needs cargo-llvm-cov, a CI-only tool (mise.ci.toml)",
     ),
-    ("coverage:check", "reads the coverage job's report"),
-    ("zizmor", "a CI-only tool (mise.ci.toml)"),
+    (
+        "coverage:check",
+        "needs cargo-llvm-cov, a CI-only tool (mise.ci.toml)",
+    ),
+    ("zizmor", "zizmor, a CI-only tool (mise.ci.toml)"),
     ("audit", "cargo-audit, a CI-only tool (mise.ci.toml)"),
     ("vet", "cargo-vet, a CI-only tool (mise.ci.toml)"),
     ("scan:repo", "Trivy, a CI-only tool (mise.ci.toml)"),
@@ -59,7 +104,7 @@ fn versions(pin: &Value) -> Option<Vec<String>> {
     match pin {
         Value::String(v) => Some(vec![v.clone()]),
         Value::Table(t) => Some(vec![t.get("version")?.as_str()?.to_owned()]),
-        Value::Array(a) => a
+        Value::Array(a) if !a.is_empty() => a
             .iter()
             .map(versions)
             .collect::<Option<Vec<_>>>()
@@ -130,21 +175,48 @@ pub fn locks(s: &Snapshot) -> Vec<Finding> {
     out
 }
 
+/// The local composite action a step uses (`$/.github/actions/NAME` or `./.github/actions/NAME`).
+fn local_action(step: &YValue) -> Option<String> {
+    let uses = step.get("uses").and_then(scalar)?;
+    let rest = uses
+        .strip_prefix("$/.github/actions/")
+        .or_else(|| uses.strip_prefix("./.github/actions/"))?;
+    Some(rest.trim_end_matches('/').to_owned())
+}
+
+fn steps(def: &YValue) -> impl Iterator<Item = &YValue> {
+    def.get("steps")
+        .and_then(YValue::as_sequence)
+        .into_iter()
+        .flatten()
+}
+
+fn mise_env(def: &YValue) -> Option<String> {
+    def.get("env")
+        .and_then(|e| e.get("MISE_ENV"))
+        .and_then(scalar)
+}
+
 pub fn layering(s: &Snapshot) -> Vec<Finding> {
-    let uses = |text: &str| -> BTreeSet<String> {
-        lines(text)
-            .filter_map(|l| USES_ACTION.captures(l).map(|c| c[1].to_owned()))
-            .collect()
-    };
+    let mut out = Vec::new();
     // The composite actions that set mise up: setup-mise, and any action that uses one of them.
-    let actions: Vec<(String, BTreeSet<String>)> = s
-        .workflows
-        .iter()
-        .filter_map(|(p, t)| {
-            let name = p.strip_prefix(".github/actions/")?.split('/').next()?;
-            Some((name.to_owned(), uses(t)))
-        })
-        .collect();
+    let mut actions = Vec::new();
+    for (path, text) in &s.workflows {
+        let Some(name) = path
+            .strip_prefix(".github/actions/")
+            .and_then(|p| p.split('/').next())
+        else {
+            continue;
+        };
+        match yaml(path, text) {
+            Ok(doc) => {
+                let runs = doc.get("runs").cloned().unwrap_or(YValue::Null);
+                let used: BTreeSet<String> = steps(&runs).filter_map(local_action).collect();
+                actions.push((name.to_owned(), used));
+            }
+            Err(why) => out.push(finding(why)),
+        }
+    }
     let mut mise = BTreeSet::from(["setup-mise".to_owned()]);
     loop {
         let before = mise.len();
@@ -157,29 +229,44 @@ pub fn layering(s: &Snapshot) -> Vec<Finding> {
             break;
         }
     }
-    let mut out = Vec::new();
     for (path, text) in &s.workflows {
         if !path.starts_with(".github/workflows/") {
             continue;
         }
-        let code: Vec<&str> = lines(text)
-            .filter(|l| !l.trim_start().starts_with('#'))
-            .collect();
-        let uses_mise = code.iter().any(|l| {
-            USES_ACTION
-                .captures(l)
-                .is_some_and(|c| mise.contains(&c[1]))
-        });
-        let sets_ci = code.iter().any(|l| MISE_ENV_CI.is_match(l));
-        match (uses_mise, sets_ci) {
-            (true, false) => out.push(finding(format!(
-                "{path} sets mise up but not MISE_ENV: ci, so mise.ci.toml would not apply"
-            ))),
-            (false, true) => out.push(finding(format!(
-                "{path} sets MISE_ENV: ci but sets no mise up (setup-mise, or an action that \
-                 uses it)"
-            ))),
-            _ => {}
+        let doc = match yaml(path, text) {
+            Ok(d) => d,
+            Err(why) => {
+                out.push(finding(why));
+                continue;
+            }
+        };
+        let top = mise_env(&doc);
+        let mut any_mise = false;
+        for (job, def) in entries(&doc, "jobs") {
+            let job = scalar(job).unwrap_or_default();
+            let uses_mise = steps(def)
+                .filter_map(local_action)
+                .any(|a| mise.contains(&a));
+            any_mise |= uses_mise;
+            let own = mise_env(def);
+            let step_ci = steps(def).any(|st| mise_env(st).as_deref() == Some("ci"));
+            if uses_mise && own.as_ref().or(top.as_ref()).map(String::as_str) != Some("ci") {
+                out.push(finding(format!(
+                    "{path}: job {job} sets mise up but its env (or the workflow's) has no \
+                     MISE_ENV: ci, so mise.ci.toml would not apply"
+                )));
+            } else if !uses_mise && (own.as_deref() == Some("ci") || step_ci) {
+                out.push(finding(format!(
+                    "{path}: job {job} sets MISE_ENV: ci but sets no mise up (setup-mise, or an \
+                     action that uses it)"
+                )));
+            }
+        }
+        if top.as_deref() == Some("ci") && !any_mise {
+            out.push(finding(format!(
+                "{path} sets MISE_ENV: ci but no job of it sets mise up (setup-mise, or an action \
+                 that uses it)"
+            )));
         }
     }
     out
@@ -196,6 +283,10 @@ fn check_tasks(mise_toml: &str) -> Result<BTreeSet<String>, Finding> {
         .ok_or_else(|| finding("mise.toml has no [tasks.check] run = [...]".into()))?;
     let mut out = BTreeSet::new();
     for step in steps {
+        // A shell command step runs no task of the list.
+        if step.is_str() {
+            continue;
+        }
         let names: Vec<&Value> = match (step.get("task"), step.get("tasks")) {
             (Some(one), None) => vec![one],
             (None, Some(Value::Array(many))) => many.iter().collect(),
@@ -231,8 +322,7 @@ pub fn check_covers_ci(s: &Snapshot, exceptions: &[(&str, &str)]) -> Vec<Finding
         for line in lines(text).filter(|l| !l.trim_start().starts_with('#')) {
             // A trailing comment (` # ...`) runs nothing.
             let code = line.split(" #").next().unwrap_or(line);
-            for c in MISE_RUN.captures_iter(code) {
-                let task = c[1].to_owned();
+            for task in mise_run_tasks(code) {
                 if !check.contains(&task)
                     && !exceptions.iter().any(|(t, _)| *t == task)
                     && run.insert(task.clone())
@@ -394,6 +484,7 @@ mod tests {
             mise | { uv = "0.13.5" } | { uv = { version = "0.14.0" } } | task fonts pins uv 0.14.0
             mise | trunk = "0.22.1" | trunk = ["0.22.1", "0.23.0"] | pins trunk 0.23.0
             mise | trunk = "0.22.1" | trunk = 1 | pins trunk in a form sync cannot read
+            mise | trunk = "0.22.1" | trunk = [] | pins trunk in a form sync cannot read
             mise.ci | trivy = "0.76.1" | trivy = "0.76.1"\ncosign = "3.1.4" | mise.ci.toml: [tools] pins cosign 3.1.4, but mise.ci.lock has no
             mise.ci | | [tasks.x]\ntools.zizmor = "1.31.1"\n | task x pins zizmor 1.31.1
             ci.lock | * | | mise.ci.toml: [tools] pins trivy 0.76.1
@@ -408,12 +499,21 @@ mod tests {
     fn mise_env_ci_goes_with_setup_mise() {
         rows(
             r#"
-            workflows/ci.yml | MISE_ENV: ci | MISE_ENV: dev | ci.yml sets mise up but not MISE_ENV: ci
-            workflows/ci.yml | MISE_ENV: ci | # MISE_ENV: ci | ci.yml sets mise up but not MISE_ENV: ci
-            workflows/security.yml | setup-mise | setup-rust | security.yml sets MISE_ENV: ci but sets no mise up
-            workflows/release-tag.yml | steps: [] | steps:\n      - uses: ./.github/actions/setup-ci | release-tag.yml sets mise up but not
+            workflows/ci.yml | MISE_ENV: ci | MISE_ENV: dev | ci.yml: job a sets mise up but its env (or the workflow's) has no MISE_ENV: ci
+            workflows/ci.yml | MISE_ENV: ci | # MISE_ENV: ci | ci.yml: job a sets mise up but
+            workflows/security.yml | setup-mise | setup-rust | security.yml sets MISE_ENV: ci but no job of it sets mise up
+            workflows/release-tag.yml | steps: [] | steps:\n      - uses: ./.github/actions/setup-ci | release-tag.yml: job a sets mise up but
             workflows/release-tag.yml | | env:\n  MISE_ENV: ci,dev\n | 
-            actions/setup-ci/action.yml | setup-mise | setup-rust | ci.yml sets MISE_ENV: ci but sets no mise up
+            actions/setup-ci/action.yml | setup-mise | setup-rust | ci.yml sets MISE_ENV: ci but no job of it sets mise up
+            workflows/ci.yml | env:\n  MISE_ENV: ci\njobs:\n  a:\n    steps:\n | jobs:\n  a:\n    steps:\n      - env:\n          MISE_ENV: ci\n        run: "true"\n | ci.yml: job a sets mise up but
+            workflows/ci.yml | env:\n  MISE_ENV: ci\njobs:\n  a:\n | jobs:\n  a:\n    env:\n      MISE_ENV: dev\n | ci.yml: job a sets mise up but
+            workflows/ci.yml | jobs:\n  a:\n | jobs:\n  a:\n    env:\n      MISE_ENV: dev\n | ci.yml: job a sets mise up but
+            workflows/release-tag.yml | * | jobs:\n  a:\n    env:\n      MISE_ENV: ci\n    steps:\n      - uses: $/.github/actions/setup-mise\n  b:\n    steps:\n      - uses: ./.github/actions/setup-mise/\n | release-tag.yml: job b sets mise up but
+            workflows/release-tag.yml | * | jobs:\n  a:\n    steps:\n      - uses: $/.github/actions/setup-mise\n      - run: "export MISE_ENV: ci"\n | release-tag.yml: job a sets mise up but
+            workflows/release-tag.yml | * | jobs:\n  a:\n    steps:\n      - uses: "$/.github/actions/setup-mise"\n | release-tag.yml: job a sets mise up but
+            workflows/release-tag.yml | * | jobs:\n  a:\n    env:\n      MISE_ENV: ci\n    steps:\n      - uses: "$/.github/actions/setup-mise"\n  b:\n    env:\n      MISE_ENV: "ci"\n    steps: []\n | release-tag.yml: job b sets MISE_ENV: ci but sets no mise up
+            workflows/release-tag.yml | * | jobs:\n  b:\n    steps:\n      - env:\n          MISE_ENV: ci\n        run: "true"\n | release-tag.yml: job b sets MISE_ENV: ci but sets no mise up
+            workflows/release-tag.yml | * | jobs: [ | release-tag.yml: not YAML
         "#,
         );
     }
@@ -428,26 +528,40 @@ mod tests {
             workflows/ci.yml | mise run coverage | true | neither ci.yml nor security.yml runs `mise run coverage`
             mise | { task = "test" }, | { task = "test" },\n  { task = "coverage" }, | `mise run check` runs coverage; remove it
             mise | { task = "test" }, | { run = "x" }, | check has a step sync cannot read
+            mise | { task = "test" }, | { task = "test" },\n  "echo done", | 
+            workflows/ci.yml | mise run fmt | mise run x\n      - run: mise run y | runs `mise run x` && runs `mise run y`
+            workflows/ci.yml | mise run fmt | mise run --output prefix -j 2 fmt | 
+            workflows/ci.yml | mise run fmt | mise run -o prefix --force clippy-wasm | runs `mise run clippy-wasm`
+            workflows/ci.yml | mise run fmt | mise run --output=prefix clippy-wasm; true | runs `mise run clippy-wasm`
             mise | [tasks.check] | [tasks.checks] | mise.toml has no [tasks.check] run
             ci.yml | * | | ci.yml is missing && runs `mise run coverage`; remove it && runs `mise run build`; remove it
         "#,
         );
     }
 
-    /// `run`'s rule set has this module's rules.
+    /// `run`'s rule set has each rule of this module.
     #[test]
     fn all_runs_these_rules() {
         let mut s = base();
         s.mise_ci_lock.clear();
+        let ci = field(&mut s, "workflows/ci.yml");
+        *ci = ci.replacen("MISE_ENV: ci", "MISE_ENV: dev", 1).replacen(
+            "mise run fmt",
+            "mise run treemap",
+            1,
+        );
         let found: Vec<String> = super::super::all(&s)
             .findings
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert!(
-            found.iter().any(|f| f.contains("pins trivy 0.76.1")),
-            "{found:?}"
-        );
+        for want in [
+            "pins trivy 0.76.1",
+            "ci.yml: job a sets mise up but",
+            "runs `mise run treemap`",
+        ] {
+            assert!(found.iter().any(|f| f.contains(want)), "{want}: {found:?}");
+        }
     }
 
     /// The real exceptions are checked against the real tree by `the_repository_is_in_sync`;
