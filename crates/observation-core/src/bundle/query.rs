@@ -45,8 +45,10 @@ impl AreaBundle {
     }
 
     /// The address of building `i` itself, for a pointer at `p` on it: its
-    /// own, else the closest to `p` of the address points it owns (see
-    /// [`Self::owner_of`]). Never a neighbour's, unlike [`Self::address_at`].
+    /// own, else the closest to `p` of the address points it owns (the one
+    /// each lies in, else the nearest building within
+    /// [`MAX_ADDRESS_DISTANCE_M`]). Never a neighbour's, unlike
+    /// [`Self::address_at`].
     pub fn building_address(&self, i: usize, p: [f32; 2]) -> Option<&Address> {
         let b = self.buildings.get(i)?;
         if let Some(a) = &b.address {
@@ -83,8 +85,8 @@ impl AreaBundle {
     }
 
     /// Indices of the buildings at an address `is` accepts: those tagged with
-    /// it, and those owning an address point with it (see
-    /// [`Self::owner_of`]). Ascending, no repeats.
+    /// it, and those owning an address point with it (as in
+    /// [`Self::building_address`]). Ascending, no repeats.
     pub fn buildings_at(&self, is: impl Fn(&Address) -> bool) -> Vec<usize> {
         let tagged = self
             .buildings

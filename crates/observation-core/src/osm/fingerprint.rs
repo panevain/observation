@@ -18,9 +18,8 @@ const FINGERPRINT_ROAD_MARGIN_M: f64 = 30.0;
 /// area's map data changed.
 ///
 /// Overpass returns whole ways, so a road through the area comes with its
-/// geometry kilometres beyond it. Only its segments that come within
-/// [`FINGERPRINT_ROAD_MARGIN_M`] of the box count (a road with none is left
-/// out), so an edit far along a road does not read as a change here. Buildings
+/// geometry kilometres beyond it. Only its segments that come within 30 m
+/// of the box count (a road with none is left out), so an edit far along a road does not read as a change here. Buildings
 /// count whole: every building returned touches the area, and all its walls
 /// count towards the figures.
 ///
