@@ -92,6 +92,8 @@ mod tests {
         let vm = LoadingVm::new(&loading(osm(), false, 100.0), 103.4).expect("loading");
         assert_eq!(vm.headline, "Loading buildings for 138 × 100 m…");
         assert_eq!(vm.elapsed, "3 s", "measured from the start of the request");
+        let later = LoadingVm::new(&loading(osm(), false, 100.0), 103.6).expect("loading");
+        assert_eq!(later.elapsed, "4 s", "rounded, not truncated");
         assert_eq!(vm.stage, FETCHING);
         assert!(vm.can_cancel);
         assert!(!vm.offer_demo);

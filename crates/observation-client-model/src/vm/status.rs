@@ -27,6 +27,7 @@ pub struct StatusVm {
 /// The elevation data's credit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DemCredit {
+    /// The credit as shown.
     pub text: String,
     /// Where the full credits are listed: only for the default source; an
     /// operator's own source has only the text it was given.
@@ -38,7 +39,9 @@ pub struct DemCredit {
 pub struct SaveVm {
     /// The browser refused the write.
     pub failed: bool,
+    /// The label after the icon.
     pub text: &'static str,
+    /// The tooltip.
     pub tip: String,
 }
 
@@ -207,6 +210,28 @@ mod tests {
     }
 
     #[test]
+    fn the_figures_round_to_the_nearest_whole_percent() {
+        let stats = CoverageStats {
+            street_m2: 200.0,
+            street_seen_m2: 101.2,
+            street_seen_multi_m2: 49.4,
+            facade_m2: 300.0,
+            facade_seen_m2: 200.0,
+            ..CoverageStats::default()
+        };
+        let vm = StatusVm::new(None, "t", SaveState::Pending, 0.0, &stats);
+        assert_eq!(
+            vm.figures,
+            [
+                ("walls", "67%".to_owned()),
+                ("2+ cams", "25%".to_owned()),
+                ("street", "51%".to_owned()),
+            ],
+            "66.7, 24.7 and 50.6 round up, not down"
+        );
+    }
+
+    #[test]
     fn a_save_is_just_now_for_a_minute_then_counted_in_minutes() {
         let tip = |now: f64| {
             let save = status(SaveState::Saved(100.0), now).save.expect("saved");
@@ -224,6 +249,11 @@ mod tests {
             tip(100.0 + 150.0),
             "Saved in this browser 2 min ago. Use Export to keep a copy elsewhere.",
             "rounded"
+        );
+        assert_eq!(
+            tip(100.0 + 170.0),
+            "Saved in this browser 3 min ago. Use Export to keep a copy elsewhere.",
+            "2.83 min rounds up, not down"
         );
     }
 
