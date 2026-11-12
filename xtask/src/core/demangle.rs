@@ -6,16 +6,23 @@
 //!
 //! [`crate_of_symbol`] gives what the script's `crate_of_symbol` gives, with these differences
 //! (each one a symbol rustc does not emit):
-//! - where the script's v0 parser recursed until Python's recursion limit and the script crashed
-//!   (a back-reference that leads back to itself, see [`V0`]), the port gives up after
-//!   [`V0_DEPTH`] nested calls and takes the script's own fallback for a symbol it cannot decode;
+//! - the port follows at most [`MAX_NESTING`] nested steps (a v0 path, type, generic argument
+//!   or back-reference; a readable path's ` as `), each one a Python frame in the script, and at
+//!   most [`V0_STEPS`] v0 steps in all. Past either it gives up: on a v0 symbol it takes the
+//!   script's own fallback for a symbol it cannot decode, on a readable path it fails. The
+//!   script crashes on deeper symbols (Python's recursion limit: from about 990 nested steps,
+//!   which is 330 levels of generic arguments or 495 back-references in a chain, a
+//!   back-reference that leads back to itself, see [`V0`]) and runs without end on symbols
+//!   whose back-references fan out; between [`MAX_NESTING`] and its limit it still decodes, and
+//!   gets a crate the port does not. Real symbols nest less than 20 steps and take less than
+//!   50; the limit sits well below Python's so that it does not depend on the interpreter's
+//!   version or on its caller's stack;
 //! - where the script failed (a v0 constant that runs to the end of the symbol, where it loops
 //!   forever; a number of more than 4,300 digits; a `$u…$` escape above 0x7FFFFFFF, which Python
 //!   3.12 cannot pass to `chr`), the port fails too;
 //! - it refuses a `_R` or `_ZN` symbol, or an unmangled one starting with `__` that is not
 //!   glue or allocator, that is not ASCII (the script read them with Unicode digits and word
-//!   characters), and a readable path with
-//!   more than [`AS_DEPTH`] nested ` as ` (the script recursed, and crashed at about 1,000).
+//!   characters).
 
 use std::sync::LazyLock;
 
@@ -23,12 +30,15 @@ use regex::Regex;
 
 use crate::core::py;
 
-/// Nested calls of the v0 parser after which the port gives up on a symbol. The script's parser
-/// is recursive too and always reached Python's recursion limit (1,000 frames) first.
-pub const V0_DEPTH: usize = 1000;
+/// Nested steps after which the port gives up on a symbol: a v0 path, type, generic argument or
+/// back-reference, or a readable path's ` as ` (one Python frame each in the script). Less than
+/// half the levels at which the script can reach Python's recursion limit, on any of its
+/// recursive paths (331 levels of generic arguments, at three frames each).
+pub const MAX_NESTING: usize = 150;
 
-/// Nested ` as ` in a readable path the port follows (the script crashed at about 1,000).
-pub const AS_DEPTH: usize = 500;
+/// Steps of the v0 parser per symbol (calls, as counted for [`MAX_NESTING`]) after which the
+/// port gives up, so that back-references fanning out cannot make it run without end.
+pub const V0_STEPS: usize = 10_000;
 
 /// Python 3.12's limit on the digits `int()` converts from decimal text.
 const INT_MAX_STR_DIGITS: usize = 4300;
@@ -56,6 +66,11 @@ pub fn crate_of_symbol(sym: &str) -> Found {
     crate_from_readable(sym)
 }
 
+fn re(pattern: &str) -> Regex {
+    // Constant patterns, each compiled by the tests: the panic cannot happen.
+    Regex::new(pattern).unwrap_or_else(|e| panic!("{pattern}: {e}"))
+}
+
 fn not_ascii() -> Refused {
     Refused("a mangled symbol that is not ASCII, which rustc does not emit".into())
 }
@@ -63,10 +78,9 @@ fn not_ascii() -> Refused {
 /// Unmangled C-ABI names: wasm-bindgen glue, compiler-rt, the allocator.
 fn unmangled(sym: &str) -> Result<Option<&'static str>, Refused> {
     static BUILTIN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(
+        re(
             r"^(memcpy|memmove|memset|memcmp|bcmp|fmodf?|sqrtf?|powf?|fmaf?|floorf?|ceilf?|truncf?|roundf?|rintf?|__\w+i[34]\b)",
         )
-        .expect("a valid pattern")
     });
     const DLMALLOC: [&str; 8] = [
         "malloc",
@@ -132,8 +146,7 @@ fn too_long() -> Refused {
 
 /// `_ZN…E` as a readable path without the hash, or `None`.
 fn demangle_legacy(sym: &[u8]) -> Result<Option<String>, Refused> {
-    static HASH: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^h[0-9a-f]{16}$").expect("a valid pattern"));
+    static HASH: LazyLock<Regex> = LazyLock::new(|| re(r"^h[0-9a-f]{16}$"));
     let mut pos = 3;
     let mut comps = Vec::new();
     while sym.get(pos).is_some_and(u8::is_ascii_digit) {
@@ -152,8 +165,7 @@ fn demangle_legacy(sym: &[u8]) -> Result<Option<String>, Refused> {
 }
 
 fn unescape_legacy(comp: &str) -> Result<String, Refused> {
-    static ESCAPE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\$([A-Za-z0-9]+)\$").expect("a valid pattern"));
+    static ESCAPE: LazyLock<Regex> = LazyLock::new(|| re(r"\$([A-Za-z0-9]+)\$"));
     let comp = comp.replace("..", "::");
     let mut out = String::with_capacity(comp.len());
     let mut last = 0;
@@ -219,18 +231,16 @@ fn hex_char(hex: &str) -> Result<Option<char>, Refused> {
 /// The leading crate of a readable path, crediting the trait's crate for an impl on a primitive
 /// or a tuple (`<f32 as bevy_reflect::Reflect>::m`), and `core` for `<str>::trim` and the like.
 fn crate_from_readable(text: &str) -> Found {
-    static HASH: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\[[0-9a-f]{1,16}\]").expect("a valid pattern"));
-    static LEAD: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^(<|&|\*const |\*mut |mut |dyn |\(|\[|'[a-z_]+ )").expect("a valid pattern")
-    });
+    static HASH: LazyLock<Regex> = LazyLock::new(|| re(r"\[[0-9a-f]{1,16}\]"));
+    static LEAD: LazyLock<Regex> =
+        LazyLock::new(|| re(r"^(<|&|\*const |\*mut |mut |dyn |\(|\[|'[a-z_]+ )"));
     const PRIMS: [&str; 26] = [
         "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
         "f32", "f64", "bool", "char", "str", "dyn", "unsafe", "extern", "fn", "mut", "const",
         "impl", "Self", "T",
     ];
     let mut text = text;
-    for _ in 0..=AS_DEPTH {
+    for _ in 0..MAX_NESTING {
         let mut t = HASH
             .replace_all(text.trim_matches(py::is_space), "")
             .into_owned();
@@ -265,16 +275,14 @@ fn crate_from_readable(text: &str) -> Found {
         return Ok(prim_impl.then(|| "core".to_owned()));
     }
     Err(Refused(format!(
-        "a readable path with more than {AS_DEPTH} nested ` as `, on which the script crashes"
+        "a readable path nested more than {MAX_NESTING} times (` as `), more than the port follows"
     )))
 }
 
 /// The crate owning a v0 symbol (`_R…`), or `None` if it cannot be decoded.
 fn v0_crate(sym: &[u8]) -> Found {
-    static CRATE_ROOT: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"C(?:s[0-9a-zA-Z]*_)?([0-9]+)").expect("a valid pattern"));
-    static CRATE_NAME: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").expect("a valid pattern"));
+    static CRATE_ROOT: LazyLock<Regex> = LazyLock::new(|| re(r"C(?:s[0-9a-zA-Z]*_)?([0-9]+)"));
+    static CRATE_NAME: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Za-z_][A-Za-z0-9_]*$"));
     let mut body = &sym[2..];
     while body.first().is_some_and(u8::is_ascii_digit) {
         body = &body[1..];
@@ -283,10 +291,11 @@ fn v0_crate(sym: &[u8]) -> Found {
         s: body,
         i: 0,
         depth: 0,
+        steps: 0,
     };
     match parser.path() {
         Ok(Some(c)) if !c.is_empty() => return Ok(Some(String::from_utf8_lossy(&c).into_owned())),
-        Ok(_) | Err(V0Error::Invalid | V0Error::Deep) => {}
+        Ok(_) | Err(V0Error::Invalid | V0Error::GaveUp) => {}
         Err(V0Error::Hang) => {
             return Err(Refused(
                 "a v0 constant that runs to the end of the symbol, on which the script loops \
@@ -317,8 +326,8 @@ fn v0_crate(sym: &[u8]) -> Found {
 enum V0Error {
     /// Python's ValueError or IndexError: the script falls back.
     Invalid,
-    /// Deeper than [`V0_DEPTH`]: the script hit Python's recursion limit.
-    Deep,
+    /// Deeper than [`MAX_NESTING`] or longer than [`V0_STEPS`]: the port takes the fallback.
+    GaveUp,
     /// The script loops forever.
     Hang,
 }
@@ -338,11 +347,12 @@ fn or(first: Option<Vec<u8>>, t: Option<Vec<u8>>) -> Option<Vec<u8>> {
 /// with its quirks. Its base-62 numbers lack the grammar's `+ 1` for a non-empty number, so a
 /// back-reference points one byte early; on some real symbols it leads back to itself, which
 /// the script followed until Python's recursion limit (and crashed), and the port until
-/// [`V0_DEPTH`] (and falls back).
+/// [`MAX_NESTING`] (and falls back).
 struct V0<'a> {
     s: &'a [u8],
     i: usize,
     depth: usize,
+    steps: usize,
 }
 
 const B62: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -362,12 +372,16 @@ impl V0<'_> {
         self.i = self.i.saturating_add(1);
     }
 
-    fn enter(&mut self) -> Result<(), V0Error> {
-        self.depth += 1;
-        if self.depth > V0_DEPTH {
-            return Err(V0Error::Deep);
+    /// Runs one nested step (a frame of the script's parser), within the limits.
+    fn nested(&mut self, step: impl FnOnce(&mut Self) -> Crate) -> Crate {
+        self.steps += 1;
+        if self.depth >= MAX_NESTING || self.steps > V0_STEPS {
+            return Err(V0Error::GaveUp);
         }
-        Ok(())
+        self.depth += 1;
+        let crate_ = step(self);
+        self.depth -= 1;
+        crate_
     }
 
     /// A base-62 number terminated by `_` (saturated: it is only compared with a position).
@@ -410,10 +424,7 @@ impl V0<'_> {
 
     /// The leading crate of a path.
     fn path(&mut self) -> Crate {
-        self.enter()?;
-        let crate_ = self.path_inner();
-        self.depth -= 1;
-        crate_
+        self.nested(Self::path_inner)
     }
 
     fn path_inner(&mut self) -> Crate {
@@ -462,6 +473,10 @@ impl V0<'_> {
 
     /// Parses the construct at an earlier offset, then resumes here.
     fn backref(&mut self, parse: fn(&mut Self) -> Crate) -> Crate {
+        self.nested(|p| p.backref_inner(parse))
+    }
+
+    fn backref_inner(&mut self, parse: fn(&mut Self) -> Crate) -> Crate {
         let target = self.base62()?;
         if target >= self.i {
             return Err(V0Error::Invalid);
@@ -473,6 +488,10 @@ impl V0<'_> {
     }
 
     fn generic_arg(&mut self) -> Result<(), V0Error> {
+        self.nested(Self::generic_arg_inner).map(drop)
+    }
+
+    fn generic_arg_inner(&mut self) -> Crate {
         match self.peek() {
             Some(b'L') => {
                 self.skip();
@@ -486,7 +505,7 @@ impl V0<'_> {
                 self.type_()?;
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn const_(&mut self) -> Result<(), V0Error> {
@@ -514,10 +533,7 @@ impl V0<'_> {
 
     /// The crate of the type if it is a path, else `None`.
     fn type_(&mut self) -> Crate {
-        self.enter()?;
-        let crate_ = self.type_inner();
-        self.depth -= 1;
-        crate_
+        self.nested(Self::type_inner)
     }
 
     fn type_inner(&mut self) -> Crate {
@@ -657,6 +673,14 @@ mod tests {
     }
 
     #[test]
+    fn falls_back_past_the_nesting_limit() {
+        // Generic arguments nested `d` levels in an impl's self type: `bar`, or the fallback `foo`.
+        let sym = |d| format!("_RXC3foo{}l{}C3baz", "INtC3bar1S".repeat(d), "E".repeat(d));
+        assert_eq!(found(&sym(49)).as_deref(), Some("bar"));
+        assert_eq!(found(&sym(50)).as_deref(), Some("foo"));
+    }
+
+    #[test]
     fn fails_where_the_script_fails() {
         for sym in [
             "_RIC3fooKj",         // loops forever
@@ -666,7 +690,7 @@ mod tests {
         ] {
             assert!(crate_of_symbol(sym).is_err(), "{sym}");
         }
-        let deep = format!("{}u8 as a::b>::c", "<u8 as ".repeat(AS_DEPTH + 1));
+        let deep = format!("{}u8 as a::b>::c", "<u8 as ".repeat(MAX_NESTING));
         assert!(crate_of_symbol(&deep).is_err());
         let long = format!("_ZN{}a", "9".repeat(INT_MAX_STR_DIGITS + 1));
         assert!(crate_of_symbol(&long).is_err());

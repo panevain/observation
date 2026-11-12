@@ -1,6 +1,7 @@
 //! The crate of each symbol, as `xtask::core::demangle::crate_of_symbol` finds it, against
 //! `crate_of_symbol` of scripts/wasm-size-treemap.py, imported by python3 from the tree (the
 //! treemap job runs that script until the port replaces it).
+//! `python3` is whichever the machine has on its PATH: on CI, the runner's system Python.
 //!
 //! `tests/fixtures/treemap/symbols.jsonl` holds `[EXPECT, SYMBOL]` lines: the function names of
 //! four small modules (built with v0 and legacy mangling, raw and as wasm-bindgen demangles
@@ -8,7 +9,13 @@
 //! mangled (`_R`, `_ZN`) and at most 300 bytes long is also tried cut at each length. EXPECT says what the script does, and so what the port must do:
 //! - `same`: the script gives a crate (or none), and the port gives the same;
 //! - `recursion`: the script's v0 parser recurses until Python's recursion limit and the script
-//!   crashes; the port gives what the script's fallback for an undecodable symbol gives;
+//!   crashes (a back-reference that leads back to itself); the port gives what the script's
+//!   fallback for an undecodable symbol gives;
+//! - `deep`: nested more than `demangle::MAX_NESTING` steps; the port gives the script's fallback
+//!   (a readable path: it fails), and the script either decodes it or crashes on Python's
+//!   recursion limit, whichever it reaches first on this interpreter;
+//! - `budget`: more than `demangle::V0_STEPS` steps; the port gives the script's fallback, and the
+//!   script decodes it, runs for more than half a second, or crashes on the recursion limit;
 //! - `hang`: the script loops forever (stopped after half a second); the port fails;
 //! - `crash`: the script raises anything else; the port fails;
 //! - `crash-3.12`: as `crash` on Python 3.12 (the runners'), which cannot pass a number above
@@ -30,7 +37,8 @@ fn ok<T, E: std::fmt::Display>(r: Result<T, E>) -> T {
 
 /// Imports the script, then prints for each JSON string on stdin what its `crate_of_symbol`
 /// did: `["ok", CRATE]`, `["recursion", FALLBACK]` (or `["crash", …]` if the fallback raises),
-/// `["hang"]` or `["crash", EXCEPTION]`. The first line is Python's version.
+/// `["hang", null]` or `["crash", EXCEPTION]`, followed for a `_R` symbol by its fallback (if that
+/// does not raise). The first line is Python's version.
 const HARNESS: &str = r#"
 import importlib.util, json, signal, sys
 spec = importlib.util.spec_from_file_location("treemap", sys.argv[1])
@@ -61,11 +69,16 @@ for line in sys.stdin:
                 raise
             out = ["recursion", fallback(sym)]
     except Hang:
-        out = ["hang"]
+        out = ["hang", None]
     except Exception as e:
         out = ["crash", type(e).__name__]
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
+    if sym.startswith("_R"):
+        try:
+            out.append(fallback(sym))
+        except Exception:
+            pass
     print(json.dumps(out), flush=True)
 "#;
 
@@ -129,6 +142,16 @@ fn every_symbol_gets_the_scripts_crate() {
         let kind = script[0].as_str().unwrap_or_default();
         let value = script.get(1).and_then(|v| v.as_str()).map(str::to_owned);
         let port = crate_of_symbol(sym);
+        let fallback = script.get(2).map(|v| v.as_str().map(str::to_owned));
+        // What the port gives where it gives up: the fallback, or for a readable path a failure.
+        let gave_up = if sym.starts_with("_R") {
+            fallback.is_some() && port.as_ref().ok() == fallback.as_ref()
+        } else {
+            port.is_err()
+        };
+        let recursion_error = kind == "recursion"
+            || (kind == "crash"
+                && script.get(1).and_then(|v| v.as_str()) == Some("RecursionError"));
         let script_ok = kind == "ok";
         let verdict = match expect.as_str() {
             "cut" => match kind {
@@ -147,6 +170,8 @@ fn every_symbol_gets_the_scripts_crate() {
             "hang" => kind == "hang" && port.is_err(),
             "crash" => kind == "crash" && port.is_err(),
             "stricter" => script_ok && port.is_err(),
+            "deep" => gave_up && (script_ok || recursion_error),
+            "budget" => gave_up && (script_ok || recursion_error || kind == "hang"),
             _ => false,
         };
         if !good {
@@ -154,7 +179,13 @@ fn every_symbol_gets_the_scripts_crate() {
                 "{expect} {sym:?}: script {script:?}, port {port:?}"
             ));
         }
-        *counts.entry(format!("{expect}/{verdict}")).or_default() += 1;
+        // For `deep` and `budget`, which of the script's outcomes this interpreter gave.
+        let outcome = if ["deep", "budget"].contains(&verdict) {
+            kind
+        } else {
+            verdict
+        };
+        *counts.entry(format!("{expect}/{outcome}")).or_default() += 1;
     }
     println!("{} symbols: {counts:?}", cases.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
