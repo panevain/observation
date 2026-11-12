@@ -56,6 +56,15 @@ impl Transient {
     }
 }
 
+/// Whether a transport failure happened while reading a response body (a
+/// timeout there included), which is logged as "overpass body failed".
+fn broke_in_body(kind: TransportErrorKind) -> bool {
+    matches!(
+        kind,
+        TransportErrorKind::Body | TransportErrorKind::BodyTimeout
+    )
+}
+
 /// How one attempt failed.
 #[derive(Debug)]
 enum AttemptError {
@@ -205,7 +214,7 @@ impl OverpassClient {
             .error_max_bytes(0)
             .form([("data", query)]);
         let resp = self.client.send(req).await.map_err(|e| {
-            if e.kind == TransportErrorKind::Body {
+            if broke_in_body(e.kind) {
                 tracing::warn!(endpoint, error = %e, "overpass body failed");
             } else {
                 tracing::warn!(endpoint, error = %e, "overpass request failed");
@@ -309,6 +318,22 @@ mod tests {
     use observation_upstream::testing::FakeHttp;
 
     use super::*;
+
+    /// Only a failure while reading the body, a timeout there included, is
+    /// logged as "overpass body failed"; the rest as "overpass request failed".
+    #[test]
+    fn body_phase_failures_are_logged_as_body_failures() {
+        for (kind, in_body) in [
+            (TransportErrorKind::Body, true),
+            (TransportErrorKind::BodyTimeout, true),
+            (TransportErrorKind::Timeout, false),
+            (TransportErrorKind::ConnectTimeout, false),
+            (TransportErrorKind::Connect, false),
+            (TransportErrorKind::Other, false),
+        ] {
+            assert_eq!(broke_in_body(kind), in_body, "{kind:?}");
+        }
+    }
 
     #[test]
     fn an_empty_interpreter_list_falls_back_to_the_default() {
