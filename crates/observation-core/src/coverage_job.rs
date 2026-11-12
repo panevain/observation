@@ -184,7 +184,7 @@ mod tests {
     fn round_trip() {
         let load = JobRequest::LoadArea {
             generation: 3,
-            inputs: LayerInputs::new(&crate::bundle::tests::sample(), 0.5, 1.0),
+            inputs: LayerInputs::new(&crate::testing::sample_bundle(), 0.5, 1.0),
         };
         let compute = JobRequest::Compute(job());
         for req in [load, compute] {
@@ -239,13 +239,7 @@ mod tests {
 
     #[test]
     fn run_matches_direct_computation() {
-        let wall = Footprint {
-            outer: vec![[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.0,
-            base_m: 0.0,
-        };
+        let wall = crate::testing::box_footprint(-5.0, -5.0, 5.0, 5.0, 6.0);
         let grid = GroundGrid::covering(Vec2::new(-40.0, -40.0), Vec2::new(40.0, 40.0), 1.0);
         let layers = StaticLayers::from_parts(grid, &[&wall], &[], 1.0, Terrain::default());
         let j = job();
@@ -261,7 +255,7 @@ mod tests {
 
     #[test]
     fn layer_inputs_build_the_same_layers() {
-        let bundle = crate::bundle::tests::sample_on(crate::terrain::tests::slope());
+        let bundle = crate::testing::sample_bundle_on(crate::testing::slope());
         let direct = StaticLayers::new(&bundle, 0.5, 1.0);
         let inputs = LayerInputs::new(&bundle, 0.5, 1.0);
         let built = JobRequest::decode(
