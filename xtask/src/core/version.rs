@@ -1,5 +1,6 @@
 //! Crate versions and the Cargo-style requirements RustSec writes for patched and unaffected
-//! ranges, ported as is from `scripts/check-cargo-cooldown.py` (`version_key`, `matches`).
+//! ranges, ported as is from `scripts/check-cargo-cooldown.py` (since removed): `version_key`
+//! and `matches`.
 //!
 //! This is deliberately not full semver: a pre-release sorts before its release, and two
 //! pre-releases compare as plain strings, as the script did. Digits are ASCII only, and

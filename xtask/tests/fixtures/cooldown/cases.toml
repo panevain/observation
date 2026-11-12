@@ -1,5 +1,5 @@
 # Scenarios for `cargo xtask cooldown`'s golden test (cooldown/golden holds what
-# scripts/check-cargo-cooldown.py printed for each). Each case:
+# scripts/check-cargo-cooldown.py, since removed, printed for each). Each case:
 # - `lockfiles`: path -> { base, head }; a missing side is a file that does not exist there;
 # - `index`: crate -> { status, body } for https://index.crates.io/<path>, `error` for a
 #   failed request; `api`: "name/version" -> { status, body } for the crates.io API;

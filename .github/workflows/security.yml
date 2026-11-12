@@ -115,6 +115,16 @@ jobs:
   # `days` old: Dependabot's cooldown covers only the crate it bumps. Fixes for RustSec
   # vulnerabilities at the base are exempt (cargo-audit finds those). Skipped outside pull
   # requests.
+  #
+  # The check that judges the pull request is the base's (HEAD^1, the base branch's commit
+  # that the merge commit was made on), never the pull request's own: xtask/Cargo.lock is one
+  # of the lockfiles it judges, so building the pull request's xtask would compile and run
+  # the very crates in question before the verdict. A base from before the port has the
+  # script, which runs as it did; otherwise the base's xtask is built in a worktree of the
+  # base, uncached, and run on this tree. A pull request that changes the check is judged by
+  # the check it replaces; its own tests run in ci.yml's test job. The configuration
+  # (.config/cargo-cooldown.toml, where exemptions are added with a reason) is the pull
+  # request's, by design.
   cargo-cooldown:
     name: cargo-cooldown
     if: github.event_name == 'pull_request'
@@ -131,13 +141,28 @@ jobs:
       - uses: $/.github/actions/setup-mise
         with:
           tools: cargo-audit
-      # The check is an xtask command. Restores the xtask build that ci.yml's design tokens job
-      # caches from develop; this job only runs on pull requests, so it never saves one.
+      - name: Check out the base
+        run: git worktree add --detach "${RUNNER_TEMP}/base" HEAD^1
+      # The base's toolchain (its rust-toolchain.toml), for building the base's xtask.
       - uses: $/.github/actions/setup-rust
         with:
-          cache-key: xtask
-          cache-workspaces: xtask -> target
-      - run: mise run cooldown --base HEAD^1
+          dir: ${{ runner.temp }}/base
+      - name: Cooldown (the base's check, on this tree)
+        env:
+          BASE_TREE: ${{ runner.temp }}/base
+          TARGET_DIR: ${{ runner.temp }}/base-target
+        run: |
+          set -euo pipefail
+          if [ -f "${BASE_TREE}/scripts/check-cargo-cooldown.py" ]; then
+            # The script reads the tree it sits in: run the base's copy from this one.
+            mkdir -p scripts
+            cp "${BASE_TREE}/scripts/check-cargo-cooldown.py" scripts/.cooldown-from-base.py
+            python3 scripts/.cooldown-from-base.py --base HEAD^1 --summary "${GITHUB_STEP_SUMMARY}"
+          else
+            # Built inside the base's tree, so that its .cargo/config.toml and toolchain apply.
+            (cd "${BASE_TREE}" && cargo build --locked --quiet --manifest-path xtask/Cargo.toml --target-dir "${TARGET_DIR}")
+            "${TARGET_DIR}/debug/xtask" --repo "${GITHUB_WORKSPACE}" cooldown --base HEAD^1 --summary "${GITHUB_STEP_SUMMARY}"
+          fi
 
   trivy:
     name: trivy (image + repo)

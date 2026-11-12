@@ -1,6 +1,6 @@
 //! `cargo xtask cooldown`: a change brings in no crate version published less than a cooldown
-//! ago. Ported from scripts/check-cargo-cooldown.py, whose report, messages and exit status it
-//! keeps.
+//! ago. Ported from scripts/check-cargo-cooldown.py (removed once the callers switched),
+//! whose report, messages and exit status it keeps.
 //!
 //! Dependabot's cooldown delays only the crate it bumps; the crates that bump pulls in, and
 //! anything added by hand, arrive at whatever age they are. This check covers every crates.io
@@ -878,8 +878,8 @@ mod tests {
         )
     }
 
-    /// Every scenario of cooldown/cases.toml gives what scripts/check-cargo-cooldown.py
-    /// printed for it (cooldown/golden; see the pull request that ported it). Where the
+    /// Every scenario of cooldown/cases.toml gives what scripts/check-cargo-cooldown.py (since
+    /// removed) printed for it (cooldown/golden; see the pull request that ported it). Where the
     /// script ended with a traceback, the port fails with its own message: checked here.
     #[test]
     fn scenarios_match_the_script() {

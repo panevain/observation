@@ -100,6 +100,8 @@ run = [
   "cargo-audit audit --deny yanked --file xtask/Cargo.lock",
 ]
 
+# The check of this tree's xtask, for local use. security.yml's cargo-cooldown job runs the
+# base's check instead, so that a pull request is never judged by code it brings in.
 [tasks.cooldown]
 description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (`cargo xtask cooldown`)"
 usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
