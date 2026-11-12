@@ -7,8 +7,9 @@
 //!
 //! Each case says what it expects: `same` (exit status, stdout, stderr, report.json,
 //! summary.md, the Cargo.lock left behind and the calls are identical), `crash` (the script
-//! fails with a traceback; the port must fail too) or `stricter` (the script passes and the
-//! port fails: the differences the port declares).
+//! fails with a traceback; the port must fail too), `stricter` (the script passes and the
+//! port fails: the differences the port declares) or `usage` (both refuse the command line
+//! with exit status 2, before running anything: no call, no report, the lock untouched).
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -41,6 +42,8 @@ struct Case {
     #[serde(default = "same")]
     expect: String,
     version: Option<String>,
+    /// The command line after `check` (default: `--repo repo --version VERSION --out out`).
+    args: Option<Vec<String>>,
     /// The lock (default: the defaults'); "-" for none.
     lock: Option<String>,
     /// The Dockerfile (default: the defaults'); "-" for none.
@@ -145,11 +148,16 @@ fn run(defaults: &Defaults, case: &Case, port: bool) -> Run {
         c
     };
     let version = case.version.as_ref().unwrap_or(&defaults.version);
+    let args = case.args.clone().unwrap_or_else(|| {
+        ["--repo", "repo", "--version", version, "--out", "out"]
+            .map(String::from)
+            .to_vec()
+    });
     let path = std::env::join_paths(
         std::iter::once(bin.clone()).chain(std::env::split_paths(&ok(std::env::var("PATH")))),
     );
     let out: Output = ok(cmd
-        .args(["--repo", "repo", "--version", version, "--out", "out"])
+        .args(&args)
         .current_dir(d)
         .env("PATH", ok(path))
         .env("SECURITY_PATCH_STUB", &stub)
@@ -177,7 +185,7 @@ fn port_and_script_agree_on_every_case() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/security-patch/cases.toml");
     let cases: Cases = ok(toml::from_str(&ok(fs::read_to_string(path))));
     let mut failures = Vec::new();
-    let mut counts = [0; 3];
+    let mut counts = [0; 4];
     for case in &cases.case {
         let script = run(&cases.defaults, case, false);
         let port = run(&cases.defaults, case, true);
@@ -186,7 +194,17 @@ fn port_and_script_agree_on_every_case() {
             "same" if !crashed && script == port => Ok(0),
             "crash" if crashed && port.code != Some(0) => Ok(1),
             "stricter" if script.code == Some(0) && port.code != Some(0) => Ok(2),
-            "same" | "crash" | "stricter" => Err(()),
+            "usage"
+                if script.code == Some(2)
+                    && port.code == Some(2)
+                    && port.files == script.files
+                    && port.files[0].is_none()
+                    && port.files[1].is_none()
+                    && port.files[3].is_none() =>
+            {
+                Ok(3)
+            }
+            "same" | "crash" | "stricter" | "usage" => Err(()),
             other => panic!("{}: unknown expect {other}", case.name),
         };
         match verdict {
@@ -199,10 +217,11 @@ fn port_and_script_agree_on_every_case() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     eprintln!(
-        "{} cases: {} same, {} crash, {} stricter",
+        "{} cases: {} same, {} crash, {} stricter, {} usage",
         cases.case.len(),
         counts[0],
         counts[1],
-        counts[2]
+        counts[2],
+        counts[3]
     );
 }

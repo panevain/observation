@@ -134,7 +134,7 @@ enum SecurityPatchCommand {
     /// Audit the repository's Cargo.lock and run `cargo update -p` for each vulnerable crate
     /// (so the lock is left with every compatible fix: use a scratch checkout), scan the
     /// published images of VERSION with Trivy, write OUT/report.json and OUT/summary.md, and
-    /// print the action: hotfix (a patch release would fix something) or none.
+    /// print the action: hotfix (a patch release would fix something) or none. Needs --repo.
     Check {
         #[arg(long, value_name = "X.Y.Z")]
         version: String,
@@ -241,6 +241,18 @@ fn github_actions() -> bool {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // The check edits the lock it audits, so it never defaults to this tree: like the script,
+    // it needs --repo (a usage error, exit status 2).
+    if matches!(cli.command, Command::SecurityPatch(_)) && cli.repo.is_none() {
+        use clap::CommandFactory as _;
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "security-patch needs --repo <DIR> (a scratch checkout: the check edits its \
+                 Cargo.lock)",
+            )
+            .exit();
+    }
     let repo = cli
         .repo
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
