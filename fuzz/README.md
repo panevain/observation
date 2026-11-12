@@ -8,9 +8,11 @@
 | `scene_json` | `SceneFile::from_json` (user-imported scene files) | never panics; accepted scenes respect `MAX_CAMERAS` / `MAX_CUSTOM_MODELS`, positions are finite, export re-imports |
 | `overpass_response` | the server's Overpass parser plus `build_bundle` | never panics; the built bundle decodes |
 | `bbox_query` | `BBox::parse` and helpers behind `/api/area?bbox=` | never panics; parsed boxes are ordered; cache keys contain no path separators |
+| `job_decode` | `JobRequest::decode` / `JobResponse::decode` (messages between the client and its coverage worker) | never panics; only messages with the current version byte decode; decoded messages re-encode to bytes that decode to the same bytes |
+| `catalog_ron` | `Catalog::from_ron_parts` / `Catalog::from_ron` (the hand-edited camera catalogue) | never panics; accepted catalogues hold valid models with unique, non-`custom-` ids, sorted by kind, vendor and name; an empty extra part leaves the fingerprint unchanged |
 | `coverage_geometry` | occlusion index, view cones and coverage rasters on arbitrary geometry (NaN, infinities, huge extents) | never panics or exhausts memory; visible cells stay inside the grid; counts return to zero |
 
-`seeds/<target>/` holds small seed inputs (the demo street's Overpass response, a sample scene, the demo bbox). The working corpus (`corpus/`) and crash reproducers (`artifacts/`) are not committed.
+`seeds/<target>/` holds small seed inputs (the demo street's Overpass response, a sample scene, the demo bbox, and copies of the core golden files for `job_decode` and `catalog_ron`). The working corpus (`corpus/`) and crash reproducers (`artifacts/`) are not committed.
 
 ## Running
 

@@ -10,10 +10,14 @@ mod toolbar;
 mod widgets;
 
 use crate::coverage::CoverageState;
-use crate::history::HistoryOp;
+use crate::history::{HistoryCommand, HistoryOp};
 use crate::net::Tiles;
 use crate::persist::PersistAction;
-use crate::state::{Area, LoadArea, Loading, Models, Scene, ToastAction, Tool, UiState};
+use crate::platform::Platform;
+use crate::state::{
+    Area, DataChangeNotice, Editor, Hover, LoadArea, Loading, Models, Panels, Scene, ToastAction,
+    Toasts, Tool,
+};
 use crate::theme::{
     MIN_VIEWPORT, SchemeChanges, Tokens, UiFont, follow_scheme, install_fonts, strong_family,
 };
@@ -22,13 +26,15 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, EguiTextureHandle, egui};
 use map_picker::MapPicker;
+use observation_client_model::vm::LoadingVm;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
+        let changes = SchemeChanges::watch(&*Platform::of(app.world()).scheme);
         app.init_resource::<MapPicker>()
-            .insert_resource(SchemeChanges::watch())
+            .insert_resource(changes)
             // Before every `Tokens` reader, so the panels and the scene switch
             // in the same frame.
             .add_systems(PreUpdate, follow_scheme)
@@ -56,23 +62,26 @@ fn apply_theme(
 
 /// Wall-clock time: the virtual clock caps each frame at 250 ms, which would
 /// slow toasts and the loading timer whenever frames are sparse.
-fn tick_toasts(time: Res<Time<Real>>, mut ui: ResMut<UiState>) {
+fn tick_toasts(time: Res<Time<Real>>, mut toasts: ResMut<Toasts>) {
     let dt = time.delta_secs();
-    ui.now = time.elapsed_secs_f64();
-    if ui.toasts.is_empty() {
+    if toasts.is_empty() {
         return;
     }
-    for t in &mut ui.toasts {
-        t.ttl -= dt;
-    }
-    ui.toasts.retain(|t| t.ttl > 0.0);
+    toasts.tick(dt);
 }
 
 /// Everything the panels need, bundled to keep system signatures readable.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct UiData<'w> {
     pub tokens: Res<'w, Tokens>,
-    pub ui: ResMut<'w, UiState>,
+    /// Wall-clock time, for "saved just now" and the loading timer.
+    pub time: Res<'w, Time<Real>>,
+    pub data_change: ResMut<'w, DataChangeNotice>,
+    pub save: Res<'w, crate::persist::Autosave>,
+    pub editor: ResMut<'w, Editor>,
+    pub panels: ResMut<'w, Panels>,
+    pub hover: ResMut<'w, Hover>,
+    pub toasts: ResMut<'w, Toasts>,
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
@@ -80,6 +89,7 @@ pub struct UiData<'w> {
     pub area: Option<Res<'w, Area>>,
     pub loading: ResMut<'w, Loading>,
     pub history: Res<'w, crate::history::History>,
+    pub history_commands: MessageWriter<'w, HistoryCommand>,
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
     pub config: Res<'w, crate::net::ServerConfig>,
@@ -96,9 +106,11 @@ fn draw_ui(
     window: Single<&Window, With<PrimaryWindow>>,
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
+    platform: Res<Platform>,
 ) -> Result {
+    let clock = &*platform.clock;
     // Register tile textures with egui before borrowing the context.
-    let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, |h| {
+    let tile_draws = map_picker::register_tiles(&mut d.picker, &mut d.tiles, clock, |h| {
         contexts.add_image(EguiTextureHandle::Weak(h.id()))
     });
     let ctx = contexts.ctx_mut()?.clone();
@@ -201,45 +213,40 @@ fn draw_ui(
 
     overlays::mode_pill(&ctx, &t, viewport_rect, &d);
     // Quick actions next to the selected camera, where the eye already is.
-    let anchor =
-        d.ui.selected
-            .filter(|_| !matches!(d.ui.tool, Tool::Place | Tool::Region | Tool::Address))
-            .and_then(|id| d.scene.camera(id))
-            .zip(camera.single().ok())
-            .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
-            .map(|p| egui::pos2(p.x, p.y))
-            .filter(|p| viewport_rect.shrink(t.space.lg).contains(*p));
-    if let (Some(id), Some(at)) = (d.ui.selected, anchor)
+    let anchor = d
+        .editor
+        .selected
+        .filter(|_| !matches!(d.editor.tool, Tool::Place | Tool::Region | Tool::Address))
+        .and_then(|id| d.scene.camera(id))
+        .zip(camera.single().ok())
+        .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
+        .map(|p| egui::pos2(p.x, p.y))
+        .filter(|p| viewport_rect.shrink(t.space.lg).contains(*p));
+    if let (Some(id), Some(at)) = (d.editor.selected, anchor)
         && let Some(a) = overlays::camera_toolbar(&ctx, &t, viewport_rect, at)
     {
         actions::apply(&mut d, id, a);
     }
-    overlays::tool_cursor(&ctx, viewport_rect, d.ui.tool);
-    overlays::address_card(&ctx, &t, viewport_rect, &d.ui);
-    match overlays::toasts(&ctx, &t, viewport_rect, &d.ui) {
+    overlays::tool_cursor(&ctx, viewport_rect, d.editor.tool);
+    overlays::address_card(&ctx, &t, viewport_rect, &d.hover, &d.editor);
+    match overlays::toasts(&ctx, &t, viewport_rect, &d.toasts) {
         Some(overlays::ToastEvent::Action(ToastAction::Undo)) => {
-            d.ui.history_request = Some(HistoryOp::Undo);
-            d.ui.toasts
-                .retain(|t| !matches!(t.action, Some(ToastAction::Undo)));
+            d.history_commands.write(HistoryCommand(HistoryOp::Undo));
+            d.toasts.forget_undo();
         }
         Some(overlays::ToastEvent::Action(ToastAction::Retry(req))) => {
-            d.ui.toasts
-                .retain(|t| !matches!(t.action, Some(ToastAction::Retry(_))));
-            load.write(req);
+            d.toasts.forget_retry();
+            load.write(LoadArea::from(req));
         }
-        Some(overlays::ToastEvent::Dismiss(i)) if i < d.ui.toasts.len() => {
-            d.ui.toasts.remove(i);
+        Some(overlays::ToastEvent::Dismiss(i)) if i < d.toasts.len() => {
+            d.toasts.dismiss(i);
         }
         _ => {}
     }
-    if let Some(area) = d.loading.area {
-        let elapsed = d.ui.now - d.loading.started;
-        let cancellable = d.loading.request.as_ref().is_some_and(|r| !r.keep_cameras);
-        match overlays::loading(&ctx, &t, viewport_rect, area, elapsed, cancellable) {
+    if let Some(vm) = LoadingVm::new(&d.loading, d.time.elapsed_secs_f64()) {
+        match overlays::loading(&ctx, &t, viewport_rect, &vm) {
             Some(overlays::LoadingChoice::Cancel) => {
-                // The reply, when it comes, is ignored as superseded.
-                d.loading.area = None;
-                d.loading.request = None;
+                d.loading.cancel();
             }
             Some(overlays::LoadingChoice::Demo) => {
                 load.write(LoadArea::demo());
@@ -247,11 +254,11 @@ fn draw_ui(
             None => {}
         }
     }
-    if d.ui.help_open {
-        overlays::help(&ctx, &t, &mut d.ui);
+    if d.panels.help_open {
+        overlays::help(&ctx, &t, &mut d.panels);
     }
-    if d.ui.regions_open {
-        regions::window(&ctx, &t, &mut d.regions, &mut d.ui.regions_open);
+    if d.panels.regions_open {
+        regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);
     }
     let local: Vec<(String, observation_core::geo::BBox)> = d
         .regions
@@ -260,7 +267,7 @@ fn draw_ui(
         .filter(|r| r.ready)
         .filter_map(|r| Some((r.name.clone(), r.bbox?)))
         .collect();
-    if d.ui.map_open
+    if d.panels.map_open
         && let Some(bbox) = map_picker::window(
             &ctx,
             &t,
@@ -268,7 +275,7 @@ fn draw_ui(
             &tile_draws,
             &local,
             &d.config,
-            &mut d.ui.map_open,
+            &mut d.panels.map_open,
         )
     {
         load.write(LoadArea::osm(bbox));

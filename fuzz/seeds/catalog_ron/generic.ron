@@ -1,0 +1,23 @@
+// Vendor-less models, in a second part so the parts are merged and sorted.
+[
+    (
+        id: "generic-dome-1080p",
+        vendor: "",
+        name: "Dome 1080p",
+        kind: Dome,
+        hfov_deg: 110.0,
+        vfov_deg: 60.0,
+        resolution: (1920, 1080),
+    ),
+    (
+        id: "generic-floodlight",
+        vendor: "",
+        name: "Floodlight",
+        kind: Floodlight,
+        hfov_deg: 140.0,
+        vfov_deg: 75.0,
+        resolution: (2560, 1440),
+        ir_range_m: Some(9.0),
+        notes: Some("Typical figures for the type."),
+    ),
+]
