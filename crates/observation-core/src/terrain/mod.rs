@@ -10,8 +10,8 @@ mod dem;
 mod grid;
 
 pub use dem::{
-    DEM_TILE_PX, DEM_ZOOM, DemTile, TERRAIN_TILES_ATTRIBUTION, TERRAIN_TILES_CREDITS_URL,
-    dem_tiles_for, terrain_extent, terrain_from_dem, terrarium_m,
+    DEM_TILE_PX, DEM_ZOOM, DemMosaic, DemTile, TERRAIN_TILES_ATTRIBUTION,
+    TERRAIN_TILES_CREDITS_URL, dem_tiles_for, terrain_extent, terrain_from_dem, terrarium_m,
 };
 pub use grid::{
     FLAT, InvalidTerrain, MAX_TERRAIN_SAMPLES, TERRAIN_CELL_M, TERRAIN_MARGIN_M, Terrain,

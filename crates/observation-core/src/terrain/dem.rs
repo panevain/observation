@@ -1,7 +1,7 @@
 //! Sampling the grid from Terrarium DEM tiles.
 
 use super::{TERRAIN_MARGIN_M, Terrain};
-use crate::geo::{BBox, Projection};
+use crate::geo::{BBox, LatLon, Projection};
 use crate::tiles::{TileId, lat_to_y, lon_to_x, tiles_covering};
 use glam::Vec2;
 
@@ -72,6 +72,84 @@ impl DemTile {
     }
 }
 
+/// The DEM tiles a bbox's terrain needs ([`dem_tiles_for`]), read as one
+/// seamless grid of pixels: the tile lookup and bilinear sampling behind
+/// [`terrain_from_dem`].
+#[derive(Debug, Clone, Copy)]
+pub struct DemMosaic<'a> {
+    tiles: &'a [DemTile],
+    /// Global pixel coordinates the tiles cover, pixel centres at +0.5.
+    lo_x: f64,
+    lo_y: f64,
+    hi_x: f64,
+    hi_y: f64,
+}
+
+impl<'a> DemMosaic<'a> {
+    /// The mosaic of `tiles` over a bbox's terrain. `None` if a tile it
+    /// needs is missing or has the wrong size.
+    pub fn new(bbox: &BBox, tiles: &'a [DemTile]) -> Option<Self> {
+        let need = dem_tiles_for(bbox);
+        let (x0, y0) = (need.first()?.x, need.first()?.y);
+        let (x1, y1) = (need.last()?.x, need.last()?.y);
+        let mosaic = Self {
+            tiles,
+            lo_x: f64::from(x0) * PX,
+            lo_y: f64::from(y0) * PX,
+            hi_x: f64::from(x1 + 1) * PX - 1.0,
+            hi_y: f64::from(y1 + 1) * PX - 1.0,
+        };
+        if need.iter().any(|id| mosaic.tile(*id).is_none()) {
+            return None;
+        }
+        Some(mosaic)
+    }
+
+    /// The first tile with this id and the right size.
+    fn tile(&self, id: TileId) -> Option<&'a DemTile> {
+        let n = (DEM_TILE_PX * DEM_TILE_PX) as usize;
+        self.tiles
+            .iter()
+            .find(|t| t.id == id && t.elevations.len() == n)
+    }
+
+    /// The elevation of the pixel at global pixel coordinates `(gx, gy)`,
+    /// clamped to the mosaic.
+    fn pixel(&self, gx: f64, gy: f64) -> Option<f32> {
+        let (gx, gy) = (
+            gx.clamp(self.lo_x, self.hi_x),
+            gy.clamp(self.lo_y, self.hi_y),
+        );
+        let (tx, ty) = ((gx / PX) as u32, (gy / PX) as u32);
+        let t = self.tile(TileId {
+            z: DEM_ZOOM,
+            x: tx,
+            y: ty,
+        })?;
+        let (col, row) = (
+            (gx - f64::from(tx) * PX) as usize,
+            (gy - f64::from(ty) * PX) as usize,
+        );
+        t.elevations.get(row * DEM_TILE_PX as usize + col).copied()
+    }
+
+    /// Elevation in metres above sea level at `p`, interpolated bilinearly
+    /// between the four nearest pixel centres; past the mosaic's edge, the
+    /// edge pixels' value.
+    pub fn elevation_at(&self, p: LatLon) -> Option<f32> {
+        let gx = lon_to_x(p.lon, DEM_ZOOM) * PX - 0.5;
+        let gy = lat_to_y(p.lat, DEM_ZOOM) * PX - 0.5;
+        let (fx, fy) = (gx.floor(), gy.floor());
+        let (tx, ty) = ((gx - fx) as f32, (gy - fy) as f32);
+        let top = self.pixel(fx, fy)? * (1.0 - tx) + self.pixel(fx + 1.0, fy)? * tx;
+        let bottom = self.pixel(fx, fy + 1.0)? * (1.0 - tx) + self.pixel(fx + 1.0, fy + 1.0)? * tx;
+        Some(top * (1.0 - ty) + bottom * ty)
+    }
+}
+
+/// [`DEM_TILE_PX`] as the `f64` the pixel maths uses.
+const PX: f64 = DEM_TILE_PX as f64;
+
 /// Samples a bbox's terrain from its DEM tiles ([`dem_tiles_for`]).
 /// `None` if a tile is missing or has the wrong size.
 pub fn terrain_from_dem(
@@ -79,43 +157,9 @@ pub fn terrain_from_dem(
     tiles: &[DemTile],
     attribution: impl Into<String>,
 ) -> Option<Terrain> {
-    let need = dem_tiles_for(bbox);
-    let (x0, y0) = (need.first()?.x, need.first()?.y);
-    let (x1, y1) = (need.last()?.x, need.last()?.y);
-    let n = (DEM_TILE_PX * DEM_TILE_PX) as usize;
-    let lookup = |id: TileId| tiles.iter().find(|t| t.id == id && t.elevations.len() == n);
-    if need.iter().any(|id| lookup(*id).is_none()) {
-        return None;
-    }
-    let px = DEM_TILE_PX as f64;
-    // Global pixel coordinates the tiles cover, pixel centres at +0.5.
-    let (lo_x, lo_y) = (f64::from(x0) * px, f64::from(y0) * px);
-    let (hi_x, hi_y) = (f64::from(x1 + 1) * px - 1.0, f64::from(y1 + 1) * px - 1.0);
-    let pixel = |gx: f64, gy: f64| -> Option<f32> {
-        let (gx, gy) = (gx.clamp(lo_x, hi_x), gy.clamp(lo_y, hi_y));
-        let (tx, ty) = ((gx / px) as u32, (gy / px) as u32);
-        let t = lookup(TileId {
-            z: DEM_ZOOM,
-            x: tx,
-            y: ty,
-        })?;
-        let (col, row) = (
-            (gx - f64::from(tx) * px) as usize,
-            (gy - f64::from(ty) * px) as usize,
-        );
-        t.elevations.get(row * DEM_TILE_PX as usize + col).copied()
-    };
+    let mosaic = DemMosaic::new(bbox, tiles)?;
     let proj = Projection::new(bbox.center());
-    let elevation = |w: Vec2| -> Option<f32> {
-        let p = proj.to_latlon([f64::from(w.x), f64::from(w.y)]);
-        let gx = lon_to_x(p.lon, DEM_ZOOM) * px - 0.5;
-        let gy = lat_to_y(p.lat, DEM_ZOOM) * px - 0.5;
-        let (fx, fy) = (gx.floor(), gy.floor());
-        let (tx, ty) = ((gx - fx) as f32, (gy - fy) as f32);
-        let top = pixel(fx, fy)? * (1.0 - tx) + pixel(fx + 1.0, fy)? * tx;
-        let bottom = pixel(fx, fy + 1.0)? * (1.0 - tx) + pixel(fx + 1.0, fy + 1.0)? * tx;
-        Some(top * (1.0 - ty) + bottom * ty)
-    };
+    let elevation = |w: Vec2| mosaic.elevation_at(proj.to_latlon([f64::from(w.x), f64::from(w.y)]));
     let (min, max) = terrain_extent(bbox);
     Terrain::sample_from(min, max, elevation, attribution)
 }
@@ -123,7 +167,6 @@ pub fn terrain_from_dem(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo::LatLon;
 
     #[test]
     fn terrarium_decoding() {
@@ -146,6 +189,60 @@ mod tests {
             ((min + max) / 2.0).length() < 0.01,
             "centred on the bbox centre"
         );
+    }
+
+    #[test]
+    fn a_mosaic_of_a_plane_samples_the_plane() {
+        // Each pixel centre holds a plane over global pixel coordinates,
+        // continued across tile seams; bilinear sampling reproduces it.
+        let bbox = BBox::around(LatLon::new(-33.8688, 151.2093), 450.0);
+        let need = dem_tiles_for(&bbox);
+        assert!(need.len() > 1, "the box must straddle a seam: {need:?}");
+        let (x0, y0) = (f64::from(need[0].x) * PX, f64::from(need[0].y) * PX);
+        let plane = |gx: f64, gy: f64| 100.0 + 0.25 * (gx - x0) + 0.5 * (gy - y0);
+        let tiles: Vec<DemTile> = need
+            .iter()
+            .map(|&id| DemTile {
+                id,
+                elevations: (0..DEM_TILE_PX * DEM_TILE_PX)
+                    .map(|i| {
+                        let gx = f64::from(id.x * DEM_TILE_PX + i % DEM_TILE_PX);
+                        let gy = f64::from(id.y * DEM_TILE_PX + i / DEM_TILE_PX);
+                        plane(gx, gy) as f32
+                    })
+                    .collect(),
+            })
+            .collect();
+        let mosaic = DemMosaic::new(&bbox, &tiles).unwrap();
+        for i in 0..=20 {
+            for j in 0..=20 {
+                let p = LatLon::new(
+                    bbox.south + (bbox.north - bbox.south) * f64::from(i) / 20.0,
+                    bbox.west + (bbox.east - bbox.west) * f64::from(j) / 20.0,
+                );
+                let gx = lon_to_x(p.lon, DEM_ZOOM) * PX - 0.5;
+                let gy = lat_to_y(p.lat, DEM_ZOOM) * PX - 0.5;
+                let got = mosaic.elevation_at(p).unwrap();
+                let want = plane(gx, gy) as f32;
+                assert!((got - want).abs() < 1e-3, "{p:?}: {got} != {want}");
+            }
+        }
+        // Past the mosaic's north-west corner: the corner pixel.
+        let far = LatLon::new(bbox.north + 1.0, bbox.west - 1.0);
+        assert_eq!(mosaic.elevation_at(far), Some(100.0));
+        // Past the south-east corner: the last pixel.
+        let last = need[need.len() - 1];
+        let (x1, y1) = (
+            f64::from(last.x + 1) * PX - 1.0,
+            f64::from(last.y + 1) * PX - 1.0,
+        );
+        let far = LatLon::new(bbox.south - 1.0, bbox.east + 1.0);
+        assert_eq!(mosaic.elevation_at(far), Some(plane(x1, y1) as f32));
+        // A missing or truncated tile is refused.
+        assert!(DemMosaic::new(&bbox, &tiles[1..]).is_none());
+        let mut short = tiles.clone();
+        short[0].elevations.pop();
+        assert!(DemMosaic::new(&bbox, &short).is_none());
     }
 
     #[test]
