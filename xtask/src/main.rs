@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use xtask::cmd;
 use xtask::ports::Brotli;
-use xtask::ports::process::{BrotliCli, CargoCli, Curl, GhCli, GitCli, SystemClock};
+use xtask::ports::process::{BrotliCli, CargoCli, Curl, GhCli, GitCli, ScannersCli, SystemClock};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -130,6 +130,20 @@ enum GateKind {
 }
 
 #[derive(Debug, Subcommand)]
+enum SecurityPatchCommand {
+    /// Audit the repository's Cargo.lock and run `cargo update -p` for each vulnerable crate
+    /// (so the lock is left with every compatible fix: use a scratch checkout), scan the
+    /// published images of VERSION with Trivy, write OUT/report.json and OUT/summary.md, and
+    /// print the action: hotfix (a patch release would fix something) or none. Needs --repo.
+    Check {
+        #[arg(long, value_name = "X.Y.Z")]
+        version: String,
+        #[arg(long, value_name = "OUT")]
+        out: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum VersionCommand {
     /// Print the workspace version; fail unless it is X.Y.Z or X.Y.Z-pre.
     Get {
@@ -175,8 +189,14 @@ enum Command {
     /// The release automation's steps.
     #[command(subcommand)]
     Release(ReleaseCommand),
+    /// Whether the latest release needs a security patch release.
+    #[command(subcommand)]
+    SecurityPatch(SecurityPatchCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
-    /// be, or the advisory ignore lists disagree.
+    /// be, the advisory ignore lists disagree, a package named to cargo is not a crate, a
+    /// testing feature is enabled outside [dev-dependencies], the image lists, cooldown days,
+    /// mise lockfiles or MISE_ENV disagree with what they mirror, or a job of a pull_request
+    /// workflow is neither covered by `mise run check` nor listed with the reason.
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
@@ -224,6 +244,18 @@ fn github_actions() -> bool {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // The check edits the lock it audits, so it never defaults to this tree: like the script,
+    // it needs --repo (a usage error, exit status 2).
+    if matches!(cli.command, Command::SecurityPatch(_)) && cli.repo.is_none() {
+        use clap::CommandFactory as _;
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "security-patch needs --repo <DIR> (a scratch checkout: the check edits its \
+                 Cargo.lock)",
+            )
+            .exit();
+    }
     let repo = cli
         .repo
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
@@ -384,6 +416,21 @@ fn main() -> ExitCode {
             );
             emit(b"", diagnostics.as_bytes());
             result
+        }
+        Command::SecurityPatch(SecurityPatchCommand::Check { version, out }) => {
+            let mut diagnostics = String::new();
+            let result = cmd::security_patch::check(
+                &repo,
+                &version,
+                &out,
+                &ScannersCli::default(),
+                &mut diagnostics,
+            );
+            emit(b"", diagnostics.as_bytes());
+            result.map(|action| {
+                emit(action.as_bytes(), b"");
+                false
+            })
         }
         Command::Sync => cmd::sync::run(&repo, &GitCli::new(&repo)).map(|out| {
             emit(out.stdout.as_bytes(), out.stderr.as_bytes());

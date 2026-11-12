@@ -1,7 +1,8 @@
 //! `cargo xtask sync`: pinned versions agree wherever they are repeated, nothing repeats what
 //! is pinned once, and the advisory ignore lists agree. Ported rule by rule from
 //! scripts/check-toolchain-sync.sh, matching what its grep, sed and awk lines matched,
-//! quirks included (each is noted where it is kept).
+//! quirks included (each is noted where it is kept). The rules in [`extra`] and [`mise`] are
+//! newer: the script never had them.
 //!
 //! Sources of truth: rust-toolchain.toml for Rust (mise.lock records it for mise),
 //! .github/actions/setup-mise for the mise that the workflows, the Dockerfile and mise.toml's
@@ -43,6 +44,16 @@ pub struct Snapshot {
     pub osv_scanner_toml: String,
     /// .config/release.toml (empty when there is none).
     pub release_toml: String,
+    /// The files only the rules in [`extra`] read, each empty when there is none:
+    /// .config/cargo-cooldown.toml, .github/dependabot.yml, scripts/bump-pins.py,
+    /// scripts/security-patch.py and compose.yaml.
+    pub cooldown_toml: String,
+    pub dependabot: String,
+    pub bump_pins: String,
+    pub security_patch: String,
+    pub compose: String,
+    /// mise.ci.lock (empty when there is none), which only [`mise`] reads.
+    pub mise_ci_lock: String,
     /// What `git grep` found for [`doc_pattern`] in the Markdown files (empty: nothing), or why
     /// it could not search.
     pub doc_pins: Result<String, String>,
@@ -78,6 +89,8 @@ pub enum Finding {
     /// hotfix.yml's inline `allowed=` list and .config/release.toml's `hotfix` list differ, or
     /// one of them cannot be read.
     HotfixList(String),
+    /// A rule the script did not have (see [`extra`]), written as it says.
+    Rule(String),
 }
 
 impl fmt::Display for Finding {
@@ -129,6 +142,7 @@ impl fmt::Display for Finding {
                  {name} with get_env without default=env.{name}; remove the entry"
             ),
             Self::HotfixList(why) => writeln!(f, "mismatch: {why}"),
+            Self::Rule(text) => writeln!(f, "{text}"),
         }
     }
 }
@@ -199,6 +213,9 @@ regex!(ALLOWED_PATH, r"^(?:[A-Za-z0-9_/-]|\\\.)+$");
 // The globs `*.y*ml` and `action.y*ml`.
 regex!(WORKFLOW_NAME, r"^.*\.y.*ml$");
 regex!(ACTION_NAME, r"^action\.y.*ml$");
+
+pub mod extra;
+pub mod mise;
 
 /// A file's lines as grep, sed and awk read them: split at LF, the last one even without a
 /// final newline. A CR stays part of its line.
@@ -737,8 +754,39 @@ fn files(repo: &Path, paths: Vec<String>) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// Reads the repository at `repo` and runs the check; `git` searches its docs.
+/// The file read at `path` in `repo`, or empty when there is none.
+fn optional(repo: &Path, path: &str) -> Result<String> {
+    if repo.join(path).exists() {
+        read(repo, path)
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// Reads the repository at `repo` and runs every rule: the script's ([`check`]), then the
+/// newer ones ([`extra`], [`mise`]); `git` searches the docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
+    Ok(all(&snapshot(repo, git)?).outcome())
+}
+
+/// Every rule on `s`: the script's ([`check`]), then the newer ones ([`extra`], [`mise`]).
+pub fn all(s: &Snapshot) -> Report {
+    let mut report = check(s);
+    report.findings.extend(extra::check(s));
+    report.findings.extend(mise::check(s));
+    // A file several rules read (a workflow that is not YAML) is reported once.
+    let mut unique = Vec::new();
+    for f in std::mem::take(&mut report.findings) {
+        if !unique.contains(&f) {
+            unique.push(f);
+        }
+    }
+    report.findings = unique;
+    report
+}
+
+/// Reads what the rules read from the repository at `repo`; `git` searches its docs.
+pub fn snapshot(repo: &Path, git: &dyn Git) -> Result<Snapshot> {
     let mut manifests = vec!["Cargo.toml".to_owned()];
     // Each glob expands to whole paths sorted as the shell sorts them, so
     // crates/observation-client-model/Cargo.toml comes before crates/observation-client/...
@@ -777,11 +825,13 @@ pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
         deny_toml: read(repo, "deny.toml")?,
         audit_toml: read(repo, ".cargo/audit.toml")?,
         osv_scanner_toml: read(repo, "osv-scanner.toml")?,
-        release_toml: if repo.join(super::release::files::CONFIG).exists() {
-            read(repo, super::release::files::CONFIG)?
-        } else {
-            String::new()
-        },
+        release_toml: optional(repo, super::release::files::CONFIG)?,
+        cooldown_toml: optional(repo, extra::COOLDOWN)?,
+        dependabot: optional(repo, extra::DEPENDABOT)?,
+        bump_pins: optional(repo, extra::BUMP_PINS)?,
+        security_patch: optional(repo, extra::SECURITY_PATCH)?,
+        compose: optional(repo, extra::COMPOSE)?,
+        mise_ci_lock: optional(repo, "mise.ci.lock")?,
         doc_pins: Ok(String::new()),
     };
     let pattern = doc_pattern(&s.mise_toml, &s.mise_ci_toml);
@@ -790,7 +840,7 @@ pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
         .grep(&flags, &pattern, &["*.md", ":!CHANGELOG.md"])
         .map(Option::unwrap_or_default)
         .map_err(|e| e.to_string());
-    Ok(check(&s).outcome())
+    Ok(s)
 }
 
 #[cfg(test)]
@@ -880,7 +930,8 @@ mod tests {
             .iter()
             .map(|&(k, v)| (k.into(), v.into()))
             .collect();
-        let out = ok(run(&tree, &git));
+        // The script's rules only: the golden is what the script printed.
+        let out = check(&ok(snapshot(&tree, &git))).outcome();
         format!(
             "== {}\nexit {}\n-- stdout\n{}-- stderr\n{}",
             case.name,

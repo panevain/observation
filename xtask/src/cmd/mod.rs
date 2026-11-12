@@ -5,6 +5,7 @@ pub mod automerge;
 pub mod cooldown;
 pub mod coverage;
 pub mod release;
+pub mod security_patch;
 pub mod sync;
 pub mod tokens;
 pub mod wasm_budget;

@@ -83,6 +83,24 @@ pub trait GitHub {
     fn gh(&self, args: &[String]) -> Result<GhOutput>;
 }
 
+/// What a program printed, read as `subprocess.run(text=True)` read it (strict UTF-8,
+/// universal newlines), and its exit status (negative: the signal that ended it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramOutput {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// The programs `security-patch` runs, whatever their exit status. The caller makes sure no
+/// value in `args` can be read as an option.
+pub trait Scanners {
+    /// `cargo ARGS`, run in `dir`.
+    fn cargo(&self, dir: &Path, args: &[&str]) -> Result<ProgramOutput>;
+    /// `trivy ARGS`.
+    fn trivy(&self, args: &[&str]) -> Result<ProgramOutput>;
+}
+
 /// The current time.
 pub trait Clock {
     fn now(&self) -> Timestamp;

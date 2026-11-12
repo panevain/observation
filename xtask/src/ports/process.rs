@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::SystemTime;
 
-use super::{AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, GitRun, Http, Response};
+use super::{
+    AuditOutput, Brotli, Cargo, Clock, GhOutput, Git, GitHub, GitRun, Http, ProgramOutput,
+    Response, Scanners,
+};
 use crate::core::time::Timestamp;
 use crate::{Error, Result};
 
@@ -336,6 +339,49 @@ impl GitHub for GhCli {
             stdout: crate::core::py::universal_newlines(&utf8(&cmd, out.stdout)?),
             stderr: crate::core::py::universal_newlines(&utf8(&cmd, out.stderr)?),
         })
+    }
+}
+
+/// cargo and Trivy for `security-patch`, as `cargo` and `trivy` (default: from `PATH`, so that
+/// rustup picks the toolchain of the directory cargo runs in). No timeout: the job's bounds them.
+#[derive(Debug, Clone)]
+pub struct ScannersCli {
+    pub cargo: PathBuf,
+    pub trivy: PathBuf,
+}
+
+impl Default for ScannersCli {
+    fn default() -> Self {
+        Self {
+            cargo: "cargo".into(),
+            trivy: "trivy".into(),
+        }
+    }
+}
+
+/// Runs `cmd` and reads its output as `subprocess.run(text=True)` did.
+fn text_output(cmd: &mut Command) -> Result<ProgramOutput> {
+    use std::os::unix::process::ExitStatusExt as _;
+    let out = run(cmd, None).map_err(|e| spawn_error(cmd, &e))?;
+    let code = out
+        .status
+        .code()
+        .or_else(|| out.status.signal().map(|s| -s))
+        .unwrap_or(-1);
+    Ok(ProgramOutput {
+        code,
+        stdout: crate::core::py::universal_newlines(&utf8(cmd, out.stdout)?),
+        stderr: crate::core::py::universal_newlines(&utf8(cmd, out.stderr)?),
+    })
+}
+
+impl Scanners for ScannersCli {
+    fn cargo(&self, dir: &Path, args: &[&str]) -> Result<ProgramOutput> {
+        text_output(Command::new(&self.cargo).current_dir(dir).args(args))
+    }
+
+    fn trivy(&self, args: &[&str]) -> Result<ProgramOutput> {
+        text_output(Command::new(&self.trivy).args(args))
     }
 }
 

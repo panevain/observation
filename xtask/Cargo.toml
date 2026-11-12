@@ -13,6 +13,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = { version = "1.1", features = ["preserve_order"] }
 semver = "1.0"
+# Reads YAML (Dependabot's config, the workflows, compose.yaml) for sync's rules.
+yaml_serde = "0.10"
 # Measures the wasm modules' gzip size (wasm-budget): a bump of flate2 or miniz_oxide can move
 # those sizes, so check the headroom in the `wasm (trunk build)` job's output with it.
 flate2 = "1.1"
@@ -35,6 +37,11 @@ path = "parity/release_files.rs"
 [[test]]
 name = "workflow_artifacts"
 path = "parity/workflow_artifacts.rs"
+
+# scripts/security-patch.py check against `security-patch check`, with stub cargo and trivy.
+[[test]]
+name = "security_patch"
+path = "parity/security_patch.rs"
 
 # Dependencies with no user yet: the commands that need them arrive in later changes. Remove in
 # sweep (each entry goes once its first user lands). The root Cargo.toml has the same list for
