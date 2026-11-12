@@ -111,11 +111,9 @@ pub(crate) mod tests {
     /// A stand-in `osm3s_query` running `script`.
     #[cfg(unix)]
     pub(crate) fn fake_query_bin(script: &str) -> tempfile::TempDir {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("osm3s_query");
-        std::fs::write(&bin, format!("#!/bin/sh\ncat >/dev/null\n{script}\n")).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let body = format!("cat >/dev/null\n{script}");
+        crate::testing::write_script(&dir.path().join("osm3s_query"), &body);
         dir
     }
 

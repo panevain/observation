@@ -287,13 +287,10 @@ mod tests {
     /// Each writes its arguments to `<name>.args` beside itself.
     #[cfg(unix)]
     fn stand_ins(osmium: &str, update_database: &str) -> (tempfile::TempDir, OsmTools) {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         for (name, body) in [("osmium", osmium), ("update_database", update_database)] {
-            let path = dir.path().join(name);
-            let script = format!("#!/bin/sh\necho \"$@\" > \"$0.args\"\n{body}\n");
-            std::fs::write(&path, script).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let script = format!("echo \"$@\" > \"$0.args\"\n{body}");
+            crate::testing::write_script(&dir.path().join(name), &script);
         }
         let tools = OsmTools {
             osmium: dir.path().join("osmium"),

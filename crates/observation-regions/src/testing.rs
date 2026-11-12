@@ -254,3 +254,24 @@ impl QueryRunner for GateRunner {
         .boxed()
     }
 }
+
+/// Writes an executable `/bin/sh` script running `body` at `path`.
+///
+/// A `sh` child creates and writes the file; this process never opens it.
+/// Any descriptor this process held open for writing on it (even briefly,
+/// even close-on-exec) could be copied into a child that another test thread
+/// forks at that moment, and executing the script while that child still
+/// holds it fails with "Text file busy" (`ETXTBSY`). The child's descriptor
+/// is only ever its own, and it has exited before this returns.
+#[cfg(unix)]
+pub(crate) fn write_script(path: &Path, body: &str) {
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(r#"printf '%s\n' "$2" > "$1" && chmod 755 "$1""#)
+        .arg("sh")
+        .arg(path)
+        .arg(format!("#!/bin/sh\n{body}"))
+        .status()
+        .unwrap();
+    assert!(status.success(), "could not write {}", path.display());
+}
