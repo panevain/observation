@@ -15,6 +15,8 @@ use serde_json::json;
 use crate::agent::Agent;
 
 mod catalog;
+#[cfg(test)]
+mod contract_tests;
 mod interpreter;
 mod regions;
 
