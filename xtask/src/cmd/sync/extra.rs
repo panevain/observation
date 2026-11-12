@@ -19,27 +19,33 @@ use super::{Finding, Snapshot, lines, re};
 
 regex!(
     CARGO_COMMAND,
-    r"(?:^|[\s;&|(`'])cargo(?:\s+\+\S+)?\s+(?:build|check|clippy|test|nextest|run|doc|llvm-cov|chef|auditable|bench|fmt|rustc)(?:\s|$)"
+    r#"(?:^|[\s;&|(`'"\[])cargo(?:\s+\+\S+)?\s+(?:build|check|clippy|test|nextest|run|doc|llvm-cov|chef|auditable|bench|fmt|rustc)(?:\s|$)"#
 );
 regex!(
     PACKAGE_FLAG,
-    r#"(?:^|[\s"'])(-p|--package|--exclude)(?:\s+|=)([^\s"';\\]+)"#
+    r#"(?:^|[\s"'])(-p|--package|--exclude)(?:\s+|=)?["']?([^\s"';\\]+)"#
 );
 regex!(STAGE, r"(?i)^\s*FROM\s.*\sAS\s+([A-Za-z0-9_.-]+)\s*$");
 regex!(FROM, r"(?i)^\s*FROM\s");
-regex!(CRATE_PATH, r"(?:^|[\s\x22'!/\[,])crates/([A-Za-z0-9_-]+)");
+// `crates/NAME` at the start of a path (`./` allowed), not inside a URL.
+regex!(
+    CRATE_PATH,
+    r"(?:^|[\s\x22'!\[,])(?:\./)?crates/([A-Za-z0-9_-]+)"
+);
+
 fn finding(text: String) -> Finding {
     Finding::Rule(text)
 }
 
 /// Lines with each `\`-continued line joined to the next (as a shell or Dockerfile reads a
-/// command), a final CR removed, comment lines left out.
+/// command), a final CR removed, comment lines left out (inside a continued command too, as
+/// Docker does), and an empty line inside a continued command skipped.
 fn commands(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     for line in lines(text) {
         let line = line.strip_suffix('\r').unwrap_or(line);
-        if cur.is_empty() && line.trim_start().starts_with('#') {
+        if line.trim_start().starts_with('#') || (!cur.is_empty() && line.trim().is_empty()) {
             continue;
         }
         match line.strip_suffix('\\') {
@@ -82,9 +88,10 @@ fn cargo_packages(text: &str, mise: bool) -> Vec<(String, String)> {
             out.extend(package_flags(&command));
             continue;
         }
-        // Each simple command on its own, so that `mkdir -p DIR; cargo build` names no DIR.
+        // Each simple command on its own, so that `mkdir -p DIR; cargo build` names no DIR. A
+        // command on another workspace (`--manifest-path`) names that workspace's packages.
         for simple in command.split([';', '&', '|']) {
-            if CARGO_COMMAND.is_match(simple) {
+            if CARGO_COMMAND.is_match(simple) && !simple.contains("--manifest-path") {
                 out.extend(package_flags(simple));
             }
         }
@@ -104,14 +111,21 @@ fn members(s: &Snapshot) -> Result<BTreeSet<String>, Finding> {
         .iter()
         .find(|(p, _)| p == "Cargo.toml")
         .ok_or_else(|| finding("Cargo.toml is missing".into()))?;
-    let members = parse("Cargo.toml", &root.1)?
-        .get("workspace")
-        .and_then(|w| w.get("members"))
-        .cloned();
-    if members != Some(Value::Array(vec![Value::String("crates/*".into())])) {
+    let workspace = parse("Cargo.toml", &root.1)?.get("workspace").cloned();
+    let members = workspace.as_ref().and_then(|w| w.get("members"));
+    let excluded = workspace
+        .as_ref()
+        .and_then(|w| w.get("exclude"))
+        .and_then(Value::as_array)
+        .is_some_and(|e| {
+            e.iter()
+                .any(|x| x.as_str().is_some_and(|x| x.starts_with("crates/")))
+        });
+    if excluded || members != Some(&Value::Array(vec![Value::String("crates/*".into())])) {
         return Err(finding(
-            "Cargo.toml's workspace members are not [\"crates/*\"], which sync's package rule \
-             reads as the crates under crates/; update the rule"
+            "Cargo.toml's workspace members are not [\"crates/*\"] (or it excludes a path under \
+             crates/), which sync's package rule reads as the crates under crates/; update the \
+             rule"
                 .into(),
         ));
     }
@@ -261,24 +275,47 @@ fn build_tables(manifest: &Table) -> Vec<(String, &Table)> {
         .collect()
 }
 
+/// The package a dependency entry names: its `package =`, else, for `workspace = true`, the
+/// root's `[workspace.dependencies]` entry's (`workspace`: key to package), else its key.
+fn package_of(key: &str, dep: &Value, workspace: &BTreeMap<String, String>) -> String {
+    match dep.get("package").and_then(Value::as_str) {
+        Some(p) => p.to_owned(),
+        None if dep.get("workspace") == Some(&Value::Boolean(true)) => workspace
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.to_owned()),
+        None => key.to_owned(),
+    }
+}
+
 pub fn testing(s: &Snapshot) -> Vec<Finding> {
     let members = match members(s) {
         Ok(m) => m,
         Err(f) => return vec![f],
     };
+    // members() has parsed every manifest read here, so none fails to parse below.
+    let parsed = |text: &str| toml::from_str::<Table>(text).unwrap_or_default();
+    let root = s
+        .manifests
+        .iter()
+        .find(|(p, _)| p == "Cargo.toml")
+        .map(|(_, t)| parsed(t))
+        .unwrap_or_default();
+    let workspace: BTreeMap<String, String> = root
+        .get("workspace")
+        .and_then(|w| w.get("dependencies"))
+        .and_then(Value::as_table)
+        .into_iter()
+        .flatten()
+        .map(|(key, dep)| (key.clone(), package_of(key, dep, &BTreeMap::new())))
+        .collect();
     let mut out = Vec::new();
     for (path, text) in &s.manifests {
         if path != "Cargo.toml" && !path.starts_with("crates/") {
             continue;
         }
-        let manifest = match parse(path, text) {
-            Ok(m) => m,
-            Err(f) => {
-                out.push(f);
-                continue;
-            }
-        };
-        // Each dependency key and the package it names (`package = ...` renames it).
+        let manifest = parsed(text);
+        // Each dependency key and the package it names, for the features below.
         let mut packages = BTreeMap::new();
         let mut tables = build_tables(&manifest);
         if let Some(dev) = manifest.get("dev-dependencies").and_then(Value::as_table) {
@@ -286,8 +323,7 @@ pub fn testing(s: &Snapshot) -> Vec<Finding> {
         }
         for (_, table) in &tables {
             for (key, dep) in *table {
-                let package = dep.get("package").and_then(Value::as_str).unwrap_or(key);
-                packages.insert(key.clone(), package.to_owned());
+                packages.insert(key.clone(), package_of(key, dep, &workspace));
             }
         }
         for (name, table) in build_tables(&manifest) {
@@ -296,7 +332,7 @@ pub fn testing(s: &Snapshot) -> Vec<Finding> {
                     .get("features")
                     .and_then(Value::as_array)
                     .is_some_and(|f| f.iter().any(|f| f.as_str() == Some("testing")));
-                if enables && members.contains(&packages[key]) {
+                if enables && members.contains(&package_of(key, dep, &workspace)) {
                     out.push(finding(format!(
                         "{path}: [{name}] {key} enables its testing feature; enable it only \
                          from [dev-dependencies]"
@@ -364,7 +400,12 @@ mod tests {
             setup_mise: String::new(),
             mise_lock: String::new(),
             manifests: vec![
-                ("Cargo.toml".into(), "[workspace]\nmembers = [\"crates/*\"]\n".into()),
+                (
+                    "Cargo.toml".into(),
+                    "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.dependencies]\n\
+                     l2 = { package = \"lib\", path = \"crates/lib\" }\n"
+                        .into(),
+                ),
                 ("crates/app/Cargo.toml".into(), manifest("app")),
                 ("crates/app-web/Cargo.toml".into(), manifest("app-web")),
                 ("crates/lib/Cargo.toml".into(), manifest("lib")),
@@ -405,6 +446,7 @@ mod tests {
         };
         match name {
             "mise" => &mut s.mise_toml,
+            "mise.dev" => &mut s.mise_dev_toml,
             "mise.ci" => &mut s.mise_ci_toml,
             "docker" => &mut s.dockerfile,
             "ci" => file(&mut s.workflows, ".github/workflows/ci.yml"),
@@ -472,7 +514,41 @@ mod tests {
             mise | run = "mkdir -p corpus" | run = "mkdir -p a; cargo build -p app" | 
             docker | FROM debian AS regions | # cargo build -p nope\nFROM debian AS regions | 
             mise.ci | cargo audit | cargo update -p tokio@1.0.0 && cargo install -p x cargo-fuzz | 
+            mise | run = "mkdir -p corpus" | run = "cargo build -p nope" | mise.toml: cargo -p nope: not a crate
+            mise | run = "mkdir -p corpus" | run = ["true", "cargo nextest run --exclude nope"] | mise.toml: cargo --exclude nope: not a crate
+            mise | -p lib | -p x -p y | mise.toml: cargo -p x: && mise.toml: cargo -p y:
+            mise.dev | | [tasks.x]\nrun = "cargo build -p nope"\n | mise.dev.toml: cargo -p nope: not a crate
+            docker | -p app-web | -p "app-www" | Dockerfile: cargo -p app-www: not a crate
+            docker | -p app-web | -papp-www | Dockerfile: cargo -p app-www: not a crate
+            docker | -p app-web | \\n    # a comment\n\n      -p app-www | Dockerfile: cargo -p app-www: not a crate
+            ci | --exclude app-web | --manifest-path xtask/Cargo.toml -p xtask | 
+            ci | --exclude app-web | --exclude app-web\n      - run: echo https://crates.io/crates/cargo-auditable ./crates/nope | ci.yml: crates/nope is not a crate
+            root | "crates/*"] | "crates/*"]\nexclude = ["crates/lib"] | excludes a path under crates/ && excludes a path under crates/
         "#,
+        );
+    }
+
+    /// `run`'s rule set has both rules of this module, after the script's.
+    #[test]
+    fn all_runs_these_rules() {
+        let mut s = base();
+        s.mise_toml = s.mise_toml.replacen("-p lib", "-p nope", 1);
+        field(&mut s, "app")
+            .push_str("[dependencies]\nlib = { path = \"../lib\", features = [\"testing\"] }\n");
+        let found: Vec<String> = super::super::all(&s)
+            .findings
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            found.iter().any(|f| f.contains("cargo -p nope")),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|f| f.contains("[dependencies] lib enables")),
+            "{found:?}"
         );
     }
 
@@ -489,7 +565,12 @@ mod tests {
             app |  | [dependencies]\nlib = { path = "../lib" }\n[features]\ntesting = ["lib/testing"]\n | 
             app |  | [dev-dependencies]\nlib = { path = "../lib", features = ["testing"] }\napp = { path = ".", features = ["testing"] }\n | 
             app |  | [dependencies]\nserde = { version = "1", features = ["testing"] }\n[features]\nx = ["serde/testing"]\n | 
-            root |  | [workspace.dependencies]\nlib = { path = "crates/lib", features = ["testing"] }\n | Cargo.toml: [workspace.dependencies] lib enables
+            root | l2 = { package = "lib", path = "crates/lib" } | l2 = { package = "lib", path = "crates/lib", features = ["testing"] } | Cargo.toml: [workspace.dependencies] l2 enables
+            app |  | [dependencies]\nlib = { path = "../lib", features = ["testing"] }\napp-web = { path = "../app-web", features = ["testing"] }\n | [dependencies] lib enables && [dependencies] app-web enables
+            app |  | [dependencies]\nl2 = { workspace = true, features = ["testing"] }\n | [dependencies] l2 enables
+            app |  | [dependencies]\nl2 = { workspace = true }\n[features]\nx = ["l2/testing"]\n | feature x enables l2/testing
+            app |  | [dependencies]\nl2 = { workspace = true }\n[dev-dependencies]\nl2 = { workspace = true, features = ["testing"] }\n | 
+            app |  | [dependencies]\nc = { package = "lib", path = "../lib", features = ["testing"] }\n[dev-dependencies]\nc = { package = "serde", version = "1" }\n | [dependencies] c enables
         "#,
         );
     }

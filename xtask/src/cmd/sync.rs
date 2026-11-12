@@ -746,10 +746,14 @@ fn files(repo: &Path, paths: Vec<String>) -> Result<Vec<(String, String)>> {
 /// Reads the repository at `repo` and runs every rule: the script's ([`check`]), then the
 /// newer ones ([`extra`]); `git` searches the docs.
 pub fn run(repo: &Path, git: &dyn Git) -> Result<Outcome> {
-    let s = snapshot(repo, git)?;
-    let mut report = check(&s);
-    report.findings.extend(extra::check(&s));
-    Ok(report.outcome())
+    Ok(all(&snapshot(repo, git)?).outcome())
+}
+
+/// Every rule on `s`: the script's ([`check`]), then the newer ones ([`extra`]).
+pub fn all(s: &Snapshot) -> Report {
+    let mut report = check(s);
+    report.findings.extend(extra::check(s));
+    report
 }
 
 /// Reads what the rules read from the repository at `repo`; `git` searches its docs.

@@ -193,7 +193,8 @@ enum Command {
     #[command(subcommand)]
     SecurityPatch(SecurityPatchCommand),
     /// Fail when a pinned version differs where it is repeated, is repeated where it must not
-    /// be, or the advisory ignore lists disagree.
+    /// be, the advisory ignore lists disagree, a package named to cargo is not a crate, or a
+    /// testing feature is enabled outside [dev-dependencies].
     Sync,
     /// Fail on colour literals outside the client's theme (.config/design-tokens.toml).
     Tokens,
