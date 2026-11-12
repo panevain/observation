@@ -60,6 +60,10 @@
             "integration_id": 15368
           },
           {
+            "context": "coverage (per-crate floor)",
+            "integration_id": 15368
+          },
+          {
             "context": "design tokens",
             "integration_id": 15368
           },

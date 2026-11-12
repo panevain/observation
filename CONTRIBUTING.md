@@ -71,7 +71,7 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | Workflow | Checks |
 | --- | --- |
 | Branch policy | `branch policy` (into `main`, only same-repo `release/*` and `hotfix/*`) |
-| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)`, `browser (wasm smoke test)` |
+| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `coverage (per-crate floor)` (each crate's line coverage against its floor in `.config/coverage.toml`), `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)`, `browser (wasm smoke test)` |
 | Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `cargo-vet`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
