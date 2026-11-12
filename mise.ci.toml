@@ -101,9 +101,9 @@ run = [
 ]
 
 [tasks.cooldown]
-description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (scripts/check-cargo-cooldown.py)"
+description = "Crate versions added to any lockfile (Cargo.lock, fuzz/Cargo.lock, xtask/Cargo.lock) since BASE are at least .config/cargo-cooldown.toml's days old, unless they fix a RustSec vulnerability (`cargo xtask cooldown`)"
 usage = 'flag "--base <rev>" default="origin/develop" help="Revision to compare the lockfiles against"'
-run = 'python3 scripts/check-cargo-cooldown.py --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
+run = 'cargo xtask cooldown --base "${usage_base}" ${GITHUB_STEP_SUMMARY:+--summary "${GITHUB_STEP_SUMMARY}"}'
 
 [tasks.vet]
 description = "cargo-vet: every crate in the server side's tree is audited (supply-chain/audits.toml), covered by an imported audit, or exempted (supply-chain/README.md)"

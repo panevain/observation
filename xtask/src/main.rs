@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use xtask::cmd;
 use xtask::ports::Brotli;
-use xtask::ports::process::{BrotliCli, GitCli};
+use xtask::ports::process::{BrotliCli, CargoCli, Curl, GitCli, SystemClock};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -42,6 +42,23 @@ enum CoverageCommand {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Fail when a crate version added to a lockfile since BASE is younger than the cooldown
+    /// (.config/cargo-cooldown.toml), unless exempt or a RustSec fix.
+    Cooldown {
+        /// The revision to compare the lockfiles against (e.g. HEAD^1 or origin/develop).
+        #[arg(long, value_name = "REV")]
+        base: String,
+        /// A lockfile to check (repeatable; default: Cargo.lock, fuzz/Cargo.lock,
+        /// xtask/Cargo.lock).
+        #[arg(long = "lockfile", value_name = "PATH")]
+        lockfiles: Vec<String>,
+        /// Append the Markdown report to FILE (e.g. $GITHUB_STEP_SUMMARY).
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+        /// The current time, ISO 8601 (for testing).
+        #[arg(long, value_name = "TIME")]
+        now: Option<String>,
+    },
     /// Line coverage per crate.
     #[command(subcommand)]
     Coverage(CoverageCommand),
@@ -93,6 +110,43 @@ fn main() -> ExitCode {
         .repo
         .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")));
     let result = match cli.command {
+        Command::Cooldown {
+            base,
+            lockfiles,
+            summary,
+            now,
+        } => {
+            let lockfiles = if lockfiles.is_empty() {
+                cmd::cooldown::LOCKFILES.map(String::from).to_vec()
+            } else {
+                lockfiles
+            };
+            let git = GitCli::new(&repo);
+            let http = Curl {
+                user_agent: cmd::cooldown::USER_AGENT.to_owned(),
+            };
+            let ports = cmd::cooldown::Ports {
+                git: &git,
+                http: &http,
+                cargo: &CargoCli::default(),
+                clock: &SystemClock,
+            };
+            let args = cmd::cooldown::Args {
+                base,
+                lockfiles,
+                now,
+            };
+            let mut diagnostics = String::new();
+            let result = cmd::cooldown::run(&repo, &args, &ports, &mut diagnostics);
+            emit(b"", diagnostics.as_bytes());
+            result.and_then(|out| {
+                emit(format!("{}\n", out.report).as_bytes(), b"");
+                if let Some(path) = summary {
+                    append(&path, &out.report)?;
+                }
+                Ok(out.failed)
+            })
+        }
         Command::Coverage(CoverageCommand::Check { json, summary }) => {
             let annotate = std::env::var_os("GITHUB_ACTIONS").is_some_and(|v| v == "true");
             cmd::coverage::run(&repo, &json, annotate).and_then(|out| {

@@ -131,6 +131,12 @@ jobs:
       - uses: $/.github/actions/setup-mise
         with:
           tools: cargo-audit
+      # The check is an xtask command. Restores the xtask build that ci.yml's design tokens job
+      # caches from develop; this job only runs on pull requests, so it never saves one.
+      - uses: $/.github/actions/setup-rust
+        with:
+          cache-key: xtask
+          cache-workspaces: xtask -> target
       - run: mise run cooldown --base HEAD^1
 
   trivy:
