@@ -13,7 +13,9 @@
 //!   fallback for an undecodable symbol gives;
 //! - `deep`: nested more than `demangle::MAX_NESTING` steps; the port gives the script's fallback
 //!   (a readable path: it fails), and the script either decodes it or crashes on Python's
-//!   recursion limit, whichever it reaches first on this interpreter;
+//!   recursion limit, whichever it reaches first on this interpreter, or runs for more than half
+//!   a second (the longest back-reference chains take the script up to a third of that before
+//!   they crash, so a slow runner may stop them first);
 //! - `budget`: more than `demangle::V0_STEPS` steps; the port gives the script's fallback, and the
 //!   script decodes it, runs for more than half a second, or crashes on the recursion limit;
 //! - `hang`: the script loops forever (stopped after half a second); the port fails;
@@ -170,8 +172,7 @@ fn every_symbol_gets_the_scripts_crate() {
             "hang" => kind == "hang" && port.is_err(),
             "crash" => kind == "crash" && port.is_err(),
             "stricter" => script_ok && port.is_err(),
-            "deep" => gave_up && (script_ok || recursion_error),
-            "budget" => gave_up && (script_ok || recursion_error || kind == "hang"),
+            "deep" | "budget" => gave_up && (script_ok || recursion_error || kind == "hang"),
             _ => false,
         };
         if !good {

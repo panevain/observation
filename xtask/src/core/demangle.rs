@@ -14,9 +14,11 @@
 //!   which is 330 levels of generic arguments or 495 back-references in a chain, a
 //!   back-reference that leads back to itself, see [`V0`]) and runs without end on symbols
 //!   whose back-references fan out; between [`MAX_NESTING`] and its limit it still decodes, and
-//!   gets a crate the port does not. Real symbols nest less than 20 steps and take less than
-//!   50; the limit sits well below Python's so that it does not depend on the interpreter's
-//!   version or on its caller's stack;
+//!   gets a crate the port does not. Real symbols are far below both: the 51,334 v0 names of a
+//!   native build of `observation-server` and its dependencies (axum, tokio, tower, hyper, serde,
+//!   ron) with v0 mangling nest at most 22 steps and take at most 84 in all. The limit sits well
+//!   below Python's so that it does not depend on the interpreter's version or on its caller's
+//!   stack;
 //! - where the script failed (a v0 constant that runs to the end of the symbol, where it loops
 //!   forever; a number of more than 4,300 digits; a `$u…$` escape above 0x7FFFFFFF, which Python
 //!   3.12 cannot pass to `chr`), the port fails too;
@@ -31,9 +33,9 @@ use regex::Regex;
 use crate::core::py;
 
 /// Nested steps after which the port gives up on a symbol: a v0 path, type, generic argument or
-/// back-reference, or a readable path's ` as ` (one Python frame each in the script). Less than
-/// half the levels at which the script can reach Python's recursion limit, on any of its
-/// recursive paths (331 levels of generic arguments, at three frames each).
+/// back-reference, or a readable path's ` as ` (one Python frame each in the script). In steps,
+/// less than a sixth of where the script can reach Python's recursion limit (about 995 steps
+/// on every recursive path); in levels of generic arguments (three steps each), 50 against 331.
 pub const MAX_NESTING: usize = 150;
 
 /// Steps of the v0 parser per symbol (calls, as counted for [`MAX_NESTING`]) after which the
