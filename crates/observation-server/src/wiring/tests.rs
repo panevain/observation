@@ -282,3 +282,29 @@ fn the_agent_client_stops_connecting_after_5_s() {
         drop(listener);
     });
 }
+
+#[tokio::test]
+async fn the_geocoder_client_exists_only_when_configured_and_is_guarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = default_config(dir.path());
+    assert!(
+        production_ports(&config)
+            .unwrap()
+            .ports
+            .geocoder_http
+            .is_none()
+    );
+    config.geocoder.url = Some("https://nominatim.example/search".into());
+    let geocoder = production_ports(&config)
+        .unwrap()
+        .ports
+        .geocoder_http
+        .expect("a geocoder client");
+    let (port, seen) = serve(Some(OK.into())).await;
+    let err = geocoder
+        .send(HttpRequest::get(format!("http://localhost:{port}/"), 100))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, TransportErrorKind::Connect);
+    assert_eq!(seen.connections(), 0, "a private address was reached");
+}

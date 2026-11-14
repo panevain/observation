@@ -76,6 +76,17 @@ pub(crate) fn production_ports(config: &Config) -> Result<Production, StateError
         }
         None => None,
     };
+    // Only when the operator opted in: searches go to a third party. Each
+    // request sets its own timeout and `User-Agent`; the client's are the same.
+    let geocoder_http: Option<Arc<dyn HttpClient>> = match &config.geocoder.url {
+        Some(_) => Some(Arc::new(
+            upstream()
+                .user_agent(&config.geocoder.user_agent())
+                .timeout(crate::geocoder::TIMEOUT)
+                .build()?,
+        )),
+        None => None,
+    };
     Ok(Production {
         ports: Ports {
             overpass_http,
@@ -84,6 +95,7 @@ pub(crate) fn production_ports(config: &Config) -> Result<Production, StateError
             bundle_store: cache.clone(),
             tile_store: cache,
             clock,
+            geocoder_http,
         },
     })
 }

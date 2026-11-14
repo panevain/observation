@@ -567,7 +567,8 @@ impl metrics::Recorder for MetricCounts {
 }
 
 /// The whole application over fakes: [`AppState::from_ports`] with
-/// [`FakeHttp`] for Overpass and for tiles, an optional [`FakeRegionAgent`],
+/// [`FakeHttp`] for Overpass, for tiles and for the place search's geocoder
+/// (used only when the configuration sets `geocoder.url`), an optional [`FakeRegionAgent`],
 /// memory stores and a [`ManualClock`], on the production configuration
 /// unless [`TestAppBuilder::config`] changes it. The fakes time out as the
 /// production clients do when a request sets no timeout (the Overpass
@@ -589,6 +590,9 @@ pub struct TestApp {
     pub router: Router,
     pub overpass: FakeHttp,
     pub tiles: FakeHttp,
+    /// The place search's geocoder; sees requests only when
+    /// `config.geocoder.url` is set.
+    pub geocoder: FakeHttp,
     pub agent: Option<FakeRegionAgent>,
     /// The memory stores; `None` with [`TestAppBuilder::disk_cache`].
     pub bundle_store: Option<Arc<MemBundleStore>>,
@@ -605,6 +609,7 @@ impl TestApp {
     pub fn assert_drained(&self) {
         self.overpass.assert_drained();
         self.tiles.assert_drained();
+        self.geocoder.assert_drained();
         if let Some(agent) = &self.agent {
             agent.assert_drained();
         }
@@ -629,6 +634,7 @@ pub struct TestAppBuilder {
     clock: Option<Arc<ManualClock>>,
     overpass: Option<FakeHttp>,
     tiles: Option<FakeHttp>,
+    geocoder: Option<FakeHttp>,
     agent: Option<FakeRegionAgent>,
     disk_cache: Option<PathBuf>,
     tweaks: Vec<ConfigTweak>,
@@ -640,6 +646,7 @@ impl std::fmt::Debug for TestAppBuilder {
             .field("clock", &self.clock)
             .field("overpass", &self.overpass)
             .field("tiles", &self.tiles)
+            .field("geocoder", &self.geocoder)
             .field("agent", &self.agent)
             .field("disk_cache", &self.disk_cache)
             .field("tweaks", &self.tweaks.len())
@@ -661,6 +668,12 @@ impl TestAppBuilder {
     /// Map and elevation tiles share it, as they share one client.
     pub fn tiles(mut self, fake: FakeHttp) -> Self {
         self.tiles = Some(fake);
+        self
+    }
+
+    /// The place search's geocoder, used when `config.geocoder.url` is set.
+    pub fn geocoder(mut self, fake: FakeHttp) -> Self {
+        self.geocoder = Some(fake);
         self
     }
 
@@ -701,6 +714,10 @@ impl TestAppBuilder {
             .tiles
             .unwrap_or_default()
             .with_timeout(crate::wiring::TILE_TIMEOUT);
+        let geocoder = self
+            .geocoder
+            .unwrap_or_default()
+            .with_timeout(crate::geocoder::TIMEOUT);
         let (bundle_store, tile_store, bundle_port, tile_port): (
             _,
             _,
@@ -737,6 +754,7 @@ impl TestAppBuilder {
                 bundle_store: bundle_port,
                 tile_store: tile_port,
                 clock: clock.clone(),
+                geocoder_http: Some(Arc::new(geocoder.clone())),
             },
         );
         TestApp {
@@ -744,6 +762,7 @@ impl TestAppBuilder {
             state,
             overpass,
             tiles,
+            geocoder,
             agent: self.agent,
             bundle_store,
             tile_store,
