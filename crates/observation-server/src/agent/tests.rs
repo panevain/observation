@@ -38,7 +38,7 @@ async fn advance(secs: u64) {
 #[test]
 fn secrets_compare_by_every_byte() {
     assert!(same_secret("abc", "abc"));
-    assert!(!same_secret("abc", "abd"));
+    assert!(!same_secret("abc", "abx"));
     assert!(!same_secret("abc", "abcd"));
     assert!(!same_secret("", "a"));
 }

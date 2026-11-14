@@ -71,7 +71,7 @@ pub mod paths {
 /// Characters in a pairing code (40 bits from [`CODE_ALPHABET`]).
 pub const CODE_LEN: usize = 8;
 /// Crockford's base32: no I, L, O or U, so a code read aloud or typed is
-/// hard to get wrong ([`normalise_code`] maps the look-alikes back).
+/// hard to get wrong ([`normalise_code`] maps the letters that look like digits back).
 pub const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /// Hex digits in a token (32 random bytes).
 pub const TOKEN_HEX_LEN: usize = 64;
@@ -406,7 +406,7 @@ mod tests {
     fn codes_are_read_as_people_type_them() {
         assert_eq!(normalise_code("ABCD-EFGH").as_deref(), Some("ABCDEFGH"));
         assert_eq!(normalise_code(" abcd efgh ").as_deref(), Some("ABCDEFGH"));
-        // Look-alikes map to the digits Crockford's alphabet keeps.
+        // Letters that look like digits map to those Crockford's alphabet keeps.
         assert_eq!(normalise_code("iLoO-2345").as_deref(), Some("11002345"));
         for bad in [
             "",
