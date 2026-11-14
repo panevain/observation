@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  # develop -> :devel, v* tags -> :X.Y.Z and :latest, for both images: the app
-  # (ghcr.io/panevain/observation) and the region agent (ghcr.io/panevain/observation-regions).
+  # develop -> :devel, v* tags -> :X.Y.Z and :latest, for every image: the app
+  # (ghcr.io/panevain/observation), the region agent (ghcr.io/panevain/observation-regions) and
+  # the MCP server (ghcr.io/panevain/observation-mcp).
   # Pushes to main build nothing: a release is published by its tag, which release-tag.yml
   # creates when a release or hotfix branch is merged into main.
   push:
@@ -104,6 +105,14 @@ jobs:
             # Tags rebuild the final stage (apt-get upgrade) so the release has the Debian
             # security fixes published since the cache was written.
             no-cache-filters: regions
+          - image: observation-mcp
+            target: mcp
+            smoke: scripts/smoke-test-mcp.sh
+            # Written by ci.yml's docker job from develop; read here.
+            cache: image-mcp
+            save-cache: false
+            # As for the app: the digest-pinned distroless base, no packages of its own.
+            no-cache-filters: ""
     env:
       IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }}
       CANDIDATE: ${{ matrix.image }}:candidate
@@ -218,8 +227,8 @@ jobs:
         run: scripts/verify-image.sh "${IMAGE_NAME}@${DIGEST}" "${GITHUB_REF}"
 
   # A GitHub release for each tag, with that version's CHANGELOG.md section and the image
-  # digests. Releases are immutable (repository setting), so this runs only once both images
-  # are published.
+  # digests. Releases are immutable (repository setting), so this runs only once every image
+  # is published.
   github-release:
     name: GitHub release
     needs: image
@@ -250,12 +259,12 @@ jobs:
             echo
             echo "| Image | Digest |"
             echo "| --- | --- |"
-            for name in observation observation-regions; do
+            for name in observation observation-regions observation-mcp; do
               digest="$(docker buildx imagetools inspect "ghcr.io/panevain/${name}:${version}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
               printf '| `ghcr.io/panevain/%s:%s` | `%s` |\n' "${name}" "${version}" "${digest}"
             done
             echo
-            echo "Verify an image (from a checkout, \`mise run verify ghcr.io/panevain/observation:${version}\`; \`mise run up\` does this for both) with:"
+            echo "Verify an image (from a checkout, \`mise run verify ghcr.io/panevain/observation:${version}\`; \`mise run up\` does this for the app and the region agent) with:"
             echo
             echo '```sh'
             echo "cosign verify ghcr.io/panevain/observation:${version} \\"

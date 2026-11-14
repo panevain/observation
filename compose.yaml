@@ -1,8 +1,9 @@
-# Observation with its optional region agent, for production on one host.
+# Observation with its optional region agent, for production on one host, and the MCP server
+# for AI agents (the `mcp` service, which `up` does not start).
 #
 #   # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
 #   mise run up            # the released images (OBS_VERSION, default latest), verified
-#   mise run up --build    # both images built from this checkout instead
+#   mise run up --build    # all three images built from this checkout (tagged :local) instead
 #
 # Released images are signed and attested (SECURITY.md). `mise run up` checks both against
 # Release's signature for OBS_VERSION's tag (scripts/verify-image.sh) and runs them by the
@@ -12,10 +13,11 @@
 # here (this file is the only place they are set): `mise run up` loads the tokens
 # from fnox.local.toml (gitignored) and OBS_CONTACT from mise.local.toml, and
 # passes anything else you set, e.g. `OBS_PORT=9090 mise run up`. Without mise,
-# export them before `docker compose up -d --build`. To run
-# the released images without mise, set OBS_IMAGE and OBS_REGIONS_IMAGE to what
+# export them before `docker compose up -d --build` (which builds the app and the agent;
+# `docker compose --profile mcp build` builds all three). To run the released images without
+# mise, set OBS_IMAGE, OBS_REGIONS_IMAGE and OBS_MCP_IMAGE to what
 # `scripts/verify-image.sh ghcr.io/panevain/observation:<version>` (and
-# `...observation-regions:<version>`) print.
+# `...observation-regions:<version>`, `...observation-mcp:<version>`) print.
 #
 # The app listens on http://localhost:8080. The region agent has no published
 # port: only the app reaches it, over the compose network. Imported regions
@@ -71,6 +73,31 @@ services:
       OBS_LOG_FORMAT: ${OBS_LOG_FORMAT:-text}
     volumes:
       - regions:/data
+
+  # The MCP server for AI agents. It speaks MCP over stdio, so an MCP client starts it per
+  # session rather than `up` running it: the `mcp` profile keeps it out of `up` and `down`.
+  #   docker compose run --rm -T mcp    # -T: no TTY, which would garble the messages
+  # `docker compose` needs OBS_REGIONS_TOKEN set even for this (see above); an MCP client can
+  # run the image directly instead, with no settings:
+  #   docker run --rm -i --network none ghcr.io/panevain/observation-mcp
+  # `mise run up` does not check this image; set OBS_MCP_IMAGE to what `mise run verify
+  # ghcr.io/panevain/observation-mcp:<version>` prints to run it by a checked digest. It works
+  # offline on the demo street and keeps nothing, so it gets no network, a read-only
+  # filesystem and no capabilities.
+  mcp:
+    image: ${OBS_MCP_IMAGE:-ghcr.io/panevain/observation-mcp:${OBS_VERSION:-latest}}
+    build:
+      context: .
+      target: mcp
+    profiles: [mcp]
+    stdin_open: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      # Logs go to stderr, which MCP clients show; stdout carries the messages.
+      RUST_LOG: ${OBS_MCP_LOG:-warn}
 
 volumes:
   cache:

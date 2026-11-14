@@ -31,7 +31,7 @@ use crate::{Error, Result};
 /// The published images: name, registry path, the Dockerfile stage whose base gives the image
 /// its OS packages, and whether a rebuild picks up every Debian fix (the region agent runs
 /// `apt-get upgrade`).
-pub const IMAGES: [(&str, &str, &str, bool); 2] = [
+pub const IMAGES: [(&str, &str, &str, bool); 3] = [
     (
         "observation",
         "ghcr.io/panevain/observation",
@@ -43,6 +43,12 @@ pub const IMAGES: [(&str, &str, &str, bool); 2] = [
         "ghcr.io/panevain/observation-regions",
         "regions",
         true,
+    ),
+    (
+        "observation-mcp",
+        "ghcr.io/panevain/observation-mcp",
+        "mcp",
+        false,
     ),
 ];
 /// The severities that call for a patch release.

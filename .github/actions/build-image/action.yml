@@ -19,7 +19,7 @@ inputs:
     required: false
     default: ""
   cache-scope:
-    description: Scope of the type=gha layer cache (image, image-prebuilt, image-regions)
+    description: Scope of the type=gha layer cache (image, image-prebuilt, image-regions, image-mcp)
     required: true
   cache-save:
     description: >-

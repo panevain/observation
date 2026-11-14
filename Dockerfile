@@ -181,6 +181,38 @@ USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/observation-regions"]
 
 # ---------------------------------------------------------------------------
+# MCP server image (target `mcp`): observation-mcp for AI agents, over stdio.
+# It works offline (the catalogue, the docs it serves and the demo street are
+# compiled in), so it needs no network, no writable filesystem and no files
+# beside the binary. Run it with stdin attached and no TTY:
+#   docker build --target mcp -t observation-mcp .
+#   docker run --rm -i --network none observation-mcp
+# ---------------------------------------------------------------------------
+FROM chef AS mcp-build
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p observation-mcp --recipe-path recipe.json
+
+COPY . .
+RUN cargo auditable build --release --locked -p observation-mcp \
+    && cp target/release/observation-mcp /observation-mcp
+
+# The same distroless base as the app image (see runtime-base below), pinned by the same digest.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS mcp
+
+LABEL org.opencontainers.image.title="observation-mcp" \
+      org.opencontainers.image.description="MCP server for Observation (stdio): camera catalogue, scene editing and coverage on the demo street, offline" \
+      org.opencontainers.image.source="https://github.com/panevain/observation" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+
+COPY --from=mcp-build /observation-mcp /usr/local/bin/observation-mcp
+
+# Logs go to stderr; stdout carries the MCP messages.
+ENV RUST_LOG=warn
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/observation-mcp"]
+
+# ---------------------------------------------------------------------------
 # Stage 4: runtime -- distroless (Debian 13), glibc, runs as nonroot (uid/gid 65532).
 #   Pinned by digest; refresh with:
 #   docker buildx imagetools inspect gcr.io/distroless/cc-debian13:nonroot
