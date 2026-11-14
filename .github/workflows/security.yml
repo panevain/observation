@@ -71,10 +71,8 @@ jobs:
           sarif_file: zizmor.sarif
           category: zizmor
 
-  # Every lockfile, including the fuzz and xtask workspaces' (cargo-deny covers only the
-  # root one: the fuzz crate's licences are not on the allow-list, and neither ships
-  # anything). Ignores come from
-  # .cargo/audit.toml. Yanked crates fail the job, as they do in cargo-deny.
+  # Every lockfile, including the fuzz and xtask workspaces', as cargo-deny's job does. Ignores
+  # come from .cargo/audit.toml. Yanked crates fail the job, as they do in cargo-deny.
   cargo-audit:
     name: cargo-audit
     runs-on: ubuntu-24.04

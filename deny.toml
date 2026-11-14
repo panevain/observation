@@ -48,6 +48,12 @@ confidence-threshold = 0.9
 # The allow-list is deliberately a superset of what is in use today (Bevy / rustls
 # stacks need the rarer entries), so don't warn about unused entries.
 unused-allowed-license = "allow"
+# Licences allowed for one crate only, each with the reason.
+exceptions = [
+    # libfuzzer-sys bundles LLVM's libFuzzer (NCSA, a permissive licence). Only the fuzz workspace
+    # uses it, and the fuzz targets ship nothing.
+    { crate = "libfuzzer-sys", allow = ["NCSA"] },
+]
 
 [licenses.private]
 # Our own crates are `publish = false`; do not require them to carry an

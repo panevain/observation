@@ -98,8 +98,8 @@ rustup toolchain list
 
 [tasks.audit]
 description = "cargo-audit on every lockfile (the workspace's, fuzz/'s and xtask/'s); yanked crates fail too. Ignores: .cargo/audit.toml"
-# cargo-deny covers only the root lockfile: the fuzz crate's licences are not on its allow-list,
-# and neither fuzz/ nor xtask/ ships anything.
+# cargo-deny (mise run deny) checks the same three lockfiles against RustSec too; this is a
+# second tool over the same advisory database.
 run = [
   "cargo-audit audit --deny yanked --file Cargo.lock",
   "cargo-audit audit --deny yanked --file fuzz/Cargo.lock",
