@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use super::{
-    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, Platform, SaveFailure,
+    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, PickedFile, Platform,
+    SaveFailure,
 };
 use bevy::log::warn;
 use observation_client_model::coverage::backend::not_started;
@@ -58,6 +59,10 @@ impl KeyValueStore for LocalStorage {
             let _ = s.remove_item(key);
         }
     }
+
+    fn keys(&self) -> Vec<String> {
+        storage().map_or_else(Vec::new, |s| storage_keys(&s))
+    }
 }
 
 /// `sessionStorage`.
@@ -75,6 +80,10 @@ impl KeyValueStore for SessionStorage {
     fn remove(&self, key: &str) {
         session_remove(key);
     }
+
+    fn keys(&self) -> Vec<String> {
+        session_storage().map_or_else(Vec::new, |s| storage_keys(&s))
+    }
 }
 
 /// Downloads through a link to a `Blob`, and opens files with `<input type="file">`.
@@ -85,7 +94,7 @@ impl FileDialogs for BrowserFiles {
         download(name, mime, text)
     }
 
-    fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>) {
+    fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<PickedFile, String>) + Send>) {
         pick_file(accept, done);
     }
 }
@@ -274,6 +283,14 @@ fn storage_get(key: &str) -> Option<String> {
     storage()?.get_item(key).ok().flatten()
 }
 
+/// Every key in `storage`, in the browser's order.
+fn storage_keys(storage: &web_sys::Storage) -> Vec<String> {
+    let n = storage.length().unwrap_or(0);
+    (0..n)
+        .filter_map(|i| storage.key(i).ok().flatten())
+        .collect()
+}
+
 /// Whether the value was stored, and if not why. Quota and privacy errors
 /// are non-fatal: the status bar says so and the user can still export.
 fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
@@ -317,7 +334,7 @@ fn download(name: &str, mime: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn pick_file(accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>) {
+fn pick_file(accept: &str, done: Box<dyn FnOnce(Result<PickedFile, String>) + Send>) {
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
         done(Err(
             "the browser gave the app no page to ask from".to_owned()
@@ -344,12 +361,13 @@ fn pick_file(accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>)
         let Some(file) = el.files().and_then(|f| f.get(0)) else {
             return;
         };
+        let name = file.name();
         wasm_bindgen_futures::spawn_local(async move {
             let read = match wasm_bindgen_futures::JsFuture::from(file.text()).await {
                 Ok(v) => v.as_string().ok_or_else(|| "it is not text".to_owned()),
                 Err(e) => Err(js_cause(&e)),
             };
-            done(read);
+            done(read.map(|text| PickedFile { name, text }));
         });
     });
     input.set_onchange(Some(on_change.unchecked_ref()));

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::platform::{
-    Clock, ColorScheme, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore, Reply,
-    SaveFailure,
+    Clock, ColorScheme, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore, PickedFile,
+    Reply, SaveFailure,
 };
 use observation_core::coverage::StaticLayers;
 use observation_core::coverage_job::{JobRequest, JobResponse};
@@ -159,6 +159,8 @@ impl Http for FakeHttp {
 pub struct MemoryStore {
     values: Mutex<HashMap<String, String>>,
     refuse: Mutex<Option<SaveFailure>>,
+    /// Refuse only writes to this key.
+    refuse_only: Mutex<Option<String>>,
     blocked_reads: Mutex<bool>,
     log: Mutex<Vec<StoreOp>>,
 }
@@ -194,6 +196,14 @@ impl MemoryStore {
     /// From now on every `set` fails with `why` (or succeeds again with `None`).
     pub fn refuse_writes(&self, why: Option<SaveFailure>) {
         *lock(&self.refuse) = why;
+        *lock(&self.refuse_only) = None;
+    }
+
+    /// From now on every `set` to `key` fails with `why`, and other writes
+    /// succeed (until [`Self::refuse_writes`]).
+    pub fn refuse_writes_to(&self, key: &str, why: SaveFailure) {
+        *lock(&self.refuse) = Some(why);
+        *lock(&self.refuse_only) = Some(key.to_owned());
     }
 
     /// A copy of everything stored.
@@ -211,7 +221,8 @@ impl KeyValueStore for MemoryStore {
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), SaveFailure> {
-        let refused = *lock(&self.refuse);
+        let refused = (*lock(&self.refuse))
+            .filter(|_| lock(&self.refuse_only).as_deref().is_none_or(|k| k == key));
         let (key, value) = (key.to_owned(), value.to_owned());
         if let Some(why) = refused {
             lock(&self.log).push(StoreOp::Refused(key, value));
@@ -226,9 +237,18 @@ impl KeyValueStore for MemoryStore {
         lock(&self.log).push(StoreOp::Remove(key.to_owned()));
         lock(&self.values).remove(key);
     }
+
+    fn keys(&self) -> Vec<String> {
+        if *lock(&self.blocked_reads) {
+            return Vec::new();
+        }
+        let mut keys: Vec<String> = lock(&self.values).keys().cloned().collect();
+        keys.sort_unstable();
+        keys
+    }
 }
 
-type Picked = Box<dyn FnOnce(Result<String, String>) + Send>;
+type Picked = Box<dyn FnOnce(Result<PickedFile, String>) + Send>;
 
 /// Records downloads and holds file pickers open until the test picks.
 #[derive(Default)]
@@ -266,8 +286,17 @@ impl FakeFiles {
         lock(&self.pickers).iter().map(|(a, _)| a.clone()).collect()
     }
 
-    /// Completes the oldest open picker; false if none is open.
+    /// Completes the oldest open picker with a file named `scene.json`;
+    /// false if none is open.
     pub fn pick(&self, result: Result<String, String>) -> bool {
+        self.pick_file(result.map(|text| PickedFile {
+            name: "scene.json".to_owned(),
+            text,
+        }))
+    }
+
+    /// Completes the oldest open picker; false if none is open.
+    pub fn pick_file(&self, result: Result<PickedFile, String>) -> bool {
         let done = {
             let mut pickers = lock(&self.pickers);
             if pickers.is_empty() {
@@ -289,7 +318,7 @@ impl FileDialogs for FakeFiles {
         Ok(())
     }
 
-    fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>) {
+    fn pick_text(&self, accept: &str, done: Picked) {
         lock(&self.pickers).push((accept.to_owned(), done));
     }
 }
@@ -733,6 +762,21 @@ mod tests {
     }
 
     #[test]
+    fn store_lists_its_keys_and_can_refuse_one_key_only() {
+        let store = MemoryStore::default();
+        assert_eq!(store.set("b", "1"), Ok(()));
+        assert_eq!(store.set("a", "2"), Ok(()));
+        assert_eq!(store.keys(), ["a", "b"]);
+        store.refuse_writes_to("a", SaveFailure::Full);
+        assert_eq!(store.set("a", "3"), Err(SaveFailure::Full));
+        assert_eq!(store.set("b", "3"), Ok(()));
+        store.refuse_writes(None);
+        assert_eq!(store.set("a", "3"), Ok(()));
+        store.block_reads(true);
+        assert!(store.keys().is_empty(), "blocked storage lists nothing");
+    }
+
+    #[test]
     fn files_record_downloads_and_answer_pickers_once() {
         let files = FakeFiles::default();
         assert_eq!(files.download("a.json", "application/json", "{}"), Ok(()));
@@ -760,7 +804,13 @@ mod tests {
         );
         assert!(files.pick(Ok("text".to_owned())));
         assert!(!files.pick(Ok("again".to_owned())));
-        assert_eq!(rx.try_iter().collect::<Vec<_>>(), [Ok("text".to_owned())]);
+        assert_eq!(
+            rx.try_iter().collect::<Vec<_>>(),
+            [Ok(PickedFile {
+                name: "scene.json".to_owned(),
+                text: "text".to_owned()
+            })]
+        );
     }
 
     #[test]

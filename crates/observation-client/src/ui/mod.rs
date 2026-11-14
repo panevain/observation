@@ -6,6 +6,7 @@ pub mod map_picker;
 mod overlays;
 mod provenance;
 mod regions;
+mod scenes;
 mod toolbar;
 mod widgets;
 
@@ -78,6 +79,9 @@ pub struct UiData<'w> {
     pub time: Res<'w, Time<Real>>,
     pub data_change: ResMut<'w, DataChangeNotice>,
     pub save: Res<'w, crate::persist::Autosave>,
+    /// The scenes saved in this browser, and the Scenes dialog's rename and
+    /// delete in progress.
+    pub slots: ResMut<'w, crate::persist::SceneSlots>,
     pub editor: ResMut<'w, Editor>,
     pub panels: ResMut<'w, Panels>,
     pub hover: ResMut<'w, Hover>,
@@ -259,6 +263,19 @@ fn draw_ui(
     }
     if d.panels.regions_open {
         regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);
+    }
+    if d.panels.scenes_open {
+        let busy = d.loading.area().is_some();
+        let has_area = d.scene.area.is_some();
+        scenes::window(
+            &ctx,
+            &t,
+            &mut d.slots,
+            busy,
+            has_area,
+            &mut d.panels.scenes_open,
+            &mut persist,
+        );
     }
     let local: Vec<(String, observation_core::geo::BBox)> = d
         .regions

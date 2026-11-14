@@ -27,6 +27,7 @@ use bevy_egui::{EguiGlobalSettings, input::EguiWantsInput};
 use observation_client_model::coverage::backend;
 use observation_client_model::persist::{STORAGE_KEY, SaveState};
 use observation_client_model::platform::{JobChannel, Reply};
+use observation_client_model::slots::{INDEX_KEY, slot_key};
 use observation_client_model::testing::{
     FakeClock, FakeColorScheme, FakeFiles, FakeHttp, LoopbackJobChannel, MemoryStore, StoreOp,
 };
@@ -381,7 +382,7 @@ fn a_saved_scene_is_restored_loaded_covered_edited_and_saved_again() {
 }
 
 #[test]
-fn an_unreadable_autosave_is_reported_and_kept_until_the_demo_street_replaces_it() {
+fn an_unreadable_autosave_is_reported_kept_and_the_demo_street_saved_as_a_new_scene() {
     let mut h = Harness::new("{ not json");
     assert!(h.toasts().is_empty());
     h.frames(1);
@@ -389,8 +390,9 @@ fn an_unreadable_autosave_is_reported_and_kept_until_the_demo_street_replaces_it
         h.toasts(),
         [(
             ToastKind::Error,
-            "Your saved scene could not be restored: not a valid scene file: key must be a \
-             string at line 1 column 3. Starting with the demo street instead"
+            "“Scene 1” could not be restored: not a valid scene file: key must be a string at \
+             line 1 column 3. It is kept as it was (delete it under Scenes if it is of no use), \
+             and the demo street opens as a new scene"
                 .to_owned(),
             true,
         )]
@@ -398,16 +400,23 @@ fn an_unreadable_autosave_is_reported_and_kept_until_the_demo_street_replaces_it
     assert!(!h.app.world().resource::<Panels>().help_open);
     let demo = area_url(&AreaRef::Demo);
     assert_eq!(h.requests(), std::slice::from_ref(&demo));
+    // The list of scenes gains the new one, which is open.
+    let ops = h.store.take_ops();
+    assert!(
+        matches!(ops.as_slice(), [StoreOp::Set(key, _)] if key == INDEX_KEY),
+        "{ops:?}"
+    );
 
-    // Until the demo street is there, the unreadable text stays.
+    // Until the demo street is there, nothing is written.
     h.frames(2 * INTERVAL_FRAMES);
     assert_eq!(h.store.ops(), []);
     assert_eq!(h.status().save, None);
 
+    // Then it goes into the new scene, and the unreadable text stays.
     assert!(h.http.respond(&demo, Ok(bundle().encode())));
     let ops = h.until_written();
-    assert_eq!(ops, [StoreOp::Set(STORAGE_KEY.to_owned(), h.scene_json())]);
-    assert_eq!(h.stored().area, AreaRef::Demo);
+    assert_eq!(ops, [StoreOp::Set(slot_key(1), h.scene_json())]);
+    assert_eq!(h.store.get(STORAGE_KEY).as_deref(), Some("{ not json"));
     h.saved_at();
     let toasts = h.toasts();
     assert_eq!(toasts.len(), 2, "{toasts:?}");

@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 pub use observation_client_model::platform::{
-    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, SaveFailure, unix_secs,
+    Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, PickedFile, SaveFailure,
+    unix_secs,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
