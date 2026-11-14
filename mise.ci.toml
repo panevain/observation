@@ -134,23 +134,27 @@ zizmor .github
 # use, directly or through a composite action, with the owner and repository ids it checks at
 # run time (https://gh.io/actions-lockfile). Both tasks query GitHub, with GH_TOKEN or your gh
 # login. The workflows keep their full-SHA pins, which zizmor, Scorecard and the repository's
-# SHA-pinning setting read: the lockfile keys each action by its tag, and --verify matches a
-# SHA pin to the entry with that commit. An update would also rewrite each `@SHA # vX.Y.Z` pin
-# to `@vX.Y.Z`, so it runs on a copy of .github and only the lockfile is copied back (your
-# own changes to the workflows stay as they are).
+# SHA-pinning setting read. GitHub looks each `uses:` up in the lockfile by its exact
+# `owner/repo@ref` when a job starts, so every entry is keyed by the SHA the workflows pin.
+# The tool keys a direct action by its tag and would rewrite each `@SHA # vX.Y.Z` pin to
+# `@vX.Y.Z`, so the update runs it on a copy of .github, copies back only the lockfile (your
+# own changes to the workflows stay as they are) and re-keys it with
+# scripts/actions-lock-keys.py. The tool's --verify accepts a tag key for a SHA pin, so the
+# check also runs that script's `check`.
 [tasks.actions-lock]
-description = "Update .github/workflows/actions.lock after adding, removing or bumping an action in a workflow or in .github/actions/ (gh actions-lock, on a copy of .github so the SHA pins stay); review its diff"
+description = "Update .github/workflows/actions.lock after adding, removing or bumping an action in a workflow or in .github/actions/ (gh actions-lock, on a copy of .github so the SHA pins stay, then keyed by SHA); review its diff"
 run = '''
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 cp -R .github "${tmp}/"
 (cd "${tmp}" && GH_ACTIONS_LOCK_REPO_ROOT="${tmp}" gh-actions-lock --no-interactive)
 cp "${tmp}/.github/workflows/actions.lock" .github/workflows/actions.lock
+python3 scripts/actions-lock-keys.py fix
 '''
 
 [tasks."actions-lock:verify"]
-description = "Check .github/workflows/actions.lock covers every action the workflows use, with pins the runner would accept (gh actions-lock --verify; writes nothing)"
-run = "gh-actions-lock --verify --no-interactive"
+description = "Check .github/workflows/actions.lock covers every action the workflows use, under the SHA keys the runner looks up, with pins it would accept (actions-lock-keys.py check, gh actions-lock --verify; writes nothing)"
+run = ["python3 scripts/actions-lock-keys.py check", "gh-actions-lock --verify --no-interactive"]
 
 [tasks."scan:repo"]
 description = "Trivy on the repository: Cargo.lock vulnerabilities, Dockerfile misconfiguration and committed secrets; a fixable CRITICAL or HIGH finding fails"
