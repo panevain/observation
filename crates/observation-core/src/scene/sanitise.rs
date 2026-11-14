@@ -26,6 +26,7 @@ impl SceneFile {
         if let Some(p) = &mut scene.provenance {
             p.sanitise();
         }
+        super::agent_log::sanitise(&mut scene.agent_log);
         scene.check_params()?;
         scene.check_custom_models()?;
         scene.make_custom_ids_unique();
@@ -874,6 +875,64 @@ mod tests {
         let long = json.replace("\"0.1.0\"", &format!("\"{}\"", "9".repeat(500)));
         let loaded = SceneFile::from_json(&long).unwrap();
         assert_eq!(loaded.provenance.unwrap().app_version.len(), 64);
+    }
+
+    #[test]
+    fn the_agent_log_is_optional_lenient_and_tidied() {
+        use crate::scene::agent_log::{AgentLogEntry, MAX_AGENT_LOG, MAX_LOG_SUMMARY_CHARS};
+        let mut s = scene();
+        assert!(!s.to_json().contains("agent_log"), "omitted when empty");
+        s.agent_log
+            .push(AgentLogEntry::new("Add a camera by the gate", 1_793_475_782).unwrap());
+        let json = s.to_json();
+        assert!(
+            json.contains("\"accepted_at\": \"2026-10-31T19:43:02Z\""),
+            "{json}"
+        );
+        assert_eq!(SceneFile::from_json(&json).unwrap(), s);
+        let with_log = |log: &str| {
+            scene().to_json().replacen(
+                "\"cameras\"",
+                &format!("\"agent_log\": {log},\n  \"cameras\""),
+                1,
+            )
+        };
+        // A malformed block reads as empty; a malformed entry is dropped.
+        for bad in ["5", "\"x\"", "{}", "null"] {
+            let loaded = SceneFile::from_json(&with_log(bad)).unwrap();
+            assert_eq!(
+                (loaded.agent_log.len(), loaded.cameras.len()),
+                (0, 1),
+                "{bad}"
+            );
+        }
+        let loaded = SceneFile::from_json(&with_log(
+            r#"[{"summary": "kept", "accepted_at": "2026-10-31T19:43:02Z"},
+                {"summary": "bad time", "accepted_at": "yesterday"},
+                {"summary": "   ", "accepted_at": "2026-10-31T19:43:02Z"},
+                {"summary": 3}]"#,
+        ))
+        .unwrap();
+        assert_eq!(loaded.agent_log.len(), 1);
+        assert_eq!(loaded.agent_log[0].summary, "kept");
+        // Summaries are cut and only the newest entries kept.
+        let entries: Vec<String> = (0..MAX_AGENT_LOG + 3)
+            .map(|i| {
+                format!(
+                    r#"{{"summary": "{i} {}", "accepted_at": "2026-10-31T19:43:02Z"}}"#,
+                    "y".repeat(300)
+                )
+            })
+            .collect();
+        let loaded = SceneFile::from_json(&with_log(&format!("[{}]", entries.join(",")))).unwrap();
+        assert_eq!(loaded.agent_log.len(), MAX_AGENT_LOG);
+        assert!(loaded.agent_log[0].summary.starts_with("3 "));
+        assert!(
+            loaded
+                .agent_log
+                .iter()
+                .all(|e| e.summary.chars().count() == MAX_LOG_SUMMARY_CHARS)
+        );
     }
 
     #[test]
