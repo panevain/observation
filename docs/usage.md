@@ -9,9 +9,9 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 | Region | What is in it |
 | --- | --- |
 | Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right the **Scenes** button (with the open scene's name), **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
-| Tool rail (left) | Six tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move**, **Region** and **Address**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
-| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, in Region the corners so far, or in Address the selected address). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move, a cell cursor for Region and a question-mark cursor for Address. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
-| Inspector (right, resizable) | At the top, always in view: **Coverage** (the figures, a **Region** menu, what the figures leave out, a line with the analysis settings that opens the Analysis tab, and the date of the map data; see [Read the coverage](#read-the-coverage)). Below it three tabs, each scrolling on its own: **Cameras** (the model for new cameras, **Place camera...**, the camera list and **Custom models**), **Camera** (the selected camera) and **Analysis**. Selecting a camera anywhere opens the Camera tab; deselecting it there goes back to Cameras |
+| Tool rail (left) | Seven tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move**, **Areas**, **Target** and **Address**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
+| 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, in Areas the corners so far and what closing the outline will do, in Target what a click marks, or in Address the selected address). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move, a cell cursor for Areas and Target and a question-mark cursor for Address. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
+| Inspector (right, resizable) | At the top, always in view: **Coverage** (the figures, a **Limit** menu, what the figures leave out, a line with the analysis settings that opens the Analysis tab, and the date of the map data; see [Read the coverage](#read-the-coverage)). Below it four tabs, each scrolling on its own: **Cameras** (the model for new cameras, **Place camera...**, the camera list and **Custom models**), **Camera** (the selected camera and where its footage lands), **Analysis** (the analysis settings and where every camera's footage lands) and **Places** (your areas and targets; see [Where footage lands](#where-footage-lands)). Selecting a camera anywhere opens the Camera tab; deselecting it there goes back to Cameras |
 | Status bar | The active tool's keys and gestures as keycaps on the left (dropped from the end when the window is narrow); on the right the three coverage figures (street, 2+ cameras, walls), as at the top of the inspector, the OpenStreetMap attribution link and **OSM data as of** the date the map data was taken (hover it for the time, in UTC, and when the server built the area) |
 
 ## Pick an area
@@ -109,7 +109,7 @@ Below the bar, the square metres behind the street figure are shown, plus "open 
 
 **Map data has changed.** A saved scene records which map data its figures came from (see `provenance` under [scene files](#undo-save-export-and-import)). When you restore or import a scene and its area comes back with different buildings, streets or addresses, a warning under the Coverage heading says *Map data has changed since this scene was saved (saved: X, now: Y)*, and a message appears briefly. The figures you see are for the current data, so they may differ from the ones the scene was saved with. Hover the warning for details (including when the scene was saved by another version of the app, which may read the same data differently); click **×** to dismiss it. It also goes when you load another area or open another scene. If the data date is the same as when the scene was saved, the map data did not change but this version of the app builds the area from it differently (building heights or street widths, say), and the warning says so instead. Edits to a road far beyond the area do not count. The check compares a fingerprint of the area's features, not the dates: the date of public OpenStreetMap data moves every minute, so a newer date alone does not mean anything in your area changed, and gives no warning.
 
-**Limit the figures to a region.** To measure only part of the area, such as your own frontage or one block, open the **Region** menu beside the Coverage heading and click **Draw region...** (or press **R**). Then click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the region; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area: while the tool is on, its edge is drawn in red and the map beyond it is tinted red and hatched, and a click out there puts the corner on the nearest point of the edge. The outline must not cross itself. The region is drawn as a dark outline. The heading changes to "Coverage inside region", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. The **Region** menu, shown in the accent colour while a region is on, then has **Only inside region**, which turns the limit off and on without losing the outline (a disabled region is drawn faded). **Redraw** replaces it and **Clear** removes it. The region is saved with the scene and is removed when you load a different area.
+**Limit the figures to an area.** To measure only part of the area, such as your own frontage or one block, open the **Limit** menu beside the Coverage heading and click **Draw area to limit to...**, then click the corners of the area on the ground (see [Draw and label areas](#draw-and-label-areas) for how drawing works). If you have drawn areas already, the menu also lists them: click one to limit the figures to it. The heading changes to "Coverage inside area", and every figure (street, walls, open ground) then counts only ground cells whose centre lies inside the outline, and wall patches whose ground half a metre in front lies inside it. The **Limit** menu, shown in the accent colour while a limit is on, then has **Only inside** (with the area's name and size), which turns the limit off and on without losing the outline (an area that is off is drawn faded, and also leaves the split described below), **Redraw**, and **Stop limiting**, which keeps the area under Places. The same choice is the **Limits the figures** box of an area in the Places tab. A scene saved with a region by an older version of the app opens with it as an unlabelled area that limits the figures, as before.
 
 What counts as "street": every mapped road, service road (including driveways) and footpath, drawn as a band of its estimated width (about 14 m for a motorway down to 2 m for a footpath; the `width` and `lanes` tags are used when present), excluding anything under a building. Other way types, such as tracks, are ignored. Footpaths and service lanes therefore count towards the street figure.
 
@@ -119,6 +119,61 @@ What counts as "seen": a spot is seen when it is inside the camera's field of vi
 
 - **Overlap:** a heat ramp by number of cameras that see a spot: 1 yellow, 2 orange, 3 red, 4 or more purple. The legend appears under the control.
 - **Per camera:** each camera in its own colour (the swatch next to its name; see **Colour** above). Where views overlap, the camera lower in the list is painted on top.
+
+## Where footage lands
+
+The coverage figures answer a whole-street question. To ask about one camera and one place ("how much of this camera's view falls on next door?", "does it see my front door?"), draw areas and mark targets, then read the split and the verdicts. All of it is in the **Places** tab, the **Camera** tab and the **Analysis** tab.
+
+The app reports what is visible in the model, not whether a camera is lawful. Areas and labels are your own statement about the ground ("as drawn"): no property boundaries or land registry data are used.
+
+### Draw and label areas
+
+Press **R** (the **Areas** tool), or **Draw area...** in the Places tab, and click the corners of the area on the ground. Clicking the first corner again (anywhere inside the circle drawn around it), or pressing **Enter**, closes the outline; **Backspace** removes the last corner and **Esc** cancels. Corners stay within the loaded area: while you draw, its edge is drawn in red and the map beyond it is tinted red and hatched, and a click out there puts the corner on the nearest point of the edge. The outline must not cross itself. The tool stays on after each area, so you can draw several in a row; the new area is picked in the Places tab.
+
+Each area is listed in the Places tab with its colour, name, label, outline area (m²) and whether it limits the figures or is off. Click an area to pick it (its outline is drawn thicker in the 3D view) and open its controls:
+
+- a **name** (for example *Front garden*; up to 60 characters),
+- a **label**: **Own**, **Neighbour**, **Public**, **Other**, or **Unlabelled**,
+- **Counts**: an area that is off is kept, drawn faded, and left out of the split and of any limit,
+- **Limits the figures**: limit the Coverage figures to this area (one area at most),
+- **Redraw**: click a new outline; the name, label and switches stay,
+- **Delete**, with an **Undo** button in the message.
+
+Outlines are drawn on the ground in a colour per label: green for Own, blue for Neighbour, light blue for Public, violet for Other and dark for unlabelled. At most 64 areas, each with at most 256 corners.
+
+### Mark targets
+
+A target is a named place to ask about: a front door, a side gate, a path. Press **T** (the **Target** tool), or **Mark target...** in the Places tab. Choose how it marks a target in the Places tab:
+
+- **Click a wall or the ground** (the default): a click on a wall marks a 1 m square patch of it, centred on the click and facing the way the wall faces; a click on the ground marks a 1 m square there. A click on a roof marks nothing.
+- **Outline on the ground**: click the corners of a small patch of ground and close it as for an area (at most 32 corners and 30 m across; draw an area for anything larger).
+
+Targets are drawn in white: a ground target as its outline with a pin, a wall target as a cased square on the wall with a short line out from it. Each is named *Target 1*, *Target 2* and so on until you rename it in the Places tab, where it can also be deleted. At most 64 targets.
+
+### Where a camera's footage lands
+
+Select a camera and scroll down its Camera tab to **Where its footage lands**. At the current detail level, lighting and subject height (the line under the heading), it lists:
+
+- **Ground seen**: all the ground the camera sees, m².
+- Each **label** in use, with all its areas together (a spot inside two areas with the same label counts once), and under it each **area** with its outline's own area. Unlabelled areas follow.
+- **Public street (as mapped)**: the street surface as mapped in OpenStreetMap (roads, driveways and footpaths), whatever areas are drawn over it.
+- **Unlabelled ground**: ground seen that is neither street nor inside a labelled area.
+- **Walls seen**, in total and on each building, nearest first, as *Building 12 · 14 m away*. Buildings are numbered as in the loaded area; the number can change when the area is built again. Addresses are not shown here: an address comes from the nearest address within 25 m, which is a guess, so the app never names a neighbour automatically.
+
+Each area, label and unlabelled figure is a range, such as *30–41 m² (as drawn 36)*: the low figure has every outline moved 1 m inward, the high figure 1 m outward, and the figure in brackets is as drawn (for unlabelled ground it is the other way round, since moving the outlines out leaves less ground outside them). So an outline drawn a little too generously or too tightly cannot quietly give "0 m² of the neighbour's", and printing each outline's own area beside it shows an outline drawn far too large. Areas may overlap, so their figures need not add up.
+
+The **Analysis** tab has the same split for every camera in coverage, side by side: ground, street, each label in use, unlabelled ground and walls, in m², each range with its as-drawn figure under it. Cameras overlap, so the rows do not add up.
+
+### Target verdicts
+
+For each target, the Places tab gives every camera's verdict at the current settings (click the target to see them all; its row says for how many cameras it is not ruled out). The Camera tab lists the selected camera's verdict on every target.
+
+- **Not ruled out**: some of the target is visible in the model from that camera, within its range.
+- **Ruled out**, with the reason: **outside the view** (no part of it is in the field of view), **out of range** (in view, but beyond the range for the detail level and lighting), **blocked by a building** (every part in view and range is hidden by a building, lies under one, or is on the far side of its wall), or **blocked by the terrain**.
+
+The wording is one-sided on purpose. Hedges, fences, trees and vehicles are not modelled and can only block more, so "not ruled out" never means the camera sees it; "ruled out" is a firm answer within the model. Under each verdict a ladder shows it at every detail level under the current lighting, then at the other lighting at the current level, for example *Detect ✓ · Observe ✓ · Recognise ✓ · Identify ✗ · Night ✗* (✓ not ruled out, ✗ ruled out; the current settings are highlighted). Hover a step for its range and reason.
+
+Every split and verdict ends with the caveats line and the date of the map data, as the Coverage card does; quote both with any figure you cite.
 
 ## Analysis settings
 
@@ -148,8 +203,8 @@ To change one of your models, pick it under **Model** at the top of the form (it
 
 ## Undo, save, export and import
 
-- **Undo and redo.** The arrows in the top bar, or **Ctrl+Z** and **Ctrl+Shift+Z** (or **Ctrl+Y**; **Cmd** on a Mac), step back and forward through your changes: placing, moving, aiming, editing and deleting cameras, the region, analysis settings, custom models and area changes. A drag or a typed name counts as one step when you let go or leave the field. Hover an arrow to see what it would undo or redo. Deleting a camera or a custom model, or replacing the cameras, also shows a message with an **Undo** button. Undo history is kept for this visit only (up to 100 steps) and for the open scene only: opening, starting or importing another scene clears it (a **Duplicate** keeps it). Undoing an area change reloads that area. While a text field has focus, Ctrl+Z undoes typing in the field instead.
-- **Autosave.** The open scene (area, cameras, custom models, analysis settings and region) is saved to your browser's local storage about every 1.5 seconds. The scene open last is restored the next time you open the app in the same browser. Clearing site data, private windows and some browser settings discard it. The status bar shows **Saved** once a save has gone through, or **Not saved** in a warning colour if the browser refused to store the scene; hover it to see why (storage full, site data blocked or no storage, as in some private modes), then use **Export** to keep your work.
+- **Undo and redo.** The arrows in the top bar, or **Ctrl+Z** and **Ctrl+Shift+Z** (or **Ctrl+Y**; **Cmd** on a Mac), step back and forward through your changes: placing, moving, aiming, editing and deleting cameras, areas and targets, analysis settings, custom models and area changes. A drag or a typed name counts as one step when you let go or leave the field. Hover an arrow to see what it would undo or redo. Deleting a camera, an area, a target or a custom model, or replacing the cameras, also shows a message with an **Undo** button. Undo history is kept for this visit only (up to 100 steps) and for the open scene only: opening, starting or importing another scene clears it (a **Duplicate** keeps it). Undoing an area change reloads that area. While a text field has focus, Ctrl+Z undoes typing in the field instead.
+- **Autosave.** The open scene (area, cameras, custom models, analysis settings, areas and targets) is saved to your browser's local storage about every 1.5 seconds. The scene open last is restored the next time you open the app in the same browser. Clearing site data, private windows and some browser settings discard it. The status bar shows **Saved** once a save has gone through, or **Not saved** in a warning colour if the browser refused to store the scene; hover it to see why (storage full, site data blocked or no storage, as in some private modes), then use **Export** to keep your work.
 - **Scenes.** A browser keeps several scenes, for example one per site. **Scenes** in the top bar lists them with their sizes: click one to open it (the open one is saved first), **New scene** starts an empty one on the current area, **Duplicate** copies the open one and carries on in the copy, the pencil renames a scene and the bin deletes one after you confirm (deleting the open scene opens the next). Scenes cannot be switched, and the open one cannot be deleted, while an area is loading. Below the list is how much storage the scenes take, out of the 5 MB or so most browsers keep for a site; when it is full, scenes stop saving until you delete one. A scene saved before scenes existed is the first one. If the scene open last cannot be read, it is kept as it was and the demo street opens as a new scene.
 - **Export** downloads the open scene as a JSON file named after it. **Import** adds a chosen JSON file as a new scene named after the file and opens it, leaving the open scene as it was, and reloads its area from the server (a file picked while an area is loading waits for it). In a browser that offers no storage or blocks it, Import replaces the open scene instead, and can be undone.
 
@@ -176,8 +231,8 @@ Imports are checked: at most 256 cameras and 64 custom models, finite positions 
 
 | Input | Action |
 | --- | --- |
-| **V** / **P** / **A** / **M** / **R** / **L** | Select / Place / Aim / Move / Region / Address tool |
-| **Enter**, **Backspace** (Region tool) | Close the region; remove the last corner |
+| **V** / **P** / **A** / **M** / **R** / **T** / **L** | Select / Place / Aim / Move / Areas / Target / Address tool |
+| **Enter**, **Backspace** (Areas tool, or the Target tool's outline) | Close the outline; remove the last corner |
 | Left-drag | Orbit the view (with Aim or Move and a camera selected: aim or move it) |
 | Right-drag, or **Shift** + left-drag | Pan (Shift-drag does not pan while Aim or Move is driving a camera; use right-drag) |
 | Scroll wheel | Zoom (8 m to 1200 m from the focus point) |

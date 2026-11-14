@@ -435,6 +435,75 @@ mod tests {
     }
 
     #[test]
+    fn the_outline_tools_and_leaving_them() {
+        let mut editor = Editor::default();
+        assert!(!editor.draws_outline());
+        editor.set_tool(Tool::Areas);
+        assert!(editor.draws_outline());
+        editor.set_tool(Tool::Target);
+        assert!(!editor.draws_outline(), "a click marks a point");
+        editor.target_shape = TargetShape::Outline;
+        assert!(editor.draws_outline());
+        // Leaving a tool drops its outline and what finishing it would do;
+        // picking the same tool again keeps them.
+        editor.set_tool(Tool::Areas);
+        editor.region_draft = vec![[0.0, 0.0]];
+        editor.area_draw = AreaDraw::Redraw(3);
+        editor.set_tool(Tool::Areas);
+        assert_eq!(editor.region_draft.len(), 1);
+        editor.set_tool(Tool::Select);
+        assert!(editor.region_draft.is_empty());
+        assert_eq!(editor.area_draw, AreaDraw::New);
+    }
+
+    #[test]
+    fn a_picked_area_or_target_that_is_gone_is_forgotten() {
+        use observation_core::footage::{LabelledArea, Target, TargetPlace};
+        let mut doc = crate::document::Document::default();
+        doc.areas.push(LabelledArea {
+            id: 2,
+            label: None,
+            name: None,
+            points: Vec::new(),
+            enabled: true,
+        });
+        doc.targets.push(Target {
+            id: 5,
+            name: String::new(),
+            at: TargetPlace::Wall {
+                point: [0.0; 3],
+                normal: [1.0, 0.0],
+            },
+        });
+        let mut editor = Editor {
+            selected_area: Some(2),
+            selected_target: Some(5),
+            area_draw: AreaDraw::Redraw(2),
+            ..Editor::default()
+        };
+        editor.forget_missing_places(&doc);
+        assert_eq!(
+            (
+                editor.selected_area,
+                editor.selected_target,
+                editor.area_draw
+            ),
+            (Some(2), Some(5), AreaDraw::Redraw(2))
+        );
+        doc.areas.clear();
+        doc.targets.clear();
+        editor.forget_missing_places(&doc);
+        assert_eq!(
+            (
+                editor.selected_area,
+                editor.selected_target,
+                editor.area_draw
+            ),
+            (None, None, AreaDraw::New)
+        );
+    }
+
+    #[test]
     fn selecting_opens_the_camera_tab_even_when_already_selected() {
         let mut editor = Editor::default();
         let mut panels = Panels::default();

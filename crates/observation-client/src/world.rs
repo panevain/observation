@@ -49,8 +49,9 @@ struct TileTextured;
 pub struct FacadeOverlay;
 
 /// Tint over the ground beyond the loaded area ([`Area::bounds`]), where
-/// nothing is analysed. Shown while the Region tool is on, with hatching and
-/// an edge drawn over it.
+/// nothing is analysed. Shown while an outline is being drawn (the Areas
+/// tool, or the Target tool's outline), with hatching and an edge drawn over
+/// it.
 #[derive(Component)]
 pub struct OutsideArea {
     /// The drawn ground around the area: the map tiles' extent, world `[x, z]`.

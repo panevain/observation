@@ -138,8 +138,8 @@ impl Area {
 }
 
 /// The ground a coverage grid spans, world `[x, z]`. Coverage is computed
-/// only here, so region corners are kept inside it, and the Region tool marks
-/// its edge.
+/// only here, so area and target corners are kept inside it, and the
+/// outline tools mark its edge.
 pub fn grid_bounds(grid: &GroundGrid) -> Rect {
     Rect::from_corners(grid.min, grid.max())
 }

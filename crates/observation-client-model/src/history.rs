@@ -446,6 +446,55 @@ mod tests {
     }
 
     #[test]
+    fn deleting_an_area_or_a_target_offers_undo_and_redo_drops_its_selection() {
+        use observation_core::footage::{LabelledArea, Target, TargetPlace};
+        let mut f = Fixture::new();
+        f.doc.areas.push(LabelledArea {
+            id: 1,
+            label: None,
+            name: Some("Garden".into()),
+            points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            enabled: true,
+        });
+        f.doc.targets.push(Target {
+            id: 1,
+            name: "Gate".into(),
+            at: TargetPlace::Wall {
+                point: [0.0, 1.0, 0.0],
+                normal: [1.0, 0.0],
+            },
+        });
+        f.doc.touch();
+        f.observe(false);
+        f.doc.areas.clear();
+        f.doc.touch();
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((ToastKind::Info, "Deleted Garden", Some(&ToastAction::Undo)))
+        );
+        f.doc.targets.clear();
+        f.doc.touch();
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((ToastKind::Info, "Deleted Gate", Some(&ToastAction::Undo)))
+        );
+        f.step(HistoryOp::Undo);
+        f.step(HistoryOp::Undo);
+        assert_eq!((f.doc.areas.len(), f.doc.targets.len()), (1, 1));
+        f.editor.selected_area = Some(1);
+        f.editor.selected_target = Some(1);
+        f.step(HistoryOp::Redo);
+        assert_eq!(
+            (f.editor.selected_area, f.editor.selected_target),
+            (None, Some(1))
+        );
+        f.step(HistoryOp::Redo);
+        assert_eq!(f.editor.selected_target, None);
+    }
+
+    #[test]
     fn undo_and_redo_restore_announce_and_fix_the_selection() {
         let mut f = Fixture::new();
         let id = f.add("Porch");
