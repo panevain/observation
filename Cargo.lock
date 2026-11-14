@@ -4938,8 +4938,13 @@ dependencies = [
 name = "observation-mcp"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "http",
+ "observation-agent-api",
  "observation-core",
  "observation-mapdata",
+ "observation-server",
+ "observation-upstream",
  "rmcp",
  "schemars",
  "serde",

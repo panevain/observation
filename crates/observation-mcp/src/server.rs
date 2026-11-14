@@ -1,25 +1,32 @@
 //! The MCP tools, resources and prompts.
 //!
-//! Every tool is read-only in MCP's sense: none changes anything outside the
-//! call. The scene tools return an edited copy of the scene they were given,
-//! for the agent to pass to the next call or save for the app to import.
+//! The scene tools are read-only in MCP's sense: none changes anything
+//! outside the call. They return an edited copy of the scene they were given,
+//! for the agent to pass to the next call or save for the app to import. The
+//! app tools ([`crate::app`]) open and close the one connection the server
+//! holds, to the user's open app.
 
 use crate::ToolError;
 use crate::area::{self, extent};
 use crate::catalog::{catalog, is_custom, model};
 use crate::edit::{self, CameraUpdate, Kind, ModelUpdate, NewModel, ParamsUpdate, Place, Target};
 use crate::figures::scene_figures;
+use crate::link::{AppLink, STATE_URI};
 use observation_core::address::ON_OUTLINE_M;
 use observation_core::camera::{ASSUMED_IR_RANGE_M, CameraKind, CameraModel, DoriLevel, Lighting};
 use observation_core::provenance::{CAVEATS_SUMMARY, caveats_text, format_date};
+use observation_core::scene::AreaRef;
 use observation_core::scene::SceneFile;
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{
-    Implementation, ListResourcesResult, PaginatedRequestParams, PromptMessage,
-    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, Role,
-    ServerCapabilities, ServerConfig,
+    CallToolRequestParams, CallToolResponse, Implementation, ListResourcesResult,
+    PaginatedRequestParams, PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource,
+    ResourceContents, ResourceUpdatedNotificationParam, Role, ServerCapabilities, ServerConfig,
+    SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
 };
-use rmcp::service::RequestContext;
+use rmcp::service::{RequestContext, SubscriptionContext};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, prompt, prompt_handler, prompt_router, tool,
     tool_handler, tool_router,
@@ -27,6 +34,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 const INSTRUCTIONS: &str = "\
 Observation estimates how much of a street home security cameras can see. \
@@ -34,16 +42,68 @@ Scenes are not stored here: create one with create_scene, then pass the returned
 to each editing tool and use the `scene` it returns. The result is a scene file the \
 Observation app can import. Positions are metres from the area's origin: x east, z south \
 (north is negative z); heights are metres above the ground. Bearings are degrees clockwise \
-from north. Only the demo street is available, so load_demo_area gives the area's extent. \
+from north. Offline only the demo street is available, so load_demo_area gives the area's \
+extent. If the user has the Observation app open on this computer, they can connect it: ask \
+for the code in its Connect agent dialog and call connect_app with the app's address (such as \
+http://127.0.0.1:8080). Then get_app_state returns their open scene (pass it to the scene \
+tools), its area, the selected cameras and a point they shared, the resource \
+observation://app/state follows it, and coverage and addresses work on their real area. Edits \
+made here do not change the app; give the user the scene to import. \
 Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
 the caveats that compute_coverage returns.";
 
 const USAGE_MD: &str = include_str!("../../../docs/usage.md");
 const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
 
-/// The Observation MCP server. It holds no state: see the module docs.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ObservationMcp;
+/// The Observation MCP server. Its only state is the connection to the
+/// user's app ([`AppLink`]); clones share it.
+#[derive(Debug, Clone, Default)]
+pub struct ObservationMcp {
+    pub(crate) link: Arc<AppLink>,
+}
+
+impl ObservationMcp {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The connection to the user's app.
+    pub fn link(&self) -> &Arc<AppLink> {
+        &self.link
+    }
+
+    /// Runs `tool` as a call with `arguments` runs: the area of their scene
+    /// is fetched first if it is a real one and an app is connected, and the
+    /// connection's areas are in view while it runs (see [`area::bundle_for`]).
+    pub async fn in_tool_scope<F: std::future::Future>(
+        &self,
+        arguments: Option<&serde_json::Map<String, Value>>,
+        tool: F,
+    ) -> F::Output {
+        if let Some(area) = scene_area(arguments) {
+            self.link.prepare_area(&area).await;
+        }
+        area::scope_areas(self.link.areas(), tool).await
+    }
+
+    /// Every tool: the scene tools and the app tools.
+    pub fn all_tools() -> ToolRouter<Self> {
+        Self::tool_router() + Self::app_tool_router()
+    }
+}
+
+/// The area of the `scene` argument of a tool call, if it has one.
+fn scene_area(arguments: Option<&serde_json::Map<String, Value>>) -> Option<AreaRef> {
+    let scene = arguments?.get("scene")?;
+    let area = match scene {
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()?
+            .get("area")?
+            .clone(),
+        other => other.get("area")?.clone(),
+    };
+    serde_json::from_value(area).ok()
+}
 
 fn fail(e: ToolError) -> String {
     e.to_string()
@@ -655,12 +715,17 @@ impl ObservationMcp {
         &self,
         Parameters(a): Parameters<SceneArg>,
     ) -> Result<Json<CoverageOut>, String> {
-        // Line of sight over the whole area is CPU work: keep it off the async runtime.
-        tokio::task::spawn_blocking(move || coverage(&a.scene))
-            .await
-            .map_err(|e| format!("coverage failed: {e}"))?
-            .map(Json)
-            .map_err(fail)
+        // Line of sight over the whole area is CPU work: keep it off the async runtime,
+        // with the connection's real areas in view.
+        let areas = area::current_areas();
+        tokio::task::spawn_blocking(move || match areas {
+            Some(areas) => area::with_areas(areas, || coverage(&a.scene)),
+            None => coverage(&a.scene),
+        })
+        .await
+        .map_err(|e| format!("coverage failed: {e}"))?
+        .map(Json)
+        .map_err(fail)
     }
 
     #[tool(
@@ -673,7 +738,7 @@ impl ObservationMcp {
     ) -> Result<Json<AddressOut>, String> {
         let s = edit::parse(&a.scene).map_err(fail)?;
         let b = area::bundle_for(&s).map_err(fail)?;
-        area::check_inside(b, a.x, a.z).map_err(fail)?;
+        area::check_inside(&b, a.x, a.z).map_err(fail)?;
         Ok(Json(AddressOut {
             address: b
                 .address_pointed_at([a.x, a.z], ON_OUTLINE_M)
@@ -686,7 +751,7 @@ fn coverage(scene: &Value) -> Result<CoverageOut, ToolError> {
     let cat = catalog()?;
     let s = edit::parse(scene)?;
     let layers = area::layers_for(&s)?;
-    let f = scene_figures(&s, cat, layers);
+    let f = scene_figures(&s, cat, &layers);
     let levels = f
         .levels
         .iter()
@@ -824,7 +889,27 @@ fn read(uri: &str) -> Result<String, ErrorData> {
     }
 }
 
-#[tool_handler]
+/// The resource the connected app's state is read from.
+const STATE_RESOURCE: (&str, &str, &str, &str) = (
+    STATE_URI,
+    "app-state",
+    "application/json",
+    "What the user has open in the connected app (as get_app_state returns it); subscribe to \
+     hear when it changes",
+);
+
+impl ObservationMcp {
+    async fn app_state_json(&self) -> String {
+        // Fresh when the server answers; what was last read when it does not.
+        let snapshot = match self.link.refresh().await {
+            Ok(s) => s,
+            Err(_) => self.link.snapshot(),
+        };
+        serde_json::to_string_pretty(&crate::app::AppStateOut::of(snapshot)).unwrap_or_default()
+    }
+}
+
+#[tool_handler(router = Self::all_tools())]
 #[prompt_handler]
 impl ServerHandler for ObservationMcp {
     fn get_info(&self) -> ServerConfig {
@@ -832,6 +917,7 @@ impl ServerHandler for ObservationMcp {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .build(),
         )
@@ -842,6 +928,97 @@ impl ServerHandler for ObservationMcp {
         .with_instructions(INSTRUCTIONS)
     }
 
+    /// Fetches the area of the call's scene from the connected app's server
+    /// first, if it is a real area, then runs the tool with the connection's
+    /// areas in view (see [`area::bundle_for`]).
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let arguments = request.arguments.clone();
+        let tcc = ToolCallContext::new(self, request, context);
+        self.in_tool_scope(arguments.as_ref(), Self::all_tools().call(tcc))
+            .await
+    }
+
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        let wants = requested
+            .resource_subscriptions
+            .as_ref()
+            .is_some_and(|uris| uris.iter().any(|u| u == STATE_URI));
+        wants.then(|| {
+            SubscriptionFilter::builder()
+                .resource_subscription(STATE_URI)
+                .build()
+        })
+    }
+
+    /// Sends `notifications/resources/updated` for the app's state whenever
+    /// it changes, until the subscription is cancelled.
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+        let mut changes = self.link.subscribe();
+        changes.borrow_and_update();
+        loop {
+            tokio::select! {
+                () = context.cancelled() => return Ok(()),
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                    if context.sink().notify_resource_updated(STATE_URI).await.is_err() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    /// The legacy form of [`Self::listen`], for clients on older protocol
+    /// versions.
+    #[allow(deprecated)]
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), ErrorData> {
+        if request.uri != STATE_URI {
+            return Err(ErrorData::resource_not_found(
+                format!(
+                    "{} does not change, so there is nothing to subscribe to",
+                    request.uri
+                ),
+                None,
+            ));
+        }
+        let mut changes = self.link.subscribe();
+        changes.borrow_and_update();
+        let peer = context.peer;
+        let task = tokio::spawn(async move {
+            while changes.changed().await.is_ok() {
+                let note = ResourceUpdatedNotificationParam::new(STATE_URI);
+                if peer.notify_resource_updated(note).await.is_err() {
+                    return;
+                }
+            }
+        });
+        self.link.set_legacy_subscription(Some(task.abort_handle()));
+        Ok(())
+    }
+
+    #[allow(deprecated)]
+    async fn unsubscribe(
+        &self,
+        _request: UnsubscribeRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), ErrorData> {
+        self.link.set_legacy_subscription(None);
+        Ok(())
+    }
+
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -849,6 +1026,7 @@ impl ServerHandler for ObservationMcp {
     ) -> Result<ListResourcesResult, ErrorData> {
         let resources = RESOURCES
             .iter()
+            .chain(std::iter::once(&STATE_RESOURCE))
             .map(|(uri, name, mime, about)| {
                 Resource::new(*uri, *name)
                     .with_mime_type(*mime)
@@ -863,9 +1041,14 @@ impl ServerHandler for ObservationMcp {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::ReadResourceResponse, ErrorData> {
-        let text = read(&request.uri)?;
+        let text = if request.uri == STATE_URI {
+            self.app_state_json().await
+        } else {
+            read(&request.uri)?
+        };
         let mime = RESOURCES
             .iter()
+            .chain(std::iter::once(&STATE_RESOURCE))
             .find(|r| r.0 == request.uri)
             .map_or("text/plain", |r| r.2);
         Ok(ReadResourceResult::new(vec![
@@ -874,6 +1057,10 @@ impl ServerHandler for ObservationMcp {
         .into())
     }
 }
+
+#[cfg(test)]
+#[path = "link_tests.rs"]
+mod link_tests;
 
 #[cfg(test)]
 mod tests {
@@ -888,8 +1075,29 @@ mod tests {
     }
 
     #[test]
+    fn only_the_app_state_can_be_subscribed_to() {
+        let s = ObservationMcp::new();
+        let wanted = SubscriptionFilter::builder()
+            .resource_subscription(STATE_URI)
+            .resource_subscription("observation://catalog")
+            .tools_list_changed()
+            .build();
+        let accepted = s.accepted_subscription_filter(&wanted).unwrap();
+        assert_eq!(
+            accepted.resource_subscriptions,
+            Some(vec![STATE_URI.to_owned()])
+        );
+        assert_eq!(accepted.tools_list_changed, None);
+        let other = SubscriptionFilter::builder()
+            .resource_subscription("observation://catalog")
+            .build();
+        assert!(s.accepted_subscription_filter(&other).is_none());
+        assert!(s.get_info().capabilities.resources.unwrap().subscribe == Some(true));
+    }
+
+    #[test]
     fn the_tools_are_listed() {
-        let names: Vec<String> = ObservationMcp::tool_router()
+        let names: Vec<String> = ObservationMcp::all_tools()
             .list_all()
             .into_iter()
             .map(|t| t.name.to_string())
@@ -900,6 +1108,9 @@ mod tests {
             "point_camera_at",
             "create_custom_model",
             "compute_coverage",
+            "connect_app",
+            "disconnect_app",
+            "get_app_state",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }
@@ -907,7 +1118,7 @@ mod tests {
 
     #[tokio::test]
     async fn coverage_of_a_scene_carries_the_caveats() {
-        let s = ObservationMcp;
+        let s = ObservationMcp::new();
         let Json(created) = s.create_scene().unwrap();
         let Json(placed) = s
             .add_example_cameras(Parameters(ExampleArgs {

@@ -16,14 +16,22 @@ pub enum ToolError {
     #[error("no custom model `{0}` in the scene")]
     NoCustomModel(String),
     #[error(
-        "this needs the area's buildings and terrain, which are only available for the demo street; \
-         the scene is on an OpenStreetMap area"
+        "this needs the area's buildings and terrain, which are only available for the demo street \
+         unless the Observation app is connected (connect_app); the scene is on an OpenStreetMap area"
     )]
     AreaUnavailable,
+    #[error("the connected app's server could not send the area: {0}")]
+    AreaFetch(String),
     #[error("the demo street could not be built: {0}")]
     Demo(String),
     #[error("the camera catalogue could not be loaded: {0}")]
     Catalog(String),
+    #[error(
+        "no app is connected: ask the user for the code in the app's Connect agent dialog, then call connect_app"
+    )]
+    NotConnected,
+    #[error("{0}")]
+    Link(String),
     #[error("{0}")]
     Invalid(String),
 }
