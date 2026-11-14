@@ -119,3 +119,4 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 - Proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`) are ignored for upstream requests unless `OBS_ALLOW_PRIVATE_UPSTREAMS=1`, since a proxy resolves names past the filter.
 - Credentials in upstream URLs are removed from startup errors.
 - Bevy 0.20.1, which moves `ruzstd` to 0.9.1 and so fixes RUSTSEC-2026-0344 (a decompression bomb in its zstd decoder). The client never reached the vulnerable code, and the advisory is no longer ignored.
+- rustix 1.1.6, which fixes RUSTSEC-2026-0486 (its xattr functions marked unwritten bytes as initialised when given a zero-length buffer). Only the client's native build and the server's and region agent's tests used the affected version, never through those functions; the wasm client and the release images did not contain it.
