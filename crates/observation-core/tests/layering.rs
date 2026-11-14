@@ -54,6 +54,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("regions", 5),
     ("provenance", 5),
     ("scene", 5),
+    ("evidence", 5),
 ];
 
 /// Upward edges that remain, each with the reason: `(file under src/, path

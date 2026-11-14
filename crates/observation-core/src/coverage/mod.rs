@@ -21,7 +21,7 @@ pub use crate::util::planar::closest_on_segment;
 pub(crate) use facade::FACADE_OFFSET_M;
 pub use facade::{FacadeCell, facade_cells};
 pub use grid::GroundGrid;
-pub use layers::{AreaGeometry, StaticLayers};
+pub use layers::{AreaGeometry, StaticLayers, road_band_mask};
 pub use params::CoverageParams;
 pub(crate) use region::scan_inside;
 pub use region::{
