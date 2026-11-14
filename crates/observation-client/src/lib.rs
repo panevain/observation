@@ -89,6 +89,7 @@ impl PluginGroup for ClientPlugins {
             .add(persist::PersistPlugin)
             .add(history::HistoryPlugin)
             .add(agent::AgentPlugin)
+            .add(agent::ProposalGhostPlugin)
             .add(ui::UiPlugin)
             .add(LoaderPlugin)
     }

@@ -103,8 +103,10 @@ pub struct UiData<'w> {
     pub font: ResMut<'w, UiFont>,
     pub address_jump: ResMut<'w, crate::state::AddressJump>,
     pub regions: ResMut<'w, crate::regions::Regions>,
-    /// The link to a local agent (Connect agent).
+    /// The link to a local agent (Connect agent), and the proposed scene's
+    /// figures for the proposal card.
     pub agent: ResMut<'w, crate::agent::AgentLinkRes>,
+    pub proposal_coverage: Res<'w, crate::coverage::ProposalCoverage>,
 }
 
 fn draw_ui(
@@ -267,6 +269,9 @@ fn draw_ui(
     }
     if d.agent.dialog_open {
         agent::window(&ctx, &t, &mut d.agent, &*platform.http);
+    }
+    if d.agent.card_open {
+        agent::proposal_card(&ctx, &t, &mut d, viewport_rect, &*platform.http, clock);
     }
     if d.panels.regions_open {
         regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);
