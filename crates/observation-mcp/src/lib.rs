@@ -21,6 +21,8 @@
 //! | [`app`] | the tools that connect to the app and read its state |
 //! | [`edit`] | the scene edits, as plain functions on a [`SceneFile`](observation_core::scene::SceneFile) |
 //! | [`figures`] | coverage figures for a whole scene |
+//! | [`places`] | labelled areas and targets, and the tools that edit them |
+//! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
 //! | [`server`] | the MCP tools, resources and prompts |
 
 pub mod app;
@@ -30,6 +32,8 @@ pub mod edit;
 pub mod error;
 pub mod figures;
 pub mod link;
+pub mod places;
+pub mod queries;
 pub mod server;
 
 pub use error::ToolError;

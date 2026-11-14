@@ -184,6 +184,8 @@ The server offers this only when it runs with `OBS_AGENT_BRIDGE=on` and you open
 
 The connection ends when you click **Disconnect** (in the dialog), when the agent disconnects, when you close the tab, or after 30 minutes in which neither side used it. Nothing about it is stored on the server, and a reload starts afresh.
 
+Offline or connected, the agent can mark the places you talk about: label ground you describe as your own, a neighbour's, public or other (`label_area`; as you describe it, not from property records) and name targets such as your front door or a side gate (`add_target`, on a patch of ground or a building wall). It can then say where each camera's footage lands (`camera_split`: square metres of visible ground in each area, on the public street and elsewhere, as a range with the outlines moved 1 m in and out, and the wall seen per building), whether the model rules out that a camera sees each target or a point, and why (`target_verdicts`, `who_sees_point`), and which stretches of street no camera sees (`find_gaps`). Verdicts are one-sided: *not ruled out* or *ruled out* with the reason, never *seen*, since hedges, fences, trees and vehicles are not modelled and can only block more. Buildings are named by number and distance, never by a neighbour's address. Every answer carries the map data's date and the caveats. The prompt `where_footage_lands` walks an agent through it.
+
 ## Keyboard, mouse and touch
 
 | Input | Action |
