@@ -213,7 +213,7 @@ mod tests {
             .is_ok()
         );
         let long = "x".repeat(MAX_CONTACT_CHARS + 1);
-        for bad in ["me (ops)", "caf\u{e9}@example.org", long.as_str()] {
+        for bad in ["me (ops)", "ren\u{e9}e@example.org", long.as_str()] {
             assert_eq!(
                 config(&[("OBS_GEOCODER_CONTACT", bad)]).unwrap_err(),
                 ConfigError::GeocoderContact,
