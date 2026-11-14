@@ -52,7 +52,7 @@ impl GroundGrid {
     }
 
     /// Inclusive cell index ranges covering an `x, z` rectangle (clamped).
-    pub(super) fn range(&self, lo: Vec2, hi: Vec2) -> Option<(u32, u32, u32, u32)> {
+    pub(crate) fn range(&self, lo: Vec2, hi: Vec2) -> Option<(u32, u32, u32, u32)> {
         let a = ((lo - self.min) / self.cell_m).floor();
         let b = ((hi - self.min) / self.cell_m).floor();
         if b.x < 0.0 || b.y < 0.0 || a.x >= self.w as f32 || a.y >= self.h as f32 {

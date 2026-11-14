@@ -149,14 +149,30 @@ impl StaticLayers {
 
     /// Whether the line from `a` to `b` is blocked by a building or the ground.
     pub fn segment_blocked(&self, a: Vec3, b: Vec3) -> bool {
-        self.occluders.segment_blocked(a, b) || self.terrain.segment_blocked(a, b, self.terrain_top)
+        self.blocked_by_building(a, b) || self.blocked_by_terrain(a, b)
+    }
+
+    /// Whether a building blocks the line from `a` to `b`: the first half of
+    /// [`Self::segment_blocked`].
+    pub fn blocked_by_building(&self, a: Vec3, b: Vec3) -> bool {
+        self.occluders.segment_blocked(a, b)
+    }
+
+    /// Whether the ground blocks the line from `a` to `b`: the second half of
+    /// [`Self::segment_blocked`].
+    pub fn blocked_by_terrain(&self, a: Vec3, b: Vec3) -> bool {
+        self.terrain.segment_blocked(a, b, self.terrain_top)
+    }
+
+    /// World point of a subject `subject_height_m` above the ground at `xz`.
+    pub fn subject_at(&self, xz: Vec2, subject_height_m: f32) -> Vec3 {
+        Vec3::new(xz.x, self.terrain.height_at(xz) + subject_height_m, xz.y)
     }
 
     /// World point of a ground cell's subject, `subject_height_m` above the
     /// ground.
     pub fn ground_subject(&self, i: usize, subject_height_m: f32) -> Vec3 {
-        let c = self.grid.center(i);
-        Vec3::new(c.x, self.terrain.height_at(c) + subject_height_m, c.y)
+        self.subject_at(self.grid.center(i), subject_height_m)
     }
 }
 

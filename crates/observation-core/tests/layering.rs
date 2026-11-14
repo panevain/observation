@@ -47,6 +47,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("frustum", 4),
     ("occlusion", 4),
     ("coverage", 4),
+    ("footage", 4),
     ("example", 4),
     // 5: messages and records exchanged with the outside.
     ("coverage_job", 5),

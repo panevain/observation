@@ -6,7 +6,7 @@ use crate::util::planar::{clean_ring, signed_area2};
 use glam::{Vec2, Vec3};
 
 /// How far façade sample points sit in front of the wall, metres.
-pub(super) const FACADE_OFFSET_M: f32 = 0.05;
+pub(crate) const FACADE_OFFSET_M: f32 = 0.05;
 
 /// One rectangular patch of wall.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,6 +15,12 @@ pub struct FacadeCell {
     pub normal: Vec3,
     /// Bottom-left, bottom-right, top-right, top-left (seen from outside).
     pub corners: [Vec3; 4],
+    /// Index of the patch's building among the footprints the layers were
+    /// built from, in their order (bundle order, see
+    /// [`AreaGeometry::footprints`](super::AreaGeometry::footprints)). Only
+    /// meaningful for the bundle at hand: a rebuilt bundle may number its
+    /// buildings differently, so it is never saved.
+    pub building: u32,
 }
 
 impl FacadeCell {
@@ -32,14 +38,16 @@ const MAX_FACADE_ROWS: f32 = 128.0;
 /// Splits every wall into roughly `cell_m`-sized patches, at most 256 along and
 /// 128 up a wall (longer or taller walls get coarser patches). Walls standing
 /// on the ground start where the ground meets them outside, so the part a
-/// slope buries has no patches.
+/// slope buries has no patches. Each patch records the index of its footprint
+/// in `footprints`.
 pub fn facade_cells<'a>(
     footprints: impl IntoIterator<Item = &'a Footprint>,
     cell_m: f32,
     terrain: &Terrain,
 ) -> Vec<FacadeCell> {
     let mut out = Vec::new();
-    for fp in footprints {
+    for (building, fp) in footprints.into_iter().enumerate() {
+        let building = u32::try_from(building).unwrap_or(u32::MAX);
         let (bottom, y1) = (fp.bottom_y(), fp.roof_y());
         if !(y1 - bottom).is_finite() {
             continue;
@@ -98,6 +106,7 @@ pub fn facade_cells<'a>(
                             center,
                             normal,
                             corners,
+                            building,
                         });
                     }
                 }
@@ -129,5 +138,17 @@ mod tests {
             ..fp
         };
         assert!(facade_cells([&nan], 1.0, &Terrain::default()).is_empty());
+    }
+
+    #[test]
+    fn patches_know_their_building() {
+        let a = crate::testing::box_footprint(0.0, 0.0, 2.0, 2.0, 2.0);
+        let b = crate::testing::box_footprint(10.0, 0.0, 13.0, 2.0, 2.0);
+        let cells = facade_cells([&a, &b], 1.0, &Terrain::default());
+        // 8 m of wall 2 m tall, then 10 m.
+        let first: Vec<u32> = cells.iter().map(|c| c.building).collect();
+        assert_eq!(first.iter().filter(|b| **b == 0).count(), 16);
+        assert_eq!(first.iter().filter(|b| **b == 1).count(), 20);
+        assert!(first.windows(2).all(|w| w[0] <= w[1]), "in footprint order");
     }
 }

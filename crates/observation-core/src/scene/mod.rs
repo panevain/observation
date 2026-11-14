@@ -4,8 +4,8 @@ mod file;
 mod sanitise;
 
 pub use file::{
-    AreaRef, FLAT_GROUND_VERSION, MAX_CAMERAS, MAX_CUSTOM_MODELS, SCENE_FORMAT, SCENE_VERSION,
-    SceneError, SceneFile, lift_onto_terrain,
+    AreaRef, FLAT_GROUND_VERSION, MAX_AREAS, MAX_CAMERAS, MAX_CUSTOM_MODELS, MAX_TARGETS,
+    SCENE_FORMAT, SCENE_VERSION, SceneError, SceneFile, lift_onto_terrain,
 };
 
 #[cfg(test)]
