@@ -16,10 +16,17 @@
 *.ttf binary
 fuzz/seeds/**/* binary
 
+# Golden files are compared byte for byte, so git must never convert them (text=auto would
+# convert line endings in any NUL-free file, binary data included). -text keeps their bytes as
+# committed without marking them binary, so their diffs stay readable in review.
+crates/*/tests/golden/** -text
+xtask/tests/fixtures/** -text
+
 # Lockfiles are generated: collapsed in GitHub diffs, but still diffable locally so that
 # dependency changes can be reviewed.
 Cargo.lock linguist-generated=true
 fuzz/Cargo.lock linguist-generated=true
+xtask/Cargo.lock linguist-generated=true
 mise.lock linguist-generated=true
 mise.ci.lock linguist-generated=true
 supply-chain/imports.lock linguist-generated=true

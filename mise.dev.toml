@@ -35,7 +35,7 @@ usage = 'flag "--release" help="Release-build the client and the server"'
 run = [
   { task = "dev:regions:build", args = ["--if-missing"] },
   "trunk build --locked{% if usage.release %} --release{% endif %}",
-  "cargo build --locked -p observation-server{% if usage.release %} --release{% endif %}",
+  "cargo build --locked -p {{vars.server_package}}{% if usage.release %} --release{% endif %}",
   "exec {{mise_bin | quote}} run --jobs 2 --output prefix dev:server{% if usage.release %} --release{% endif %} ::: dev:regions:run",
 ]
 
@@ -46,7 +46,7 @@ usage = 'flag "--release" help="Run the release build"'
 # Loopback only, whatever OBS_BIND says (see the header). An OBS_ADMIN_TOKEN exported in the
 # shell replaces the dev one.
 env = { OBS_BIND = "127.0.0.1:8080", OBS_REGIONS_URL = "http://127.0.0.1:8090", OBS_REGIONS_TOKEN = "{{vars.dev_token}}", OBS_ADMIN_TOKEN = "{{ get_env(name='OBS_ADMIN_TOKEN', default=vars.dev_token) }}" }
-run = "cargo run --locked -p observation-server{% if usage.release %} --release{% endif %}"
+run = "cargo run --locked -p {{vars.server_package}}{% if usage.release %} --release{% endif %}"
 
 [tasks."dev:regions"]
 description = "Rebuild the region agent image from this checkout and run it on 127.0.0.1:8090 (Ctrl-C stops it)"

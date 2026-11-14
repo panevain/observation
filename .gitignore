@@ -1,4 +1,5 @@
 /target
+/xtask/target
 /dist
 /web/tokens.css
 /cache
@@ -18,4 +19,5 @@
 /.claude/settings.local.json
 /CLAUDE.local.md
 /lcov.info
+/coverage.json
 __pycache__/

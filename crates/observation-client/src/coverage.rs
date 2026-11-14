@@ -1,56 +1,49 @@
 //! Incremental coverage computation and overlay painting.
 //!
-//! Each camera's visibility is cached under a key derived from everything
-//! that affects it, so moving one camera only recomputes that camera. The
-//! computing itself happens in [`backend`]: a Web Worker in the browser.
-
-mod backend;
+//! Each camera's sight lines are cached under a key derived from everything
+//! that affects them, so moving one camera only recomputes that camera. They
+//! are computed once, out to the camera's longest range over the detail
+//! levels, with each cell's distance, so every detail level and Day/Night
+//! follows by distance alone: switching them recomputes nothing. The
+//! computing itself happens in the [`CoverageBackend`]: a Web Worker in the
+//! browser.
 
 use crate::input::OrbitCamera;
-use crate::state::{Area, Models, OverlayMode, Scene, Tool, UiState, terrain_of};
+use crate::platform::{self, Platform};
+use crate::state::{
+    Area, Editor, FACADE_CELL_M, GROUND_CELL_M, Models, OverlayMode, Panels, Scene, Tool,
+    terrain_of,
+};
 use crate::theme::{Tokens, rgba, to_bevy};
 use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texel, write_overlay};
-use backend::CoverageBackend;
-use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use observation_client_model::coverage;
+use observation_client_model::coverage::backend::{self, WorkerNote};
 use observation_core::camera::{CameraModel, CameraPlacement};
-use observation_core::coverage::{
-    CoverageCounts, CoverageParams, CoverageStats, RegionMask, Visibility as CellVisibility,
-};
-use observation_core::coverage_job::JobResult;
+use observation_core::coverage::CoverageParams;
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
 
-#[derive(Default, Resource)]
-pub struct CoverageState {
-    cams: HashMap<u32, (u64, CellVisibility)>,
-    counts: Option<CoverageCounts>,
-    pub stats: CoverageStats,
-    /// Range used for each camera (for the inspector), metres.
-    pub ranges: HashMap<u32, f32>,
-    paint: bool,
-    painted_mode: Option<(OverlayMode, bool)>,
-    /// Hash of the camera colours last painted in per-camera mode.
-    painted_colors: u64,
-    /// The region's corners and cells, kept while the region is turned off so
-    /// turning it back on needs no recomputation.
-    region: Option<(Vec<[f32; 2]>, RegionMask)>,
-    /// Whether the figures were last computed inside the region.
-    region_on: bool,
-}
+/// The coverage counts, as a resource.
+#[derive(Default, Resource, Deref, DerefMut)]
+pub struct CoverageState(coverage::CoverageState);
 
-impl CoverageState {
-    pub fn visibility(&self, id: u32) -> Option<&CellVisibility> {
-        self.cams.get(&id).map(|(_, v)| v)
-    }
-}
+/// Where coverage jobs run, as a non-send resource: in the browser it owns
+/// the worker, which is tied to the main thread.
+#[derive(Deref, DerefMut)]
+pub struct CoverageBackend(backend::CoverageBackend);
 
 pub struct CoveragePlugin;
 
 impl Plugin for CoveragePlugin {
     fn build(&self, app: &mut App) {
+        // The worker starts now, at build, so it has loaded by the time the
+        // first area arrives.
+        let platform = Platform::of(app.world());
+        let backend =
+            backend::CoverageBackend::new(platform::coverage_worker(), platform.clock.clone());
         app.init_resource::<CoverageState>()
-            .init_non_send::<CoverageBackend>()
+            .insert_non_send(CoverageBackend(backend))
             .insert_gizmo_config(
                 RegionGizmos,
                 GizmoConfig {
@@ -78,39 +71,20 @@ impl Plugin for CoveragePlugin {
                 Update,
                 (
                     // After a new area's state reset and `Area` insert, which
-                    // Bevy applies in between (an automatic sync point).
-                    update_coverage.after(AreaLoadSet),
+                    // Bevy applies in between (an automatic sync point), and
+                    // after the frame's edits up to `record`.
+                    update_coverage
+                        .after(AreaLoadSet)
+                        .after(crate::history::record),
                     paint_overlay,
                     draw_region,
-                    draw_outside_area,
+                    // Before the pointer (and so are the three above): drawing
+                    // shows the state the click is made against.
+                    draw_outside_area.before(crate::input::PointerSet),
                 )
                     .chain(),
             );
     }
-}
-
-/// Everything a camera's visibility depends on: its pose, the fields of view
-/// and effective range that shape its cone, and the subject height. Hashing
-/// the resolved range (not the density, lighting and IR range behind it) means
-/// a settings change that leaves the range alone, such as a density change
-/// while the IR range caps it at night, recomputes nothing.
-fn key(c: &CameraPlacement, m: &CameraModel, range: f32, subject_height_m: f32) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for v in c
-        .position
-        .iter()
-        .chain([&c.yaw_deg, &c.pitch_deg, &c.roll_deg])
-    {
-        v.to_bits().hash(&mut h);
-    }
-    (
-        m.hfov_deg.to_bits(),
-        m.vfov_deg.to_bits(),
-        range.to_bits(),
-        subject_height_m.to_bits(),
-    )
-        .hash(&mut h);
-    h.finish()
 }
 
 /// The view cone used for analysis and drawing.
@@ -129,99 +103,25 @@ fn update_coverage(
     if area.is_changed() {
         // `Area` is only ever inserted, so this is a new area (on_area_loaded
         // has reset the state).
-        backend.load_area(&area.bundle);
+        backend.load_area(&area.bundle, GROUND_CELL_M, FACADE_CELL_M);
     }
     let layers = &area.layers;
-    let results = backend.drain(layers);
-    if results.is_empty() && !scene.is_changed() && !models.is_changed() && state.counts.is_some() {
+    let (results, notes) = backend.drain(layers);
+    for note in notes {
+        match note {
+            WorkerNote::Ready => info!("{note}"),
+            WorkerNote::Failed(_) => warn!("{note}"),
+        }
+    }
+    if results.is_empty() && !scene.is_changed() && !models.is_changed() && state.counted() {
         return;
     }
-    let state = &mut *state;
-    let counts = state
-        .counts
-        .get_or_insert_with(|| CoverageCounts::new(layers));
-    let mut changed = false;
-
-    state.ranges.clear();
-    // Enabled cameras with a known model, and their current keys.
-    let mut current = Vec::new();
-    let mut keys = HashMap::new();
-    for c in scene.cameras.iter().filter(|c| c.enabled) {
-        let Some(m) = models.get(&c.model_id) else {
-            continue;
-        };
-        let range = m.effective_range_m(scene.params.pixels_per_metre(), scene.params.lighting);
-        state.ranges.insert(c.id, range);
-        let k = key(c, m, range, scene.params.subject_height_m);
-        keys.insert(c.id, k);
-        current.push((c, m, range, k));
-    }
-    state.cams.retain(|id, (_, vis)| {
-        let keep = keys.contains_key(id);
-        if !keep {
-            counts.remove(vis);
-            changed = true;
-        }
-        keep
-    });
-    for r in results {
-        changed |= apply(&mut state.cams, counts, keys.get(&r.camera_id).copied(), r);
-    }
-    for &(c, m, range, k) in &current {
-        // One job per camera at a time: a camera dragged faster than its jobs
-        // finish gets its latest pose computed when the previous job is back.
-        if state.cams.get(&c.id).is_some_and(|(old, _)| *old == k) || backend.busy(c.id) {
-            continue;
-        }
-        let cone = ViewCone::new(c, m, range);
-        if let Some(r) = backend.submit(c.id, k, cone, scene.params.subject_height_m, layers) {
-            changed |= apply(&mut state.cams, counts, Some(k), r);
-        }
-    }
-    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
-    if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
-        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
-        changed = true;
-    }
-    let on = usable.is_some_and(|r| r.enabled);
-    if on != state.region_on {
-        state.region_on = on;
-        changed = true;
-    }
-    if changed || state.painted_mode.is_none() {
-        let mask = state.region.as_ref().filter(|_| on).map(|(_, m)| m);
-        state.stats = CoverageStats::compute_in(layers, counts, mask);
-        state.paint = true;
-    }
-}
-
-/// Puts a computed visibility into the cache and the counts, given the
-/// camera's current key (`None` once it is deleted, disabled or without a
-/// model). A result for an earlier pose still replaces an older visibility, so
-/// the overlay follows a dragged camera one job behind, but never an
-/// up-to-date one. Returns whether anything changed.
-fn apply(
-    cams: &mut HashMap<u32, (u64, CellVisibility)>,
-    counts: &mut CoverageCounts,
-    current: Option<u64>,
-    r: JobResult,
-) -> bool {
-    let Some(current) = current else {
-        return false;
-    };
-    if r.key != current && cams.get(&r.camera_id).is_some_and(|(k, _)| *k == current) {
-        return false;
-    }
-    counts.add(&r.visibility);
-    if let Some((_, old)) = cams.insert(r.camera_id, (r.key, r.visibility)) {
-        counts.remove(&old);
-    }
-    true
+    coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
 }
 
 fn paint_overlay(
     mut state: ResMut<CoverageState>,
-    ui: Res<UiState>,
+    panels: Res<Panels>,
     scene: Res<Scene>,
     models: Res<Models>,
     tokens: Res<Tokens>,
@@ -232,7 +132,7 @@ fn paint_overlay(
 ) {
     let Some(overlay) = overlay else { return };
     for mut v in &mut facade_vis {
-        let want = if ui.show_facades {
+        let want = if panels.show_facades {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -243,12 +143,12 @@ fn paint_overlay(
     }
     // A theme change can recolour either mode.
     if tokens.is_changed() {
-        state.paint = true;
+        state.repaint();
     }
-    let mode = (ui.overlay, ui.show_facades);
+    let mode = (panels.overlay, panels.show_facades);
     // Per-camera colours can change without any visibility changing; repaint
     // only when one actually did.
-    let colors = if (ui.overlay == OverlayMode::PerCamera
+    let colors = if (panels.overlay == OverlayMode::PerCamera
         && (scene.is_changed() || models.is_changed()))
         || tokens.is_changed()
     {
@@ -259,14 +159,15 @@ fn paint_overlay(
         }
         h.finish()
     } else {
-        state.painted_colors
+        state.painted_colors()
     };
-    let recolor = colors != state.painted_colors;
-    if !state.paint && !recolor && state.painted_mode == Some(mode) && !overlay.is_changed() {
+    if state.is_painted(mode, colors) && !overlay.is_changed() {
         return;
     }
-    let Some(counts) = &state.counts else { return };
-    let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match ui.overlay {
+    let Some(counts) = state.selected_counts() else {
+        return;
+    };
+    let (mut ground, mut facade): (Vec<[u8; 4]>, Vec<[u8; 4]>) = match panels.overlay {
         OverlayMode::Overlap => (
             counts
                 .ground
@@ -296,25 +197,23 @@ fn paint_overlay(
             vec![CLEAR; counts.facade.len()],
         ),
     };
-    if ui.overlay == OverlayMode::PerCamera {
+    if panels.overlay == OverlayMode::PerCamera {
         for c in &scene.cameras {
-            let Some(vis) = state.visibility(c.id) else {
+            let Some((seen_ground, seen_facade)) = state.seen(c.id) else {
                 continue;
             };
             let mut col = texel(crate::cameras::camera_color(&scene, c, &models, &tokens));
             col[3] = 150;
-            for &i in &vis.ground {
+            for i in seen_ground {
                 ground[i as usize] = col;
             }
-            for &i in &vis.facade {
+            for i in seen_facade {
                 facade[i as usize] = col;
             }
         }
     }
     write_overlay(&overlay, &mut images, &mut meshes, &ground, &facade);
-    state.paint = false;
-    state.painted_mode = Some(mode);
-    state.painted_colors = colors;
+    state.mark_painted(mode, colors);
 }
 
 /// Height of the region outline above the ground, metres.
@@ -328,7 +227,7 @@ struct RegionGizmos;
 fn draw_region(
     mut gizmos: Gizmos<RegionGizmos>,
     scene: Res<Scene>,
-    ui: Res<UiState>,
+    editor: Res<Editor>,
     tokens: Res<Tokens>,
     area: Option<Res<Area>>,
 ) {
@@ -348,7 +247,7 @@ fn draw_region(
         out
     };
     if let Some(r) = &scene.region
-        && ui.region_draft.is_empty()
+        && editor.region_draft.is_empty()
     {
         let c = if r.is_active() {
             color
@@ -358,18 +257,18 @@ fn draw_region(
         let ring = r.points.iter().chain(r.points.first()).copied().collect();
         gizmos.linestrip(draped(ring), c);
     }
-    if ui.tool != Tool::Region {
+    if editor.tool != Tool::Region {
         return;
     }
-    let draft = &ui.region_draft;
-    let path = draft.iter().chain(&ui.region_hover).copied().collect();
+    let draft = &editor.region_draft;
+    let path = draft.iter().chain(&editor.region_hover).copied().collect();
     gizmos.linestrip(draped(path), color);
     let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for (i, p) in draft.iter().enumerate() {
         // Once clicking it would close the region, the first corner shows
         // the whole area a click closes it from.
         let radius = if i == 0 && draft.len() >= 3 {
-            ui.region_snap_m
+            editor.region_snap_m
         } else {
             0.4
         };
@@ -397,10 +296,10 @@ fn draw_outside_area(
     mut outside: Query<(&OutsideArea, &mut Visibility)>,
     camera: Query<&GlobalTransform, With<OrbitCamera>>,
     area: Option<Res<Area>>,
-    ui: Res<UiState>,
+    editor: Res<Editor>,
     tokens: Res<Tokens>,
 ) {
-    let on = ui.tool == Tool::Region;
+    let on = editor.tool == Tool::Region;
     for (_, mut vis) in &mut outside {
         vis.set_if_neq(if on {
             Visibility::Inherited
@@ -492,6 +391,246 @@ fn hatch(inner: Rect, outer: Rect, spacing: f32, mut line: impl FnMut(Vec2, Vec2
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::state::Models;
+    use observation_client_model::document::Document;
+    use observation_client_model::testing::{FakeClock, LoopbackJobChannel};
+    use observation_core::bundle::{OsmRoad, build_bundle};
+    use observation_core::camera::{CameraKind, Catalog, DoriLevel, Lighting};
+    use observation_core::coverage::{
+        CoverageCounts, CoverageStats, Region, RegionMask, StaticLayers,
+    };
+    use observation_core::geo::{BBox, LatLon};
+    use observation_core::scene::AreaRef;
+    use observation_core::terrain::Terrain;
+    use std::sync::Arc;
+
+    /// An app running [`update_coverage`] on a straight street with two
+    /// cameras looking along it, computing inline.
+    fn app() -> App {
+        app_on(backend::CoverageBackend::default())
+    }
+
+    /// The same, with jobs run by `backend`.
+    fn app_on(backend: backend::CoverageBackend) -> App {
+        let bbox = BBox::new(51.5, -0.001, 51.5009, 0.001).unwrap();
+        let road = OsmRoad {
+            osm_id: 1,
+            highway: "residential".into(),
+            name: None,
+            width_m: 8.0,
+            points: vec![LatLon::new(51.50045, -0.001), LatLon::new(51.50045, 0.001)],
+        };
+        let bundle = build_bundle(bbox, &[], &[road], &[], Terrain::default(), "", 0, None);
+        let layers = StaticLayers::new(&bundle, GROUND_CELL_M, FACADE_CELL_M);
+        let model = CameraModel {
+            id: "test".into(),
+            vendor: String::new(),
+            name: "Test".into(),
+            kind: CameraKind::Bullet,
+            hfov_deg: 90.0,
+            vfov_deg: 55.0,
+            resolution: [1920, 1080],
+            ir_range_m: Some(12.0),
+            source: None,
+            notes: None,
+        };
+        let mut models = Models::new(Catalog::default());
+        models.custom.push(model);
+        let camera = |id, x: f32, yaw_deg| CameraPlacement {
+            id,
+            label: String::new(),
+            model_id: "test".into(),
+            position: [x, 3.0, 4.0],
+            yaw_deg,
+            pitch_deg: -10.0,
+            roll_deg: 0.0,
+            color: None,
+            enabled: true,
+            group: None,
+        };
+        let mut scene = Scene::default();
+        scene.cameras = vec![camera(1, -60.0, 90.0), camera(2, 60.0, 270.0)];
+        let mut app = App::new();
+        app.insert_resource(scene)
+            .insert_resource(models)
+            .insert_resource(Area {
+                area: AreaRef::Demo,
+                bundle,
+                layers,
+            })
+            .init_resource::<CoverageState>()
+            .insert_non_send(CoverageBackend(backend))
+            .add_systems(Update, update_coverage);
+        app.update();
+        app
+    }
+
+    fn submitted(app: &App) -> usize {
+        app.world().non_send::<CoverageBackend>().submitted()
+    }
+
+    /// The figures for the current settings, computed from scratch.
+    fn direct(app: &App) -> CoverageStats {
+        let w = app.world();
+        let (scene, models, layers) = (
+            w.resource::<Scene>(),
+            w.resource::<Models>(),
+            &w.resource::<Area>().layers,
+        );
+        let mut counts = CoverageCounts::new(layers);
+        for c in &scene.cameras {
+            let m = models.get(&c.model_id).unwrap();
+            counts.add(&layers.visibility(
+                &cone_for(c, m, &scene.params),
+                scene.params.subject_height_m,
+            ));
+        }
+        let mask = scene
+            .region
+            .as_ref()
+            .filter(|r| r.is_active())
+            .map(|r| RegionMask::new(layers, r));
+        CoverageStats::compute_in(layers, &counts, mask.as_ref())
+    }
+
+    fn set(app: &mut App, f: impl FnOnce(&mut CoverageParams)) {
+        edit(app, |doc| f(&mut doc.params));
+    }
+
+    fn edit(app: &mut App, f: impl FnOnce(&mut Document)) {
+        f(&mut app.world_mut().resource_mut::<Scene>());
+        app.update();
+    }
+
+    #[test]
+    fn levels_and_lighting_switch_without_recomputing() {
+        let mut app = app();
+        assert_eq!(submitted(&app), 2);
+        let stats = |app: &App| app.world().resource::<CoverageState>().stats;
+        let first = stats(&app);
+        assert!(first.street_fraction() > 0.1, "{first:?}");
+        assert_eq!(first, direct(&app));
+
+        let mut ladder = Vec::new();
+        for lighting in [Lighting::Day, Lighting::Night] {
+            for level in [
+                DoriLevel::Identify,
+                DoriLevel::Observe,
+                DoriLevel::Recognise,
+                DoriLevel::Detect,
+            ] {
+                set(&mut app, |p| {
+                    p.dori = level;
+                    p.lighting = lighting;
+                });
+                assert_eq!(stats(&app), direct(&app), "{level:?} {lighting:?}");
+                // The ladder gives the same figures without selecting a level.
+                let rung = app
+                    .world()
+                    .resource::<CoverageState>()
+                    .ladder()
+                    .find(|(l, _)| *l == level)
+                    .map(|(_, s)| *s);
+                assert_eq!(rung, Some(stats(&app)));
+                ladder.push(stats(&app).street_fraction());
+            }
+        }
+        assert_eq!(submitted(&app), 2, "a level or lighting change recomputed");
+        // Detect by day sees the most, and coverage falls as the level rises.
+        assert!(ladder[3] > ladder[2] && ladder[2] > ladder[0], "{ladder:?}");
+
+        // A Custom density within the computed range needs no recompute
+        // either; a lower one, reaching farther, does (once per camera).
+        set(&mut app, |p| {
+            p.dori = DoriLevel::Custom;
+            p.lighting = Lighting::Day;
+            p.custom_ppm = 40.0;
+        });
+        assert_eq!(submitted(&app), 2);
+        assert_eq!(stats(&app), direct(&app));
+        assert_eq!(app.world().resource::<CoverageState>().ladder().count(), 5);
+        set(&mut app, |p| p.custom_ppm = 10.0);
+        assert_eq!(submitted(&app), 4);
+        assert_eq!(stats(&app), direct(&app));
+        // That computed down to 5 px/m, so lowering it on to 7 does not.
+        set(&mut app, |p| p.custom_ppm = 7.0);
+        assert_eq!(submitted(&app), 4);
+        assert_eq!(stats(&app), direct(&app));
+
+        // The subject height moves the sample points: every camera again.
+        set(&mut app, |p| p.subject_height_m = 1.6);
+        assert_eq!(submitted(&app), 6);
+        assert_eq!(stats(&app), direct(&app));
+
+        // Limiting the figures to a region, or lifting the limit, recounts
+        // every level without recomputing.
+        let whole = stats(&app);
+        app.world_mut().resource_mut::<Scene>().region = Some(Region {
+            points: vec![[-80.0, -50.0], [0.0, -50.0], [0.0, 50.0], [-80.0, 50.0]],
+            enabled: true,
+        });
+        app.update();
+        let west = stats(&app);
+        assert_eq!(west, direct(&app));
+        assert!(west.street_m2 < whole.street_m2 && west.street_seen_m2 > 0.0);
+        set(&mut app, |p| p.dori = DoriLevel::Identify);
+        assert_eq!(stats(&app), direct(&app));
+        app.world_mut()
+            .resource_mut::<Scene>()
+            .region
+            .as_mut()
+            .unwrap()
+            .enabled = false;
+        set(&mut app, |p| p.dori = DoriLevel::Custom);
+        assert_eq!(stats(&app), whole);
+        assert_eq!(submitted(&app), 6);
+    }
+
+    /// Through a worker (one that answers as `coverage-worker` does), the
+    /// figures and the jobs per edit are those computed inline, a frame later.
+    #[test]
+    fn the_worker_gives_the_inline_figures_with_the_same_jobs() {
+        let worker = backend::CoverageBackend::new(
+            Some(Box::new(LoopbackJobChannel::default())),
+            Arc::new(FakeClock::at(0.0)),
+        );
+        let (mut inline, mut app) = (app(), app_on(worker));
+        let stats = |app: &App| app.world().resource::<CoverageState>().stats;
+        assert_eq!(submitted(&app), 2, "sent as on the inline path");
+        assert_eq!(stats(&app).street_seen_m2, 0.0, "not back yet");
+        app.update();
+        assert_eq!(stats(&app), stats(&inline));
+        assert_eq!(stats(&app), direct(&app));
+
+        let edits: [fn(&mut Document); 6] = [
+            |d| d.params.dori = DoriLevel::Identify,
+            |d| {
+                d.params.dori = DoriLevel::Custom;
+                d.params.custom_ppm = 10.0;
+            },
+            |d| d.params.subject_height_m = 1.6,
+            // Move a camera, add one, remove one.
+            |d| d.cameras[0].position[0] += 10.0,
+            |d| {
+                // The fixture's cameras were not added through `add_camera`,
+                // so this one gets its id here.
+                let mut c = d.cameras[0].clone();
+                (c.id, c.position[0]) = (3, 0.0);
+                d.cameras.push(c);
+            },
+            |d| d.cameras.retain(|c| c.id != 2),
+        ];
+        for change in edits {
+            edit(&mut inline, change);
+            edit(&mut app, change);
+            app.update();
+            assert_eq!(submitted(&app), submitted(&inline));
+            assert_eq!(stats(&app), stats(&inline));
+            assert_eq!(stats(&app), direct(&app));
+        }
+        assert_eq!(submitted(&app), 8);
+    }
 
     fn lines(inner: Rect, outer: Rect, spacing: f32) -> Vec<(Vec2, Vec2)> {
         let mut out = Vec::new();

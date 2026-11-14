@@ -1,0 +1,44 @@
+{
+  "format": "observation-scene",
+  "version": 1,
+  "area": {
+    "kind": "osm",
+    "bbox": { "south": 47.7075, "west": -122.208, "north": 47.7098, "east": -122.204 }
+  },
+  "origin": { "lat": 47.70865, "lon": -122.206 },
+  "cameras": [
+    {
+      "id": 1,
+      "label": "Front door",
+      "model_id": "generic-doorbell-160",
+      "position": [12.0, 1.2, -3.0],
+      "yaw_deg": 180.0,
+      "pitch_deg": 0.0
+    },
+    {
+      "id": 2,
+      "label": "Driveway",
+      "model_id": "custom-drive-1",
+      "position": [-4.5, 2.6, 8.25],
+      "yaw_deg": 90.0,
+      "pitch_deg": -20.0,
+      "roll_deg": 1.5,
+      "enabled": false
+    }
+  ],
+  "custom_models": [
+    {
+      "id": "custom-drive-1",
+      "vendor": "",
+      "name": "Drive",
+      "kind": "Turret",
+      "hfov_deg": 102.0,
+      "vfov_deg": 54.0,
+      "resolution": [2560, 1440],
+      "ir_range_m": 30.0,
+      "source": null,
+      "notes": "Hand-entered"
+    }
+  ],
+  "params": { "dori": "Recognise", "lighting": "Night", "subject_height_m": 1.6 }
+}

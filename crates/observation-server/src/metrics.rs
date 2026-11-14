@@ -135,6 +135,40 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::timeout::TimeoutLayer;
 
+    /// The metric names and buckets dashboards and alerts depend on, as
+    /// literals.
+    #[test]
+    fn metric_names_are_these() {
+        assert_eq!(
+            [
+                HTTP_REQUESTS,
+                HTTP_DURATION,
+                BUNDLE_CACHE,
+                TILE_CACHE,
+                DEM_CACHE,
+                OVERPASS_FETCH,
+                REGION_QUERY,
+                CLIENT_LIMITED,
+            ],
+            [
+                "observation_http_requests_total",
+                "observation_http_request_duration_seconds",
+                "observation_bundle_cache_total",
+                "observation_tile_cache_total",
+                "observation_dem_cache_total",
+                "observation_overpass_fetches_total",
+                "observation_region_queries_total",
+                "observation_client_rate_limited_total",
+            ]
+        );
+        assert_eq!(
+            DURATION_BUCKETS,
+            [
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 80.0
+            ]
+        );
+    }
+
     #[test]
     fn unknown_methods_share_one_label() {
         assert_eq!(method_label(&Method::GET), "GET");

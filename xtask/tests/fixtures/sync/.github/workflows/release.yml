@@ -1,0 +1,7 @@
+name: Release
+jobs:
+  publish:
+    steps:
+      - uses: $/.github/actions/build-image
+      - name: Push
+        uses: docker/build-push-action@0000000000000000000000000000000000000000 # v7

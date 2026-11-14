@@ -1,0 +1,770 @@
+== get: the template
+exit 0
+-- stdout
+0.1.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: pre-release
+exit 0
+-- stdout
+0.2.0-dev.3
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: no [workspace.package]
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: ''
+-- cargo
+-- Cargo.toml
+== get: not semver
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0'
+-- cargo
+-- Cargo.toml
+== get: comment after the version
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0 # c'
+-- cargo
+-- Cargo.toml
+== get: quotes after the version
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0" "x'
+-- cargo
+-- Cargo.toml
+== get: two versions in the range
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0
+1.0.1'
+-- cargo
+-- Cargo.toml
+== get: version after the blank line
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: ''
+-- cargo
+-- Cargo.toml
+== get: second [workspace.package] block
+exit 0
+-- stdout
+1.2.3
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: no blank line, a later [package] version
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0
+2.0.0'
+-- cargo
+-- Cargo.toml
+== get: no blank line, only a later version
+exit 0
+-- stdout
+2.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: valid then empty
+exit 0
+-- stdout
+1.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: empty then valid
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '
+1.0.0'
+-- cargo
+-- Cargo.toml
+== get: CRLF
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0'
+-- cargo
+-- Cargo.toml
+== get: indented version
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: ''
+-- cargo
+-- Cargo.toml
+== get: no spaces around =
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: ''
+-- cargo
+-- Cargo.toml
+== get: section header with a comment
+exit 0
+-- stdout
+1.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: no trailing newline
+exit 0
+-- stdout
+1.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: pre-release with a hyphen
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0-a-b'
+-- cargo
+-- Cargo.toml
+== get: build metadata
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0.0+b'
+-- cargo
+-- Cargo.toml
+== get: leading v
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: 'v1.0.0'
+-- cargo
+-- Cargo.toml
+== get: Arabic-Indic digits
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '١.0.0'
+-- cargo
+-- Cargo.toml
+== get: GITHUB_ACTIONS set, failing
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml: '1.0'
+-- cargo
+-- Cargo.toml
+== get: GITHUB_ACTIONS set, passing
+exit 0
+-- stdout
+1.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: GITHUB_ACTIONS empty, failing
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '1.0'
+-- cargo
+-- Cargo.toml
+== get: stdin with a name
+exit 0
+-- stdout
+3.2.1
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: stdin with a name, failing
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: ''
+-- cargo
+-- Cargo.toml
+== get: stdin without a name, failing
+exit 1
+-- stdout
+-- stderr
+bad workspace version in -: ''
+-- cargo
+-- Cargo.toml
+== get: empty FILE
+exit 0
+-- stdout
+1.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: other file, empty NAME
+exit 1
+-- stdout
+-- stderr
+bad workspace version in other.toml: 'x'
+-- cargo
+-- Cargo.toml
+== get: other file and NAME
+exit 1
+-- stdout
+-- stderr
+bad workspace version in the other: 'x'
+-- cargo
+-- Cargo.toml
+== get: missing file
+exit 2
+-- stdout
+-- stderr
+sed: can't read nope.toml: No such file or directory
+-- cargo
+-- Cargo.toml
+== get: not UTF-8 outside the version
+exit 0
+-- stdout
+1.0.0
+-- stderr
+-- cargo
+-- Cargo.toml
+== get: NUL in the version
+exit 0
+-- stdout
+1.0.0
+-- stderr
+scripts/workspace-version.sh: line 11: warning: command substitution: ignored null byte in input
+-- cargo
+-- Cargo.toml
+== set: patch
+exit 0
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+cargo update -w --manifest-path fuzz/Cargo.toml
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+publish = false
+== set: pre-release
+exit 0
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+cargo update -w --manifest-path fuzz/Cargo.toml
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.2.0-dev.1"
+edition = "2024"
+publish = false
+== set: the same version
+exit 0
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+cargo update -w --manifest-path fuzz/Cargo.toml
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== set: value with a space
+exit 0
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+cargo update -w --manifest-path fuzz/Cargo.toml
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+publish = false
+== set: leading v
+exit 1
+-- stdout
+-- stderr
+not a semver version: v0.2.0
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== set: two parts
+exit 1
+-- stdout
+-- stderr
+not a semver version: 0.2
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== set: trailing newline
+exit 1
+-- stdout
+-- stderr
+not a semver version: 0.2.0
+
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== set: empty
+exit 1
+-- stdout
+-- stderr
+scripts/set-version.sh: line 8: 1: usage: scripts/set-version.sh VERSION
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== set: no argument
+exit 1
+-- stdout
+-- stderr
+scripts/set-version.sh: line 8: 1: usage: scripts/set-version.sh VERSION
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== set: no [workspace.package]
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: ''
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[package]
+name = "a"
+version = "0.1.0"
+== set: empty version value
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: ''
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = ""
+edition = "2024"
+
+[workspace.dependencies]
+== set: two versions in the range
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '0.2.0
+0.2.0'
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.2.0"
+version = "0.2.0"
+edition = "2024"
+
+[workspace.dependencies]
+== set: comment after the version
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '0.2.0 # c'
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.2.0" # c
+edition = "2024"
+
+[workspace.dependencies]
+== set: CRLF
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '0.2.0'
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+
+[workspace.dependencies]
+== set: no blank line, a later [package] version
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml: '0.2.0
+0.2.0'
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[workspace.package]
+version = "0.2.0"
+[package]
+version = "0.2.0"
+== set: GITHUB_ACTIONS set, failed read-back
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml: '0.2.0 # c'
+could not set the version in Cargo.toml [workspace.package]
+-- cargo
+-- Cargo.toml
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.2.0" # c
+edition = "2024"
+
+[workspace.dependencies]
+== set: missing Cargo.toml
+exit 2
+-- stdout
+-- stderr
+sed: can't read Cargo.toml: No such file or directory
+-- cargo
+-- Cargo.toml
+== set: first cargo update fails
+exit 101
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+publish = false
+== set: fuzz cargo update fails
+exit 101
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+cargo update -w --manifest-path fuzz/Cargo.toml
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+publish = false
+== set: not UTF-8 outside the version
+exit 0
+-- stdout
+-- stderr
+-- cargo
+cargo update -w
+cargo update -w --manifest-path fuzz/Cargo.toml
+-- Cargo.toml
+# \xff
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+publish = false
+== get: FILE --help after --
+exit 1
+-- stdout
+-- stderr
+bad workspace version in --help: 'Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...
+
+  -n, --quiet, --silent
+                 suppress automatic printing of pattern space
+      --debug
+                 annotate program execution
+  -e script, --expression=script
+                 add the script to the commands to be executed
+  -f script-file, --file=script-file
+                 add the contents of script-file to the commands to be executed
+  --follow-symlinks
+                 follow symlinks when processing in place
+  -i[SUFFIX], --in-place[=SUFFIX]
+                 edit files in place (makes backup if SUFFIX supplied)
+  -l N, --line-length=N
+                 specify the desired line-wrap length for the `l' command
+  --posix
+                 disable all GNU extensions.
+  -E, -r, --regexp-extended
+                 use extended regular expressions in the script
+                 (for portability use POSIX -E).
+  -s, --separate
+                 consider files as separate rather than as a single,
+                 continuous long stream.
+      --sandbox
+                 operate in sandbox mode (disable e/r/w commands).
+  -u, --unbuffered
+                 load minimal amounts of data from the input files and flush
+                 the output buffers more often
+  -z, --null-data
+                 separate lines by NUL characters
+      --help     display this help and exit
+      --version  output version information and exit
+
+If no -e, --expression, -f, or --file option is given, then the first
+non-option argument is taken as the sed script to interpret.  All
+remaining arguments are names of input files; if no input files are
+specified, then the standard input is read.
+
+GNU sed home page: <https://www.gnu.org/software/sed/>.
+General help using GNU software: <https://www.gnu.org/gethelp/>.
+E-mail bug reports to: <bug-sed@gnu.org>.'
+-- cargo
+-- Cargo.toml
+== set: VERSION --help after --
+exit 1
+-- stdout
+-- stderr
+not a semver version: --help
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== get: FILE -h after --
+exit 1
+-- stdout
+-- stderr
+sed: invalid option -- 'h'
+Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...
+
+  -n, --quiet, --silent
+                 suppress automatic printing of pattern space
+      --debug
+                 annotate program execution
+  -e script, --expression=script
+                 add the script to the commands to be executed
+  -f script-file, --file=script-file
+                 add the contents of script-file to the commands to be executed
+  --follow-symlinks
+                 follow symlinks when processing in place
+  -i[SUFFIX], --in-place[=SUFFIX]
+                 edit files in place (makes backup if SUFFIX supplied)
+  -l N, --line-length=N
+                 specify the desired line-wrap length for the `l' command
+  --posix
+                 disable all GNU extensions.
+  -E, -r, --regexp-extended
+                 use extended regular expressions in the script
+                 (for portability use POSIX -E).
+  -s, --separate
+                 consider files as separate rather than as a single,
+                 continuous long stream.
+      --sandbox
+                 operate in sandbox mode (disable e/r/w commands).
+  -u, --unbuffered
+                 load minimal amounts of data from the input files and flush
+                 the output buffers more often
+  -z, --null-data
+                 separate lines by NUL characters
+      --help     display this help and exit
+      --version  output version information and exit
+
+If no -e, --expression, -f, or --file option is given, then the first
+non-option argument is taken as the sed script to interpret.  All
+remaining arguments are names of input files; if no input files are
+specified, then the standard input is read.
+
+GNU sed home page: <https://www.gnu.org/software/sed/>.
+General help using GNU software: <https://www.gnu.org/gethelp/>.
+-- cargo
+-- Cargo.toml
+== set: VERSION -h after --
+exit 1
+-- stdout
+-- stderr
+not a semver version: -h
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== get: FILE -- after --
+exit 1
+-- stdout
+-- stderr
+bad workspace version in --: ''
+-- cargo
+-- Cargo.toml
+== set: VERSION -- after --
+exit 1
+-- stdout
+-- stderr
+not a semver version: --
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+== get: FILE -V after --
+exit 1
+-- stdout
+-- stderr
+sed: option requires an argument -- 'V'
+Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...
+
+  -n, --quiet, --silent
+                 suppress automatic printing of pattern space
+      --debug
+                 annotate program execution
+  -e script, --expression=script
+                 add the script to the commands to be executed
+  -f script-file, --file=script-file
+                 add the contents of script-file to the commands to be executed
+  --follow-symlinks
+                 follow symlinks when processing in place
+  -i[SUFFIX], --in-place[=SUFFIX]
+                 edit files in place (makes backup if SUFFIX supplied)
+  -l N, --line-length=N
+                 specify the desired line-wrap length for the `l' command
+  --posix
+                 disable all GNU extensions.
+  -E, -r, --regexp-extended
+                 use extended regular expressions in the script
+                 (for portability use POSIX -E).
+  -s, --separate
+                 consider files as separate rather than as a single,
+                 continuous long stream.
+      --sandbox
+                 operate in sandbox mode (disable e/r/w commands).
+  -u, --unbuffered
+                 load minimal amounts of data from the input files and flush
+                 the output buffers more often
+  -z, --null-data
+                 separate lines by NUL characters
+      --help     display this help and exit
+      --version  output version information and exit
+
+If no -e, --expression, -f, or --file option is given, then the first
+non-option argument is taken as the sed script to interpret.  All
+remaining arguments are names of input files; if no input files are
+specified, then the standard input is read.
+
+GNU sed home page: <https://www.gnu.org/software/sed/>.
+General help using GNU software: <https://www.gnu.org/gethelp/>.
+-- cargo
+-- Cargo.toml
+== set: VERSION -V after --
+exit 1
+-- stdout
+-- stderr
+not a semver version: -V
+-- cargo
+-- Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false

@@ -2,8 +2,14 @@
 # `mise run typos` locally (part of `mise run check`). Words below are correct here.
 
 [files]
-# Written by cargo-vet, and full of crate names (flate2, writeable).
-extend-exclude = ["supply-chain/config.toml", "supply-chain/imports.lock"]
+# Written by cargo-vet, and full of crate names (flate2, writeable); golden files hold whatever
+# output a test records.
+extend-exclude = [
+    "supply-chain/config.toml",
+    "supply-chain/imports.lock",
+    "**/tests/golden/**",
+    "xtask/tests/fixtures/**",
+]
 
 [default.extend-identifiers]
 # Fields of view, plural.

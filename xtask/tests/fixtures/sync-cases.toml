@@ -1,0 +1,109 @@
+# Mutations of the fixture tree in sync/, one case each, for `cargo xtask sync`'s golden test
+# (sync.golden holds what scripts/check-toolchain-sync.sh printed for each). An edit replaces
+# the first occurrence of `find` in `file` with `replace`; without `find` it appends `replace`.
+
+[[case]]
+name = "clean"
+
+[[case]]
+name = "rust channel unreadable"
+edit = [{ file = "rust-toolchain.toml", find = 'channel = "1.99.1"', replace = "channel = 1.99.1" }]
+
+[[case]]
+name = "setup-mise version unreadable"
+edit = [{ file = ".github/actions/setup-mise/action.yml", find = "version: 2026.10.25", replace = 'version: "2026.10.25"' }]
+
+[[case]]
+name = "mise.lock rust differs"
+edit = [{ file = "mise.lock", find = 'version = "1.99.1"', replace = 'version = "1.98.0"' }]
+
+[[case]]
+name = "mise.lock has no rust"
+edit = [{ file = "mise.lock", find = "[[tools.rust]]", replace = "[[tools.rustc]]" }]
+
+[[case]]
+name = "rust-version in manifests"
+edit = [
+    { file = "crates/lib/Cargo.toml", replace = "rust-version = \"1.99\"\n" },
+    { file = "fuzz/Cargo.toml", replace = "rust-version = \"1.99\"\n" },
+]
+
+[[case]]
+name = "Dockerfile mise differs"
+edit = [{ file = "Dockerfile", find = "mise:2026.10.25", replace = "mise:2026.10.24" }]
+
+[[case]]
+name = "min_version differs"
+edit = [{ file = "mise.toml", find = 'soft = "2026.10.25"', replace = 'soft = "2026.11.1"' }]
+
+[[case]]
+name = "mise-action used directly"
+edit = [{ file = ".github/workflows/ci.yml", replace = "      - uses: jdx/mise-action@1234 # v5\n" }]
+
+[[case]]
+name = "build-push-action used directly"
+edit = [
+    { file = ".github/workflows/ci.yml", replace = "      - uses:   docker/build-push-action@1234\n" },
+    { file = ".github/actions/setup-mise/action.yml", replace = "    - uses: docker/build-push-action@1234\n" },
+]
+
+[[case]]
+name = "release.yml builds twice"
+edit = [{ file = ".github/workflows/release.yml", replace = "      - uses: docker/build-push-action@1234\n      - uses: docker/build-push-action@5678\n" }]
+
+[[case]]
+name = "task pins differ"
+edit = [{ file = "mise.toml", find = "tools.fnox = \"1.46.0\"\ntools.cosign = \"3.1.4\"", replace = "tools.fnox = \"1.46.0\"\ntools.cosign = \"3.1.5\"" }]
+
+[[case]]
+name = "task pin differs from tools"
+edit = [{ file = "mise.ci.toml", find = 'cosign = "3.1.4"', replace = 'cosign = "3.1.3"' }]
+
+[[case]]
+name = "docs repeat pins"
+edit = [
+    { file = "README.md", replace = "Install trunk 0.22.1, `cargo nextest` 0.9 and mise v2026.10.25; the image is rust:1.99.1-slim.\n" },
+    { file = "docs/design.md", replace = "Uses Overpass API 0.7.62 and UV@0.13.\n" },
+]
+
+[[case]]
+name = "CHANGELOG may repeat pins"
+edit = [{ file = "CHANGELOG.md", replace = "- Bumped trunk 0.22.1 and rust:1.99.1.\n" }]
+
+[[case]]
+name = "audit.toml ignores differ"
+edit = [{ file = ".cargo/audit.toml", find = ', "GHSA-abcd-efgh-ijkl"', replace = "" }]
+
+[[case]]
+name = "osv-scanner ignores differ"
+edit = [{ file = "osv-scanner.toml", replace = "\n[[IgnoredVulns]]\nid = \"RUSTSEC-2026-0002\"\n" }]
+
+[[case]]
+name = "several at once"
+edit = [
+    { file = "mise.lock", find = 'version = "1.99.1"', replace = 'version = "1.98.0"' },
+    { file = "Dockerfile", find = "mise:2026.10.25", replace = "mise:2026.10.24" },
+    { file = "mise.ci.toml", find = 'cosign = "3.1.4"', replace = 'cosign = "3.1.3"' },
+    { file = "README.md", replace = "trunk 0.22\n" },
+    { file = ".cargo/audit.toml", find = ', "GHSA-abcd-efgh-ijkl"', replace = "" },
+]
+
+# Each glob lists whole paths in the shell's order: crates/app-cli/ before crates/app/, and
+# .github/actions/setup-mise-cache/ before .github/actions/setup-mise/ ('-' before '/').
+[[case]]
+name = "rust-version in prefix-named crates"
+edit = [
+    { file = "crates/app/Cargo.toml", replace = "rust-version.workspace = true\n" },
+    { file = "crates/app-cli/Cargo.toml", replace = "rust-version.workspace = true\n" },
+]
+
+[[case]]
+name = "build-push-action in prefix-named actions"
+edit = [
+    { file = ".github/actions/setup-mise/action.yml", replace = "    - uses: docker/build-push-action@1234\n" },
+    { file = ".github/actions/setup-mise-cache/action.yml", replace = "    - uses: docker/build-push-action@1234\n" },
+]
+
+[[case]]
+name = "docs line ending in CR"
+edit = [{ file = "README.md", replace = "Base image rust:1.99.1\r\n" }]

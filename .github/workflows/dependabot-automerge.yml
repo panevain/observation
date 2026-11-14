@@ -1,14 +1,20 @@
 name: Dependabot auto-merge
 
 # Enables auto-merge (squash) on Dependabot pull requests that only bring semver patch updates,
-# base image digest refreshes or the fuzz targets' nightly (scripts/dependabot-automerge.py);
+# base image digest refreshes or the fuzz targets' nightly (`cargo xtask automerge list`);
 # they merge once the required checks pass, and the weekly Prepare release ships them. Minor and
-# major updates still need a person. To hold one, label it `hold`: it is skipped, and auto-merge
-# is switched off if it was already on. The Pins PR's auto-merge is pins.yml's to set, but a
-# `hold` on it is honoured here too.
+# major updates still need a person, and so does any update that changes xtask/ (the checker's
+# own workspace: auto-merge is switched off if it is on). To hold one, label it `hold`: it is
+# skipped, and auto-merge is switched off if it was already on. The Pins PR's auto-merge is
+# pins.yml's to set, but a `hold` on it is honoured here too.
 # A sweep on a schedule rather than a pull_request workflow: the bot app enables auto-merge,
 # so the merge into develop starts its push workflows (one enabled with GITHUB_TOKEN would
 # not), and the app's key is only available to runs on develop.
+# The checker that decides is built from the commit this run is on (develop on schedule; a
+# dispatched branch reaches only the dry part, since `bot` admits develop, main and v* only),
+# never from a pull request: no pull request's code is checked out. It is built uncached in the
+# `find` job, whose token can only read, and the bot job receives only its JSON. The bot job
+# checks each pull request in that JSON again with gh and jq before turning auto-merge on.
 on:
   schedule:
     # Every 4 hours; the 06:00 run follows the 05:00-05:30 update window (Dependabot, Pins).
@@ -26,20 +32,32 @@ concurrency:
 
 permissions: {}
 
+# mise.ci.toml's tools, environment and tasks (setup-rust's ci:toolchain).
+env:
+  MISE_ENV: ci
+
 jobs:
   find:
     name: find patch updates
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # An uncached build of xtask, then the gh calls.
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
     outputs:
       prs: ${{ steps.list.outputs.prs }}
+      has_work: ${{ steps.list.outputs.has_work }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          cache: "false"
+      - uses: $/.github/actions/setup-rust
+      - name: Build the checker
+        run: cargo build --locked --quiet --manifest-path xtask/Cargo.toml --target-dir "${RUNNER_TEMP}/xtask-target"
       - name: Eligible pull requests
         id: list
         env:
@@ -48,17 +66,19 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          args=(--repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")
+          args=(--github-repo "${REPO}" --summary "${GITHUB_STEP_SUMMARY}")
           if [ "${DRY_RUN}" = true ]; then args+=(--dry-run); fi
-          prs="$(python3 scripts/dependabot-automerge.py list "${args[@]}")"
+          prs="$("${RUNNER_TEMP}/xtask-target/debug/xtask" automerge list "${args[@]}")"
           echo "prs=${prs}" >> "${GITHUB_OUTPUT}"
+          has_work="$(jq -c '(.merge | length) + (.hold | length) > 0' <<<"${prs}")"
+          echo "has_work=${has_work}" >> "${GITHUB_OUTPUT}"
 
   # Only when there is something to do, so the sweep does not deploy to `bot` each time, and
   # never on a dry run.
   merge:
     name: set auto-merge
     needs: find
-    if: needs.find.outputs.prs != '' && needs.find.outputs.prs != '{"merge":[],"hold":[]}' && !inputs.dry_run
+    if: needs.find.outputs.has_work == 'true' && !inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: bot
@@ -81,14 +101,43 @@ jobs:
         run: |
           set -euo pipefail
           jq -r '.hold[].number' <<<"${PRS}" | while read -r n; do
-            if gh pr merge "${n}" --repo "${REPO}" --disable-auto; then
+            # find builds code, so the number is checked as a value before gh sees it.
+            if ! [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::warning::not a pull request number: '${n}'"
+            elif gh pr merge "${n}" --repo "${REPO}" --disable-auto; then
               echo "- #${n}: on hold, auto-merge disabled" >> "${GITHUB_STEP_SUMMARY}"
             else
               echo "::warning::could not disable auto-merge on #${n}"
             fi
           done
+          # Each pull request is checked again here, from GitHub alone (no code from any tree),
+          # right before auto-merge goes on: the number `find` gave, opened by Dependabot, into
+          # develop, from this repository (not a fork), not a draft, not labelled hold, and still
+          # at the commit `find` judged. Only a single "ok" from jq merges: anything else,
+          # including an empty or unreadable answer, is skipped.
+          recheck='if .number != $n then "not the pull request that was checked"
+            elif .author.login != "app/dependabot" or .author.is_bot != true then "not opened by Dependabot"
+            elif .baseRefName != "develop" then "not into develop"
+            elif .isCrossRepository != false then "from another repository"
+            elif .isDraft != false then "a draft"
+            elif (.labels | map(.name) | index("hold")) != null then "labelled hold"
+            elif .headRefOid != $sha then "it has changed since it was checked"
+            else "ok" end'
           jq -r '.merge[] | "\(.number) \(.sha)"' <<<"${PRS}" | while read -r n sha; do
-            # --match-head-commit: nothing pushed since the check above is merged unchecked.
+            why="could not check it again"
+            if ! [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+              why="not a pull request number"
+            elif view="$(gh pr view "${n}" --repo "${REPO}" --json number,author,baseRefName,isCrossRepository,isDraft,labels,headRefOid </dev/null)"; then
+              why="$(jq -e -r --argjson n "${n}" --arg sha "${sha}" "${recheck}" <<<"${view}")" || why="could not check it again"
+              # One answer, one line: several JSON documents are not a check.
+              [[ -n "${why}" && "${why}" != *$'\n'* ]] || why="could not check it again"
+            fi
+            if [ "${why}" != ok ]; then
+              echo "- #${n}: skipped, ${why}" >> "${GITHUB_STEP_SUMMARY}"
+              echo "::warning::not enabling auto-merge on #${n}: ${why}"
+              continue
+            fi
+            # --match-head-commit: nothing pushed since the checks above is merged unchecked.
             if gh pr merge "${n}" --repo "${REPO}" --auto --squash --match-head-commit "${sha}"; then
               echo "- #${n}: auto-merge enabled" >> "${GITHUB_STEP_SUMMARY}"
             else

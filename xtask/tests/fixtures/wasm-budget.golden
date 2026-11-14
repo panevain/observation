@@ -1,0 +1,355 @@
+== all within budget
+-- args
+
+-- modules
+observation-client-0123456789abcdef_bg.wasm 300000 131883
+coverage-worker_bg.wasm 48722 21765
+-- budget
+["observation-client"]
+raw = 301000
+gzip = 132883
+
+["coverage-worker"]
+raw = 63722
+gzip = 30765
+
+-- exit
+0
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `coverage-worker` | 0.05 MiB | 0.06 MiB | 0.02 MiB | 0.03 MiB | ok |
+| `observation-client` | 0.29 MiB | 0.29 MiB | 0.13 MiB | 0.13 MiB | ok |
+
+-- stderr
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `coverage-worker` | 0.05 MiB | 0.06 MiB | 0.02 MiB | 0.03 MiB | ok |
+| `observation-client` | 0.29 MiB | 0.29 MiB | 0.13 MiB | 0.13 MiB | ok |
+== sizes exactly at their limits
+-- args
+
+-- modules
+app-deadbeef_bg.wasm 70000 30261
+-- budget
+["app"]
+raw = 70000
+gzip = 30261
+
+-- exit
+0
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `app` | 0.07 MiB | 0.07 MiB | 0.03 MiB | 0.03 MiB | ok |
+
+-- stderr
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `app` | 0.07 MiB | 0.07 MiB | 0.03 MiB | 0.03 MiB | ok |
+== raw one byte over
+-- args
+
+-- modules
+app-deadbeef_bg.wasm 70000 30261
+-- budget
+["app"]
+raw = 69999
+gzip = 30261
+
+-- exit
+1
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `app` | 0.07 MiB | 0.07 MiB | 0.03 MiB | 0.03 MiB | OVER |
+
+- app: raw 70,000 B (0.07 MiB) is over its budget of 69,999 B (0.07 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+
+-- stderr
+app: raw 70,000 B (0.07 MiB) is over its budget of 69,999 B (0.07 MiB)
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `app` | 0.07 MiB | 0.07 MiB | 0.03 MiB | 0.03 MiB | OVER |
+
+- app: raw 70,000 B (0.07 MiB) is over its budget of 69,999 B (0.07 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+== gzip one byte over
+-- args
+
+-- modules
+app-deadbeef_bg.wasm 70000 30261
+-- budget
+["app"]
+raw = 70000
+gzip = 30260
+
+-- exit
+1
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `app` | 0.07 MiB | 0.07 MiB | 0.03 MiB | 0.03 MiB | OVER |
+
+- app: gzip 30,261 B (0.03 MiB) is over its budget of 30,260 B (0.03 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+
+-- stderr
+app: gzip 30,261 B (0.03 MiB) is over its budget of 30,260 B (0.03 MiB)
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `app` | 0.07 MiB | 0.07 MiB | 0.03 MiB | 0.03 MiB | OVER |
+
+- app: gzip 30,261 B (0.03 MiB) is over its budget of 30,260 B (0.03 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+== both over
+-- args
+
+-- modules
+big_bg.wasm 2500000 1098589
+ok_bg.wasm 1000 492
+-- budget
+["big"]
+raw = 2100000
+gzip = 1086244
+
+["ok"]
+raw = 1000
+gzip = 492
+
+-- exit
+1
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `big` | 2.38 MiB | 2.00 MiB | 1.05 MiB | 1.04 MiB | OVER |
+| `ok` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+- big: raw 2,500,000 B (2.38 MiB) is over its budget of 2,100,000 B (2.00 MiB)
+- big: gzip 1,098,589 B (1.05 MiB) is over its budget of 1,086,244 B (1.04 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+
+-- stderr
+big: raw 2,500,000 B (2.38 MiB) is over its budget of 2,100,000 B (2.00 MiB)
+big: gzip 1,098,589 B (1.05 MiB) is over its budget of 1,086,244 B (1.04 MiB)
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `big` | 2.38 MiB | 2.00 MiB | 1.05 MiB | 1.04 MiB | OVER |
+| `ok` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+- big: raw 2,500,000 B (2.38 MiB) is over its budget of 2,100,000 B (2.00 MiB)
+- big: gzip 1,098,589 B (1.05 MiB) is over its budget of 1,086,244 B (1.04 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+== module without a budget
+-- args
+
+-- modules
+new-module-0123abcd_bg.wasm 5000 2309
+ok_bg.wasm 1000 492
+-- budget
+["ok"]
+raw = 1001
+gzip = 493
+
+-- exit
+1
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `new-module` | 0.00 MiB | - | 0.00 MiB | - | no budget |
+| `ok` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+- new-module-0123abcd_bg.wasm: no budget for `new-module` in .config/wasm-size-budget.toml
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+
+-- stderr
+new-module-0123abcd_bg.wasm: no budget for `new-module` in .config/wasm-size-budget.toml
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `new-module` | 0.00 MiB | - | 0.00 MiB | - | no budget |
+| `ok` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+- new-module-0123abcd_bg.wasm: no budget for `new-module` in .config/wasm-size-budget.toml
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+== file names
+-- args
+
+-- modules
+a-1234567_bg.wasm 100 66
+b-ABCDEF12_bg.wasm 100 85
+plain.wasm 100 86
+c-0123456789abcdef0_bg.wasm 100 96
+.hidden.wasm 100 114
+d.e_bg.wasm 100 87
+-- budget
+["a-1234567"]
+raw = 100
+gzip = 66
+
+["b-ABCDEF12"]
+raw = 100
+gzip = 85
+
+["plain"]
+raw = 100
+gzip = 86
+
+["c-0123456789abcdef0"]
+raw = 100
+gzip = 96
+
+[".hidden"]
+raw = 100
+gzip = 114
+
+["d.e"]
+raw = 100
+gzip = 87
+
+-- exit
+0
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `.hidden` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `a-1234567` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `b-ABCDEF12` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `c-0123456789abcdef0` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `d.e` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `plain` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+-- stderr
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `.hidden` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `a-1234567` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `b-ABCDEF12` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `c-0123456789abcdef0` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `d.e` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+| `plain` | 0.00 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+== MiB rounding ties
+-- args
+
+-- modules
+t1_bg.wasm 131072 58394
+t2_bg.wasm 393216 173761
+t3_bg.wasm 655360 290483
+-- budget
+["t1"]
+raw = 131072
+gzip = 58394
+
+["t2"]
+raw = 393216
+gzip = 173761
+
+["t3"]
+raw = 655360
+gzip = 290483
+
+-- exit
+0
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `t1` | 0.12 MiB | 0.12 MiB | 0.06 MiB | 0.06 MiB | ok |
+| `t2` | 0.38 MiB | 0.38 MiB | 0.17 MiB | 0.17 MiB | ok |
+| `t3` | 0.62 MiB | 0.62 MiB | 0.28 MiB | 0.28 MiB | ok |
+
+-- stderr
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `t1` | 0.12 MiB | 0.12 MiB | 0.06 MiB | 0.06 MiB | ok |
+| `t2` | 0.38 MiB | 0.38 MiB | 0.17 MiB | 0.17 MiB | ok |
+| `t3` | 0.62 MiB | 0.62 MiB | 0.28 MiB | 0.28 MiB | ok |
+== with brotli
+-- args
+--brotli
+-- modules
+observation-client-0123456789abcdef_bg.wasm 300000 131883 100000
+worker_bg.wasm 9999 4477 3333
+-- budget
+["observation-client"]
+raw = 300000
+gzip = 131882
+
+["worker"]
+raw = 10004
+gzip = 4482
+
+-- exit
+1
+-- stdout
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | brotli -q 11 | |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `observation-client` | 0.29 MiB | 0.29 MiB | 0.13 MiB | 0.13 MiB | 0.10 MiB | OVER |
+| `worker` | 0.01 MiB | 0.01 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+- observation-client: gzip 131,883 B (0.13 MiB) is over its budget of 131,882 B (0.13 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.
+
+-- stderr
+observation-client: gzip 131,883 B (0.13 MiB) is over its budget of 131,882 B (0.13 MiB)
+-- summary
+### Wasm size budget
+
+| module | raw | budget | gzip -9 | budget | brotli -q 11 | |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `observation-client` | 0.29 MiB | 0.29 MiB | 0.13 MiB | 0.13 MiB | 0.10 MiB | OVER |
+| `worker` | 0.01 MiB | 0.01 MiB | 0.00 MiB | 0.00 MiB | 0.00 MiB | ok |
+
+- observation-client: gzip 131,883 B (0.13 MiB) is over its budget of 131,882 B (0.13 MiB)
+
+Shrink the module, or raise its limit in `.config/wasm-size-budget.toml` with the reason in the pull request.

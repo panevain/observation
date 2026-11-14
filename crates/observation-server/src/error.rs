@@ -83,3 +83,75 @@ impl IntoResponse for ApiError {
         resp
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each error's status, `retry-after` and body, byte for byte.
+    #[tokio::test]
+    async fn bodies_are_these_bytes() {
+        let cases = [
+            (
+                ApiError::BadRequest("bad box".into()),
+                400,
+                r#"{"error":"bad box"}"#,
+                None,
+            ),
+            (ApiError::NotFound("gone"), 404, r#"{"error":"gone"}"#, None),
+            (ApiError::Unauthorized("no"), 401, r#"{"error":"no"}"#, None),
+            (ApiError::Forbidden("off"), 403, r#"{"error":"off"}"#, None),
+            (
+                ApiError::Conflict("busy".into()),
+                409,
+                r#"{"error":"busy"}"#,
+                None,
+            ),
+            (
+                ApiError::Upstream("down \"x\"".into()),
+                502,
+                r#"{"error":"down \"x\""}"#,
+                None,
+            ),
+            (
+                ApiError::UpstreamTimeout("slow".into()),
+                504,
+                r#"{"error":"slow"}"#,
+                None,
+            ),
+            (
+                ApiError::RateLimited {
+                    retry_after_secs: 30,
+                },
+                503,
+                r#"{"error":"the map provider is busy; try again in about 30 s"}"#,
+                Some("30"),
+            ),
+            (
+                ApiError::TooManyRequests {
+                    retry_after_secs: 7,
+                },
+                429,
+                r#"{"error":"too many new areas or map tiles from your address; try again in about 7 s"}"#,
+                Some("7"),
+            ),
+            (
+                ApiError::Internal("disk on fire".into()),
+                500,
+                r#"{"error":"the server hit an unexpected problem; please try again"}"#,
+                None,
+            ),
+        ];
+        for (error, status, body, retry_after) in cases {
+            let resp = error.into_response();
+            assert_eq!(resp.status().as_u16(), status, "{body}");
+            assert_eq!(resp.headers()[header::CONTENT_TYPE], "application/json");
+            let retry = resp.headers().get(header::RETRY_AFTER);
+            assert_eq!(retry.map(|v| v.to_str().unwrap()), retry_after, "{body}");
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            assert_eq!(std::str::from_utf8(&bytes).unwrap(), body);
+        }
+    }
+}

@@ -1,0 +1,39 @@
+{
+  "format": "observation-scene",
+  "version": 2,
+  "area": { "kind": "demo" },
+  "origin": { "lat": 47.70865, "lon": -122.206 },
+  "cameras": [
+    {
+      "id": 7,
+      "label": "Side gate",
+      "model_id": "generic-doorbell-160",
+      "position": [-14.0, 3.1, 6.5],
+      "yaw_deg": 270.0,
+      "pitch_deg": -5.0,
+      "roll_deg": 0.0,
+      "enabled": true,
+      "group": "Back of house"
+    }
+  ],
+  "custom_models": [],
+  "params": {
+    "dori": "Detect",
+    "lighting": "Day",
+    "subject_height_m": 1.0,
+    "custom_ppm": 250.0
+  },
+  "region": {
+    "points": [[0.0, 0.0], [1e9, 0.0], [0.0, 10.0]],
+    "enabled": true
+  },
+  "provenance": {
+    "osm_data_as_of": "2026-10-31T00:00:00Z",
+    "bundle_built_at": "2026-11-01T08:15:30Z",
+    "osm_fingerprint": "F95BDBFE9344F0C5",
+    "app_version": "0.1.0-this-label-is-far-longer-than-the-sixty-four-characters-a-file-may-keep",
+    "catalog_version": "0123456789abcdef",
+    "caveats_version": 1,
+    "unknown_extra": [1, 2, 3]
+  }
+}

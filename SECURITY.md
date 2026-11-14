@@ -88,14 +88,15 @@ Every change is checked automatically (see `.github/workflows/`):
   ISRG, Zcash), or is an exemption recorded when vetting started. A new
   version nobody has reviewed fails the check until someone does. The client's
   own Bevy tree is not vetted yet (see `supply-chain/README.md`).
-- **cargo-shear** reports dependencies that no code uses, in both workspaces, so
+- **cargo-shear** reports dependencies that no code uses, in every workspace, so
   nothing sits in the tree (and the audit surface) for no reason.
-- **cargo-audit**: `Cargo.lock` and the fuzz
-  workspace's `fuzz/Cargo.lock`, on every change and daily; yanked crates fail too.
+- **cargo-audit**: `Cargo.lock` and the fuzz and tooling
+  workspaces' `fuzz/Cargo.lock` and `xtask/Cargo.lock`, on every change and daily;
+  yanked crates fail too.
   Accepted advisories need a reason in `deny.toml` and are mirrored in
   `.cargo/audit.toml` and `osv-scanner.toml`.
 - **Crate cooldown** (`.config/cargo-cooldown.toml`): every crate version a pull
-  request adds to either lockfile, including indirect dependencies, must have
+  request adds to any of the lockfiles, including indirect dependencies, must have
   been published at least 7 days earlier, as Dependabot's cooldown requires
   only of the crate it bumps. Fixes for RustSec vulnerabilities are exempt;
   other exemptions need a reason.
@@ -118,9 +119,13 @@ Every change is checked automatically (see `.github/workflows/`):
   security updates), and a weekly workflow for the pins Dependabot does not
   cover. All GitHub Actions are pinned to full commit SHAs, and the tools the
   checks run (cargo-audit, cargo-deny, Trivy, zizmor, cosign and the rest) are
-  pinned in `mise.ci.toml` and installed only from release assets that match the
-  checksums in `mise.ci.lock`, with the publisher's attestations or signatures
-  verified where they exist.
+  pinned in `mise.toml` or `mise.ci.toml`. A tool installed from the network is
+  checked against the release asset's SHA-256 recorded in `mise.lock` or
+  `mise.ci.lock` (cargo-fuzz, built from crates.io with `cargo install
+  --locked`, has no checksum there); a tool restored from CI's cache of
+  develop's installs is not checked again (the release jobs use no cache). The
+  publisher's attestations or signatures, where they exist, are verified when
+  that lock entry is written (`mise run lock`).
 - **Release provenance**: both images pushed to GHCR (`observation` and
   `observation-regions`) carry SLSA build provenance and an SBOM, are signed
   keylessly with cosign, and are attested with GitHub artifact attestations. A

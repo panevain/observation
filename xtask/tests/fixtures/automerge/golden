@@ -1,0 +1,1178 @@
+== nothing open
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+-- summary
+### Open Dependabot and Pins pull requests
+
+None.
+== nothing open, no summary
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+-- summary
+== nothing open, empty summary path
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+-- summary
+== patch update
+exit 0
+-- stdout
+{"merge":[{"number":1,"sha":"0000000000000000000000000000000000000001"}],"hold":[]}
+-- stderr
+#1 Bump serde from 1.0.1 to 1.0.2 (#1): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #1 | Bump serde from 1.0.1 to 1.0.2 (#1) | enable auto-merge |
+== patch update, dry run
+exit 0
+-- stdout
+{"merge":[{"number":1,"sha":"0000000000000000000000000000000000000001"}],"hold":[]}
+-- stderr
+#1 Bump serde from 1.0.1 to 1.0.2 (#1): would enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests (dry run: nothing changed)
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #1 | Bump serde from 1.0.1 to 1.0.2 (#1) | would enable auto-merge |
+== hold with auto-merge
+exit 0
+-- stdout
+{"merge":[],"hold":[{"number":2,"sha":"0000000000000000000000000000000000000002"}]}
+-- stderr
+#2 Bump serde from 1.0.1 to 1.0.2 (#2): labelled hold: disable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #2 | Bump serde from 1.0.1 to 1.0.2 (#2) | labelled hold: disable auto-merge |
+== hold with auto-merge, dry run
+exit 0
+-- stdout
+{"merge":[],"hold":[{"number":2,"sha":"0000000000000000000000000000000000000002"}]}
+-- stderr
+#2 Bump serde from 1.0.1 to 1.0.2 (#2): labelled hold: would disable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests (dry run: nothing changed)
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #2 | Bump serde from 1.0.1 to 1.0.2 (#2) | labelled hold: would disable auto-merge |
+== hold without auto-merge
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#3 Bump serde from 1.0.1 to 1.0.2 (#3): left alone: labelled hold
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #3 | Bump serde from 1.0.1 to 1.0.2 (#3) | left alone: labelled hold |
+== pins PR
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#4 Bump pinned tools: left alone: the Pins PR, whose auto-merge pins.yml sets
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #4 | Bump pinned tools | left alone: the Pins PR, whose auto-merge pins.yml sets |
+== pins PR on hold with auto-merge
+exit 0
+-- stdout
+{"merge":[],"hold":[{"number":4,"sha":"0000000000000000000000000000000000000004"}]}
+-- stderr
+#4 Bump serde from 1.0.1 to 1.0.2 (#4): labelled hold: disable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #4 | Bump serde from 1.0.1 to 1.0.2 (#4) | labelled hold: disable auto-merge |
+== draft
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#5 Bump serde from 1.0.1 to 1.0.2 (#5): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #5 | Bump serde from 1.0.1 to 1.0.2 (#5) | left alone: draft, already set to auto-merge, or not into develop |
+== already auto-merge
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#6 Bump serde from 1.0.1 to 1.0.2 (#6): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #6 | Bump serde from 1.0.1 to 1.0.2 (#6) | left alone: draft, already set to auto-merge, or not into develop |
+== into main
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#7 Bump serde from 1.0.1 to 1.0.2 (#7): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #7 | Bump serde from 1.0.1 to 1.0.2 (#7) | left alone: draft, already set to auto-merge, or not into develop |
+== human commit
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#8 Bump serde from 1.0.1 to 1.0.2 (#8): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #8 | Bump serde from 1.0.1 to 1.0.2 (#8) | left alone: has commits not by Dependabot |
+== two authors
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#9 Bump serde from 1.0.1 to 1.0.2 (#9): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #9 | Bump serde from 1.0.1 to 1.0.2 (#9) | left alone: has commits not by Dependabot |
+== no authors
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#9 Bump serde from 1.0.1 to 1.0.2 (#9): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #9 | Bump serde from 1.0.1 to 1.0.2 (#9) | left alone: has commits not by Dependabot |
+== no commits
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#10 Bump serde from 1.0.1 to 1.0.2 (#10): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #10 | Bump serde from 1.0.1 to 1.0.2 (#10) | left alone: has commits not by Dependabot |
+== minor update
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#11 Bump serde from 1.0.1 to 1.0.2 (#11): left alone: serde is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #11 | Bump serde from 1.0.1 to 1.0.2 (#11) | left alone: serde is version-update:semver-minor |
+== one of two minor
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#12 Bump serde from 1.0.1 to 1.0.2 (#12): left alone: b is version-update:semver-major
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #12 | Bump serde from 1.0.1 to 1.0.2 (#12) | left alone: b is version-update:semver-major |
+== no metadata
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#13 Bump serde from 1.0.1 to 1.0.2 (#13): left alone: no updated-dependencies metadata
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #13 | Bump serde from 1.0.1 to 1.0.2 (#13) | left alone: no updated-dependencies metadata |
+== docker digest
+exit 0
+-- stdout
+{"merge":[{"number":14,"sha":"000000000000000000000000000000000000000e"}],"hold":[]}
+-- stderr
+#14 Bump serde from 1.0.1 to 1.0.2 (#14): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #14 | Bump serde from 1.0.1 to 1.0.2 (#14) | enable auto-merge |
+== untyped outside docker
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#15 Bump serde from 1.0.1 to 1.0.2 (#15): left alone: serde is not a patch update
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #15 | Bump serde from 1.0.1 to 1.0.2 (#15) | left alone: serde is not a patch update |
+== fuzz nightly
+exit 0
+-- stdout
+{"merge":[{"number":16,"sha":"0000000000000000000000000000000000000010"}],"hold":[]}
+-- stderr
+#16 Bump serde from 1.0.1 to 1.0.2 (#16): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #16 | Bump serde from 1.0.1 to 1.0.2 (#16) | enable auto-merge |
+== rust toolchain outside fuzz
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#17 Bump serde from 1.0.1 to 1.0.2 (#17): left alone: rust is not a patch update
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #17 | Bump serde from 1.0.1 to 1.0.2 (#17) | left alone: rust is not a patch update |
+== two commits, all patch
+exit 0
+-- stdout
+{"merge":[{"number":18,"sha":"0000000000000000000000000000000000000012"}],"hold":[]}
+-- stderr
+#18 Bump serde from 1.0.1 to 1.0.2 (#18): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #18 | Bump serde from 1.0.1 to 1.0.2 (#18) | enable auto-merge |
+== several PRs, mixed
+exit 0
+-- stdout
+{"merge":[{"number":19,"sha":"0000000000000000000000000000000000000013"}],"hold":[{"number":21,"sha":"0000000000000000000000000000000000000015"}]}
+-- stderr
+#19 Bump serde from 1.0.1 to 1.0.2 (#19): enable auto-merge
+#20 Bump serde from 1.0.1 to 1.0.2 (#20): left alone: draft, already set to auto-merge, or not into develop
+#21 Bump serde from 1.0.1 to 1.0.2 (#21): labelled hold: disable auto-merge
+#22 Bump serde from 1.0.1 to 1.0.2 (#22): left alone: the Pins PR, whose auto-merge pins.yml sets
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #19 | Bump serde from 1.0.1 to 1.0.2 (#19) | enable auto-merge |
+| #20 | Bump serde from 1.0.1 to 1.0.2 (#20) | left alone: draft, already set to auto-merge, or not into develop |
+| #21 | Bump serde from 1.0.1 to 1.0.2 (#21) | labelled hold: disable auto-merge |
+| #22 | Bump serde from 1.0.1 to 1.0.2 (#22) | left alone: the Pins PR, whose auto-merge pins.yml sets |
+== listed twice
+exit 0
+-- stdout
+{"merge":[{"number":23,"sha":"0000000000000000000000000000000000000017"},{"number":23,"sha":"0000000000000000000000000000000000000017"}],"hold":[]}
+-- stderr
+#23 Bump serde from 1.0.1 to 1.0.2 (#23): enable auto-merge
+#23 Bump serde from 1.0.1 to 1.0.2 (#23): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #23 | Bump serde from 1.0.1 to 1.0.2 (#23) | enable auto-merge |
+| #23 | Bump serde from 1.0.1 to 1.0.2 (#23) | enable auto-merge |
+== title with pipe
+exit 0
+-- stdout
+{"merge":[{"number":24,"sha":"0000000000000000000000000000000000000018"}],"hold":[]}
+-- stderr
+#24 Bump a|b from 1 | 2: enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #24 | Bump a\|b from 1 \| 2 | enable auto-merge |
+== title non-ASCII
+exit 0
+-- stdout
+{"merge":[{"number":25,"sha":"0000000000000000000000000000000000000019"}],"hold":[]}
+-- stderr
+#25 Bump café → 2: enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #25 | Bump café → 2 | enable auto-merge |
+== sha non-ASCII and quote
+exit 0
+-- stdout
+{"merge":[{"number":26,"sha":"\u00e9\"\\"}],"hold":[]}
+-- stderr
+#26 Bump serde from 1.0.1 to 1.0.2 (#26): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #26 | Bump serde from 1.0.1 to 1.0.2 (#26) | enable auto-merge |
+== metadata type before entry
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is not a patch update
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is not a patch update |
+== metadata last type wins
+exit 0
+-- stdout
+{"merge":[{"number":30,"sha":"000000000000000000000000000000000000001e"}],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | enable auto-merge |
+== metadata type with trailing space
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is not a patch update
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is not a patch update |
+== metadata type after nbsp
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata type after unit separator
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata type without indent
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is not a patch update
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is not a patch update |
+== metadata empty name
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: no updated-dependencies metadata
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: no updated-dependencies metadata |
+== metadata CRLF block
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: no updated-dependencies metadata
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: no updated-dependencies metadata |
+== metadata CR before end
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata U+2028 inside
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata end at EOF
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata end with suffix then end
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata no end
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: no updated-dependencies metadata
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: no updated-dependencies metadata |
+== metadata head not at line start
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: no updated-dependencies metadata
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: no updated-dependencies metadata |
+== metadata second head counts
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: a is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: a is version-update:semver-minor |
+== metadata two blocks, first wins
+exit 0
+-- stdout
+{"merge":[{"number":30,"sha":"000000000000000000000000000000000000001e"}],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | enable auto-merge |
+== metadata empty block
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#30 Bump serde from 1.0.1 to 1.0.2 (#30): left alone: no updated-dependencies metadata
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #30 | Bump serde from 1.0.1 to 1.0.2 (#30) | left alone: no updated-dependencies metadata |
+== gh list fails
+exit 1
+-- stdout
+-- stderr
+HTTP 401: Bad credentials
+gh pr list --repo o/r --author app/dependabot --state open --limit 200 --json number failed (1)
+-- summary
+== gh pins list fails
+exit 1
+-- stdout
+-- stderr
+boom
+gh pr list --repo o/r --head chore/pin-bumps --state open --json number failed (4)
+-- summary
+== gh view fails
+exit 1
+-- stdout
+-- stderr
+no such PR
+gh pr view 40 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits failed (1)
+-- summary
+== gh view fails after first
+exit 1
+-- stdout
+-- stderr
+x
+gh pr view 42 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits failed (1)
+-- summary
+== gh list not JSON
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+-- summary
+== gh list empty output
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+-- summary
+== gh list object
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: unsupported operand type(s) for +=: 'dict' and 'list'
+-- summary
+== gh list strings both empty
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+-- summary
+### Open Dependabot and Pins pull requests
+
+None.
+== gh list string then list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can only concatenate str (not "list") to str
+-- summary
+== pins list empty object
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+-- summary
+### Open Dependabot and Pins pull requests
+
+None.
+== pins list object
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+-- summary
+== pins list number
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'int' object is not iterable
+-- summary
+== listed item not an object
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'int' object is not subscriptable
+-- summary
+== listed item without number
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'number'
+-- summary
+== listed number as string
+exit 0
+-- stdout
+{"merge":[{"number":50,"sha":"0000000000000000000000000000000000000032"}],"hold":[]}
+-- stderr
+#50 Bump serde from 1.0.1 to 1.0.2 (#50): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #50 | Bump serde from 1.0.1 to 1.0.2 (#50) | enable auto-merge |
+== listed number true
+exit 1
+-- stdout
+-- stderr
+invalid
+gh pr view True --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits failed (1)
+-- summary
+== listed number float
+exit 1
+-- stdout
+-- stderr
+invalid
+gh pr view 51.0 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits failed (1)
+-- summary
+== view not an object
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: list indices must be integers or slices, not str
+-- summary
+== view without number
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'number'
+-- summary
+== view without headRefOid
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'headRefOid'
+-- summary
+== view without labels
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'labels'
+-- summary
+== view without headRefName
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'headRefName'
+-- summary
+== view without title
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'title'
+-- summary
+== view without isDraft
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'isDraft'
+-- summary
+== view without baseRefName
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'baseRefName'
+-- summary
+== view without commits
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'commits'
+-- summary
+== hold without autoMergeRequest key
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'autoMergeRequest'
+-- summary
+== labels empty object
+exit 0
+-- stdout
+{"merge":[{"number":55,"sha":"0000000000000000000000000000000000000037"}],"hold":[]}
+-- stderr
+#55 Bump serde from 1.0.1 to 1.0.2 (#55): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #55 | Bump serde from 1.0.1 to 1.0.2 (#55) | enable auto-merge |
+== labels empty string
+exit 0
+-- stdout
+{"merge":[{"number":55,"sha":"0000000000000000000000000000000000000037"}],"hold":[]}
+-- stderr
+#55 Bump serde from 1.0.1 to 1.0.2 (#55): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #55 | Bump serde from 1.0.1 to 1.0.2 (#55) | enable auto-merge |
+== labels string
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+-- summary
+== labels null
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'NoneType' object is not iterable
+-- summary
+== labels label without name
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'name'
+-- summary
+== labels name list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: unhashable type: 'list'
+-- summary
+== labels name int
+exit 0
+-- stdout
+{"merge":[{"number":55,"sha":"0000000000000000000000000000000000000037"}],"hold":[]}
+-- stderr
+#55 Bump serde from 1.0.1 to 1.0.2 (#55): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #55 | Bump serde from 1.0.1 to 1.0.2 (#55) | enable auto-merge |
+== labels label string
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+-- summary
+== commits empty object
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#56 Bump serde from 1.0.1 to 1.0.2 (#56): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #56 | Bump serde from 1.0.1 to 1.0.2 (#56) | left alone: has commits not by Dependabot |
+== commits string
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+-- summary
+== commits null
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#56 Bump serde from 1.0.1 to 1.0.2 (#56): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #56 | Bump serde from 1.0.1 to 1.0.2 (#56) | left alone: has commits not by Dependabot |
+== commits number
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'int' object is not iterable
+-- summary
+== commits item string
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+-- summary
+== commits authors empty object
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#56 Bump serde from 1.0.1 to 1.0.2 (#56): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #56 | Bump serde from 1.0.1 to 1.0.2 (#56) | left alone: has commits not by Dependabot |
+== commits authors string
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+-- summary
+== commits author without login
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'login'
+-- summary
+== commits bad second author list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'int' object is not subscriptable
+-- summary
+== commits bad commit after human
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#56 Bump serde from 1.0.1 to 1.0.2 (#56): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #56 | Bump serde from 1.0.1 to 1.0.2 (#56) | left alone: has commits not by Dependabot |
+== commits no messageBody
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'messageBody'
+-- summary
+== commits messageBody null
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: expected string or bytes-like object, got 'NoneType'
+-- summary
+== commits login int
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#56 Bump serde from 1.0.1 to 1.0.2 (#56): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #56 | Bump serde from 1.0.1 to 1.0.2 (#56) | left alone: has commits not by Dependabot |
+== headRefName int, eligible commits
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'int' object has no attribute 'startswith'
+-- summary
+== headRefName int, human commit
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#57 Bump serde from 1.0.1 to 1.0.2 (#57): left alone: has commits not by Dependabot
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #57 | Bump serde from 1.0.1 to 1.0.2 (#57) | left alone: has commits not by Dependabot |
+== baseRefName int
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#58 Bump serde from 1.0.1 to 1.0.2 (#58): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #58 | Bump serde from 1.0.1 to 1.0.2 (#58) | left alone: draft, already set to auto-merge, or not into develop |
+== isDraft string
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#59 Bump serde from 1.0.1 to 1.0.2 (#59): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #59 | Bump serde from 1.0.1 to 1.0.2 (#59) | left alone: draft, already set to auto-merge, or not into develop |
+== title int
+exit 1
+-- stdout
+-- stderr
+#60 5: enable auto-merge
+<traceback> AttributeError: 'int' object has no attribute 'replace'
+-- summary
+== number string in view
+exit 0
+-- stdout
+{"merge":[{"number":"61","sha":"000000000000000000000000000000000000003d"}],"hold":[]}
+-- stderr
+#61 Bump serde from 1.0.1 to 1.0.2 (#61): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #61 | Bump serde from 1.0.1 to 1.0.2 (#61) | enable auto-merge |
+== headRefOid int
+exit 0
+-- stdout
+{"merge":[{"number":62,"sha":5}],"hold":[]}
+-- stderr
+#62 Bump serde from 1.0.1 to 1.0.2 (#62): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #62 | Bump serde from 1.0.1 to 1.0.2 (#62) | enable auto-merge |
+== xtask patch update
+exit 0
+-- stdout
+{"merge":[{"number":70,"sha":"0000000000000000000000000000000000000046"}],"hold":[]}
+-- stderr
+#70 Bump serde from 1.0.1 to 1.0.2 (#70): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #70 | Bump serde from 1.0.1 to 1.0.2 (#70) | enable auto-merge |
+== xtask patch update, dry run
+exit 0
+-- stdout
+{"merge":[{"number":70,"sha":"0000000000000000000000000000000000000046"}],"hold":[]}
+-- stderr
+#70 Bump serde from 1.0.1 to 1.0.2 (#70): would enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests (dry run: nothing changed)
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #70 | Bump serde from 1.0.1 to 1.0.2 (#70) | would enable auto-merge |
+== xtask and root patch update
+exit 0
+-- stdout
+{"merge":[{"number":71,"sha":"0000000000000000000000000000000000000047"}],"hold":[]}
+-- stderr
+#71 Bump serde from 1.0.1 to 1.0.2 (#71): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #71 | Bump serde from 1.0.1 to 1.0.2 (#71) | enable auto-merge |
+== xtask manifest only
+exit 0
+-- stdout
+{"merge":[{"number":72,"sha":"0000000000000000000000000000000000000048"}],"hold":[]}
+-- stderr
+#72 Bump serde from 1.0.1 to 1.0.2 (#72): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #72 | Bump serde from 1.0.1 to 1.0.2 (#72) | enable auto-merge |
+== xtask branch, root files
+exit 0
+-- stdout
+{"merge":[{"number":73,"sha":"0000000000000000000000000000000000000049"}],"hold":[]}
+-- stderr
+#73 Bump serde from 1.0.1 to 1.0.2 (#73): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #73 | Bump serde from 1.0.1 to 1.0.2 (#73) | enable auto-merge |
+== more files than listed
+exit 0
+-- stdout
+{"merge":[{"number":74,"sha":"000000000000000000000000000000000000004a"}],"hold":[]}
+-- stderr
+#74 Bump serde from 1.0.1 to 1.0.2 (#74): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #74 | Bump serde from 1.0.1 to 1.0.2 (#74) | enable auto-merge |
+== xtask with auto-merge on
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#75 Bump serde from 1.0.1 to 1.0.2 (#75): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #75 | Bump serde from 1.0.1 to 1.0.2 (#75) | left alone: draft, already set to auto-merge, or not into develop |
+== xtask with auto-merge on, dry run
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#75 Bump serde from 1.0.1 to 1.0.2 (#75): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests (dry run: nothing changed)
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #75 | Bump serde from 1.0.1 to 1.0.2 (#75) | left alone: draft, already set to auto-merge, or not into develop |
+== xtask draft
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#76 Bump serde from 1.0.1 to 1.0.2 (#76): left alone: draft, already set to auto-merge, or not into develop
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #76 | Bump serde from 1.0.1 to 1.0.2 (#76) | left alone: draft, already set to auto-merge, or not into develop |
+== xtask minor update
+exit 0
+-- stdout
+{"merge":[],"hold":[]}
+-- stderr
+#77 Bump serde from 1.0.1 to 1.0.2 (#77): left alone: serde is version-update:semver-minor
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #77 | Bump serde from 1.0.1 to 1.0.2 (#77) | left alone: serde is version-update:semver-minor |
+== xtask and root, mixed
+exit 0
+-- stdout
+{"merge":[{"number":78,"sha":"000000000000000000000000000000000000004e"},{"number":79,"sha":"000000000000000000000000000000000000004f"}],"hold":[]}
+-- stderr
+#78 Bump serde from 1.0.1 to 1.0.2 (#78): enable auto-merge
+#79 Bump serde from 1.0.1 to 1.0.2 (#79): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #78 | Bump serde from 1.0.1 to 1.0.2 (#78) | enable auto-merge |
+| #79 | Bump serde from 1.0.1 to 1.0.2 (#79) | enable auto-merge |
+== xtask-like paths
+exit 0
+-- stdout
+{"merge":[{"number":80,"sha":"0000000000000000000000000000000000000050"}],"hold":[]}
+-- stderr
+#80 Bump serde from 1.0.1 to 1.0.2 (#80): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #80 | Bump serde from 1.0.1 to 1.0.2 (#80) | enable auto-merge |
+== files not a list
+exit 0
+-- stdout
+{"merge":[{"number":81,"sha":"0000000000000000000000000000000000000051"}],"hold":[]}
+-- stderr
+#81 Bump serde from 1.0.1 to 1.0.2 (#81): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #81 | Bump serde from 1.0.1 to 1.0.2 (#81) | enable auto-merge |
+== files path not a string
+exit 0
+-- stdout
+{"merge":[{"number":82,"sha":"0000000000000000000000000000000000000052"}],"hold":[]}
+-- stderr
+#82 Bump serde from 1.0.1 to 1.0.2 (#82): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #82 | Bump serde from 1.0.1 to 1.0.2 (#82) | enable auto-merge |
+== changedFiles missing
+exit 0
+-- stdout
+{"merge":[{"number":83,"sha":"0000000000000000000000000000000000000053"}],"hold":[]}
+-- stderr
+#83 Bump serde from 1.0.1 to 1.0.2 (#83): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #83 | Bump serde from 1.0.1 to 1.0.2 (#83) | enable auto-merge |
+== files query fails
+exit 0
+-- stdout
+{"merge":[{"number":84,"sha":"0000000000000000000000000000000000000054"}],"hold":[]}
+-- stderr
+#84 Bump serde from 1.0.1 to 1.0.2 (#84): enable auto-merge
+-- summary
+### Open Dependabot and Pins pull requests
+
+| PR | Title | Auto-merge |
+| --- | --- | --- |
+| #84 | Bump serde from 1.0.1 to 1.0.2 (#84) | enable auto-merge |

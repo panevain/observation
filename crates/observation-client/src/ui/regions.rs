@@ -4,7 +4,8 @@
 
 use super::widgets::{bar, danger, hint, primary, secondary, section};
 use crate::icons;
-use crate::regions::{CatalogState, RegionRequest, Regions, now_unix};
+use crate::platform::{Clock, unix_secs};
+use crate::regions::{CatalogState, RegionRequest, Regions};
 use crate::theme::{Tokens, strong_family};
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
 use observation_core::regions::{ActionKind, JobPhase, MAX_SIZE_IDS, RegionAction, RegionView};
@@ -91,7 +92,13 @@ fn job_detail(r: &RegionView) -> String {
 }
 
 /// Shows the dialog while `open`.
-pub fn window(ctx: &egui::Context, t: &Tokens, r: &mut Regions, open: &mut bool) {
+pub fn window(
+    ctx: &egui::Context,
+    t: &Tokens,
+    r: &mut Regions,
+    open: &mut bool,
+    clock: &dyn Clock,
+) {
     let manageable = r.manageable();
     let can_act = manageable && !r.token.trim().is_empty();
     egui::Window::new("Local map data")
@@ -140,11 +147,11 @@ pub fn window(ctx: &egui::Context, t: &Tokens, r: &mut Regions, open: &mut bool)
                 .id_salt("regions-list")
                 .max_height(260.0)
                 .auto_shrink([false, true])
-                .show(ui, |ui| region_list(ui, t, r, can_act));
+                .show(ui, |ui| region_list(ui, t, r, can_act, clock));
 
             if manageable {
                 section(ui, t, "Add a region");
-                add_region(ui, t, r, can_act);
+                add_region(ui, t, r, can_act, clock);
                 section(ui, t, "Admin token");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -170,7 +177,7 @@ pub fn window(ctx: &egui::Context, t: &Tokens, r: &mut Regions, open: &mut bool)
         });
 }
 
-fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
+fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool, clock: &dyn Clock) {
     let regions = r.regions().to_vec();
     if regions.is_empty() {
         hint(
@@ -180,7 +187,7 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         );
         return;
     }
-    let now = now_unix();
+    let now = unix_secs(clock);
     let (refresh_days, refresh_range) = r.status.as_ref().map_or((0, 1..=1), |s| {
         let s = &s.snapshot;
         (s.refresh_days, s.min_refresh_days..=s.max_refresh_days)
@@ -384,7 +391,7 @@ fn region_list(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
     }
 }
 
-fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
+fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool, clock: &dyn Clock) {
     if matches!(r.catalog, CatalogState::NotLoaded) {
         r.request(RegionRequest::Catalog);
     }
@@ -441,7 +448,7 @@ fn add_region(ui: &mut egui::Ui, t: &Tokens, r: &mut Regions, can_act: bool) {
         hint(ui, t, "No extract matches.");
         return;
     }
-    r.want_sizes(matches.iter().map(|e| e.id.as_str()), now_unix());
+    r.want_sizes(matches.iter().map(|e| e.id.as_str()), unix_secs(clock));
     let have: Vec<String> = r.regions().iter().map(|x| x.id.clone()).collect();
     egui::ScrollArea::vertical()
         .id_salt("regions-catalog")

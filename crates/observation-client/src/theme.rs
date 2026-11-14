@@ -1,7 +1,7 @@
 //! Design tokens: the single source of colours, spacing, radii and type scale.
 //!
 //! No other module may contain colour literals (enforced in CI by
-//! `scripts/check-design-tokens.sh`). The scales, the minimum viewport and
+//! `cargo xtask tokens`). The scales, the minimum viewport and
 //! the UI colour roles come from `observation-tokens`, which also writes them
 //! as the CSS of the loading screen and the small-viewport gate in
 //! `web/index.html`.
@@ -11,8 +11,10 @@ use bevy_egui::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow,
     Stroke, TextStyle,
 };
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, unbounded};
 use observation_core::camera::CameraKind;
+
+use crate::platform::ColorScheme;
 
 use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors};
 pub use observation_tokens::{Layout, Radius, Space, TypeScale};
@@ -224,8 +226,8 @@ impl Tokens {
     }
 
     /// Picks light/dark from the browser's `prefers-color-scheme`.
-    pub fn from_environment() -> Self {
-        Self::for_scheme(prefers_dark())
+    pub fn from_environment(scheme: &dyn ColorScheme) -> Self {
+        Self::for_scheme(scheme.prefers_dark())
     }
 
     fn for_scheme(dark: bool) -> Self {
@@ -487,9 +489,12 @@ pub struct SchemeChanges(Receiver<bool>);
 impl SchemeChanges {
     /// Starts listening to the browser. Call once: each call adds a listener
     /// that lives as long as the page.
-    pub fn watch() -> Self {
+    pub fn watch(scheme: &dyn ColorScheme) -> Self {
         let (tx, rx) = unbounded();
-        watch_scheme(tx);
+        scheme.watch(Box::new(move |dark| {
+            // The receiver lives as long as the app; a send error means shutdown.
+            let _ = tx.send(dark);
+        }));
         Self(rx)
     }
 }
@@ -505,50 +510,3 @@ pub fn follow_scheme(changes: Res<SchemeChanges>, mut tokens: ResMut<Tokens>) {
         *tokens = Tokens::for_scheme(dark);
     }
 }
-
-#[cfg(target_arch = "wasm32")]
-fn dark_query() -> Option<web_sys::MediaQueryList> {
-    web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn prefers_dark() -> bool {
-    dark_query().is_some_and(|m| m.matches())
-}
-
-/// Sends the new setting whenever the media query's `change` event fires.
-#[cfg(target_arch = "wasm32")]
-fn watch_scheme(tx: Sender<bool>) {
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen::closure::Closure;
-
-    let Some(query) = dark_query() else { return };
-    let on_change = {
-        let query = query.clone();
-        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-            // The receiver lives as long as the app; a send error means shutdown.
-            let _ = tx.send(query.matches());
-        })
-    };
-    if let Err(e) =
-        query.add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
-    {
-        warn!(
-            "cannot follow the system theme: {}",
-            crate::net::js_cause(&e)
-        );
-        return;
-    }
-    // The handler (and the query it holds, which must stay alive to keep
-    // firing) lives as long as the page.
-    on_change.forget();
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn prefers_dark() -> bool {
-    true
-}
-
-/// Native builds stay dark: there is no system setting to follow.
-#[cfg(not(target_arch = "wasm32"))]
-fn watch_scheme(_: Sender<bool>) {}

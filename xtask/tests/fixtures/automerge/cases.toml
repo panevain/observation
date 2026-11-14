@@ -1,0 +1,1257 @@
+[[case]]
+name = "nothing open"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "nothing open, no summary"
+summary = false
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "nothing open, empty summary path"
+summary = false
+summary_empty = true
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "patch update"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 1}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 1 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 1, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#1)\", \"headRefName\": \"dependabot/cargo/serde-1.0.1\", \"headRefOid\": \"0000000000000000000000000000000000000001\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 1 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "patch update, dry run"
+dry_run = true
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 1}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 1 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 1, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#1)\", \"headRefName\": \"dependabot/cargo/serde-1.0.1\", \"headRefOid\": \"0000000000000000000000000000000000000001\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 1 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "hold with auto-merge"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 2}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 2 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 2, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#2)\", \"headRefName\": \"dependabot/cargo/serde-1.0.2\", \"headRefOid\": \"0000000000000000000000000000000000000002\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [{\"name\": \"hold\"}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 2 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "hold with auto-merge, dry run"
+dry_run = true
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 2}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 2 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 2, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#2)\", \"headRefName\": \"dependabot/cargo/serde-1.0.2\", \"headRefOid\": \"0000000000000000000000000000000000000002\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [{\"name\": \"hold\"}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 2 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "hold without auto-merge"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 3}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 3 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 3, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#3)\", \"headRefName\": \"dependabot/cargo/serde-1.0.3\", \"headRefOid\": \"0000000000000000000000000000000000000003\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [{\"name\": \"dependencies\"}, {\"name\": \"hold\"}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 3 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "pins PR"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[{\"number\": 4}]"
+[case.gh."pr view 4 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 4, \"title\": \"Bump pinned tools\", \"headRefName\": \"chore/pin-bumps\", \"headRefOid\": \"0000000000000000000000000000000000000004\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 4 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "pins PR on hold with auto-merge"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[{\"number\": 4}]"
+[case.gh."pr view 4 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 4, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#4)\", \"headRefName\": \"chore/pin-bumps\", \"headRefOid\": \"0000000000000000000000000000000000000004\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [{\"name\": \"hold\"}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 4 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "draft"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 5}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 5 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 5, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#5)\", \"headRefName\": \"dependabot/cargo/serde-1.0.5\", \"headRefOid\": \"0000000000000000000000000000000000000005\", \"baseRefName\": \"develop\", \"isDraft\": true, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 5 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "already auto-merge"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 6}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 6 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 6, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#6)\", \"headRefName\": \"dependabot/cargo/serde-1.0.6\", \"headRefOid\": \"0000000000000000000000000000000000000006\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 6 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "into main"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 7}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 7 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 7, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#7)\", \"headRefName\": \"dependabot/cargo/serde-1.0.7\", \"headRefOid\": \"0000000000000000000000000000000000000007\", \"baseRefName\": \"main\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 7 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "human commit"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 8}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 8 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 8, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#8)\", \"headRefName\": \"dependabot/cargo/serde-1.0.8\", \"headRefOid\": \"0000000000000000000000000000000000000008\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}, {\"authors\": [{\"login\": \"someone\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 8 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "two authors"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 9}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 9 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 9, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#9)\", \"headRefName\": \"dependabot/cargo/serde-1.0.9\", \"headRefOid\": \"0000000000000000000000000000000000000009\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}, {\"login\": \"someone\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 9 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "no authors"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 9}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 9 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 9, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#9)\", \"headRefName\": \"dependabot/cargo/serde-1.0.9\", \"headRefOid\": \"0000000000000000000000000000000000000009\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 9 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "no commits"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 10}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 10 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 10, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#10)\", \"headRefName\": \"dependabot/cargo/serde-1.0.10\", \"headRefOid\": \"000000000000000000000000000000000000000a\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": []}"
+[case.gh."pr view 10 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "minor update"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 11}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 11 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 11, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#11)\", \"headRefName\": \"dependabot/cargo/serde-1.0.11\", \"headRefOid\": \"000000000000000000000000000000000000000b\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-minor\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 11 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "one of two minor"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 12}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 12 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 12, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#12)\", \"headRefName\": \"dependabot/cargo/serde-1.0.12\", \"headRefOid\": \"000000000000000000000000000000000000000c\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: a\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n- dependency-name: b\\n  dependency-type: direct:production\\n  update-type: version-update:semver-major\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 12 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "no metadata"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 13}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 13 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 13, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#13)\", \"headRefName\": \"dependabot/cargo/serde-1.0.13\", \"headRefOid\": \"000000000000000000000000000000000000000d\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bump serde\\n\\nno block here\"}]}"
+[case.gh."pr view 13 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "docker digest"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 14}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 14 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 14, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#14)\", \"headRefName\": \"dependabot/docker/debian-abc\", \"headRefOid\": \"000000000000000000000000000000000000000e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: debian\\n  dependency-type: direct:production\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 14 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "untyped outside docker"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 15}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 15 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 15, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#15)\", \"headRefName\": \"dependabot/cargo/serde-1.0.15\", \"headRefOid\": \"000000000000000000000000000000000000000f\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 15 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "fuzz nightly"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 16}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 16 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 16, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#16)\", \"headRefName\": \"dependabot/rust_toolchain/fuzz/nightly-2026-11-01\", \"headRefOid\": \"0000000000000000000000000000000000000010\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: rust\\n  dependency-type: direct:production\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 16 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "rust toolchain outside fuzz"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 17}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 17 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 17, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#17)\", \"headRefName\": \"dependabot/rust_toolchain/nightly\", \"headRefOid\": \"0000000000000000000000000000000000000011\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: rust\\n  dependency-type: direct:production\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 17 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "two commits, all patch"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 18}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 18 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 18, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#18)\", \"headRefName\": \"dependabot/cargo/serde-1.0.18\", \"headRefOid\": \"0000000000000000000000000000000000000012\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}, {\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: x\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 18 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "several PRs, mixed"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 19}, {\"number\": 20}, {\"number\": 21}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[{\"number\": 22}]"
+[case.gh."pr view 19 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 19, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#19)\", \"headRefName\": \"dependabot/cargo/serde-1.0.19\", \"headRefOid\": \"0000000000000000000000000000000000000013\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 20 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 20, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#20)\", \"headRefName\": \"dependabot/cargo/serde-1.0.20\", \"headRefOid\": \"0000000000000000000000000000000000000014\", \"baseRefName\": \"develop\", \"isDraft\": true, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 21 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 21, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#21)\", \"headRefName\": \"dependabot/cargo/serde-1.0.21\", \"headRefOid\": \"0000000000000000000000000000000000000015\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [{\"name\": \"hold\"}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 22 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 22, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#22)\", \"headRefName\": \"chore/pin-bumps\", \"headRefOid\": \"0000000000000000000000000000000000000016\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 19 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+[case.gh."pr view 20 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+[case.gh."pr view 21 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+[case.gh."pr view 22 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "listed twice"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 23}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[{\"number\": 23}]"
+[case.gh."pr view 23 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 23, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#23)\", \"headRefName\": \"dependabot/cargo/serde-1.0.23\", \"headRefOid\": \"0000000000000000000000000000000000000017\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 23 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "title with pipe"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 24}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 24 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 24, \"title\": \"Bump a|b from 1 | 2\", \"headRefName\": \"dependabot/cargo/serde-1.0.24\", \"headRefOid\": \"0000000000000000000000000000000000000018\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 24 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "title non-ASCII"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 25}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 25 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 25, \"title\": \"Bump caf\\u00e9 \\u2192 2\", \"headRefName\": \"dependabot/cargo/serde-1.0.25\", \"headRefOid\": \"0000000000000000000000000000000000000019\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 25 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "sha non-ASCII and quote"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 26}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 26 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 26, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#26)\", \"headRefName\": \"dependabot/cargo/serde-1.0.26\", \"headRefOid\": \"\\u00e9\\\"\\\\\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 26 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata type before entry"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n  update-type: version-update:semver-minor\\n- dependency-name: a\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata last type wins"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n  update-type: version-update:semver-minor\\n  update-type: version-update:semver-patch\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata type with trailing space"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n  update-type: version-update:semver-patch \\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata type after nbsp"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n\\u00a0update-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata type after unit separator"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n\\u001fupdate-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata type without indent"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\nupdate-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata empty name"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: \\n  update-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata CRLF block"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\r\\nupdated-dependencies:\\r\\n- dependency-name: a\\r\\n  update-type: version-update:semver-minor\\r\\n...\\r\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata CR before end"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\r  update-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata U+2028 inside"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\u2028  update-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata end at EOF"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n  update-type: version-update:semver-minor\\n...\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata end with suffix then end"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n....\\n  update-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata no end"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n  update-type: version-update:semver-minor\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata head not at line start"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"x---\\nupdated-dependencies:\\n- dependency-name: a\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata second head counts"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"x---\\nupdated-dependencies:\\n...\\n---\\nupdated-dependencies:\\n- dependency-name: a\\n  update-type: version-update:semver-minor\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata two blocks, first wins"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n- dependency-name: a\\n  update-type: version-update:semver-patch\\n...\\n---\\nupdated-dependencies:\\n- dependency-name: b\\n  update-type: version-update:semver-major\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "metadata empty block"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 30}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 30 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 30, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#30)\", \"headRefName\": \"dependabot/cargo/serde-1.0.30\", \"headRefOid\": \"000000000000000000000000000000000000001e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"---\\nupdated-dependencies:\\n...\\n\"}]}"
+[case.gh."pr view 30 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "gh list fails"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+code = 1
+stderr = "HTTP 401: Bad credentials\n"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "gh pins list fails"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+code = 4
+stderr = "boom\n"
+
+[[case]]
+name = "gh view fails"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 40}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 40 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+code = 1
+stderr = "no such PR\n"
+
+[[case]]
+name = "gh view fails after first"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 41}, {\"number\": 42}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 41 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 41, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#41)\", \"headRefName\": \"dependabot/cargo/serde-1.0.41\", \"headRefOid\": \"0000000000000000000000000000000000000029\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 42 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+code = 1
+stderr = "x\n"
+[case.gh."pr view 41 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "gh list not JSON"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "oops"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "gh list empty output"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = ""
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "gh list object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "{}"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "gh list strings both empty"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "\"\""
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "\"\""
+
+[[case]]
+name = "gh list string then list"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "\"ab\""
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "pins list empty object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "{}"
+
+[[case]]
+name = "pins list object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "{\"a\": 1}"
+
+[[case]]
+name = "pins list number"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "5"
+
+[[case]]
+name = "listed item not an object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[5]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "listed item without number"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+
+[[case]]
+name = "listed number as string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": \"50\"}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 50 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 50, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#50)\", \"headRefName\": \"dependabot/cargo/serde-1.0.50\", \"headRefOid\": \"0000000000000000000000000000000000000032\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 50 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "listed number true"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": true}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view True --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+code = 1
+stderr = "invalid\n"
+
+[[case]]
+name = "listed number float"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 51.0}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 51.0 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+code = 1
+stderr = "invalid\n"
+
+[[case]]
+name = "view not an object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 52}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 52 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "[1]"
+
+[[case]]
+name = "view without number"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+
+[[case]]
+name = "view without headRefOid"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "view without labels"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "view without headRefName"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "view without title"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "view without isDraft"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"baseRefName\": \"develop\", \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "view without baseRefName"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "view without commits"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 53}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 53 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 53, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#53)\", \"headRefName\": \"dependabot/cargo/serde-1.0.53\", \"headRefOid\": \"0000000000000000000000000000000000000035\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": []}"
+[case.gh."pr view 53 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "hold without autoMergeRequest key"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 54}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 54 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 54, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#54)\", \"headRefName\": \"dependabot/cargo/serde-1.0.54\", \"headRefOid\": \"0000000000000000000000000000000000000036\", \"baseRefName\": \"develop\", \"isDraft\": false, \"labels\": [{\"name\": \"hold\"}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 54 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels empty object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": {}, \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels empty string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": \"\", \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": \"ab\", \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels null"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": null, \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels label without name"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [{}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels name list"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [{\"name\": [\"hold\"]}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels name int"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [{\"name\": 5}], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "labels label string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 55}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 55 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 55, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#55)\", \"headRefName\": \"dependabot/cargo/serde-1.0.55\", \"headRefOid\": \"0000000000000000000000000000000000000037\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [\"hold\"], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 55 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits empty object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": {}}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": \"ab\"}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits null"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": null}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits number"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": 5}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits item string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [\"x\"]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits authors empty object"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": {}, \"messageBody\": \"\"}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits authors string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": \"ab\", \"messageBody\": \"\"}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits author without login"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{}], \"messageBody\": \"\"}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits bad second author list"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"someone\"}, 5], \"messageBody\": \"\"}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits bad commit after human"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"someone\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}, 5]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits no messageBody"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}]}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits messageBody null"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": null}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "commits login int"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 56}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 56 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 56, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#56)\", \"headRefName\": \"dependabot/cargo/serde-1.0.56\", \"headRefOid\": \"0000000000000000000000000000000000000038\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": 5}], \"messageBody\": \"\"}]}"
+[case.gh."pr view 56 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "headRefName int, eligible commits"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 57}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 57 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 57, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#57)\", \"headRefName\": 5, \"headRefOid\": \"0000000000000000000000000000000000000039\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 57 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "headRefName int, human commit"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 57}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 57 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 57, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#57)\", \"headRefName\": 5, \"headRefOid\": \"0000000000000000000000000000000000000039\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"someone\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 57 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "baseRefName int"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 58}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 58 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 58, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#58)\", \"headRefName\": \"dependabot/cargo/serde-1.0.58\", \"headRefOid\": \"000000000000000000000000000000000000003a\", \"baseRefName\": 5, \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 58 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "isDraft string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 59}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 59 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 59, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#59)\", \"headRefName\": \"dependabot/cargo/serde-1.0.59\", \"headRefOid\": \"000000000000000000000000000000000000003b\", \"baseRefName\": \"develop\", \"isDraft\": \"no\", \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 59 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "title int"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 60}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 60 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 60, \"title\": 5, \"headRefName\": \"dependabot/cargo/serde-1.0.60\", \"headRefOid\": \"000000000000000000000000000000000000003c\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 60 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "number string in view"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 61}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 61 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": \"61\", \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#61)\", \"headRefName\": \"dependabot/cargo/serde-1.0.61\", \"headRefOid\": \"000000000000000000000000000000000000003d\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+
+[[case]]
+name = "headRefOid int"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 62}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 62 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 62, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#62)\", \"headRefName\": \"dependabot/cargo/serde-1.0.62\", \"headRefOid\": 5, \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 62 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask patch update"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 70}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 70 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 70, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#70)\", \"headRefName\": \"dependabot/cargo/serde-1.0.70\", \"headRefOid\": \"0000000000000000000000000000000000000046\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 70 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask patch update, dry run"
+dry_run = true
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 70}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 70 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 70, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#70)\", \"headRefName\": \"dependabot/cargo/serde-1.0.70\", \"headRefOid\": \"0000000000000000000000000000000000000046\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 70 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask and root patch update"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 71}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 71 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 71, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#71)\", \"headRefName\": \"dependabot/cargo/serde-1.0.71\", \"headRefOid\": \"0000000000000000000000000000000000000047\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 71 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"fuzz/Cargo.lock\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"xtask/Cargo.toml\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 4}"
+
+[[case]]
+name = "xtask manifest only"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 72}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 72 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 72, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#72)\", \"headRefName\": \"dependabot/cargo/serde-1.0.72\", \"headRefOid\": \"0000000000000000000000000000000000000048\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 72 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.toml\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask branch, root files"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 73}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 73 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 73, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#73)\", \"headRefName\": \"dependabot/cargo/xtask/serde-1.0.2\", \"headRefOid\": \"0000000000000000000000000000000000000049\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 73 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "more files than listed"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 74}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 74 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 74, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#74)\", \"headRefName\": \"dependabot/cargo/serde-1.0.74\", \"headRefOid\": \"000000000000000000000000000000000000004a\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 74 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"crates/c0/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c1/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c2/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c3/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c4/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c5/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c6/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c7/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c8/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c9/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c10/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c11/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c12/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c13/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c14/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c15/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c16/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c17/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c18/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c19/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c20/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c21/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c22/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c23/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c24/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c25/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c26/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c27/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c28/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c29/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c30/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c31/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c32/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c33/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c34/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c35/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c36/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c37/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c38/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c39/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c40/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c41/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c42/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c43/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c44/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c45/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c46/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c47/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c48/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c49/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c50/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c51/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c52/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c53/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c54/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c55/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c56/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c57/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c58/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c59/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c60/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c61/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c62/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c63/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c64/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c65/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c66/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c67/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c68/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c69/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c70/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c71/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c72/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c73/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c74/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c75/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c76/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c77/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c78/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c79/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c80/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c81/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c82/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c83/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c84/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c85/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c86/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c87/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c88/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c89/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c90/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c91/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c92/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c93/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c94/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c95/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c96/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c97/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c98/Cargo.toml\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/c99/Cargo.toml\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 101}"
+
+[[case]]
+name = "xtask with auto-merge on"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 75}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 75 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 75, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#75)\", \"headRefName\": \"dependabot/cargo/serde-1.0.75\", \"headRefOid\": \"000000000000000000000000000000000000004b\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 75 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask with auto-merge on, dry run"
+dry_run = true
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 75}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 75 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 75, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#75)\", \"headRefName\": \"dependabot/cargo/serde-1.0.75\", \"headRefOid\": \"000000000000000000000000000000000000004b\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": {\"enabledAt\": \"2026-11-01T00:00:00Z\", \"mergeMethod\": \"SQUASH\"}, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 75 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask draft"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 76}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 76 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 76, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#76)\", \"headRefName\": \"dependabot/cargo/serde-1.0.76\", \"headRefOid\": \"000000000000000000000000000000000000004c\", \"baseRefName\": \"develop\", \"isDraft\": true, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 76 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask minor update"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 77}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 77 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 77, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#77)\", \"headRefName\": \"dependabot/cargo/serde-1.0.77\", \"headRefOid\": \"000000000000000000000000000000000000004d\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-minor\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 77 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask and root, mixed"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 78}, {\"number\": 79}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 78 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 78, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#78)\", \"headRefName\": \"dependabot/cargo/serde-1.0.78\", \"headRefOid\": \"000000000000000000000000000000000000004e\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 79 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 79, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#79)\", \"headRefName\": \"dependabot/cargo/serde-1.0.79\", \"headRefOid\": \"000000000000000000000000000000000000004f\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 78 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+[case.gh."pr view 79 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 1}"
+
+[[case]]
+name = "xtask-like paths"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 80}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 80 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 80, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#80)\", \"headRefName\": \"dependabot/cargo/serde-1.0.80\", \"headRefOid\": \"0000000000000000000000000000000000000050\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 80 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": \"xtaskx/Cargo.lock\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"crates/xtask/Cargo.lock\", \"additions\": 1, \"deletions\": 1}, {\"path\": \"docs/xtask/\", \"additions\": 1, \"deletions\": 1}], \"changedFiles\": 3}"
+
+[[case]]
+name = "files not a list"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 81}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 81 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 81, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#81)\", \"headRefName\": \"dependabot/cargo/serde-1.0.81\", \"headRefOid\": \"0000000000000000000000000000000000000051\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 81 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": {}, \"changedFiles\": 0}"
+
+[[case]]
+name = "files path not a string"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 82}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 82 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 82, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#82)\", \"headRefName\": \"dependabot/cargo/serde-1.0.82\", \"headRefOid\": \"0000000000000000000000000000000000000052\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 82 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": [{\"path\": 5}], \"changedFiles\": 1}"
+
+[[case]]
+name = "changedFiles missing"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 83}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 83 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 83, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#83)\", \"headRefName\": \"dependabot/cargo/serde-1.0.83\", \"headRefOid\": \"0000000000000000000000000000000000000053\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 83 --repo o/r --json files,changedFiles"]
+stdout = "{\"files\": []}"
+
+[[case]]
+name = "files query fails"
+[case.gh."pr list --repo o/r --author app/dependabot --state open --limit 200 --json number"]
+stdout = "[{\"number\": 84}]"
+[case.gh."pr list --repo o/r --head chore/pin-bumps --state open --json number"]
+stdout = "[]"
+[case.gh."pr view 84 --repo o/r --json number,title,headRefName,headRefOid,baseRefName,isDraft,autoMergeRequest,labels,commits"]
+stdout = "{\"number\": 84, \"title\": \"Bump serde from 1.0.1 to 1.0.2 (#84)\", \"headRefName\": \"dependabot/cargo/serde-1.0.84\", \"headRefOid\": \"0000000000000000000000000000000000000054\", \"baseRefName\": \"develop\", \"isDraft\": false, \"autoMergeRequest\": null, \"labels\": [], \"commits\": [{\"authors\": [{\"login\": \"dependabot[bot]\"}], \"messageBody\": \"Bumps x.\\n\\n---\\nupdated-dependencies:\\n- dependency-name: serde\\n  dependency-type: direct:production\\n  update-type: version-update:semver-patch\\n...\\n\\nSigned-off-by: dependabot[bot]\"}]}"
+[case.gh."pr view 84 --repo o/r --json files,changedFiles"]
+code = 1
+stderr = "HTTP 502\n"

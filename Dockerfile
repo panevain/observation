@@ -10,7 +10,7 @@
 #   * The chef stage copies in only the binaries, so a change to the mise files
 #     that leaves them alone keeps every later layer cached.
 # ---------------------------------------------------------------------------
-FROM ghcr.io/jdx/mise:2026.10.19-debian@sha256:9b8995abd457c975a4f5150b423f6569ee5a01960662ffa4c06c859867e59a21 AS build-tools
+FROM ghcr.io/jdx/mise:2026.10.25-debian@sha256:00a8a9d05a300e5a15a89d6d3a87ea88ec4e78c4702b78d49aa1d3250af61427 AS build-tools
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -35,7 +35,7 @@ RUN set -eux; \
 # build is a regular image layer that the GHA layer cache keeps until the
 # dependency graph changes. Source-only changes rebuild just our crates.
 # ---------------------------------------------------------------------------
-FROM rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS chef
+FROM rust:1.99.1-slim-trixie@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7 AS chef
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -124,7 +124,7 @@ RUN cargo auditable build --release --locked -p observation-regions \
 
 # Overpass API from the release tarball, sha256-verified. Releases:
 # https://dev.overpass-api.de/releases/
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS overpass-build
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS overpass-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG OVERPASS_VERSION=0.7.62.11
@@ -149,7 +149,7 @@ RUN set -eux; \
     cp bin/osm3s_query bin/update_database /out/bin/; \
     mkdir -p /out/data
 
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS regions
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS regions
 
 LABEL org.opencontainers.image.title="observation-regions" \
       org.opencontainers.image.description="Region agent for Observation: local Overpass databases built from Geofabrik extracts" \
@@ -187,7 +187,7 @@ ENTRYPOINT ["/usr/local/bin/observation-regions"]
 #   Distroless stops rebuilding a Debian release's images once the next one is out
 #   (cc-debian12 was frozen in August 2026), so move to the new suffix when that happens.
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime-base
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime-base
 
 LABEL org.opencontainers.image.title="observation" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \

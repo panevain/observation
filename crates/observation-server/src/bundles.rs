@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use axum::body::Bytes;
 use futures_util::FutureExt;
@@ -13,10 +13,11 @@ use observation_core::bundle::build_bundle;
 use observation_core::geo::BBox;
 use tracing::Instrument;
 
-use crate::cache::Cache;
-use crate::elevation::Elevation;
+use crate::clock::{Clock, unix_secs};
+use crate::domain::freshness::usable_bundle;
 use crate::error::ApiError;
-use crate::overpass::{OsmData, OverpassClient};
+use crate::overpass::OsmData;
+use crate::ports::{BundleStore, MapDataSource, TerrainSource};
 use crate::ratelimit::{ClientKey, RateLimiter};
 use crate::regions::Regions;
 
@@ -33,44 +34,61 @@ type Flight = Shared<BoxFuture<'static, Result<Bytes, ApiError>>>;
 /// waiting client disconnects.
 #[derive(Debug)]
 pub struct BundleService {
-    cache: Arc<Cache>,
-    overpass: Arc<OverpassClient>,
+    store: Arc<dyn BundleStore>,
+    /// Public Overpass: asked when no local region has the area.
+    overpass: Arc<dyn MapDataSource>,
     regions: Option<Arc<Regions>>,
-    elevation: Arc<Elevation>,
+    elevation: Arc<dyn TerrainSource>,
     attribution: String,
     in_flight: Mutex<HashMap<String, Flight>>,
     /// Per-client limit on new builds.
     limiter: RateLimiter,
+    /// Stamps `generated_unix` and is "now" for freshness.
+    clock: Arc<dyn Clock>,
+    /// How long a cached bundle stays fresh.
+    bundle_ttl: Duration,
 }
 
 impl BundleService {
     pub fn new(
-        cache: Arc<Cache>,
-        overpass: Arc<OverpassClient>,
+        store: Arc<dyn BundleStore>,
+        overpass: Arc<dyn MapDataSource>,
         regions: Option<Arc<Regions>>,
-        elevation: Arc<Elevation>,
+        elevation: Arc<dyn TerrainSource>,
         attribution: String,
         limiter: RateLimiter,
+        clock: Arc<dyn Clock>,
+        bundle_ttl: Duration,
     ) -> Self {
         Self {
-            cache,
+            store,
             overpass,
             regions,
             elevation,
             attribution,
             in_flight: Mutex::new(HashMap::new()),
             limiter,
+            clock,
+            bundle_ttl,
         }
+    }
+
+    /// The cached bundle for `key` and whether it is fresh, given newer local
+    /// data since `valid_after`; expired bundles too, to serve when the
+    /// upstream is down.
+    async fn cached(&self, key: &str, valid_after: Option<SystemTime>) -> Option<(Bytes, bool)> {
+        let stored = self.store.get(key).await?;
+        usable_bundle(key, stored, self.clock.now(), self.bundle_ttl, valid_after)
     }
 
     /// Returns the encoded bundle for `bbox`, which should already be snapped.
     /// Only a request that starts a new build is charged to `client`, and the
     /// token is given back unless the build asks public Overpass (see
-    /// [`Self::produce`]). Cache hits and requests joining a build in progress
+    /// `produce`). Cache hits and requests joining a build in progress
     /// are free, and a client over its limit gets an expired copy if there is one.
     pub async fn get(self: &Arc<Self>, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         let key = bbox.cache_key();
-        let stale = match self.cache.get_bundle(&key, self.valid_after(&bbox)).await {
+        let stale = match self.cached(&key, self.valid_after(&bbox)).await {
             Some((bytes, true)) => {
                 metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
                 return Ok(bytes);
@@ -135,13 +153,13 @@ impl BundleService {
     /// elevation failure is still charged: it cost an upstream request too.
     async fn produce(&self, key: &str, bbox: BBox, client: ClientKey) -> Result<Bytes, ApiError> {
         // A previous flight may have finished between the caller's check and now.
-        if let Some((bytes, true)) = self.cache.get_bundle(key, self.valid_after(&bbox)).await {
+        if let Some((bytes, true)) = self.cached(key, self.valid_after(&bbox)).await {
             self.limiter.refund(client);
             metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "hit").increment(1);
             return Ok(bytes);
         }
         // One budget for both sources: Overpass gets what the local try left.
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         // Elevation first: it is usually cached, and if it fails the map data
         // would be thrown away, so Overpass is not asked for nothing.
         let fetched = match self.elevation.terrain(&bbox).await {
@@ -163,7 +181,7 @@ impl BundleService {
         let (data, terrain) = match fetched {
             Ok(both) => both,
             Err(e) => {
-                if let Some((stale, _)) = self.cache.get_bundle(key, None).await {
+                if let Some((stale, _)) = self.cached(key, None).await {
                     metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "stale_served")
                         .increment(1);
                     tracing::warn!(key, error = %e, "serving expired bundle because upstream failed");
@@ -173,9 +191,7 @@ impl BundleService {
                 return Err(e);
             }
         };
-        let generated = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let generated = unix_secs(self.clock.now());
         let bundle = build_bundle(
             bbox,
             &data.buildings,
@@ -189,7 +205,7 @@ impl BundleService {
         let bytes = Bytes::from(bundle.encode());
         metrics::counter!(crate::metrics::BUNDLE_CACHE, "result" => "built").increment(1);
         // `Ok(false)` (not cached) is logged by the cache with the reason.
-        if let Err(e) = self.cache.put_bundle(key, &bytes).await {
+        if let Err(e) = self.store.put(key, &bytes).await {
             tracing::warn!(key, error = %e, "could not cache bundle");
         }
         tracing::info!(
@@ -224,3 +240,6 @@ impl BundleService {
         outcome.ok().flatten()
     }
 }
+
+#[cfg(test)]
+mod service_tests;

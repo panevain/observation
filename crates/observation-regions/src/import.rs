@@ -8,26 +8,26 @@
 //! once the work directory is removed. Child processes are killed when the
 //! job's future is dropped (cancellation).
 
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use observation_core::regions::JobPhase;
-use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use observation_upstream::{HttpClient, HttpRequest, status_error};
+use tokio::io::AsyncWriteExt;
 
 use crate::catalog::Extract;
 use crate::poly::{Boundary, MAX_POLY_BYTES};
-use crate::registry::{Imported, JobId, RegionDb, Registry, now_unix, slug};
+use crate::ports::{Download, Toolchain, checked_body};
+use crate::registry::{Imported, JobId, RegionDb, Registry, slug};
 
-/// The tools and limits an import needs.
+/// What an import talks to.
 #[derive(Debug, Clone)]
 pub struct Tools {
-    pub client: reqwest::Client,
-    pub osmium: PathBuf,
-    pub overpass_bin: PathBuf,
+    /// For the boundary.
+    pub http: Arc<dyn HttpClient>,
+    pub download: Arc<dyn Download>,
+    pub toolchain: Arc<dyn Toolchain>,
 }
 
 /// Longest wait for the next piece of a download.
@@ -50,42 +50,30 @@ pub async fn run(
 
     let pbf = work.join("extract.osm.pbf");
     download(tools, registry, id, job, &extract.pbf_url, &pbf).await?;
-    let poly = fetch_poly(tools, &extract.poly_url).await?;
+    let poly = fetch_poly(&*tools.http, &extract.poly_url).await?;
     let boundary = Boundary::parse(&poly).map_err(|e| e.to_string())?;
 
     registry.progress(id, job, JobPhase::Filtering, 0, None);
     let filtered = work.join("filtered.osm.pbf");
-    let mut filter = Command::new(&tools.osmium);
-    filter
-        .arg("tags-filter")
-        .arg(&pbf)
-        .args([
-            "w/building",
-            "r/building",
-            "w/highway",
-            "n/addr:housenumber",
-            "n/addr:housename",
-        ])
-        .arg("-o")
-        .arg(&filtered)
-        .arg("--overwrite");
-    run_tool(filter, "osmium tags-filter").await?;
+    tools.toolchain.tags_filter(&pbf, &filtered).await?;
     let _ = tokio::fs::remove_file(&pbf).await;
 
-    let info = file_info(tools, &filtered).await?;
-    let total = info.data.count.nodes + info.data.count.ways + info.data.count.relations;
+    let info = tools.toolchain.file_info(&filtered).await?;
+    let total = info.elements;
     registry.progress(id, job, JobPhase::Importing, 0, Some(total));
     let db = work.join("db");
     tokio::fs::create_dir_all(&db)
         .await
         .map_err(|e| format!("could not create the database directory: {e}"))?;
     let version = info
-        .header
-        .option
-        .osmosis_replication_timestamp
+        .replication_timestamp
         .as_deref()
         .filter(|t| is_osm_timestamp(t));
-    import(tools, registry, id, job, &filtered, &db, total, version).await?;
+    let mut progress = |done| registry.progress(id, job, JobPhase::Importing, done, Some(total));
+    tools
+        .toolchain
+        .load(&filtered, &db, version, &mut progress)
+        .await?;
     let _ = tokio::fs::remove_file(&filtered).await;
 
     registry.progress(id, job, JobPhase::Finishing, 0, None);
@@ -96,7 +84,7 @@ pub async fn run(
     tokio::fs::create_dir_all(&db_root)
         .await
         .map_err(|e| format!("could not create the database directory: {e}"))?;
-    let db_dir = format!("{}-{}", slug(id), now_unix());
+    let db_dir = format!("{}-{}", slug(id), registry.now_unix());
     let dest = db_root.join(&db_dir);
     let _ = tokio::fs::remove_dir_all(&dest).await;
     tokio::fs::rename(&db, &dest)
@@ -108,7 +96,7 @@ pub async fn run(
         bbox: boundary.bbox(),
         db: Arc::new(RegionDb::new(dest, boundary)),
         db_dir,
-        data_timestamp: info.header.option.osmosis_replication_timestamp,
+        data_timestamp: info.replication_timestamp,
         disk_bytes,
     })
 }
@@ -124,12 +112,16 @@ async fn download(
     let max = registry.max_download_bytes();
     // The body may take hours, so only the wait for the headers is bounded here
     // (and each piece of the body below).
-    let mut resp = tokio::time::timeout(READ_STALL, tools.client.get(url).send())
+    let resp = tokio::time::timeout(READ_STALL, tools.download.get(url))
         .await
         .map_err(|_| "the download server did not answer; try again later".to_owned())?
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| format!("could not download the extract: {}", e.without_url()))?;
-    let total = resp.content_length();
+        .map_err(|e| format!("could not download the extract: {e}"))?;
+    if resp.status.is_client_error() || resp.status.is_server_error() {
+        let e = status_error(resp.status, resp.reason.as_deref());
+        return Err(format!("could not download the extract: {e}"));
+    }
+    let total = resp.content_length;
+    let mut body = resp.body;
     let too_big = |n: u64| {
         format!(
             "the extract is {} MB, more than the {} MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
@@ -146,10 +138,10 @@ async fn download(
     let mut done = 0u64;
     registry.progress(id, job, JobPhase::Downloading, 0, total);
     loop {
-        let chunk = tokio::time::timeout(READ_STALL, resp.chunk())
+        let chunk = tokio::time::timeout(READ_STALL, body.chunk())
             .await
             .map_err(|_| "the download stalled; try again later".to_owned())?
-            .map_err(|e| format!("the download failed: {}", e.without_url()))?;
+            .map_err(|e| format!("the download failed: {e}"))?;
         let Some(chunk) = chunk else { break };
         done += chunk.len() as u64;
         if done > max {
@@ -169,57 +161,16 @@ async fn download(
     Ok(())
 }
 
-async fn fetch_poly(tools: &Tools, url: &str) -> Result<String, String> {
+pub(crate) async fn fetch_poly(http: &dyn HttpClient, url: &str) -> Result<String, String> {
     let fail = |e: String| format!("could not download the region boundary: {e}");
-    let resp = tools
-        .client
-        .get(url)
+    let req = HttpRequest::get(url, MAX_POLY_BYTES)
         .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| fail(e.without_url().to_string()))?;
-    let bytes = crate::read_capped(resp, MAX_POLY_BYTES)
-        .await
-        .map_err(|e| fail(e.without_url().to_string()))?
+        .skip_error_bodies();
+    let resp = http.send(req).await.map_err(|e| fail(e.to_string()))?;
+    let bytes = checked_body(resp)
+        .map_err(fail)?
         .ok_or_else(|| fail("it is unexpectedly large".into()))?;
     String::from_utf8(bytes.to_vec()).map_err(|_| fail("it is not text".into()))
-}
-
-#[derive(Debug, Deserialize)]
-struct FileInfo {
-    header: Header,
-    data: Data,
-}
-
-#[derive(Debug, Deserialize)]
-struct Header {
-    #[serde(default)]
-    option: HeaderOptions,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct HeaderOptions {
-    osmosis_replication_timestamp: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Data {
-    count: Counts,
-}
-
-#[derive(Debug, Deserialize)]
-struct Counts {
-    nodes: u64,
-    ways: u64,
-    relations: u64,
-}
-
-async fn file_info(tools: &Tools, file: &Path) -> Result<FileInfo, String> {
-    let mut cmd = Command::new(&tools.osmium);
-    cmd.arg("fileinfo").arg("-e").arg("-j").arg(file);
-    let out = run_tool(cmd, "osmium fileinfo").await?;
-    serde_json::from_slice(&out).map_err(|e| format!("osmium fileinfo output unreadable: {e}"))
 }
 
 /// Whether `s` is an OSM data date as Overpass reports it,
@@ -228,158 +179,6 @@ async fn file_info(tools: &Tools, file: &Path) -> Result<FileInfo, String> {
 /// before a timestamp reaches a command line or a response header.
 pub fn is_osm_timestamp(s: &str) -> bool {
     observation_core::provenance::parse_utc(s).is_some()
-}
-
-/// Pipes `osmium cat -f osm` into `update_database`, counting elements on the
-/// way for progress. With a `version` (the extract's replication timestamp,
-/// see [`is_osm_timestamp`]) the database records it, and Overpass reports it
-/// as `timestamp_osm_base`.
-async fn import(
-    tools: &Tools,
-    registry: &Registry,
-    id: &str,
-    job: JobId,
-    filtered: &Path,
-    db: &Path,
-    total: u64,
-    version: Option<&str>,
-) -> Result<(), String> {
-    let mut cat = Command::new(&tools.osmium);
-    cat.arg("cat")
-        .arg(filtered)
-        .args(["-f", "osm", "-o", "-"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut update = Command::new(tools.overpass_bin.join("update_database"));
-    update
-        .arg(format!("--db-dir={}/", db.display()))
-        .args([
-            "--meta=no",
-            "--compression-method=lz4",
-            "--map-compression-method=lz4",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(version) = version {
-        update.arg(format!("--version={version}"));
-    }
-    let mut cat = cat
-        .spawn()
-        .map_err(|e| format!("could not start osmium: {e}"))?;
-    let mut update = update
-        .spawn()
-        .map_err(|e| format!("could not start update_database: {e}"))?;
-    let cat_err = tokio::spawn(tail(cat.stderr.take()));
-    let update_err = tokio::spawn(tail(update.stderr.take()));
-    let (Some(mut xml), Some(mut sink)) = (cat.stdout.take(), update.stdin.take()) else {
-        return Err("could not connect osmium to update_database".into());
-    };
-
-    let mut counter = ElementCounter::default();
-    let mut buf = vec![0u8; 256 * 1024];
-    let relay = async {
-        loop {
-            let n = xml.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            counter.feed(&buf[..n]);
-            sink.write_all(&buf[..n]).await?;
-            registry.progress(id, job, JobPhase::Importing, counter.count, Some(total));
-        }
-        sink.shutdown().await
-    }
-    .await;
-    // Unblock osmium if update_database stopped reading (and vice versa).
-    drop(xml);
-    drop(sink);
-    let cat_status = cat.wait().await;
-    let update_status = update.wait().await;
-    let cat_err = cat_err.await.unwrap_or_default();
-    let update_err = update_err.await.unwrap_or_default();
-    // update_database first: when it dies, osmium fails too, on a broken pipe.
-    match (update_status, cat_status) {
-        (Ok(u), _) if !u.success() => Err(format!("update_database failed: {update_err}")),
-        (_, Ok(c)) if !c.success() => Err(format!("osmium cat failed: {cat_err}")),
-        (Err(e), _) | (_, Err(e)) => Err(format!("import tool failed: {e}")),
-        _ => relay.map_err(|e| format!("the import was interrupted: {e}")),
-    }
-}
-
-/// Runs a tool to completion; its stdout on success, its stderr in the error.
-async fn run_tool(mut cmd: Command, what: &str) -> Result<Vec<u8>, String> {
-    let out = cmd
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|e| format!("could not start {what}: {e}"))?;
-    if out.status.success() {
-        Ok(out.stdout)
-    } else {
-        Err(format!(
-            "{what} failed: {}",
-            last_chars(&String::from_utf8_lossy(&out.stderr), 500)
-        ))
-    }
-}
-
-/// The last 500 characters a child wrote to stderr.
-async fn tail(stream: Option<impl AsyncRead + Unpin>) -> String {
-    let mut out = Vec::new();
-    if let Some(mut s) = stream {
-        let mut buf = [0u8; 4096];
-        while let Ok(n) = s.read(&mut buf).await {
-            if n == 0 {
-                break;
-            }
-            out.extend_from_slice(&buf[..n]);
-            if out.len() > 64 * 1024 {
-                out.drain(..out.len() - 4096);
-            }
-        }
-    }
-    last_chars(&String::from_utf8_lossy(&out), 500)
-}
-
-fn last_chars(s: &str, n: usize) -> String {
-    let s = s.trim();
-    let skip = s.chars().count().saturating_sub(n);
-    s.chars().skip(skip).collect()
-}
-
-/// Counts `<node `, `<way ` and `<relation ` starts in an XML stream fed in
-/// arbitrary chunks.
-#[derive(Debug, Default)]
-pub struct ElementCounter {
-    pub count: u64,
-    /// The end of the previous chunk, for matches split across chunks.
-    carry: Vec<u8>,
-}
-
-impl ElementCounter {
-    const PATTERNS: [&'static [u8]; 3] = [b"<node ", b"<way ", b"<relation "];
-    const KEEP: usize = 9; // longest pattern - 1
-
-    pub fn feed(&mut self, chunk: &[u8]) {
-        let mut window = std::mem::take(&mut self.carry);
-        let carried = window.len();
-        window.extend_from_slice(chunk);
-        for p in Self::PATTERNS {
-            // Matches lying wholly in the carry were counted last time.
-            self.count += window
-                .windows(p.len())
-                .enumerate()
-                .filter(|(i, w)| *w == p && i + p.len() > carried)
-                .count() as u64;
-        }
-        let keep = window.len().min(Self::KEEP);
-        self.carry = window[window.len() - keep..].to_vec();
-    }
 }
 
 /// Total size of the files below `dir`.
@@ -399,33 +198,341 @@ fn dir_size(dir: &Path) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use http::StatusCode;
+    use observation_upstream::TransportErrorKind;
+    use observation_upstream::testing::{FakeHttp, FakeReply};
 
-    #[test]
-    fn counts_elements_across_chunk_boundaries() {
-        let xml = b"<osm>\n  <node id=\"1\"/>\n  <node id=\"2\">\n    <tag k=\"a\" v=\"b\"/>\n  </node>\n  <way id=\"3\">\n    <nd ref=\"1\"/>\n  </way>\n  <relation id=\"4\">\n    <member type=\"node\" ref=\"1\"/>\n  </relation>\n</osm>\n";
-        let mut whole = ElementCounter::default();
-        whole.feed(xml);
-        assert_eq!(whole.count, 4);
-        for size in 1..12 {
-            let mut c = ElementCounter::default();
-            for chunk in xml.chunks(size) {
-                c.feed(chunk);
-            }
-            assert_eq!(c.count, 4, "chunk size {size}");
+    use super::*;
+    use crate::catalog::Extract;
+    use crate::ports::{ManualClock, SystemClock};
+    use crate::testing::{FAKE_TIMESTAMP, FakeDownload, FakeToolchain, Reply, Step, chunk};
+
+    const PBF: &str = "https://download.geofabrik.de/europe/monaco-latest.osm.pbf";
+
+    /// A registry whose `monaco` import is running, allowing `max` bytes
+    /// of download.
+    async fn running(
+        dir: &Path,
+        max: u64,
+        clock: Arc<dyn crate::ports::Clock>,
+    ) -> (Arc<Registry>, JobId) {
+        let registry = Arc::new(Registry::open(dir, max, 7, clock).unwrap());
+        registry.enqueue("monaco", "Monaco").unwrap();
+        let (id, job) = registry.next_job().await;
+        let task = tokio::spawn(std::future::pending::<()>());
+        assert!(registry.started(&id, job, task.abort_handle()));
+        (registry, job)
+    }
+
+    fn tools(download: FakeDownload, http: FakeHttp) -> Tools {
+        Tools {
+            http: Arc::new(http),
+            download: Arc::new(download),
+            toolchain: Arc::new(FakeToolchain::default()),
         }
     }
 
-    #[test]
-    fn parses_fileinfo() {
-        let json = br#"{"file":{},"header":{"boxes":[],"option":{"osmosis_replication_timestamp":"2026-10-19T20:21:11Z"}},
-          "data":{"count":{"changesets":0,"nodes":27352,"ways":5321,"relations":32}}}"#;
-        let info: FileInfo = serde_json::from_slice(json).unwrap();
-        assert_eq!(info.data.count.nodes, 27352);
+    /// Downloads `reply` with a cap of `max` bytes: the result, what was
+    /// written, and how long it took on Tokio's clock.
+    async fn fetch(reply: Reply, max: u64) -> (Result<(), String>, Option<Vec<u8>>, Duration) {
+        let dir = tempfile::tempdir().unwrap();
+        let (registry, job) = running(dir.path(), max, Arc::new(SystemClock)).await;
+        let tools = tools(FakeDownload::new(reply), FakeHttp::new());
+        let dest = dir.path().join("extract.osm.pbf");
+        let started = tokio::time::Instant::now();
+        let result = download(&tools, &registry, "monaco", job, PBF, &dest).await;
+        (result, std::fs::read(&dest).ok(), started.elapsed())
+    }
+
+    /// What a failed or finished download leaves on disk.
+    #[derive(Debug, Clone, Copy)]
+    enum File {
+        /// The file holds exactly these bytes.
+        Is(&'static [u8]),
+        /// The file was never created.
+        Absent,
+        /// Created; what reached it before the failure is not checked (the
+        /// file is dropped unflushed).
+        Unchecked,
+    }
+
+    /// Every way a download ends, with its sentence: the status texts, the
+    /// 60 s waits for the head and for each piece, the size cap (declared
+    /// and while streaming) and a body that breaks off. A body ending early
+    /// is a body error from hyper ("error decoding response body", as
+    /// `a_broken_stream_is_a_body_error_with_its_status` pins), so the
+    /// import's own "ended early" check is defensive and not reached here.
+    #[tokio::test(start_paused = true)]
+    async fn downloads_end_as_described() {
+        const MIB: u64 = 1 << 20;
+        let fail = |e: &str| Err(e.to_owned());
+        // The reply, the cap, the result, what is on disk, the seconds taken.
+        type Case = (Reply, u64, Result<(), String>, File, u64);
+        let cases: Vec<Case> = vec![
+            (
+                Reply::ok(Some(6), vec![chunk(b"abc"), chunk(b"def")]),
+                MIB,
+                Ok(()),
+                File::Is(b"abcdef"),
+                0,
+            ),
+            (
+                Reply::ok(None, vec![chunk(b"abc")]),
+                MIB,
+                Ok(()),
+                File::Is(b"abc"),
+                0,
+            ),
+            (
+                Reply::status(404, None),
+                MIB,
+                fail("could not download the extract: HTTP status client error (404 Not Found)"),
+                File::Absent,
+                0,
+            ),
+            (
+                Reply::status(503, Some("Busy")),
+                MIB,
+                fail("could not download the extract: HTTP status server error (503 Busy)"),
+                File::Absent,
+                0,
+            ),
+            (
+                Reply::Fail(TransportErrorKind::Connect),
+                MIB,
+                fail("could not download the extract: scripted Connect"),
+                File::Absent,
+                0,
+            ),
+            (
+                Reply::Hang,
+                MIB,
+                fail("the download server did not answer; try again later"),
+                File::Absent,
+                60,
+            ),
+            (
+                Reply::ok(Some(6), vec![chunk(b"abc"), Step::Hang]),
+                MIB,
+                fail("the download stalled; try again later"),
+                File::Unchecked,
+                60,
+            ),
+            // A body that ends before its declared length, as hyper reports it.
+            (
+                Reply::ok(
+                    Some(6),
+                    vec![
+                        chunk(b"abc"),
+                        Step::Fail(TransportErrorKind::Body, "error decoding response body"),
+                    ],
+                ),
+                MIB,
+                fail("the download failed: error decoding response body"),
+                File::Unchecked,
+                0,
+            ),
+            // The cap: declared, refused before the file is created ...
+            (
+                Reply::ok(Some(3 * MIB + 1), vec![]),
+                3 * MIB,
+                fail(
+                    "the extract is 4 MB, more than the 3 MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
+                ),
+                File::Absent,
+                0,
+            ),
+            (
+                Reply::ok(Some(10), vec![chunk(b"0123456789")]),
+                10,
+                Ok(()),
+                File::Is(b"0123456789"),
+                0,
+            ),
+            // ... and while streaming, at exactly one byte over.
+            (
+                Reply::ok(None, vec![chunk(b"012345"), chunk(b"6789")]),
+                10,
+                Ok(()),
+                File::Is(b"0123456789"),
+                0,
+            ),
+            (
+                Reply::ok(None, vec![chunk(b"012345"), chunk(b"6789A")]),
+                10,
+                fail(
+                    "the extract is 1 MB, more than the 0 MB this server accepts (OBS_REGIONS_MAX_DOWNLOAD_MB)",
+                ),
+                File::Unchecked,
+                0,
+            ),
+        ];
+        for (reply, max, want, on_disk, secs) in cases {
+            let label = format!("{reply:?}, max {max}");
+            // A lost deadline fails here rather than hanging the test.
+            let (got, file, took) =
+                tokio::time::timeout(Duration::from_secs(3600), fetch(reply, max))
+                    .await
+                    .unwrap_or_else(|_| panic!("{label}: still waiting after an hour"));
+            assert_eq!(got, want, "{label}");
+            match on_disk {
+                File::Is(bytes) => assert_eq!(file.as_deref(), Some(bytes), "{label}"),
+                File::Absent => assert_eq!(file, None, "{label}: the file was created"),
+                File::Unchecked => assert!(file.is_some(), "{label}: no file"),
+            }
+            assert_eq!(took, Duration::from_secs(secs), "{label}");
+        }
+    }
+
+    /// Dropping the import (a cancel) drops the download's body, which ends
+    /// the transfer.
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_download_drops_its_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let (registry, job) = running(dir.path(), 1 << 20, Arc::new(SystemClock)).await;
+        let fake = Arc::new(FakeDownload::new(Reply::ok(
+            None,
+            vec![chunk(b"abc"), Step::Hang],
+        )));
+        let tools = Tools {
+            http: Arc::new(FakeHttp::new()),
+            download: fake.clone(),
+            toolchain: Arc::new(FakeToolchain::default()),
+        };
+        let dest = dir.path().join("extract.osm.pbf");
+        let task =
+            tokio::spawn(
+                async move { download(&tools, &registry, "monaco", job, PBF, &dest).await },
+            );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!fake.body_dropped.load(std::sync::atomic::Ordering::SeqCst));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(fake.body_dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(*fake.urls.lock().unwrap(), [PBF]);
+    }
+
+    /// A whole import on fakes: it reports each phase and the load's
+    /// progress, the tools run in order with the checked timestamp, the
+    /// extract is gone once filtered, and the database lands in
+    /// `db/<slug>-<clock's now>` with its boundary.
+    #[tokio::test(start_paused = true)]
+    async fn an_import_lands_in_a_directory_named_by_the_clock() {
+        const SQUARE: &str = "sq\n1\n 0 0\n 1 0\n 1 1\n 0 1\nEND\nEND\n";
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::at_unix(1_700_000_000));
+        let (registry, job) = running(dir.path(), 1 << 20, clock).await;
+        let toolchain = Arc::new(FakeToolchain::default());
+        let tools = Tools {
+            http: Arc::new(FakeHttp::replying([FakeReply::ok(SQUARE)])),
+            download: Arc::new(FakeDownload::new(Reply::ok(
+                Some(3),
+                vec![Step::Pause, chunk(b"pbf"), Step::Pause],
+            ))),
+            toolchain: toolchain.clone(),
+        };
+        let extract = Extract {
+            entry: observation_core::regions::CatalogEntry {
+                id: "monaco".into(),
+                name: "Monaco".into(),
+                parent: None,
+            },
+            pbf_url: PBF.into(),
+            poly_url: "https://download.geofabrik.de/europe/monaco.poly".into(),
+        };
+        // Every published state of the job, in order.
+        let mut published = registry.subscribe();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let watcher = tokio::spawn(async move {
+            while published.changed().await.is_ok() {
+                let snapshot = published.borrow_and_update().clone();
+                if let Some(j) = snapshot.regions.iter().find_map(|r| r.job.clone()) {
+                    record.lock().unwrap().push((j.phase, j.done, j.total));
+                }
+            }
+        });
+        let imported = run(&tools, &registry, job, &extract).await.unwrap();
+        // Let the watcher see the last state.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        watcher.abort();
+        use observation_core::regions::JobPhase::{Downloading, Filtering, Finishing, Importing};
         assert_eq!(
-            info.header.option.osmosis_replication_timestamp.as_deref(),
-            Some("2026-10-19T20:21:11Z")
+            *seen.lock().unwrap(),
+            [
+                (Downloading, 0, Some(3)),
+                (Downloading, 3, Some(3)),
+                (Filtering, 0, None),
+                (Importing, 0, Some(3)),
+                (Importing, 1, Some(3)),
+                (Importing, 3, Some(3)),
+                (Finishing, 0, None),
+            ]
         );
+        assert_eq!(imported.db_dir, "monaco-1700000000");
+        assert_eq!(imported.data_timestamp.as_deref(), Some(FAKE_TIMESTAMP));
+        let db = dir.path().join("db/monaco-1700000000");
+        assert_eq!(imported.db.dir, db);
+        assert_eq!(
+            std::fs::read_to_string(db.join("region.poly")).unwrap(),
+            SQUARE
+        );
+        assert!(
+            !dir.path().join("work/monaco").exists(),
+            "the work directory is gone"
+        );
+        assert_eq!(
+            *toolchain.calls.lock().unwrap(),
+            [
+                "tags_filter",
+                "file_info (extract kept: false)",
+                &format!("load Some({FAKE_TIMESTAMP:?})")
+            ]
+        );
+    }
+
+    /// The boundary: a 60 s GET whose error bodies are not read, capped at
+    /// 32 MiB, and the sentence for each way it fails.
+    #[tokio::test]
+    async fn boundary_failures_are_described() {
+        const URL: &str = "https://download.geofabrik.de/europe/monaco.poly";
+        let cases = [
+            (FakeReply::ok("sq\nEND\n"), Ok("sq\nEND\n".to_owned())),
+            (
+                FakeReply::status(StatusCode::NOT_FOUND),
+                Err("HTTP status client error (404 Not Found)"),
+            ),
+            (
+                FakeReply::status(StatusCode::SERVICE_UNAVAILABLE).reason("Back Soon"),
+                Err("HTTP status server error (503 Back Soon)"),
+            ),
+            (
+                FakeReply::ok(vec![b'x'; MAX_POLY_BYTES + 1]),
+                Err("it is unexpectedly large"),
+            ),
+            (
+                FakeReply::ok(vec![b'x'; MAX_POLY_BYTES]),
+                Ok("x".repeat(MAX_POLY_BYTES)),
+            ),
+            (FakeReply::ok(vec![0xff]), Err("it is not text")),
+            (FakeReply::ok(""), Ok(String::new())),
+            (
+                FakeReply::error(TransportErrorKind::Connect),
+                Err("FakeHttp: scripted Connect"),
+            ),
+        ];
+        for (reply, want) in cases {
+            let fake = FakeHttp::replying([reply]);
+            let got = fetch_poly(&fake, URL).await;
+            let want = want.map_err(|e| format!("could not download the region boundary: {e}"));
+            assert_eq!(got, want);
+            let req = &fake.requests()[0];
+            assert_eq!((&req.method, req.url.as_str()), (&http::Method::GET, URL));
+            assert_eq!(req.timeout, Some(Duration::from_secs(60)));
+            assert_eq!(req.max_bytes, 32 * 1024 * 1024);
+            assert!(req.skip_error_bodies);
+            fake.assert_drained();
+        }
     }
 
     #[test]
@@ -447,10 +554,5 @@ mod tests {
         ] {
             assert!(!is_osm_timestamp(bad), "{bad:?}");
         }
-    }
-
-    #[test]
-    fn last_chars_is_char_safe() {
-        assert_eq!(last_chars("  héllo wörld ", 5), "wörld");
     }
 }

@@ -20,8 +20,10 @@ node_modules
 Dockerfile
 tests/browser
 supply-chain
+xtask
 scripts/prune-images.sh
 /lcov.info
+/coverage.json
 
 # Local settings and secrets (mise, docker compose)
 .env

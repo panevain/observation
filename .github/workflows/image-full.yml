@@ -16,6 +16,7 @@ on:
       - rust-toolchain.toml
       - Trunk.toml
       - web/**
+      - .cargo/config.toml
       - Cargo.toml
       - Cargo.lock
       - crates/*/Cargo.toml

@@ -1,0 +1,5 @@
+name: Build image
+runs:
+  using: composite
+  steps:
+    - uses: docker/build-push-action@0000000000000000000000000000000000000000 # v7

@@ -11,6 +11,32 @@
 //!
 //! `allow_private` turns the address filter off for operators whose upstream
 //! lives on a private network.
+//!
+//! [`HttpClient`] is the port services send upstream requests through, with
+//! the size cap part of every request; [`GuardedHttp`], built only from
+//! [`client_builder`], is its production implementation, and the `testing`
+//! feature adds fakes. [`read_capped`] and [`BoundedQueue`] are the other
+//! shared pieces of talking to an upstream: a size cap on what it sends back
+//! and a bound on who waits for it.
+
+mod body;
+mod guarded;
+mod http;
+mod queue;
+mod stream;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
+pub use crate::http::{
+    Body, DEFAULT_ERROR_MAX_BYTES, HttpClient, HttpRequest, HttpResponse, RequestBody,
+    TransportError, TransportErrorKind,
+};
+pub use body::read_capped;
+pub use guarded::{BuildError, GuardedHttp, GuardedHttpBuilder};
+pub use queue::{BoundedQueue, QueueError};
+/// URLs as the HTTP client parses them, for checking configured addresses.
+pub use reqwest::Url;
+pub use stream::{ByteStream, StreamingResponse, status_error};
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};

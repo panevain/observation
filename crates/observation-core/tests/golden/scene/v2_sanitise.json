@@ -1,0 +1,87 @@
+{
+  "format": "observation-scene",
+  "version": 2,
+  "area": {
+    "kind": "demo"
+  },
+  "origin": {
+    "lat": 47.70865,
+    "lon": -122.206
+  },
+  "cameras": [
+    {
+      "id": 4,
+      "label": "Gate",
+      "model_id": "custom-spot-1",
+      "position": [
+        2.0,
+        2.7,
+        -8.0
+      ],
+      "yaw_deg": 315.0,
+      "pitch_deg": -30.0,
+      "roll_deg": -2.0,
+      "enabled": true,
+      "group": "  Front garden cameras covering the gate, the drive, the path and the bins - éééééééééééééééééééé  "
+    },
+    {
+      "id": 5,
+      "label": "Hall",
+      "model_id": "custom-hall-1",
+      "position": [
+        1.0,
+        2.0,
+        -12.0
+      ],
+      "yaw_deg": 10.0,
+      "pitch_deg": -10.0,
+      "roll_deg": 0.0,
+      "enabled": true
+    }
+  ],
+  "custom_models": [
+    {
+      "id": "custom-spot-1",
+      "vendor": "",
+      "name": "Spot",
+      "kind": "Spotlight",
+      "hfov_deg": 118.0,
+      "vfov_deg": 62.0,
+      "resolution": [
+        2304,
+        1296
+      ],
+      "ir_range_m": 12.0,
+      "source": null,
+      "notes": null
+    },
+    {
+      "id": "custom-hall-1",
+      "vendor": "",
+      "name": "Hall",
+      "kind": "Indoor",
+      "hfov_deg": 108.0,
+      "vfov_deg": 58.0,
+      "resolution": [
+        1920,
+        1080
+      ],
+      "ir_range_m": null,
+      "source": "https://example.com/hall",
+      "notes": null
+    }
+  ],
+  "params": {
+    "dori": "Observe",
+    "lighting": "Night",
+    "subject_height_m": 1.6,
+    "custom_ppm": 250.0
+  },
+  "provenance": {
+    "osm_data_as_of": 12345,
+    "bundle_built_at": "yesterday",
+    "osm_fingerprint": "not-hex",
+    "app_version": "0.2.0",
+    "catalog_version": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

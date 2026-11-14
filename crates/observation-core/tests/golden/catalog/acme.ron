@@ -1,0 +1,27 @@
+// A fixed fixture catalogue for the golden fingerprint test. Not the shipped
+// catalogue: that one changes with every model added.
+[
+    (
+        id: "acme-bullet-4k",
+        vendor: "Acme",
+        name: "Bullet 4K",
+        kind: Bullet,
+        hfov_deg: 98.0,
+        vfov_deg: 52.0,
+        resolution: (3840, 2160),
+        ir_range_m: Some(30.0),
+        source: Some("https://example.com/acme/bullet-4k"),
+        notes: Some("Spec sheet figures."),
+    ),
+    (
+        id: "acme-doorbell",
+        vendor: "Acme",
+        name: "Doorbell",
+        kind: Doorbell,
+        hfov_deg: 160.0,
+        vfov_deg: 160.0,
+        resolution: (1536, 1536),
+        ir_range_m: Some(4.5),
+        source: Some("https://example.com/acme/doorbell"),
+    ),
+]

@@ -1,0 +1,1882 @@
+== pubtime 6d23h59m
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 6 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== pubtime exactly 7d
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime 7d+1s
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime 7d-1us
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 6 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== pubtime 7 frac digits
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime offset +01 exact
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime offset -05 1s late
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 6 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== pubtime offset date render
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-01 | 9 d | ok |
+
+-- stderr
+== pubtime comma frac
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime space sep
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime no seconds
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime +0000 offset
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime +00 short offset
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime offset with secs
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime space before offset
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime lowercase z
+exit 1
+-- stdout
+-- stderr
+<traceback> ValueError: Invalid isoformat string: '2026-01-01T00:00:00z'
+== pubtime naive pubtime
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can't subtract offset-naive and offset-aware datetimes
+== pubtime date-only pubtime
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can't subtract offset-naive and offset-aware datetimes
+== pubtime clock skew
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-12 | -1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== pubtime trailing space
+exit 1
+-- stdout
+-- stderr
+<traceback> ValueError: Invalid isoformat string: '2026-01-01T00:00:00+00:00 '
+== pubtime basic format
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== pubtime lowercase t
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== now naive
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== now offset
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== now 7 frac
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `boundary` | 1.0.0 | 2026-11-04 | 7 d | ok |
+
+-- stderr
+== pubtime numeric api old
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'int' object has no attribute 'replace'
+== pubtime zero api old
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `odd` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== pubtime true api old
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'bool' object has no attribute 'replace'
+== pubtime null api old
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `odd` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== pubtime empty api old
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `odd` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== pubtime list api old
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'list' object has no attribute 'replace'
+== pubtime object api old
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'dict' object has no attribute 'replace'
+== no pubtime api network down
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== no pubtime api 429
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `nopt` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== no pubtime api 503
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `nopt` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== no pubtime api old
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `nopt` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== no pubtime api new
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `nopt` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== api created_at null exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'NoneType' object has no attribute 'replace'
+== api created_at null
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'NoneType' object has no attribute 'replace'
+== api version string exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+== api version string
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: string indices must be integers, not 'str'
+== api version null exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'NoneType' object is not subscriptable
+== api version null
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'NoneType' object is not subscriptable
+== api no version exempt
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `apix` | 1.0.0 | ? | unknown | exempt: vetted |
+
+-- stderr
+== api no version
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `apiy` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== api created_at naive exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can't subtract offset-naive and offset-aware datetimes
+== api created_at naive
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can't subtract offset-naive and offset-aware datetimes
+== api created_at number exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'int' object has no attribute 'replace'
+== api created_at number
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'int' object has no attribute 'replace'
+== api not json exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+== api not json
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+== api json list exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: list indices must be integers or slices, not str
+== api json list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: list indices must be integers or slices, not str
+== index malformed line
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+== index array line
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: list indices must be integers or slices, not str
+== index vers number
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `mal` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index no vers
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'vers'
+== index dup new wins
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `dup` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== index dup old wins
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `dup` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index U+2028 in line
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Unterminated string starting at: line 1 column 54 (char 53)
+== index U+0085 in line
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Unterminated string starting at: line 1 column 54 (char 53)
+== index FF in line
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Unterminated string starting at: line 1 column 54 (char 53)
+== index CRLF
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ls` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index whitespace line
+exit 1
+-- stdout
+-- stderr
+<traceback> json.decoder.JSONDecodeError: Expecting value: line 1 column 3 (char 2)
+== index empty 200
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `emp` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index 404 api old
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `emp` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index 404 api 404
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `emp` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== index 429
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.HTTPError: HTTP Error 429: recorded
+== index 500
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.HTTPError: HTTP Error 500: recorded
+== index 403
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.HTTPError: HTTP Error 403: recorded
+== index network
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== index unknown version api 404
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `unk` | 1.0.1 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== yanked
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `yk` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== yanked old
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `yk` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== uppercase name
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `Serde` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== one-letter
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `a` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== three-letter
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `abc` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== added to one lockfile only (present in another)
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `shared` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== downgrade to new
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `dg` | 1.1.9 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== build metadata change
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `bm` | 1.0.0+b | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== checksum change only
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== source switch crates.io registry->sparse same version
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== other registry shadow
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== git shadow
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== source missing crates.io-like with trailing slash variant
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== new lockfile
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `nl` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== deleted lockfile
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== base lockfile unshowable
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ub` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== bad base
+exit 1
+-- stdout
+-- stderr
+--base nope: not a commit in this repository (fetch it first?)
+== lock missing version
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'version'
+== lock invalid toml
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid value (at line 1, column 11)
+== lock version int
+exit 1
+-- stdout
+-- stderr
+<traceback> AssertionError: no recorded answer for https://index.crates.io/1/x
+== exempt other version
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt expired
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+- the exemption for ex expired on 2026-11-10; remove it
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt ends today
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: r |
+
+-- stderr
+== exempt no reason
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: every exemption needs a name and a reason: {'name': 'ex'}
+== exempt empty reason
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: every exemption needs a name and a reason: {'name': 'ex', 'reason': ''}
+== exempt not new crate
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt version float
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt version int
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt version bool
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt version empty
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt version build meta
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt name int
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== exempt reason int
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: 5 |
+
+-- stderr
+== exempt reason list
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: ['a'] |
+
+-- stderr
+== exempt exempt as table
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== exempt exempt as string
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== exempt exempt list of strings
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== exempt until datetime
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: '<' not supported between instances of 'datetime.datetime' and 'datetime.date'
+== exempt until string
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `until` must be a date (YYYY-MM-DD): {'name': 'ex', 'reason': 'r', 'until': '2026-12-01'}
+== exempt until expired float version
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | TOO NEW |
+
+- the exemption for ex 1.0 expired on 2026-11-01; remove it
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== old crate, exempt as table
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== old crate, exempt as string
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== nothing new, exempt as table
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== nothing new, days true
+exit 0
+-- stdout
+### Cargo cooldown (True days, against base)
+
+No crate versions added.
+
+-- stderr
+== new crate, days true
+exit 0
+-- stdout
+### Cargo cooldown (True days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `dc` | 1.0.0 | 2026-11-10 | 1 d | ok |
+
+-- stderr
+== nothing new, days float
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== new crate, days float
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== nothing new, days negative
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== new crate, days negative
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== nothing new, days string
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== new crate, days string
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== nothing new, days missing
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== new crate, days missing
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `days` must be a whole number of days
+== nothing new, days 0
+exit 0
+-- stdout
+### Cargo cooldown (0 days, against base)
+
+No crate versions added.
+
+-- stderr
+== new crate, days 0
+exit 0
+-- stdout
+### Cargo cooldown (0 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `dc` | 1.0.0 | 2026-11-10 | 1 d | ok |
+
+-- stderr
+== nothing new, days 800000
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: date value out of range
+== new crate, days 800000
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: date value out of range
+== nothing new, days 200000000
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: date value out of range
+== new crate, days 200000000
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: date value out of range
+== nothing new, days i64max
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: Python int too large to convert to C int
+== new crate, days i64max
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: Python int too large to convert to C int
+== nothing new, config invalid
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid value (at line 1, column 8)
+== new crate, config invalid
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid value (at line 1, column 8)
+== new crate, days wraps
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: Python int too large to convert to C int
+== rustsec fix
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | security fix (RUSTSEC-2026-0001) |
+
+-- stderr
+== rustsec non-fix too new
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.1.5 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec fixes one of two
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec fixes both
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.3.0 | 2026-11-10 | 1 d | security fix (RUSTSEC-2026-0001, RUSTSEC-2026-0002) |
+
+-- stderr
+== rustsec unaffected range
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 0.4.0 | 2026-11-10 | 1 d | security fix (RUSTSEC-2026-0001) |
+
+-- stderr
+== rustsec patched null
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'NoneType' object is not iterable
+== rustsec patched non-string first
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'int' object has no attribute 'split'
+== rustsec patched string list
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec unreadable range then match
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec match then unreadable
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | security fix (RUSTSEC-2026-0001) |
+
+-- stderr
+== rustsec no versions key
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec advisory for other crate
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec no package name
+exit 1
+-- stdout
+-- stderr
+<traceback> KeyError: 'name'
+== rustsec json null
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'NoneType' object has no attribute 'get'
+== rustsec json list
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'list' object has no attribute 'get'
+== rustsec json no vulnerabilities
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec vulnerabilities null
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'NoneType' object has no attribute 'get'
+== rustsec no json
+exit 1
+-- stdout
+-- stderr
+cargo-audit produced no JSON
+== rustsec missing cargo-audit
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+- cargo-audit is not on PATH, so security fixes are not recognised; they need an exemption
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec warning only (informational)
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== rustsec fix and exempt
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | exempt: r |
+
+-- stderr
+== old crate, audit json null
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'NoneType' object has no attribute 'get'
+== old crate, audit json list
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'list' object has no attribute 'get'
+== config toml 1.1 escape e
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Unescaped '\' in a string (at line 4, column 14)
+== config toml 1.1 escape x
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Unescaped '\' in a string (at line 4, column 13)
+== config toml 1.1 inline table newline
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid initial character for a key part (at line 2, column 24)
+== config toml 1.1 inline table trailing comma
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid initial character for a key part (at line 2, column 38)
+== config toml 1.1 until without seconds
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Expected newline or end of document after a statement (at line 5, column 19)
+== config toml 1.1 unicode bare key
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Expected '=' after a key in a key/value pair (at line 2, column 3)
+== config toml 1.1 control char in comment
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Found invalid character '\x01' (at line 1, column 12)
+== lock toml 1.1 escape x
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Unescaped '\' in a string (at line 7, column 15)
+== lock toml 1.1 inline table newline
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid initial character for a key part (at line 7, column 15)
+== lock toml 1.1 time without seconds
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Expected newline or end of document after a statement (at line 7, column 10)
+== lock CR line ends
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== lock BOM
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Invalid statement (at line 1, column 1)
+== lock leap second
+exit 1
+-- stdout
+-- stderr
+<traceback> tomllib.TOMLDecodeError: Expected newline or end of document after a statement (at line 7, column 18)
+== name glob brackets
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `serd[e-e]` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== name glob brackets exempt
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `serd[e-e]` | 1.0.0 | ? | unknown | exempt: r |
+
+-- stderr
+== name query string
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `serde?x` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== name slash
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `se/de` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== version glob brackets
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `serde` | 1.0.[0-0] | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== version glob braces
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `serde` | {1.0.0} | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== version two parts exempt
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `serde` | 1.0 | ? | unknown | exempt: r |
+
+-- stderr
+== version with a space exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== name with a space exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== name non-ascii exempt
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== version leading space security fix
+exit 1
+-- stdout
+-- stderr
+<traceback> urllib.error.URLError: <urlopen error recorded network failure>
+== exempt reason printed, float
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: 1.5 |
+
+-- stderr
+== exempt reason printed, date
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: 2026-01-01 |
+
+-- stderr
+== exempt reason printed, table
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: {'a': 1} |
+
+-- stderr
+== exempt reason printed, list
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: [1, 'x'] |
+
+-- stderr
+== exempt reason printed, bool
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: True |
+
+-- stderr
+== exempt reason printed, datetime
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: 2026-01-01 10:00:00+05:00 |
+
+-- stderr
+== exempt reason printed, time
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | exempt: 10:30:00.500000 |
+
+-- stderr
+== exempt version float expired
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+- the exemption for ex 1.0 expired on 2026-01-01; remove it
+
+-- stderr
+== exempt name int expired
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+- the exemption for 5 expired on 2026-01-01; remove it
+
+-- stderr
+== exempt until time
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: `until` must be a date (YYYY-MM-DD): {'name': 'ex', 'reason': 'r', 'until': datetime.time(10, 0)}
+== exempt until local datetime
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: '<' not supported between instances of 'datetime.datetime' and 'datetime.date'
+== exempt empty table
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== exempt empty string
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== exempt int
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: 'int' object is not iterable
+== exempt item not a table
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== exempt reason repr in error
+exit 1
+-- stdout
+-- stderr
+.config/cargo-cooldown.toml: every exemption needs a name and a reason: {'name': "it's", 'reason': 0, 'when': 1e+16, 'at': datetime.datetime(2026, 1, 1, 10, 0, 0, 250000, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400)))}
+== days false
+exit 0
+-- stdout
+### Cargo cooldown (False days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `old` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== days false new
+exit 0
+-- stdout
+### Cargo cooldown (False days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `ex` | 1.0.0 | 2026-11-10 | 1 d | ok |
+
+-- stderr
+== days 739931 nothing new
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: date value out of range
+== days 739932 nothing new
+exit 1
+-- stdout
+-- stderr
+<traceback> OverflowError: date value out of range
+== lock package table
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== lock package empty table
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== lock package string
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== lock source array
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: unhashable type: 'list'
+== lock source int
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== lock name int in both
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+No crate versions added.
+
+-- stderr
+== old crate, audit list empty object
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== old crate, audit list empty string
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== old crate, audit list object
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'str' object has no attribute 'get'
+== old crate, audit no vulnerabilities key
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== old crate, audit versions null
+exit 1
+-- stdout
+-- stderr
+<traceback> AttributeError: 'NoneType' object has no attribute 'get'
+== old crate, audit package name int
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== old crate, audit package name list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: unhashable type: 'list'
+== old crate, audit package list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: list indices must be integers or slices, not str
+== new crate, audit patched string
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== new crate, audit patched object
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | security fix (X) |
+
+-- stderr
+== new crate, audit id int
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: sequence item 0: expected str instance, int found
+== new crate, audit id int not fixed
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | TOO NEW |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr
+== new crate, audit range int after match
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | security fix (X) |
+
+-- stderr
+== new crate, audit two ids
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `vu` | 1.2.0 | 2026-11-10 | 1 d | security fix (A, B) |
+
+-- stderr
+== pubtime date with offset
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can't subtract offset-naive and offset-aware datetimes
+== index vers list
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: unhashable type: 'list'
+== index vers null then real
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `mal` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index line separator U+2029
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `mal` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== index vertical tab between lines
+exit 0
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `mal` | 1.0.0 | 2026-01-01 | 314 d | ok |
+
+-- stderr
+== api created_at date only
+exit 1
+-- stdout
+-- stderr
+<traceback> TypeError: can't subtract offset-naive and offset-aware datetimes
+== api created_at empty
+exit 1
+-- stdout
+-- stderr
+<traceback> ValueError: Invalid isoformat string: ''
+== api no created_at
+exit 1
+-- stdout
+### Cargo cooldown (7 days, against base)
+
+| crate | version | published | age | verdict |
+| --- | --- | --- | ---: | --- |
+| `apiz` | 1.0.0 | ? | unknown | NOT FOUND on crates.io |
+
+
+**1 crate version(s) younger than 7 days**: wait until they are, pin an older version, or add an exemption with a reason to `.config/cargo-cooldown.toml`.
+
+-- stderr

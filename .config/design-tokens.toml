@@ -1,0 +1,24 @@
+# The design-token check (`cargo xtask tokens`; `mise run tokens`, CI's "design tokens" job).
+#
+# The client takes every colour from `theme`, which takes the UI colour roles from
+# crates/observation-tokens. Any other `.rs` file under a root whose line matches one of
+# `patterns` fails the check, which prints each such line as path:line:text. `theme` and every
+# root must exist, so that a moved file cannot make the check pass by checking nothing.
+
+roots = ["crates/observation-client/src", "crates/observation-client-model/src"]
+theme = "crates/observation-client/src/theme.rs"
+
+# Rust regex syntax (https://docs.rs/regex), each matched against one line at a time.
+patterns = [
+    'Color32::from_rgb',
+    # Already covered by the one above (from_rgb is its prefix); kept as the script had it.
+    'Color32::from_rgba',
+    'Color32::from_gray',
+    'Color::srgb\(',
+    'Color::srgba\(',
+    'Color::rgb\(',
+    'Srgba::new\(',
+    'Srgba::rgb\(',
+    'Color32::[A-Z][A-Z0-9_]*',
+    '"[^"]*#[0-9a-fA-F]{6}',
+]

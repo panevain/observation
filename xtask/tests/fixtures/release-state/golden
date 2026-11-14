@@ -1,0 +1,1946 @@
+== no tags / state
+exit 0
+-- stdout
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== dev tags only / state
+exit 0
+-- stdout
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== one release, tagged main / state
+exit 0
+-- stdout
+latest=0.1.0
+main=0.1.0
+pending=false
+hotfix=false
+next=0.1.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== version order / state
+exit 0
+-- stdout
+latest=1.10.0
+main=1.10.0
+pending=false
+hotfix=false
+next=1.10.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.10.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== leading zeros, same value / state
+exit 0
+-- stdout
+latest=1.2.3
+main=1.2.3
+pending=false
+hotfix=false
+next=1.2.4
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.3
+git ls-remote --heads origin refs/heads/hotfix/*
+== leading zeros, a dot against a zero / state
+exit 0
+-- stdout
+latest=1.00.3
+main=1.0.3
+pending=false
+hotfix=false
+next=1.00.4
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.0.3
+git ls-remote --heads origin refs/heads/hotfix/*
+== leading zeros in major and minor / state
+exit 0
+-- stdout
+latest=01.02.7
+main=1.2.8
+pending=true
+hotfix=false
+next=01.02.8
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.8
+git ls-remote --heads origin refs/heads/hotfix/*
+== octal patch / state
+exit 0
+-- stdout
+latest=1.2.010
+main=1.2.9
+pending=true
+hotfix=false
+next=1.2.9
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.9
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 08 / state
+exit 0
+-- stdout
+latest=1.2.08
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- stderr
+scripts/release-state.sh: line 22: 08: value too great for base (error token is "08")
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 08 / prep
+exit 0
+-- stdout
+main is at 0.1.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+scripts/release-state.sh: line 22: 08: value too great for base (error token is "08")
+-- output
+go=false
+-- summary
+main is at 0.1.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 08 / prep-pre
+exit 0
+-- stdout
+-- stderr
+scripts/release-state.sh: line 22: 08: value too great for base (error token is "08")
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 08 / hotfix
+exit 1
+-- stdout
+::error::main is at 0.1.0, which is not tagged yet; tag or finish that release first
+-- stderr
+scripts/release-state.sh: line 22: 08: value too great for base (error token is "08")
+-- output
+latest=1.2.08
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 08 / watch
+exit 0
+-- stdout
+main is at 0.1.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+scripts/release-state.sh: line 22: 08: value too great for base (error token is "08")
+-- output
+latest=1.2.08
+main=0.1.0
+pending=true
+hotfix=false
+next=
+go=false
+-- summary
+main is at 0.1.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 0 / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch 00 / state
+exit 0
+-- stdout
+latest=1.2.00
+main=0.1.0
+pending=true
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch at the 64-bit limit / state
+exit 0
+-- stdout
+latest=1.2.9223372036854775807
+main=0.1.0
+pending=true
+hotfix=false
+next=1.2.-9223372036854775808
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== patch over 64 bits / state
+exit 0
+-- stdout
+latest=1.2.99999999999999999999
+main=0.1.0
+pending=true
+hotfix=false
+next=1.2.7766279631452241920
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== not stable versions / state
+exit 0
+-- stdout
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== nested tag ref / state
+exit 0
+-- stdout
+latest=1.0.0
+main=0.1.0
+pending=true
+hotfix=false
+next=1.0.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag name holding refs/tags/v / state
+exit 0
+-- stdout
+latest=2.0.0
+main=0.1.0
+pending=true
+hotfix=false
+next=2.0.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== CR at a line end / state
+exit 0
+-- stdout
+latest=1.0.0
+main=0.1.0
+pending=true
+hotfix=false
+next=1.0.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== no newline at the end / state
+exit 0
+-- stdout
+latest=1.1.0
+main=0.1.0
+pending=true
+hotfix=false
+next=1.1.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== no tab / state
+exit 0
+-- stdout
+latest=1.0.0
+main=0.1.0
+pending=true
+hotfix=false
+next=1.0.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== pre-release on main / state
+exit 0
+-- stdout
+latest=0.1.0
+main=0.2.0-dev.1
+pending=true
+hotfix=false
+next=0.1.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.2.0-dev.1
+git ls-remote --heads origin refs/heads/hotfix/*
+== tags listing fails / state
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+== fetch fails / state
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+== show fails / state
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: ''
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== show fails after printing a version / state
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main / state
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main, outside Actions / state
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main, GITHUB_ACTIONS empty / state
+exit 1
+-- stdout
+-- stderr
+bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== no [workspace.package] on main / state
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: ''
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== tag lookup fails / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=true
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup fails / prep
+exit 0
+-- stdout
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup fails / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup fails / hotfix
+exit 1
+-- stdout
+::error::main is at 1.2.0, which is not tagged yet; tag or finish that release first
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=true
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup fails / watch
+exit 0
+-- stdout
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=true
+hotfix=false
+next=1.2.1
+go=false
+-- summary
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup exits 1 / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=true
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup exits 1 / prep
+exit 0
+-- stdout
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup exits 1 / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup exits 1 / hotfix
+exit 1
+-- stdout
+::error::main is at 1.2.0, which is not tagged yet; tag or finish that release first
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=true
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== tag lookup exits 1 / watch
+exit 0
+-- stdout
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=true
+hotfix=false
+next=1.2.1
+go=false
+-- summary
+main is at 1.2.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix listing fails / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix listing fails / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+git ls-remote --heads origin refs/heads/release/*
+== hotfix listing fails / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix listing fails / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix listing fails / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix listing prints only a newline / state
+exit 0
+-- stdout
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== two hotfix branches / state
+exit 0
+-- stdout
+latest=
+main=0.1.0
+pending=true
+hotfix=true
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== no release yet (today) / state
+exit 0
+-- stdout
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== no release yet (today) / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git ls-remote --heads origin refs/heads/release/*
+== no release yet (today) / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== no release yet (today) / hotfix
+exit 1
+-- stdout
+::error::no release yet; nothing to patch
+-- stderr
+-- output
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== no release yet (today) / watch
+exit 0
+-- stdout
+No release yet; nothing to watch.
+-- stderr
+-- output
+latest=
+main=0.1.0
+pending=true
+hotfix=false
+next=
+go=false
+-- summary
+No release yet; nothing to watch.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== released, nothing open / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== released, nothing open / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+git ls-remote --heads origin refs/heads/release/*
+== released, nothing open / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== released, nothing open / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== released, nothing open / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main waits for its tag / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.3.0
+pending=true
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.3.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main waits for its tag / prep
+exit 0
+-- stdout
+main is at 1.3.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+main is at 1.3.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.3.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main waits for its tag / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.3.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main waits for its tag / hotfix
+exit 1
+-- stdout
+::error::main is at 1.3.0, which is not tagged yet; tag or finish that release first
+-- stderr
+-- output
+latest=1.2.0
+main=1.3.0
+pending=true
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.3.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main waits for its tag / watch
+exit 0
+-- stdout
+main is at 1.3.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+latest=1.2.0
+main=1.3.0
+pending=true
+hotfix=false
+next=1.2.1
+go=false
+-- summary
+main is at 1.3.0, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.3.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== first release waits for its tag / state
+exit 0
+-- stdout
+latest=
+main=0.2.0
+pending=true
+hotfix=false
+next=
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== first release waits for its tag / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git ls-remote --heads origin refs/heads/release/*
+== first release waits for its tag / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== first release waits for its tag / hotfix
+exit 1
+-- stdout
+::error::no release yet; nothing to patch
+-- stderr
+-- output
+latest=
+main=0.2.0
+pending=true
+hotfix=false
+next=
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== first release waits for its tag / watch
+exit 0
+-- stdout
+No release yet; nothing to watch.
+-- stderr
+-- output
+latest=
+main=0.2.0
+pending=true
+hotfix=false
+next=
+go=false
+-- summary
+No release yet; nothing to watch.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v0.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge open / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge open / prep
+exit 0
+-- stdout
+develop does not contain v1.2.0 yet (its back-merge is still open); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+develop does not contain v1.2.0 yet (its back-merge is still open); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+== back-merge open / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge open / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge open / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== merge-base fails / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== merge-base fails / prep
+exit 0
+-- stdout
+develop does not contain v1.2.0 yet (its back-merge is still open); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+develop does not contain v1.2.0 yet (its back-merge is still open); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+== merge-base fails / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== merge-base fails / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== merge-base fails / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix open / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=true
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix open / prep
+exit 0
+-- stdout
+A hotfix/* branch exists (a hotfix is in progress); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+A hotfix/* branch exists (a hotfix is in progress); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+== hotfix open / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix open / hotfix
+exit 1
+-- stdout
+::error::a hotfix/* branch already exists
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=true
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== hotfix open / watch
+exit 0
+-- stdout
+A hotfix/* branch exists (a hotfix is in progress); skipping.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=true
+next=1.2.1
+go=false
+-- summary
+A hotfix/* branch exists (a hotfix is in progress); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release open / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release open / prep
+exit 0
+-- stdout
+A release/* branch exists (a release is in progress); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+A release/* branch exists (a release is in progress); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+git ls-remote --heads origin refs/heads/release/*
+== release open / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release open / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release open / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing fails / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing fails / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+git ls-remote --heads origin refs/heads/release/*
+== release listing fails / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing fails / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing fails / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing prints only a newline / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing prints only a newline / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+git ls-remote --heads origin refs/heads/release/*
+== release listing prints only a newline / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing prints only a newline / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== release listing prints only a newline / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main behind the latest release / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.1.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main behind the latest release / prep
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+git ls-remote --heads origin refs/heads/release/*
+== main behind the latest release / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main behind the latest release / hotfix
+exit 1
+-- stdout
+::error::main is at 1.1.0 but the latest release is 1.2.0
+-- stderr
+-- output
+latest=1.2.0
+main=1.1.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== main behind the latest release / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.1.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.1.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== waits for its tag and a hotfix open / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.1
+pending=true
+hotfix=true
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.1
+git ls-remote --heads origin refs/heads/hotfix/*
+== waits for its tag and a hotfix open / prep
+exit 0
+-- stdout
+main is at 1.2.1, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+main is at 1.2.1, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.1
+git ls-remote --heads origin refs/heads/hotfix/*
+== waits for its tag and a hotfix open / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.1
+git ls-remote --heads origin refs/heads/hotfix/*
+== waits for its tag and a hotfix open / hotfix
+exit 1
+-- stdout
+::error::main is at 1.2.1, which is not tagged yet; tag or finish that release first
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.1
+pending=true
+hotfix=true
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.1
+git ls-remote --heads origin refs/heads/hotfix/*
+== waits for its tag and a hotfix open / watch
+exit 0
+-- stdout
+main is at 1.2.1, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.1
+pending=true
+hotfix=true
+next=1.2.1
+go=false
+-- summary
+main is at 1.2.1, which is not tagged yet (a release or hotfix waits for its tag); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.1
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge and release open / state
+exit 0
+-- stdout
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge and release open / prep
+exit 0
+-- stdout
+develop does not contain v1.2.0 yet (its back-merge is still open); skipping.
+-- stderr
+-- output
+go=false
+-- summary
+develop does not contain v1.2.0 yet (its back-merge is still open); skipping.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+git merge-base --is-ancestor v1.2.0 HEAD
+== back-merge and release open / prep-pre
+exit 0
+-- stdout
+-- stderr
+-- output
+go=true
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge and release open / hotfix
+exit 0
+-- stdout
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== back-merge and release open / watch
+exit 0
+-- stdout
+Checking v1.2.0.
+-- stderr
+-- output
+latest=1.2.0
+main=1.2.0
+pending=false
+hotfix=false
+next=1.2.1
+go=true
+-- summary
+Checking v1.2.0.
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+git ls-remote --exit-code --tags origin refs/tags/v1.2.0
+git ls-remote --heads origin refs/heads/hotfix/*
+== bad version on main, checks / state
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main, checks / prep
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main, checks / prep-pre
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main, checks / hotfix
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== bad version on main, checks / watch
+exit 1
+-- stdout
+-- stderr
+::error::bad workspace version in Cargo.toml on main: '1.0'
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+git fetch --quiet --depth=1 origin main
+git show FETCH_HEAD:Cargo.toml
+== tags listing fails, checks / state
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+== tags listing fails, checks / prep
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+== tags listing fails, checks / prep-pre
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+== tags listing fails, checks / hotfix
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*
+== tags listing fails, checks / watch
+exit 128
+-- stdout
+-- stderr
+-- output
+-- summary
+-- git
+git ls-remote --tags --refs origin v*

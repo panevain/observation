@@ -8,15 +8,16 @@
 //! an older deployment is detected rather than misread.
 
 use crate::building::Footprint;
-use crate::bundle::{AreaBundle, Road};
-use crate::coverage::{GroundGrid, StaticLayers, Visibility};
+use crate::bundle::AreaBundle;
+use crate::coverage::{AreaGeometry, GroundGrid, Sight, StaticLayers};
 use crate::frustum::ViewCone;
+use crate::road::Road;
 use crate::terrain::Terrain;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const JOB_VERSION: u8 = 2;
+pub const JOB_VERSION: u8 = 3;
 
 /// Client to worker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,10 +31,10 @@ pub enum JobRequest {
     Compute(Job),
 }
 
-/// What [`StaticLayers::new`] takes from a bundle: the arguments of
-/// [`StaticLayers::from_parts`], without the render mesh and addresses the
-/// layers do not use. The worker builds its layers from these with the same
-/// function, so they match the client's.
+/// What [`StaticLayers::new`] takes from a bundle: its grid and
+/// [`AreaGeometry`], without the render mesh and addresses the layers do not
+/// use. The worker builds its layers from these with
+/// [`StaticLayers::from_area`], as the client does, so they match.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayerInputs {
     pub grid: GroundGrid,
@@ -55,18 +56,25 @@ impl LayerInputs {
     }
 
     pub fn build(&self) -> StaticLayers {
-        let footprints: Vec<&Footprint> = self.footprints.iter().collect();
-        StaticLayers::from_parts(
-            self.grid,
-            &footprints,
-            &self.roads,
-            self.facade_cell_m,
-            self.terrain.clone(),
-        )
+        StaticLayers::from_area(self.grid, self, self.facade_cell_m)
     }
 }
 
-/// One camera's visibility to compute.
+impl AreaGeometry for LayerInputs {
+    fn footprints(&self) -> impl Iterator<Item = &Footprint> {
+        self.footprints.iter()
+    }
+
+    fn roads(&self) -> &[Road] {
+        &self.roads
+    }
+
+    fn terrain(&self) -> &Terrain {
+        &self.terrain
+    }
+}
+
+/// One camera's sight lines to compute, out to the cone's range.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Job {
     /// The area load this job belongs to.
@@ -84,7 +92,7 @@ impl Job {
             generation: self.generation,
             camera_id: self.camera_id,
             key: self.key,
-            visibility: layers.visibility(&self.cone, self.subject_height_m),
+            sight: layers.sight(&self.cone, self.subject_height_m),
         }
     }
 }
@@ -95,7 +103,7 @@ pub struct JobResult {
     pub generation: u32,
     pub camera_id: u32,
     pub key: u64,
-    pub visibility: Visibility,
+    pub sight: Sight,
 }
 
 /// Worker to client.
@@ -184,7 +192,7 @@ mod tests {
     fn round_trip() {
         let load = JobRequest::LoadArea {
             generation: 3,
-            inputs: LayerInputs::new(&crate::bundle::tests::sample(), 0.5, 1.0),
+            inputs: LayerInputs::new(&crate::testing::sample_bundle(), 0.5, 1.0),
         };
         let compute = JobRequest::Compute(job());
         for req in [load, compute] {
@@ -196,9 +204,12 @@ mod tests {
             generation: 3,
             camera_id: 7,
             key: 42,
-            visibility: Visibility {
+            sight: Sight {
+                range: 31.5,
                 ground: vec![0, 5, 70_000],
+                ground_d2: vec![1.0, 4.25, 990.0],
                 facade: vec![2],
+                facade_d2: vec![12.5],
             },
         });
         let stale = JobResponse::Stale {
@@ -236,25 +247,23 @@ mod tests {
 
     #[test]
     fn run_matches_direct_computation() {
-        let wall = Footprint {
-            outer: vec![[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]],
-            holes: vec![],
-            min_height_m: 0.0,
-            height_m: 6.0,
-            base_m: 0.0,
-        };
+        let wall = crate::testing::box_footprint(-5.0, -5.0, 5.0, 5.0, 6.0);
         let grid = GroundGrid::covering(Vec2::new(-40.0, -40.0), Vec2::new(40.0, 40.0), 1.0);
         let layers = StaticLayers::from_parts(grid, &[&wall], &[], 1.0, Terrain::default());
         let j = job();
         let r = j.run(&layers);
         assert_eq!((r.generation, r.camera_id, r.key), (3, 7, j.key));
-        assert_eq!(r.visibility, layers.visibility(&j.cone, 1.0));
-        assert!(!r.visibility.ground.is_empty() && !r.visibility.facade.is_empty());
+        assert_eq!(r.sight.range, j.cone.range);
+        assert_eq!(
+            r.sight.within(j.cone.range),
+            layers.visibility(&j.cone, 1.0)
+        );
+        assert!(!r.sight.ground.is_empty() && !r.sight.facade.is_empty());
     }
 
     #[test]
     fn layer_inputs_build_the_same_layers() {
-        let bundle = crate::bundle::tests::sample_on(crate::terrain::tests::slope());
+        let bundle = crate::testing::sample_bundle_on(crate::testing::slope());
         let direct = StaticLayers::new(&bundle, 0.5, 1.0);
         let inputs = LayerInputs::new(&bundle, 0.5, 1.0);
         let built = JobRequest::decode(
@@ -268,12 +277,12 @@ mod tests {
             panic!("LoadArea did not round-trip: {built:?}");
         };
         let built = inputs.build();
-        assert_eq!(built.grid, direct.grid);
-        assert_eq!(built.building_mask, direct.building_mask);
-        assert_eq!(built.street_mask, direct.street_mask);
-        assert_eq!(built.facades, direct.facades);
+        assert_eq!(built.grid(), direct.grid());
+        assert_eq!(built.building_mask(), direct.building_mask());
+        assert_eq!(built.street_mask(), direct.street_mask());
+        assert_eq!(built.facades(), direct.facades());
         assert_eq!(built.terrain(), direct.terrain());
         assert!(!built.terrain().is_flat());
-        assert!(direct.building_mask.contains(&true) && direct.street_mask.contains(&true));
+        assert!(direct.building_mask().contains(&true) && direct.street_mask().contains(&true));
     }
 }

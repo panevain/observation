@@ -7,14 +7,18 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Test doubles (a manual clock, memory stores, the app over fakes) for tests of
+# code that builds on this crate.
+testing = ["observation-regions-api/testing", "observation-upstream/testing"]
+
 [dependencies]
 observation-core.workspace = true
 observation-upstream.workspace = true
+observation-regions-api.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
-# `form` is needed to POST the Overpass query as `application/x-www-form-urlencoded`.
-reqwest = { workspace = true, features = ["form"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -28,6 +32,11 @@ httpdate = "1.0"
 png = "0.18"
 
 [dev-dependencies]
+# The integration tests build the app over fakes (`testing::TestApp`).
+observation-server = { path = ".", features = ["testing"] }
+observation-regions-api = { workspace = true, features = ["testing"] }
+observation-upstream = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
 tower = { workspace = true, features = ["util"] }
 tempfile = "3"
 

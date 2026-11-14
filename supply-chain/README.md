@@ -25,6 +25,11 @@ those crates, which keep the default `safe-to-deploy`. So everything that runs o
 or handles its input is covered. Tightening the client's policy means exempting its tree too;
 do it when the exemptions can be carried.
 
+`observation-client-model` (the client's engine-free logic, with no Bevy) and every other crate
+keep the default policy, so their dependencies are vetted like the server's. The fuzz targets
+(`fuzz/`) and the repository tooling (`xtask/`) are workspaces of their own that ship nothing,
+and are not vetted.
+
 ## When the check fails
 
 A pull request brought in a crate version (a new crate, or a new version of one) that is in the

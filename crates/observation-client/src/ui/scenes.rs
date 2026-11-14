@@ -5,10 +5,11 @@
 use super::widgets::{bar, danger, hint, primary, secondary, section};
 use crate::icons;
 use crate::persist::PersistAction;
-use crate::slots::{MAX_NAME_CHARS, STORAGE_BUDGET, SlotError, Slots};
 use crate::theme::{Tokens, strong_family};
 use bevy::prelude::MessageWriter;
 use bevy_egui::egui::{self, Align, Align2, Layout, RichText, Vec2};
+use observation_client_model::scenes::SceneAction;
+use observation_client_model::slots::{MAX_NAME_CHARS, STORAGE_BUDGET, SlotError, Slots};
 
 /// Share of the storage guide past which the usage bar turns to a warning.
 const NEARLY_FULL: f32 = 0.8;
@@ -89,7 +90,7 @@ pub fn window(
                     .on_hover_text("Start an empty scene on this area; the open one stays saved")
                     .clicked()
                 {
-                    persist.write(PersistAction::NewScene);
+                    persist.write(PersistAction::Scene(SceneAction::New));
                 }
                 let tip = if has_area {
                     "Copy the open scene and carry on in the copy"
@@ -105,7 +106,7 @@ pub fn window(
                     .on_disabled_hover_text(tip)
                     .clicked()
                 {
-                    persist.write(PersistAction::DuplicateScene);
+                    persist.write(PersistAction::Scene(SceneAction::Duplicate));
                 }
             });
 
@@ -164,7 +165,10 @@ fn list(
                     .on_hover_text("Keep the old name")
                     .clicked();
                 if save || enter {
-                    persist.write(PersistAction::RenameScene(slot.id, text.clone()));
+                    persist.write(PersistAction::Scene(SceneAction::Rename(
+                        slot.id,
+                        text.clone(),
+                    )));
                     slots.renaming = None;
                 } else if cancel {
                     slots.renaming = None;
@@ -183,7 +187,7 @@ fn list(
                 .on_hover_text("Open this scene; the open one stays saved")
                 .clicked()
             {
-                persist.write(PersistAction::OpenScene(slot.id));
+                persist.write(PersistAction::Scene(SceneAction::Open(slot.id)));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if slots.confirm_delete == Some(slot.id) {
@@ -192,7 +196,7 @@ fn list(
                         .clicked()
                     {
                         slots.confirm_delete = None;
-                        persist.write(PersistAction::DeleteScene(slot.id));
+                        persist.write(PersistAction::Scene(SceneAction::Delete(slot.id)));
                     }
                     if ui.add(secondary(t, "Keep")).clicked() {
                         slots.confirm_delete = None;

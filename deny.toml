@@ -71,9 +71,9 @@ deny = [
     { name = "native-tls", reason = "TLS is rustls only" },
     { name = "hyper-tls", reason = "TLS is rustls only (hyper-rustls)" },
     # Outbound HTTP goes through observation-upstream's address-filtering resolver and redirect
-    # policy (SSRF guards). The server and the region agent use reqwest only through it, plus
-    # the error and response types; the client talks only to its own server, through the browser.
-    { name = "reqwest", wrappers = ["observation-upstream", "observation-server", "observation-regions"], reason = "outbound HTTP must use observation-upstream's client_builder" },
+    # policy (SSRF guards). Only it depends on reqwest; the server and the region agent reach
+    # reqwest through it; the client talks only to its own server, through the browser.
+    { name = "reqwest", wrappers = ["observation-upstream"], reason = "outbound HTTP must use observation-upstream's client_builder" },
     # Build-time downloads without checksum verification, and git-based crates fetched at build
     # time, defeat --locked and the Cargo.lock checksums.
     { name = "protoc-prebuilt", reason = "downloads protoc at build time without verifying it" },

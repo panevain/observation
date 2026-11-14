@@ -2,56 +2,42 @@
 //! imported region, region management for the UI, and a live copy of the
 //! agent's [`RegionsSnapshot`] kept up to date by long-polling.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use observation_core::geo::BBox;
-use observation_core::provenance::parse_utc;
 use observation_core::regions::{
-    ActionKind, OSM_BASE_HEADER, RegionAction, RegionView, RegionsSnapshot, RegionsStatus,
-    SizesRequest,
+    ActionKind, RegionAction, RegionView, RegionsSnapshot, RegionsStatus, SizesRequest,
 };
-use reqwest::StatusCode;
+use observation_regions_api::{AgentError, RegionAgent};
 use tokio::sync::watch;
+use tokio::time::Instant;
 
 use crate::error::ApiError;
 use crate::overpass::{OsmData, build_query, parse_response};
 
-/// Largest query result accepted (as for public Overpass).
-const MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
-/// Largest snapshot or catalog accepted.
-const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
 /// How long the catalog is reused.
 const CATALOG_TTL: Duration = Duration::from_secs(3600);
 
 #[derive(Debug)]
 pub struct Regions {
-    client: reqwest::Client,
-    base: String,
-    token: Option<String>,
+    agent: Arc<dyn RegionAgent>,
     manageable: bool,
     tx: watch::Sender<RegionsStatus>,
     catalog: tokio::sync::Mutex<Option<(Instant, Bytes)>>,
 }
 
 impl Regions {
-    /// `client` must carry the project `User-Agent` and no overall timeout
-    /// (snapshot requests long-poll).
-    pub fn new(
-        client: reqwest::Client,
-        base: String,
-        token: Option<String>,
-        manageable: bool,
-    ) -> Self {
+    /// Follows `agent`; region management is allowed when `manageable`.
+    pub fn new(agent: Arc<dyn RegionAgent>, manageable: bool) -> Self {
         let (tx, _) = watch::channel(RegionsStatus {
             agent_online: false,
             manageable,
             snapshot: RegionsSnapshot::default(),
         });
         Self {
-            client,
-            base,
-            token,
+            agent,
             manageable,
             tx,
             catalog: tokio::sync::Mutex::new(None),
@@ -64,14 +50,6 @@ impl Regions {
 
     pub fn subscribe(&self) -> watch::Receiver<RegionsStatus> {
         self.tx.subscribe()
-    }
-
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let req = self.client.request(method, format!("{}{path}", self.base));
-        match &self.token {
-            Some(t) => req.bearer_auth(t),
-            None => req,
-        }
     }
 
     /// Publishes the agent's reachability and, if given, its snapshot. With
@@ -93,6 +71,26 @@ impl Regions {
         });
     }
 
+    /// Asks the agent for its snapshot once (waiting for a newer one while
+    /// it is online) and publishes the answer, or that the agent is
+    /// unreachable. The error describes why, for the log.
+    pub async fn poll_once(&self) -> Result<(), String> {
+        let since = {
+            let s = self.tx.borrow();
+            s.agent_online.then_some(s.snapshot.version)
+        };
+        match self.agent.snapshot(since).await {
+            Ok(snap) => {
+                self.publish(true, Some(snap), false);
+                Ok(())
+            }
+            Err(e) => {
+                self.publish(false, None, false);
+                Err(e)
+            }
+        }
+    }
+
     /// Follows the agent's snapshot forever: long-polls for changes, backing
     /// off while the agent is unreachable.
     pub async fn run_poller(self: std::sync::Arc<Self>) {
@@ -100,34 +98,9 @@ impl Regions {
         // Last time an unreachable agent was logged.
         let mut warned: Option<Instant> = None;
         loop {
-            let since = {
-                let s = self.tx.borrow();
-                s.agent_online.then_some(s.snapshot.version)
-            };
-            let path =
-                since.map_or_else(|| "/regions".to_owned(), |v| format!("/regions?since={v}"));
-            let result = async {
-                let resp = self
-                    .request(reqwest::Method::GET, &path)
-                    .timeout(Duration::from_secs(40))
-                    .send()
-                    .await
-                    .and_then(reqwest::Response::error_for_status)
-                    .map_err(|e| e.without_url().to_string())?;
-                let body = crate::read_capped(resp, MAX_JSON_BYTES)
-                    .await
-                    .map_err(|e| e.without_url().to_string())?
-                    .ok_or("the snapshot is too large")?;
-                serde_json::from_slice::<RegionsSnapshot>(&body).map_err(|e| e.to_string())
-            }
-            .await;
-            match result {
-                Ok(snap) => {
-                    backoff = Duration::from_secs(1);
-                    self.publish(true, Some(snap), false);
-                }
+            match self.poll_once().await {
+                Ok(()) => backoff = Duration::from_secs(1),
                 Err(e) => {
-                    self.publish(false, None, false);
                     if warned.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
                         tracing::warn!(error = %e, "region agent unreachable");
                         warned = Some(Instant::now());
@@ -166,42 +139,11 @@ impl Regions {
                 return Ok(None);
             }
         }
-        let resp = self
-            // Digits, `.`, `-` and `,` only: no escaping needed.
-            .request(
-                reqwest::Method::POST,
-                &format!("/interpreter?bbox={}", bbox.overpass()),
-            )
-            .form(&[("data", build_query(bbox))])
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|e| e.without_url().to_string())?;
-        if resp.status() == StatusCode::NOT_FOUND {
+        let Some(result) = self.agent.query(bbox, &build_query(bbox), timeout).await? else {
             return Ok(None);
-        }
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = crate::read_capped(resp, 4096).await.ok().flatten();
-            return Err(format!(
-                "agent answered {status}: {}",
-                body.map(|b| String::from_utf8_lossy(&b).into_owned())
-                    .unwrap_or_default()
-            ));
-        }
-        // The region's data date, for databases imported before the agent
-        // recorded it in them (they report an empty `timestamp_osm_base`).
-        let header_base = resp
-            .headers()
-            .get(OSM_BASE_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_utc);
-        let body = crate::read_capped(resp, MAX_RESULT_BYTES)
-            .await
-            .map_err(|e| e.without_url().to_string())?
-            .ok_or("the result is too large")?;
-        let mut data = parse_response(&body).map_err(|e| e.to_string())?;
-        data.osm_base_unix = data.osm_base_unix.or(header_base);
+        };
+        let mut data = parse_response(&result.body).map_err(|e| e.to_string())?;
+        data.osm_base_unix = data.osm_base_unix.or(result.osm_base_unix);
         Ok(Some(data))
     }
 
@@ -213,13 +155,7 @@ impl Regions {
         {
             return Ok(body.clone());
         }
-        let resp = self
-            .request(reqwest::Method::GET, "/catalog")
-            .timeout(Duration::from_secs(45))
-            .send()
-            .await
-            .map_err(|_| unreachable_agent())?;
-        let body = self.answer(resp).await?;
+        let body = self.agent.catalog().await.map_err(agent_error)?;
         *cached = Some((Instant::now(), body.clone()));
         Ok(body)
     }
@@ -227,14 +163,7 @@ impl Regions {
     /// Download sizes of catalog extracts (JSON, `{"<id>": bytes or null}`).
     /// The agent caches them, so this is not cached here.
     pub async fn catalog_sizes(&self, req: &SizesRequest) -> Result<Bytes, ApiError> {
-        let resp = self
-            .request(reqwest::Method::POST, "/catalog/sizes")
-            .json(req)
-            .timeout(Duration::from_secs(45))
-            .send()
-            .await
-            .map_err(|_| unreachable_agent())?;
-        self.answer(resp).await
+        self.agent.catalog_sizes(req).await.map_err(agent_error)
     }
 
     /// Forwards an action and publishes the snapshot the agent answers with.
@@ -248,49 +177,28 @@ impl Regions {
                 "region management is turned off on this server (set OBS_ADMIN_TOKEN)",
             ));
         }
-        let resp = self
-            .request(
-                reqwest::Method::POST,
-                &format!("/regions/{}", action.path()),
-            )
-            .json(req)
-            .timeout(Duration::from_secs(45))
-            .send()
-            .await
-            .map_err(|_| unreachable_agent())?;
-        let body = self.answer(resp).await?;
+        let body = self.agent.act(action, req).await.map_err(agent_error)?;
         let snap: RegionsSnapshot = serde_json::from_slice(&body)
             .map_err(|e| ApiError::Internal(format!("agent snapshot unreadable: {e}")))?;
         self.publish(true, Some(snap), true);
         Ok(self.status())
     }
+}
 
-    /// The body of a successful agent answer; its `error` text otherwise.
-    async fn answer(&self, resp: reqwest::Response) -> Result<Bytes, ApiError> {
-        let status = resp.status();
-        let body = crate::read_capped(resp, MAX_JSON_BYTES)
-            .await
-            .map_err(|_| unreachable_agent())?
-            .ok_or_else(|| ApiError::Upstream("the region agent sent too much data".into()))?;
-        if status.is_success() {
-            return Ok(body);
+/// The API error for a failed catalog request or action.
+fn agent_error(e: AgentError) -> ApiError {
+    match e {
+        AgentError::BadRequest(msg) => ApiError::BadRequest(msg),
+        AgentError::Conflict(msg) => ApiError::Conflict(msg),
+        AgentError::Unauthorized => {
+            tracing::error!("the region agent refused OBS_REGIONS_TOKEN");
+            ApiError::Upstream(
+                "the server is not allowed to use its region agent; check OBS_REGIONS_TOKEN".into(),
+            )
         }
-        let msg = serde_json::from_slice::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
-            .unwrap_or_else(|| format!("the region agent answered HTTP {}", status.as_u16()));
-        Err(match status {
-            StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND => ApiError::BadRequest(msg),
-            StatusCode::CONFLICT => ApiError::Conflict(msg),
-            StatusCode::UNAUTHORIZED => {
-                tracing::error!("the region agent refused OBS_REGIONS_TOKEN");
-                ApiError::Upstream(
-                    "the server is not allowed to use its region agent; check OBS_REGIONS_TOKEN"
-                        .into(),
-                )
-            }
-            _ => ApiError::Upstream(msg),
-        })
+        AgentError::Unreachable => unreachable_agent(),
+        AgentError::TooLarge => ApiError::Upstream("the region agent sent too much data".into()),
+        AgentError::Other(msg) => ApiError::Upstream(msg),
     }
 }
 
@@ -303,6 +211,9 @@ fn unreachable_agent() -> ApiError {
 fn might_hold(r: &RegionView, bbox: &BBox) -> bool {
     r.ready && r.bbox.is_none_or(|b| b.contains_box(bbox))
 }
+
+#[cfg(test)]
+mod follower_tests;
 
 #[cfg(test)]
 mod tests {

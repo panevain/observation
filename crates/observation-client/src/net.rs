@@ -3,15 +3,15 @@
 //! Requests run on the browser's event loop (`fetch`, `EventSource`) and report
 //! back through a channel that a system drains every frame.
 
-use crate::regions::{CatalogState, RegionRequest, Regions};
-use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, UiState};
+use crate::platform::{HttpRequest, Platform, unix_secs};
+use crate::regions::{CatalogState, RegionRequest, Regions, announce};
+use crate::state::{AreaLoaded, LoadArea, Loading, ToastAction, Toasts};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
-use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use observation_client_model::net::{self, TileQueue, TileState};
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
-use observation_core::geo::{MAX_BBOX_SIDE_M, MIN_BBOX_SIDE_M};
 use observation_core::regions::{ActionKind, RegionAction, SizesRequest};
 use observation_core::scene::AreaRef;
 use observation_core::tiles::TileId;
@@ -28,62 +28,9 @@ enum Request {
     RegionsSizes(Vec<String>),
 }
 
-/// Settings published by the server at `/api/config`. Until it answers, and
-/// for any field it leaves out or gets wrong, this build's own values apply.
-#[derive(Debug, Resource)]
-pub struct ServerConfig {
-    /// Attribution required by the configured tile provider.
-    pub tile_attribution: String,
-    /// Tile URL template with `{z}`, `{x}` and `{y}` placeholders.
-    pub tile_template: String,
-    /// Side limits of an area the server will load, metres (min < max).
-    pub min_bbox_side_m: f64,
-    pub max_bbox_side_m: f64,
-    /// The server has answered (or failed to): tiles may be requested.
-    answered: bool,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            tile_attribution: "© OpenStreetMap contributors".to_owned(),
-            tile_template: "/api/tiles/{z}/{x}/{y}.png".to_owned(),
-            min_bbox_side_m: MIN_BBOX_SIDE_M,
-            max_bbox_side_m: MAX_BBOX_SIDE_M,
-            answered: false,
-        }
-    }
-}
-
-impl ServerConfig {
-    /// Takes the fields of a `/api/config` body that are present and sane.
-    fn apply(&mut self, v: &serde_json::Value) {
-        let text = |k: &str| v.get(k).and_then(serde_json::Value::as_str);
-        if let Some(a) = text("attribution").filter(|a| !a.is_empty()) {
-            a.clone_into(&mut self.tile_attribution);
-        }
-        // A same-origin path with every placeholder. Browsers read `\` as `/`
-        // and drop tabs and newlines, so `/\host` would leave the origin.
-        if let Some(u) = text("tile_url").filter(|u| {
-            u.starts_with('/')
-                && !u.starts_with("//")
-                && !u
-                    .chars()
-                    .any(|c| c == '\\' || c.is_whitespace() || c.is_control())
-                && ["{z}", "{x}", "{y}"].iter().all(|p| u.contains(p))
-        }) {
-            u.clone_into(&mut self.tile_template);
-        }
-        // An older server publishes only the maximum.
-        let side = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
-        let min = side("min_bbox_side_m").unwrap_or(self.min_bbox_side_m);
-        let max = side("max_bbox_side_m").unwrap_or(self.max_bbox_side_m);
-        if min.is_finite() && max.is_finite() && 0.0 < min && min < max {
-            self.min_bbox_side_m = min;
-            self.max_bbox_side_m = max;
-        }
-    }
-}
+/// Settings published by the server at `/api/config`, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct ServerConfig(net::ServerConfig);
 
 type Reply = (Request, Result<Vec<u8>, String>);
 
@@ -91,12 +38,19 @@ type Reply = (Request, Result<Vec<u8>, String>);
 pub struct Net {
     tx: Sender<Reply>,
     rx: Receiver<Reply>,
+    /// The ports requests go through, and the clock and session storage the
+    /// replies need.
+    platform: Platform,
 }
 
-impl Default for Net {
-    fn default() -> Self {
+impl FromWorld for Net {
+    fn from_world(world: &mut World) -> Self {
         let (tx, rx) = unbounded();
-        Self { tx, rx }
+        Self {
+            tx,
+            rx,
+            platform: Platform::of(world).clone(),
+        }
     }
 }
 
@@ -107,47 +61,26 @@ impl Net {
 
     fn send(&self, http: HttpRequest, req: Request) {
         let tx = self.tx.clone();
-        spawn_fetch(http, move |res| {
-            // The receiver lives as long as the app; a send error means shutdown.
-            let _ = tx.send((req, res));
-        });
+        self.platform.http.fetch(
+            http,
+            Box::new(move |res| {
+                // The receiver lives as long as the app; a send error means shutdown.
+                let _ = tx.send((req, res));
+            }),
+        );
     }
 
     /// Follows `/api/regions/events`; every status (and every drop of the
     /// stream, which the browser reconnects) arrives as a `RegionsStatus` reply.
     fn follow_regions(&self) {
         let tx = self.tx.clone();
-        spawn_event_source("/api/regions/events", "regions", move |res| {
-            let _ = tx.send((Request::RegionsStatus, res));
-        });
-    }
-}
-
-/// One HTTP request.
-#[derive(Debug, Clone)]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    allow(
-        dead_code,
-        reason = "only the browser build's fetch reads more than the URL"
-    )
-)]
-struct HttpRequest {
-    url: String,
-    method: &'static str,
-    /// JSON body.
-    body: Option<String>,
-    bearer: Option<String>,
-}
-
-impl HttpRequest {
-    fn get(url: String) -> Self {
-        Self {
-            url,
-            method: "GET",
-            body: None,
-            bearer: None,
-        }
+        self.platform.http.subscribe(
+            "/api/regions/events",
+            "regions",
+            Box::new(move |res| {
+                let _ = tx.send((Request::RegionsStatus, res));
+            }),
+        );
     }
 }
 
@@ -164,75 +97,9 @@ pub fn area_url(area: &AreaRef) -> String {
     }
 }
 
-/// State of one map tile.
-#[derive(Debug, Clone)]
-pub enum TileState {
-    Pending,
-    Ready(Handle<Image>),
-    /// The request failed at this time (unix seconds); asked for again after
-    /// [`TILE_RETRY_SECS`].
-    Failed(u64),
-}
-
-/// Map tiles shared by the 3D ground and the 2D map picker.
-#[derive(Debug, Default, Resource)]
-pub struct Tiles {
-    tiles: HashMap<TileId, TileState>,
-    in_flight: usize,
-    queue: Vec<TileId>,
-    /// Tiles the 3D ground needs; the map picker never cancels these.
-    pinned: HashSet<TileId>,
-}
-
-/// Concurrent tile requests (the server limits upstream fetches too).
-const MAX_IN_FLIGHT: usize = 6;
-/// Soft cap on decoded tiles kept in memory.
-const MAX_TILES: usize = 400;
-/// Wait before asking again for a tile that failed (the server may be limiting
-/// this client), so failed tiles are neither blank for good nor re-requested every frame.
-const TILE_RETRY_SECS: u64 = 30;
-
-impl Tiles {
-    /// Returns the tile if loaded; queues it otherwise.
-    pub fn get(&mut self, t: TileId) -> Option<Handle<Image>> {
-        let retry = match self.tiles.get(&t) {
-            None => true,
-            Some(TileState::Failed(at)) => crate::regions::now_unix() >= at + TILE_RETRY_SECS,
-            Some(_) => false,
-        };
-        if retry {
-            self.tiles.insert(t, TileState::Pending);
-            self.queue.push(t);
-        }
-        self.ready(t)
-    }
-
-    /// Marks the tiles the 3D ground shows, replacing the previous set.
-    pub fn pin(&mut self, tiles: impl IntoIterator<Item = TileId>) {
-        self.pinned = tiles.into_iter().collect();
-    }
-
-    /// Returns the tile if loaded, without requesting it.
-    pub fn ready(&self, t: TileId) -> Option<Handle<Image>> {
-        match self.tiles.get(&t) {
-            Some(TileState::Ready(h)) => Some(h.clone()),
-            _ => None,
-        }
-    }
-
-    /// Drops queued requests that are no longer wanted (e.g. after panning the
-    /// map), except pinned ones.
-    pub fn retain_queue(&mut self, keep: impl Fn(&TileId) -> bool) {
-        let (tiles, pinned) = (&mut self.tiles, &self.pinned);
-        self.queue.retain(|t| {
-            let k = pinned.contains(t) || keep(t);
-            if !k {
-                tiles.remove(t);
-            }
-            k
-        });
-    }
-}
+/// Map tiles shared by the 3D ground and the 2D map picker, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Tiles(TileQueue<Handle<Image>>);
 
 pub struct NetPlugin;
 
@@ -251,7 +118,10 @@ impl Plugin for NetPlugin {
             .add_systems(
                 Update,
                 (
-                    start_area_loads,
+                    // After `record`, which so runs before the whole chain: an
+                    // undo in the frame after a Load click still runs, and
+                    // `record` is still busy in the frame an area reply comes.
+                    start_area_loads.after(crate::history::record),
                     pump_tiles,
                     send_region_requests,
                     drain_replies,
@@ -269,21 +139,17 @@ fn start_area_loads(
 ) {
     // Only the most recent request matters.
     if let Some(req) = reqs.read().last() {
-        loading.area = Some(req.area);
-        loading.request = Some(req.clone());
-        loading.started = time.elapsed_secs_f64();
+        loading.start((**req).clone(), time.elapsed_secs_f64());
         net.get(area_url(&req.area), Request::Area(req.clone()));
     }
 }
 
 fn pump_tiles(net: Res<Net>, mut tiles: ResMut<Tiles>, config: Res<ServerConfig>) {
     // Tiles are cached by id, not URL: wait for the server's template.
-    if !config.answered {
+    if !config.answered() {
         return;
     }
-    while tiles.in_flight < MAX_IN_FLIGHT {
-        let Some(t) = tiles.queue.pop() else { break };
-        tiles.in_flight += 1;
+    while let Some(t) = tiles.next_request() {
         net.get(t.url(&config.tile_template), Request::Tile(t));
     }
 }
@@ -340,32 +206,23 @@ fn send_region_action(net: &Net, token: &str, action: ActionKind, body: RegionAc
     );
 }
 
-fn drain_replies(
+pub(crate) fn drain_replies(
     net: Res<Net>,
     mut tiles: ResMut<Tiles>,
     mut images: ResMut<Assets<Image>>,
     mut loaded: MessageWriter<AreaLoaded>,
     mut loading: ResMut<Loading>,
-    mut ui: ResMut<UiState>,
+    mut toasts: ResMut<Toasts>,
     mut config: ResMut<ServerConfig>,
     mut regions: ResMut<Regions>,
 ) {
     for (req, res) in net.rx.try_iter() {
         match req {
             Request::Config => {
-                let v: Option<serde_json::Value> =
-                    res.ok().and_then(|b| serde_json::from_slice(&b).ok());
-                if let Some(v) = &v {
-                    config.apply(v);
-                }
-                config.answered = true;
-                let has_regions = v
-                    .as_ref()
-                    .and_then(|v| v.get("regions")?.as_bool())
-                    .unwrap_or(false);
+                let has_regions = config.answer(res.ok().as_deref());
                 if has_regions && !regions.enabled {
                     regions.enabled = true;
-                    regions.restore_token();
+                    regions.restore_token(&*net.platform.session);
                     net.follow_regions();
                 }
             }
@@ -373,7 +230,7 @@ fn drain_replies(
                 Ok(bytes) => {
                     regions.live = true;
                     match serde_json::from_slice(&bytes) {
-                        Ok(status) => regions.update(status, &mut ui),
+                        Ok(status) => announce(regions.update(status), &mut toasts),
                         Err(e) => warn!("unreadable region status: {e}"),
                     }
                 }
@@ -390,7 +247,7 @@ fn drain_replies(
             }
             Request::RegionsSizes(asked) => {
                 let answer = res.ok().and_then(|b| serde_json::from_slice(&b).ok());
-                regions.take_sizes(&asked, answer, crate::regions::now_unix());
+                regions.take_sizes(&asked, answer, unix_secs(&*net.platform.clock));
             }
             Request::RegionAction(action, id) => {
                 if regions.busy.as_deref() == Some(id.as_str()) {
@@ -400,19 +257,16 @@ fn drain_replies(
                     serde_json::from_slice(&b).map_err(|e| format!("unreadable reply: {e}"))
                 }) {
                     Ok(status) => {
-                        regions.update(status, &mut ui);
+                        announce(regions.update(status), &mut toasts);
                         if action == ActionKind::Import {
-                            regions.store_token();
+                            regions.store_token(&*net.platform.session);
                         }
                     }
-                    Err(e) => ui.error(format!("Could not {} {id}: {e}", action.verb())),
+                    Err(e) => toasts.error(format!("Could not {} {id}: {e}", action.verb())),
                 }
             }
             Request::Area(request) => {
-                if loading.area == Some(request.area) {
-                    loading.area = None;
-                    loading.request = None;
-                } else {
+                if !loading.finish(request.area) {
                     continue; // superseded or cancelled
                 }
                 let result = res.and_then(|bytes| {
@@ -420,15 +274,14 @@ fn drain_replies(
                         .map_err(|e| format!("{e}; reload the page and try again"))
                 });
                 if let Err(e) = &result {
-                    ui.error_with(
+                    toasts.error_with(
                         format!("Could not load area: {e}"),
-                        ToastAction::Retry(request.clone()),
+                        ToastAction::Retry((*request).clone()),
                     );
                 }
                 loaded.write(AreaLoaded { request, result });
             }
             Request::Tile(t) => {
-                tiles.in_flight = tiles.in_flight.saturating_sub(1);
                 let state = res
                     .and_then(|bytes| {
                         Image::from_buffer(
@@ -441,257 +294,321 @@ fn drain_replies(
                         )
                         .map_err(|e| e.to_string())
                     })
-                    .map_or(TileState::Failed(crate::regions::now_unix()), |img| {
+                    .map_or(TileState::Failed(unix_secs(&*net.platform.clock)), |img| {
                         TileState::Ready(images.add(img))
                     });
-                tiles.tiles.insert(t, state);
+                tiles.finish(t, state);
             }
         }
     }
-    if tiles.tiles.len() > MAX_TILES {
-        // Drop failed entries due for a retry; loaded tiles stay cached.
-        let now = crate::regions::now_unix();
-        tiles.tiles.retain(|_, s| match s {
-            TileState::Failed(at) => now < *at + TILE_RETRY_SECS,
-            TileState::Ready(_) | TileState::Pending => true,
-        });
-    }
-}
-
-/// What a failed HTTP reply means to the user: the server's own `error` text
-/// when it sent one, else a description of the status (proxies and the request
-/// timeout answer without one).
-#[cfg(target_arch = "wasm32")]
-fn http_failure(status: u16, body: &str) -> String {
-    let from_server = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
-        .filter(|m| !m.is_empty());
-    from_server.unwrap_or_else(|| match status {
-        404 => "the server does not have this (HTTP 404); the app may be out of date, so reload the page".to_owned(),
-        429 => "too many requests to the server (HTTP 429); wait a minute and try again".to_owned(),
-        408 | 504 => format!("the server took too long to answer (HTTP {status}); try again shortly"),
-        502 | 503 => format!("the server is unavailable right now (HTTP {status}); try again shortly"),
-        500..=599 => format!("the server had a problem (HTTP {status}); try again shortly"),
-        _ => format!("the server refused the request (HTTP {status})"),
-    })
-}
-
-/// The message of a JavaScript exception (`TypeError: Failed to fetch`, a
-/// `DOMException`, ...), or a placeholder when it carries none.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn js_cause(e: &wasm_bindgen::JsValue) -> String {
-    use wasm_bindgen::JsCast;
-    let msg = match e.dyn_ref::<js_sys::Error>() {
-        Some(err) => String::from(err.message()),
-        None => e.as_string().unwrap_or_default(),
-    };
-    if msg.is_empty() {
-        "no details from the browser".to_owned()
-    } else {
-        msg
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen_futures::JsFuture;
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = async {
-            let window = web_sys::window()
-                .ok_or("the browser gave the app no window to make requests from")?;
-            let init = web_sys::RequestInit::new();
-            init.set_method(req.method);
-            let headers = web_sys::Headers::new()
-                .map_err(|e| format!("could not build the request: {}", js_cause(&e)))?;
-            if let Some(body) = &req.body {
-                let _ = headers.set("content-type", "application/json");
-                init.set_body(&wasm_bindgen::JsValue::from_str(body));
-            }
-            if let Some(token) = req.bearer.as_deref().filter(|t| !t.is_empty()) {
-                let _ = headers.set("authorization", &format!("Bearer {token}"));
-            }
-            init.set_headers(&headers);
-            // A rejected fetch means no HTTP reply at all: offline, DNS, a dead
-            // server, or a blocked connection.
-            let resp: web_sys::Response =
-                JsFuture::from(window.fetch_with_str_and_init(&req.url, &init))
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "the server did not answer (you may be offline, or it may be down): {}",
-                            js_cause(&e)
-                        )
-                    })?
-                    .dyn_into()
-                    .map_err(|_| {
-                        "the browser returned something other than a response".to_owned()
-                    })?;
-            if !resp.ok() {
-                let body = match resp.text() {
-                    Ok(text) => JsFuture::from(text)
-                        .await
-                        .ok()
-                        .and_then(|v| v.as_string())
-                        .unwrap_or_default(),
-                    Err(_) => String::new(),
-                };
-                return Err(http_failure(resp.status(), &body));
-            }
-            let read_err = |e: wasm_bindgen::JsValue| {
-                format!(
-                    "the connection dropped while the reply was downloading: {}",
-                    js_cause(&e)
-                )
-            };
-            let buf = JsFuture::from(resp.array_buffer().map_err(read_err)?)
-                .await
-                .map_err(read_err)?;
-            Ok(js_sys::Uint8Array::new(&buf).to_vec())
-        }
-        .await
-        .map_err(|e: String| e);
-        done(result);
-    });
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
-    done(Err(format!(
-        "networking is only available in the browser build ({})",
-        req.url
-    )));
-}
-
-/// Opens an `EventSource` and calls `on` with the data of every `event`
-/// message, and with an error whenever the connection drops. The browser
-/// retries a dropped stream by itself, but gives up for good after an error
-/// answer (a 503 from the stream cap, a 502 from a proxy during a restart);
-/// then a new one is opened after [`REOPEN_AFTER_MS`]. Lives as long as the page.
-#[cfg(target_arch = "wasm32")]
-fn spawn_event_source(url: &str, event: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
-    open_event_source(url.to_owned(), event.to_owned(), std::rc::Rc::new(on));
-}
-
-/// Wait before replacing an `EventSource` the browser closed.
-#[cfg(target_arch = "wasm32")]
-const REOPEN_AFTER_MS: i32 = 5_000;
-
-#[cfg(target_arch = "wasm32")]
-fn open_event_source(url: String, event: String, on: std::rc::Rc<dyn Fn(Result<Vec<u8>, String>)>) {
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen::closure::Closure;
-
-    let source = match web_sys::EventSource::new(&url) {
-        Ok(s) => s,
-        Err(e) => {
-            on(Err(js_cause(&e)));
-            return;
-        }
-    };
-    let on_message = {
-        let on = std::rc::Rc::clone(&on);
-        Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
-            if let Some(data) = e.data().as_string() {
-                on(Ok(data.into_bytes()));
-            }
-        })
-    };
-    let on_error = {
-        let source = source.clone();
-        let (url, event) = (url.clone(), event.clone());
-        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-            on(Err("the live connection dropped".to_owned()));
-            if source.ready_state() != web_sys::EventSource::CLOSED {
-                return; // the browser is reconnecting
-            }
-            let (url, event, on) = (url.clone(), event.clone(), std::rc::Rc::clone(&on));
-            let reopen = Closure::once_into_js(move || open_event_source(url, event, on));
-            if let Some(window) = web_sys::window() {
-                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    reopen.unchecked_ref(),
-                    REOPEN_AFTER_MS,
-                );
-            }
-        })
-    };
-    let _ = source.add_event_listener_with_callback(&event, on_message.as_ref().unchecked_ref());
-    source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-    // The handlers live as long as their source: for the page, or until it is
-    // closed and replaced, which is rare enough not to matter.
-    on_message.forget();
-    on_error.forget();
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn spawn_event_source(_: &str, _: &str, on: impl Fn(Result<Vec<u8>, String>) + 'static) {
-    on(Err(
-        "live updates are only available in the browser build".to_owned()
-    ));
+    tiles.evict(&*net.platform.clock);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::platform::{KeyValueStore, PlatformPlugin};
+    use observation_client_model::net::{MAX_IN_FLIGHT, TILE_RETRY_SECS};
+    use observation_client_model::testing::{
+        FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore,
+    };
+    use observation_client_model::toasts::Toast;
+    use observation_core::bundle::build_bundle;
+    use observation_core::geo::BBox;
+    use observation_core::terrain::Terrain;
+    use std::sync::Arc;
 
-    fn applied(v: &serde_json::Value) -> ServerConfig {
-        let mut c = ServerConfig::default();
-        c.apply(v);
-        c
+    /// The net systems over a held-reply fake server, past startup (the
+    /// config request is pending).
+    struct Harness {
+        app: App,
+        http: Arc<FakeHttp>,
+        session: Arc<MemoryStore>,
+        clock: Arc<FakeClock>,
     }
 
-    #[test]
-    fn takes_the_servers_limits_and_tile_url() {
-        let c = applied(&json!({
-            "attribution": "© Someone",
-            "tile_url": "/tiles/{z}/{y}/{x}.png",
-            "min_bbox_side_m": 50.0,
-            "max_bbox_side_m": 1000.0,
-        }));
-        assert_eq!(c.tile_attribution, "© Someone");
-        assert_eq!((c.min_bbox_side_m, c.max_bbox_side_m), (50.0, 1000.0));
-        let t = TileId::new(18, 130_000, 87_000).unwrap();
-        assert_eq!(t.url(&c.tile_template), "/tiles/18/87000/130000.png");
-        assert_eq!(
-            t.url(&ServerConfig::default().tile_template),
-            "/api/tiles/18/130000/87000.png"
-        );
-    }
-
-    #[test]
-    fn an_older_server_without_a_minimum_keeps_ours() {
-        let c = applied(&json!({ "max_bbox_side_m": 400.0 }));
-        assert_eq!(
-            (c.min_bbox_side_m, c.max_bbox_side_m),
-            (MIN_BBOX_SIDE_M, 400.0)
-        );
-    }
-
-    #[test]
-    fn ignores_values_that_make_no_sense() {
-        let d = ServerConfig::default();
-        for v in [
-            json!({ "min_bbox_side_m": 600.0, "max_bbox_side_m": 500.0 }),
-            json!({ "min_bbox_side_m": 0.0 }),
-            json!({ "max_bbox_side_m": -1.0 }),
-            json!({ "max_bbox_side_m": 10.0 }),
-            json!({ "min_bbox_side_m": 300.0, "max_bbox_side_m": 300.0 }),
-            json!({ "max_bbox_side_m": "500" }),
-            json!({ "tile_url": "https://elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "//elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "/\\elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "/\t/elsewhere.example/{z}/{x}/{y}.png" }),
-            json!({ "tile_url": "/api/tiles/{z}/{x}.png" }),
-            json!({ "attribution": "" }),
-        ] {
-            let c = applied(&v);
-            assert_eq!(c.min_bbox_side_m, d.min_bbox_side_m, "{v}");
-            assert_eq!(c.max_bbox_side_m, d.max_bbox_side_m, "{v}");
-            assert_eq!(c.tile_template, d.tile_template, "{v}");
-            assert_eq!(c.tile_attribution, d.tile_attribution, "{v}");
+    impl Harness {
+        fn new() -> Self {
+            let http = Arc::new(FakeHttp::default());
+            let session = Arc::new(MemoryStore::default());
+            let clock = Arc::new(FakeClock::at(1_000_000.0));
+            let platform = Platform {
+                http: http.clone(),
+                local: Arc::new(MemoryStore::default()),
+                session: session.clone(),
+                files: Arc::new(FakeFiles::default()),
+                clock: clock.clone(),
+                scheme: Arc::new(FakeColorScheme::new(false)),
+            };
+            let mut app = App::new();
+            app.insert_resource(platform)
+                .add_plugins((MinimalPlugins, AssetPlugin::default()))
+                .init_asset::<Image>()
+                .add_plugins((PlatformPlugin, crate::ResourcesPlugin, NetPlugin));
+            app.update();
+            assert_eq!(http.pending_urls(), ["/api/config"]);
+            Self {
+                app,
+                http,
+                session,
+                clock,
+            }
         }
+
+        fn load(&mut self, req: LoadArea) {
+            self.app
+                .world_mut()
+                .resource_mut::<Messages<LoadArea>>()
+                .write(req);
+        }
+
+        /// Every `AreaLoaded` written since the last call.
+        fn loaded(&mut self) -> Vec<AreaLoaded> {
+            self.app
+                .world_mut()
+                .resource_mut::<Messages<AreaLoaded>>()
+                .drain()
+                .collect()
+        }
+
+        fn toasts(&self) -> Vec<Toast> {
+            self.app
+                .world()
+                .resource::<Toasts>()
+                .iter()
+                .cloned()
+                .collect()
+        }
+
+        fn wanted(&self) -> Option<AreaRef> {
+            self.app.world().resource::<Loading>().area()
+        }
+    }
+
+    fn osm() -> AreaRef {
+        AreaRef::Osm {
+            bbox: BBox::new(51.0, -0.1, 51.001, -0.099).expect("valid box"),
+        }
+    }
+
+    fn bundle() -> AreaBundle {
+        let bbox = BBox::new(51.0, -0.1, 51.001, -0.099).expect("valid box");
+        build_bundle(bbox, &[], &[], &[], Terrain::default(), "Test", 0, None)
+    }
+
+    #[test]
+    fn an_area_reply_becomes_area_loaded_and_a_bad_one_offers_a_retry() {
+        let mut h = Harness::new();
+        h.load(LoadArea::demo());
+        h.app.update();
+        let demo = area_url(&AreaRef::Demo);
+        assert_eq!(h.http.pending_urls(), ["/api/config", demo.as_str()]);
+        assert_eq!(h.wanted(), Some(AreaRef::Demo));
+
+        assert!(h.http.respond(&demo, Ok(bundle().encode())));
+        h.app.update();
+        let loaded = h.loaded();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].request.area, AreaRef::Demo);
+        assert_eq!(loaded[0].result, Ok(bundle()));
+        assert_eq!(h.wanted(), None, "no longer loading");
+        assert!(h.toasts().is_empty());
+
+        h.load(LoadArea::demo());
+        h.app.update();
+        assert!(h.http.respond(&demo, Ok(b"<html>sign in</html>".to_vec())));
+        h.app.update();
+        let loaded = h.loaded();
+        let why = "the reply is not an area bundle (a proxy or sign-in page may have \
+                   answered); reload the page and try again";
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].result, Err(why.to_owned()));
+        let toasts = h.toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].text, format!("Could not load area: {why}"));
+        assert_eq!(
+            toasts[0].action,
+            Some(ToastAction::Retry((*LoadArea::demo()).clone()))
+        );
+        assert_eq!(toasts[0].ttl, f32::INFINITY);
+    }
+
+    #[test]
+    fn only_the_latest_area_request_is_fetched_and_loaded() {
+        let mut h = Harness::new();
+        h.load(LoadArea::demo());
+        h.load(LoadArea::new(osm(), false));
+        h.app.update();
+        let (demo, osm_url) = (area_url(&AreaRef::Demo), area_url(&osm()));
+        assert_eq!(
+            h.http.pending_urls(),
+            ["/api/config", osm_url.as_str()],
+            "one frame's requests: the last one"
+        );
+
+        h.load(LoadArea::demo());
+        h.app.update();
+        assert_eq!(h.wanted(), Some(AreaRef::Demo));
+        assert!(h.http.respond(&osm_url, Err("offline".into())));
+        h.app.update();
+        assert!(h.loaded().is_empty(), "superseded");
+        assert!(h.toasts().is_empty(), "a superseded failure says nothing");
+        assert_eq!(h.wanted(), Some(AreaRef::Demo));
+
+        assert!(h.http.respond(&demo, Ok(bundle().encode())));
+        h.app.update();
+        let loaded = h.loaded();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].request.area, AreaRef::Demo);
+    }
+
+    #[test]
+    fn a_cancelled_area_request_ignores_its_reply() {
+        let mut h = Harness::new();
+        h.load(LoadArea::demo());
+        h.app.update();
+        h.app.world_mut().resource_mut::<Loading>().cancel();
+        assert!(
+            h.http
+                .respond(&area_url(&AreaRef::Demo), Err("offline".into()))
+        );
+        h.app.update();
+        assert!(h.loaded().is_empty());
+        assert!(h.toasts().is_empty());
+    }
+
+    /// A 1x1 PNG, as a tile server sends.
+    const PNG: [u8; 70] = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 16, 80, 48, 248, 15,
+        0, 2, 4, 1, 96, 141, 188, 187, 113, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
+    #[test]
+    fn tiles_wait_for_the_config_then_go_six_at_a_time_and_a_reply_frees_a_slot() {
+        let mut h = Harness::new();
+        let tiles: Vec<TileId> = (0..MAX_IN_FLIGHT as u32 + 2)
+            .map(|x| TileId::new(17, 65_000 + x, 43_000).expect("valid tile"))
+            .collect();
+        for &t in &tiles {
+            let mut queue = h.app.world_mut().resource_mut::<Tiles>();
+            assert_eq!(queue.get(t, &*h.clock), None);
+        }
+        h.app.update();
+        h.app.update();
+        assert_eq!(h.http.pending_urls(), ["/api/config"], "held");
+
+        // A config that cannot be fetched still lets the tiles go, with this
+        // build's own tile template.
+        assert!(h.http.respond("/api/config", Err("offline".into())));
+        h.app.update();
+        assert!(
+            h.http.pending_urls().is_empty(),
+            "the config arrives after pump_tiles"
+        );
+        h.app.update();
+        let template = h
+            .app
+            .world()
+            .resource::<ServerConfig>()
+            .tile_template
+            .clone();
+        let url = |t: TileId| t.url(&template);
+        let newest_six: Vec<String> = tiles
+            .iter()
+            .rev()
+            .take(MAX_IN_FLIGHT)
+            .map(|&t| url(t))
+            .collect();
+        assert_eq!(h.http.pending_urls(), newest_six);
+        let (first, second) = (tiles[0], tiles[1]);
+        let (newest, next) = (tiles[MAX_IN_FLIGHT + 1], tiles[MAX_IN_FLIGHT]);
+
+        // A loaded tile is drawn, and its slot goes to the next tile.
+        assert!(h.http.respond(&url(newest), Ok(PNG.to_vec())));
+        h.app.update();
+        let handle = h
+            .app
+            .world()
+            .resource::<Tiles>()
+            .ready(newest)
+            .expect("ready");
+        assert!(h.app.world().resource::<Assets<Image>>().contains(&handle));
+        h.app.update();
+        assert!(h.http.pending_urls().contains(&url(second)));
+        assert!(
+            !h.http.pending_urls().contains(&url(first)),
+            "six at a time"
+        );
+
+        // So does a failed one's, and it is asked for again after the wait.
+        assert!(h.http.respond(&url(next), Err("offline".into())));
+        h.app.update();
+        assert_eq!(h.app.world().resource::<Tiles>().ready(next), None);
+        h.app.update();
+        assert!(h.http.pending_urls().contains(&url(first)));
+        h.clock.advance((TILE_RETRY_SECS * 1000) as f64);
+        let mut queue = h.app.world_mut().resource_mut::<Tiles>();
+        assert_eq!(queue.get(next, &*h.clock), None);
+        h.app.update();
+        assert!(!h.http.pending_urls().contains(&url(next)), "no slot free");
+        assert!(h.http.respond(&url(tiles[2]), Ok(PNG.to_vec())));
+        h.app.update();
+        h.app.update();
+        assert!(h.http.pending_urls().contains(&url(next)), "retried");
+    }
+
+    #[test]
+    fn region_statuses_follow_the_config_and_toast_finished_imports() {
+        let mut h = Harness::new();
+        h.session
+            .set("observation.admin-token", "secret")
+            .expect("stored");
+        assert!(
+            h.http
+                .respond("/api/config", Ok(br#"{"regions": true}"#.to_vec()))
+        );
+        h.app.update();
+        assert_eq!(
+            h.http.subscriptions(),
+            [("/api/regions/events".to_owned(), "regions".to_owned())]
+        );
+        assert_eq!(h.app.world().resource::<Regions>().token, "secret");
+
+        let status = |importing: bool, error: Option<&str>| {
+            serde_json::to_vec(&serde_json::json!({
+                "agent_online": true, "manageable": true,
+                "snapshot": {"version": 1, "max_download_bytes": 0, "refresh_days": 0,
+                    "regions": [{
+                        "id": "monaco", "name": "Monaco", "ready": false, "bbox": null,
+                        "data_timestamp": null, "imported_unix": null, "disk_bytes": null,
+                        "job": importing.then(|| serde_json::json!(
+                            {"phase": "importing", "done": 0, "total": null, "since_unix": 0}
+                        )),
+                        "last_error": error,
+                    }]},
+            }))
+            .expect("serialisable")
+        };
+        assert_eq!(
+            h.http.emit("/api/regions/events", &Ok(status(true, None))),
+            1
+        );
+        h.app.update();
+        assert!(h.app.world().resource::<Regions>().live);
+        assert!(h.toasts().is_empty());
+
+        h.http
+            .emit("/api/regions/events", &Ok(status(false, Some("disk full"))));
+        h.app.update();
+        let toasts = h.toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].text, "Importing Monaco failed: disk full");
+        assert_eq!(toasts[0].ttl, f32::INFINITY);
+
+        h.http
+            .emit("/api/regions/events", &Err("stream dropped".into()));
+        h.app.update();
+        assert!(!h.app.world().resource::<Regions>().live);
     }
 }
