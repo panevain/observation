@@ -111,6 +111,11 @@ pub const JOBS_NOT_IN_CHECK: &[(&str, &str, &str)] = &[
     ),
     (
         CI,
+        "actions-lock",
+        "gh-actions-lock, a CI-only tool (mise.ci.toml), against the GitHub API",
+    ),
+    (
+        CI,
         "wasm",
         "the trunk release build of the client, its dist/ and size budget; `check` leaves the \
          build out",

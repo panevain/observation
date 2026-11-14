@@ -20,7 +20,7 @@ const T: u64 = 1_700_000_000;
 const TEMPLATE: &str = "https://dem.example/terrarium/{z}/{x}/{y}.png";
 
 fn bbox() -> BBox {
-    BBox::parse(include_str!("../../fixtures/demo-bbox.txt").trim()).unwrap()
+    BBox::parse(observation_mapdata::demo::BBOX_TXT.trim()).unwrap()
 }
 
 fn url(id: TileId) -> String {

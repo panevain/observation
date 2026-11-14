@@ -5,12 +5,14 @@ members = [
 ]
 default-members = [
     "crates/observation-core",
+    "crates/observation-mapdata",
     "crates/observation-server",
     "crates/observation-regions",
     "crates/observation-regions-api",
     "crates/observation-upstream",
     "crates/observation-tokens",
     "crates/observation-client-model",
+    "crates/observation-mcp",
 ]
 # Separate workspaces, each with its own Cargo.lock: the fuzz targets (nightly only; see
 # fuzz/README.md) and the repository's tooling (`cargo xtask`, see xtask/Cargo.toml), whose
@@ -26,6 +28,7 @@ publish = false
 
 [workspace.dependencies]
 observation-core = { path = "crates/observation-core" }
+observation-mapdata = { path = "crates/observation-mapdata" }
 observation-upstream = { path = "crates/observation-upstream" }
 observation-tokens = { path = "crates/observation-tokens" }
 observation-client-model = { path = "crates/observation-client-model" }

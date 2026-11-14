@@ -32,7 +32,7 @@ pub const DEFAULT_BUNDLE_CACHE_MB: u64 = 1024;
 /// Largest `OBS_BUNDLE_CACHE_MB` accepted (1 PiB), so the byte count cannot overflow.
 pub const MAX_BUNDLE_CACHE_MB: u64 = 1 << 30;
 /// Default attribution string shown by the client and embedded in bundles.
-pub const DEFAULT_ATTRIBUTION: &str = "© OpenStreetMap contributors";
+pub const DEFAULT_ATTRIBUTION: &str = observation_mapdata::OSM_ATTRIBUTION;
 /// Default contact URL placed in the `User-Agent`.
 pub const DEFAULT_CONTACT: &str = "https://github.com/panevain/observation";
 

@@ -28,6 +28,7 @@ cargo-fuzz = "cargo:cargo-fuzz"
 cargo-chef = "github:LukeMathWalker/cargo-chef"
 cargo-auditable = "github:rust-secure-code/cargo-auditable"
 cargo-vet = "github:mozilla/cargo-vet"
+gh-actions-lock = "github:github/gh-actions-lock"
 
 [tools]
 # Security checks (security.yml, release.yml, release-watch.yml, hotfix.yml). Trivy comes
@@ -37,6 +38,11 @@ trivy = "0.76.1"
 cosign = "3.1.4"
 cargo-audit = { version = "0.22.2", version_prefix = "cargo-audit/v" }
 zizmor = "1.31.1"
+# The workflows' action lockfile (.github/workflows/actions.lock; ci.yml's actions-lock job):
+# the release binary of GitHub's `gh actions-lock` extension, run on its own, so no gh
+# extension is installed. Its assets are bare binaries named for the platform (linux-amd64);
+# `bin` names the installed one.
+gh-actions-lock = { version = "0.4.1", bin = "gh-actions-lock" }
 # Dependency audits (security.yml's cargo-vet job; supply-chain/).
 cargo-vet = "0.10.3"
 # Coverage and fuzzing (ci.yml, fuzz.yml). cargo-fuzz builds the targets for the platform it was
@@ -123,6 +129,32 @@ run = '''
 if [ -n "${usage_sarif:-}" ]; then zizmor --format sarif --no-exit-codes .github > "${usage_sarif}"; fi
 zizmor .github
 '''
+
+# .github/workflows/actions.lock: the commit GitHub Actions runs for every action the workflows
+# use, directly or through a composite action, with the owner and repository ids it checks at
+# run time (https://gh.io/actions-lockfile). Both tasks query GitHub, with GH_TOKEN or your gh
+# login. The workflows keep their full-SHA pins, which zizmor, Scorecard and the repository's
+# SHA-pinning setting read. GitHub looks each `uses:` up in the lockfile by its exact
+# `owner/repo@ref` when a job starts, so every entry is keyed by the SHA the workflows pin.
+# The tool keys a direct action by its tag and would rewrite each `@SHA # vX.Y.Z` pin to
+# `@vX.Y.Z`, so the update runs it on a copy of .github, copies back only the lockfile (your
+# own changes to the workflows stay as they are) and re-keys it with
+# scripts/actions-lock-keys.py. The tool's --verify accepts a tag key for a SHA pin, so the
+# check also runs that script's `check`.
+[tasks.actions-lock]
+description = "Update .github/workflows/actions.lock after adding, removing or bumping an action in a workflow or in .github/actions/ (gh actions-lock, on a copy of .github so the SHA pins stay, then keyed by SHA); review its diff"
+run = '''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cp -R .github "${tmp}/"
+(cd "${tmp}" && GH_ACTIONS_LOCK_REPO_ROOT="${tmp}" gh-actions-lock --no-interactive)
+cp "${tmp}/.github/workflows/actions.lock" .github/workflows/actions.lock
+python3 scripts/actions-lock-keys.py fix
+'''
+
+[tasks."actions-lock:verify"]
+description = "Check .github/workflows/actions.lock covers every action the workflows use, under the SHA keys the runner looks up, with pins it would accept (actions-lock-keys.py check, gh actions-lock --verify; writes nothing)"
+run = ["python3 scripts/actions-lock-keys.py check", "gh-actions-lock --verify --no-interactive"]
 
 [tasks."scan:repo"]
 description = "Trivy on the repository: Cargo.lock vulnerabilities, Dockerfile misconfiguration and committed secrets; a fixable CRITICAL or HIGH finding fails"

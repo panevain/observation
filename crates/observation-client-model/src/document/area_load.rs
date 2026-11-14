@@ -4,28 +4,13 @@
 
 use observation_core::bundle::AreaBundle;
 use observation_core::camera::CameraModel;
-use observation_core::example::example_cameras;
+use observation_core::example::{EXAMPLE_MODELS, example_cameras};
 use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::{AreaRef, lift_onto_terrain};
 
 use super::{Document, LoadArea, Models};
 use crate::editor::{Editor, Hover};
 use crate::toasts::Toasts;
-
-/// Models used, in turn, for the example cameras on the demo street: a mix of
-/// types and brands.
-pub const EXAMPLE_MODELS: [&str; 10] = [
-    "ring-wired-doorbell-pro",
-    "ring-floodlight-cam-wired-plus",
-    "google-nest-doorbell-battery",
-    "reolink-rlc-810a",
-    "arlo-pro-4",
-    "eufy-eufycam-s3-pro",
-    "ubiquiti-unifi-g5-dome",
-    "wyze-cam-floodlight-pro",
-    "tp-link-tapo-c320ws",
-    "blink-outdoor-4",
-];
 
 /// Takes in the area `request` asked for, now that its `bundle` has arrived;
 /// returns how a restored or imported scene's map data changed since it was

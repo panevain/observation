@@ -71,7 +71,7 @@ These checks must pass, from GitHub Actions, before merging into `main` or `deve
 | Workflow | Checks |
 | --- | --- |
 | Branch policy | `branch policy` (into `main`, only same-repo `release/*` and `hotfix/*`) |
-| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `coverage (per-crate floor)` (each crate's line coverage against its floor in `.config/coverage.toml`), `design tokens`, `hygiene (typos, unused deps)`, `wasm (trunk build)`, `docker (build + smoke test)`, `browser (wasm smoke test)` |
+| CI | `fmt`, `clippy (native workspace)`, `clippy (wasm client)`, `test`, `coverage (per-crate floor)` (each crate's line coverage against its floor in `.config/coverage.toml`), `design tokens`, `hygiene (typos, unused deps)`, `actions lockfile` (`.github/workflows/actions.lock` covers every action the workflows use), `wasm (trunk build)`, `docker (build + smoke test)`, `browser (wasm smoke test)` |
 | Security | `cargo-deny`, `zizmor (workflow audit)`, `cargo-audit`, `cargo-cooldown`, `cargo-vet`, `trivy (image + repo)` |
 | CodeQL | `analyze (rust)`, `analyze (actions)` |
 
@@ -92,9 +92,11 @@ mise run check          # fmt, clippy (native + wasm), tests, typos, unused deps
 mise run build          # release wasm build, as the CI wasm job does
 mise run build:budget   # then its size against .config/wasm-size-budget.toml
 mise run test:browser   # headless-browser smoke test against a running server (mise run serve --release)
-mise -E ci install cargo-vet   # a CI-only tool (mise.ci.toml) you need; likewise cargo-audit, zizmor, trivy
-mise -E ci run vet      # cargo-vet as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz
+mise -E ci install cargo-vet   # a CI-only tool (mise.ci.toml) you need; likewise cargo-audit, zizmor, trivy, gh-actions-lock
+mise -E ci run vet      # cargo-vet as Security runs it; likewise audit, cooldown, zizmor, scan:repo, fuzz, actions-lock:verify
 ```
+
+The workflows run only the action commits recorded in `.github/workflows/actions.lock` ([workflow lockfiles](https://gh.io/actions-lockfile)): GitHub checks every action a job uses, directly or through a composite action, against it when the job starts. After adding, removing or bumping an action in a workflow or in `.github/actions/`, run `mise -E ci install gh-actions-lock` and `mise -E ci run actions-lock` (it uses `GH_TOKEN` or your gh login), then review the lockfile's diff and commit it with the change; CI's `actions lockfile` check fails until then. Keep the full-SHA pins in the `uses:` lines: GitHub looks each `uses:` up by its exact `owner/repo@ref`, so the lockfile keys every action by that SHA, with its tag as `ref`. The tool keys actions by tag and would rewrite each pin to its tag, so the task runs it on a copy of `.github` and re-keys the result (`scripts/actions-lock-keys.py`); don't run `gh actions-lock` on the tree directly. Dependabot updates the lockfile in its own action bumps.
 
 The first `mise install` (or `mise run`) trusts the repository's mise files, so read them first; `mise trust` trusts them without installing anything. Until then an activated shell skips them without asking, and an editor extension, which has no terminal to ask in, fails. Tools other than `cargo` (trunk, cargo-nextest, typos and the rest) run through `mise exec -- <command>`, or directly in a shell with `mise activate`. Install CI-only tools one at a time, as above: a bare `mise -E ci install` installs all of them, builds cargo-fuzz from source, and on a platform `mise.ci.lock` has no entry for, adds that platform to the lockfile. After editing `mise.ci.toml`, run `mise -E ci,dev run tasks:validate` as CI does (`mise run check` validates only the dev environment). The environment names are not private to this repository: selecting `dev` also loads a `~/.config/mise/config.dev.toml` of your own, and a `MISE_ENV` exported for another project replaces `dev` here.
 

@@ -11,11 +11,13 @@ Observation shows how much of a suburban street common home surveillance cameras
 A Cargo workspace under `crates/` ([Workspace in docs/design.md](docs/design.md#workspace) has the module lists):
 
 - `observation-core`: engine-free logic shared by client and server (projection, tiles, extrusion, bundle format, cameras, view cones, occlusion, coverage, scene files).
+- `observation-mapdata`: map data without I/O: the Overpass response parser, Terrarium elevation tile decoding and the demo street built from the committed fixtures.
 - `observation-server`: the axum server binary (Overpass pipeline, bundle cache, tile proxy, elevation, demo street, region relay, static files).
 - `observation-regions`: the optional region agent binary (Geofabrik import into local Overpass, queries).
 - `observation-regions-api`: the HTTP contract between the server and the region agent.
 - `observation-upstream`: every outbound HTTP request of the server and the agent, behind SSRF guards.
 - `observation-tokens`: design token values, and the `token-css` binary that trunk runs to write `web/tokens.css`.
+- `observation-mcp`: an MCP server over stdio (spec 2026-07-28, `rmcp`) exposing the camera catalogue, scene editing and coverage on the demo street. `.mcp.json` registers it as the `observation` server for Claude Code.
 - `observation-client`: the Bevy/egui app for `wasm32-unknown-unknown` and its coverage worker. Not a default member.
 - `observation-client-model`: the client's engine-free logic (no Bevy, egui or `web-sys`).
 
