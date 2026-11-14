@@ -13,7 +13,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 observation-core = { path = "../crates/observation-core" }
-observation-server = { path = "../crates/observation-server" }
+observation-mapdata = { path = "../crates/observation-mapdata" }
 
 # Kept out of the main workspace: fuzzing needs a nightly toolchain and
 # sanitizer flags (see fuzz/README.md).

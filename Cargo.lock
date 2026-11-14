@@ -4757,6 +4757,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-mapdata"
+version = "0.1.0"
+dependencies = [
+ "observation-core",
+ "png",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "observation-regions"
 version = "0.1.0"
 dependencies = [
@@ -4800,6 +4811,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "observation-core",
+ "observation-mapdata",
  "observation-regions-api",
  "observation-server",
  "observation-upstream",

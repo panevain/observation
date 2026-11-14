@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn demo_fixture_parses() {
         // Real OSM data (see fixtures/README.md): ~100 untagged houses + streets.
-        let d = parse_response(include_bytes!("../../fixtures/demo-overpass.json")).unwrap();
+        let d = parse_response(crate::demo::OVERPASS_JSON.as_bytes()).unwrap();
         assert!(d.buildings.len() > 80, "{} buildings", d.buildings.len());
         assert!(d.roads.len() > 10, "{} roads", d.roads.len());
         assert!(

@@ -1,0 +1,22 @@
+[package]
+name = "observation-mapdata"
+description = "Map data for Observation without I/O: Overpass response parsing, Terrarium elevation tile decoding and the offline demo street"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+observation-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Decodes the Terrarium elevation tiles areas are built on.
+png = "0.18"
+
+[lints]
+workspace = true

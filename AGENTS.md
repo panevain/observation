@@ -11,6 +11,7 @@ Observation shows how much of a suburban street common home surveillance cameras
 A Cargo workspace under `crates/` ([Workspace in docs/design.md](docs/design.md#workspace) has the module lists):
 
 - `observation-core`: engine-free logic shared by client and server (projection, tiles, extrusion, bundle format, cameras, view cones, occlusion, coverage, scene files).
+- `observation-mapdata`: map data without I/O: the Overpass response parser, Terrarium elevation tile decoding and the demo street built from the committed fixtures.
 - `observation-server`: the axum server binary (Overpass pipeline, bundle cache, tile proxy, elevation, demo street, region relay, static files).
 - `observation-regions`: the optional region agent binary (Geofabrik import into local Overpass, queries).
 - `observation-regions-api`: the HTTP contract between the server and the region agent.
