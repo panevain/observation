@@ -374,9 +374,11 @@ fn restoring_the_autosave_loads_its_area_with_its_cameras() {
         saved_state(w.resource::<Scene>(), w.resource::<Models>()),
         saved_state(&scene, &models)
     );
-    // Nothing changed, but the first autosave writes the same text back.
-    h.store.remove(STORAGE_KEY);
+    // Nothing changed, so the first autosave does not write the same text
+    // back (over what another tab may have stored since).
+    h.store.take_ops();
     h.run_past_autosave();
+    assert_eq!(h.store.ops(), []);
     assert_eq!(h.store.get(STORAGE_KEY).as_deref(), Some(golden.as_str()));
 }
 
@@ -571,23 +573,21 @@ fn autosave_writes_once_per_change_at_the_interval() {
     );
     assert_eq!(h.save_state(), SaveState::Pending);
 
-    // The restored text is written back once, at the end of the interval.
-    h.frames(INTERVAL_FRAMES - 1);
-    assert_eq!(h.store.ops(), [], "not before the interval");
-    h.frames(1);
-    assert_eq!(h.store.take_ops(), [autosaved(&golden)]);
-    assert!(matches!(h.save_state(), SaveState::Saved(_)));
-
-    // Nothing changed: nothing written, interval after interval.
+    // The restored text is what is stored: nothing written, interval after
+    // interval.
     h.frames(3 * INTERVAL_FRAMES);
     assert_eq!(h.store.ops(), []);
+    assert_eq!(h.save_state(), SaveState::Pending);
 
-    // One change, one write of the new document.
+    // One change, one write of the new document, at the end of an interval.
     h.app.world_mut().resource_mut::<Scene>().remove_camera(2);
     let changed = h.saved_json().expect("an area is set");
     assert_ne!(changed, golden);
-    h.frames(INTERVAL_FRAMES);
+    h.frames(INTERVAL_FRAMES - 1);
+    assert_eq!(h.store.ops(), [], "not before the interval");
+    h.frames(1);
     assert_eq!(h.store.take_ops(), [autosaved(&changed)]);
+    assert!(matches!(h.save_state(), SaveState::Saved(_)));
     h.frames(2 * INTERVAL_FRAMES);
     assert_eq!(h.store.ops(), []);
 }
@@ -598,8 +598,10 @@ fn a_refused_autosave_is_retried_until_it_is_stored() {
     let mut h = harness(Some(&golden));
     h.store.take_ops();
     h.store.refuse_writes(Some(SaveFailure::Full));
+    h.app.world_mut().resource_mut::<Scene>().remove_camera(2);
+    let changed = h.saved_json().expect("an area is set");
     h.frames(INTERVAL_FRAMES);
-    let refused = StoreOp::Refused(STORAGE_KEY.to_owned(), golden.clone());
+    let refused = StoreOp::Refused(STORAGE_KEY.to_owned(), changed.clone());
     assert_eq!(h.store.take_ops(), std::slice::from_ref(&refused));
     assert_eq!(h.save_state(), SaveState::Failed(SaveFailure::Full));
     // The status bar's tooltip for it.
@@ -620,7 +622,7 @@ fn a_refused_autosave_is_retried_until_it_is_stored() {
     // Accepted again: stored once, then left alone.
     h.store.refuse_writes(None);
     h.frames(INTERVAL_FRAMES);
-    assert_eq!(h.store.take_ops(), [autosaved(&golden)]);
+    assert_eq!(h.store.take_ops(), [autosaved(&changed)]);
     let SaveState::Saved(at) = h.save_state() else {
         panic!("saved, got {:?}", h.save_state());
     };

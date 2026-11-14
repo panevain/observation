@@ -288,8 +288,15 @@ impl Slots {
     /// What the stored index says, keeping this tab's open scene in it (and
     /// open) even if another tab removed it: this tab still autosaves there.
     fn fresh(&self, store: &dyn KeyValueStore) -> Result<SlotIndex, SlotError> {
-        let mut index = SlotIndex::load(store).map_err(SlotError::Newer)?;
-        if index.get(self.index.active).is_none() {
+        let index = SlotIndex::load(store).map_err(SlotError::Newer)?;
+        Ok(self.relist(index).0)
+    }
+
+    /// `index` with this tab's open scene in it and open; true if it had to
+    /// be added back.
+    fn relist(&self, mut index: SlotIndex) -> (SlotIndex, bool) {
+        let missing = index.get(self.index.active).is_none();
+        if missing {
             let name =
                 clean_name(self.index.active_name()).unwrap_or_else(|| index.next_default_name());
             index.slots.push(Slot {
@@ -298,24 +305,25 @@ impl Slots {
             });
         }
         index.active = self.index.active;
-        Ok(index)
+        (index, missing)
     }
 
     /// Puts the open scene back in the stored list if another tab removed
     /// it, so what the autosave writes there stays reachable.
     pub fn ensure_listed(&mut self, store: &dyn KeyValueStore) -> Result<(), SlotError> {
         let stored = SlotIndex::load(store).map_err(SlotError::Newer)?;
-        if stored.get(self.index.active).is_some() {
+        let (index, added) = self.relist(stored);
+        if !added {
             return Ok(());
         }
-        let index = self.fresh(store)?;
         index.save(store)?;
         self.set_index(index);
         Ok(())
     }
 
-    /// Reads the index and every scene's size again, and forgets a half-done
-    /// rename or delete (the dialog was opened).
+    /// Reads the index again, and the size of every scene this tab has not
+    /// seen stored (the sizes of the ones it wrote or read are kept), and
+    /// forgets a half-done rename or delete (the dialog was opened).
     pub fn refresh(&mut self, store: &dyn KeyValueStore) {
         match self.fresh(store) {
             Ok(index) => {
@@ -325,15 +333,16 @@ impl Slots {
             Err(SlotError::Newer(v)) => self.newer = Some(v),
             Err(_) => {}
         }
+        let known = std::mem::take(&mut self.sizes);
         self.sizes = self
             .index
             .slots
             .iter()
             .map(|s| {
-                (
-                    s.id,
-                    store.get(&slot_key(s.id)).map_or(0, |v| stored_len(&v)),
-                )
+                let size = known.get(&s.id).copied().filter(|&n| n > 0);
+                let size = size
+                    .unwrap_or_else(|| store.get(&slot_key(s.id)).map_or(0, |v| stored_len(&v)));
+                (s.id, size)
             })
             .collect();
         self.renaming = None;
@@ -716,6 +725,10 @@ mod tests {
         s.refresh(&mem);
         assert_eq!(s.sizes[&0], 3);
         assert!(s.used() > 3);
+        // A size this tab knows is not read again.
+        s.sizes.insert(0, 7);
+        s.refresh(&mem);
+        assert_eq!(s.sizes[&0], 7);
         assert_eq!(stored_len("é😀"), 3);
 
         assert_eq!(name_from_file("kirkland.json"), "kirkland");
