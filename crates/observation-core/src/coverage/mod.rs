@@ -18,11 +18,15 @@ mod stats;
 mod tally;
 
 pub use crate::util::planar::closest_on_segment;
+pub(crate) use facade::FACADE_OFFSET_M;
 pub use facade::{FacadeCell, facade_cells};
 pub use grid::GroundGrid;
 pub use layers::{AreaGeometry, StaticLayers};
 pub use params::CoverageParams;
-pub use region::{MAX_REGION_POINTS, Region, RegionMask, RegionProblem};
+pub(crate) use region::scan_inside;
+pub use region::{
+    MAX_REGION_POINTS, Region, RegionMask, RegionProblem, outline_area_m2, outline_problem,
+};
 pub use sight::{Sight, Visibility};
 pub use stats::CoverageStats;
 pub use tally::{CoverageCounts, Tally};

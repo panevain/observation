@@ -9,6 +9,9 @@ use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, fresh_custom_id,
 };
 use observation_core::coverage::{CoverageParams, Region};
+use observation_core::footage::{
+    LabelledArea, Target, area_by_id, area_by_id_mut, set_figures_area,
+};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::{AreaRef, SceneFile};
@@ -84,8 +87,14 @@ pub struct Document {
     pub origin: LatLon,
     pub cameras: Vec<CameraPlacement>,
     pub params: CoverageParams,
-    /// Area the coverage figures can be limited to.
-    pub region: Option<Region>,
+    /// The scene's areas, labelled or not. Only the one the figures are
+    /// limited to is edited yet (the Region tool, through [`Self::region`]
+    /// and [`Self::set_region`]); the others are kept as loaded.
+    pub areas: Vec<LabelledArea>,
+    /// The id of the area the coverage figures are limited to.
+    pub limit_figures_to: Option<u32>,
+    /// The scene's targets, kept as loaded.
+    pub targets: Vec<Target>,
     /// The cameras come from a scene saved before terrain and still stand on
     /// flat ground; they are lifted onto the terrain when the area loads.
     pub on_flat_ground: bool,
@@ -110,7 +119,9 @@ impl Default for Document {
             origin: LatLon::new(0.0, 0.0),
             cameras: Vec::new(),
             params: CoverageParams::default(),
-            region: None,
+            areas: Vec::new(),
+            limit_figures_to: None,
+            targets: Vec::new(),
             on_flat_ground: false,
             provenance: None,
             saved_provenance: None,
@@ -151,6 +162,23 @@ impl Document {
         self.touch();
     }
 
+    /// The area the coverage figures can be limited to (the single region
+    /// the Region tool draws), if there is one.
+    pub fn region(&self) -> Option<&LabelledArea> {
+        area_by_id(&self.areas, self.limit_figures_to)
+    }
+
+    /// The same, to change (without a new revision).
+    pub fn region_mut(&mut self) -> Option<&mut LabelledArea> {
+        area_by_id_mut(&mut self.areas, self.limit_figures_to)
+    }
+
+    /// Replaces the region's outline and switch (keeping its id, label and
+    /// name), adds one, or with `None` removes it; without a new revision.
+    pub fn set_region(&mut self, region: Option<Region>) {
+        set_figures_area(&mut self.areas, &mut self.limit_figures_to, region);
+    }
+
     /// How many placed cameras use model `model_id`.
     pub fn cameras_using(&self, model_id: &str) -> usize {
         self.cameras
@@ -164,7 +192,9 @@ impl Document {
         let mut file = SceneFile::new(area, self.origin);
         file.cameras = self.cameras.clone();
         file.params = self.params;
-        file.region = self.region.clone();
+        file.areas = self.areas.clone();
+        file.limit_figures_to = self.limit_figures_to;
+        file.targets = self.targets.clone();
         file.custom_models = models.custom.clone();
         file.provenance = self.provenance.clone();
         if self.on_flat_ground {
@@ -181,7 +211,9 @@ impl Document {
             origin: self.origin,
             cameras: self.cameras.clone(),
             params: self.params,
-            region: self.region.clone(),
+            areas: self.areas.clone(),
+            limit_figures_to: self.limit_figures_to,
+            targets: self.targets.clone(),
             custom_models: models.custom.clone(),
         }
     }
@@ -198,7 +230,9 @@ impl Document {
         self.origin = s.origin;
         self.cameras = s.cameras.clone();
         self.params = s.params;
-        self.region = s.region.clone();
+        self.areas = s.areas.clone();
+        self.limit_figures_to = s.limit_figures_to;
+        self.targets = s.targets.clone();
         // Every step was recorded with its cameras on the terrain (none is
         // while a flat-ground scene waits for its area).
         self.on_flat_ground = false;
@@ -225,14 +259,16 @@ impl Document {
         self.next_id = file.cameras.iter().map(|c| c.id).max().unwrap_or(0) + 1;
         self.cameras = file.cameras;
         self.params = file.params;
-        self.region = file.region;
+        self.areas = file.areas;
+        self.limit_figures_to = file.limit_figures_to;
+        self.targets = file.targets;
         self.saved_provenance = file.provenance;
         models.custom = file.custom_models;
         self.touch();
     }
 
-    /// An empty scene on the current area (no cameras, region or custom
-    /// models, default settings), or `None` before an area has loaded.
+    /// An empty scene on the current area (no cameras, areas, targets or
+    /// custom models, default settings), or `None` before an area has loaded.
     pub fn blank_file(&self) -> Option<SceneFile> {
         let mut file = SceneFile::new(self.area?, self.origin);
         file.provenance = self.provenance.clone();
@@ -244,7 +280,9 @@ impl Document {
     pub fn clear_document(&mut self, models: &mut Models) {
         self.cameras.clear();
         self.params = CoverageParams::default();
-        self.region = None;
+        self.areas.clear();
+        self.limit_figures_to = None;
+        self.targets.clear();
         self.on_flat_ground = false;
         self.saved_provenance = None;
         self.next_id = 1;
@@ -270,7 +308,9 @@ pub struct Snapshot {
     pub origin: LatLon,
     pub cameras: Vec<CameraPlacement>,
     pub params: CoverageParams,
-    pub region: Option<Region>,
+    pub areas: Vec<LabelledArea>,
+    pub limit_figures_to: Option<u32>,
+    pub targets: Vec<Target>,
     pub custom_models: Vec<CameraModel>,
 }
 
@@ -315,6 +355,61 @@ mod tests {
         let mut f = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
         f.provenance = p;
         f
+    }
+
+    #[test]
+    fn areas_and_targets_survive_load_edit_undo_and_save() {
+        use observation_core::footage::{AreaLabel, TargetPlace};
+        let mut models = Models::new(Catalog::default());
+        let mut f = file(None);
+        let square = |x: f32| vec![[x, 0.0], [x + 5.0, 0.0], [x + 5.0, 5.0]];
+        f.areas = vec![
+            LabelledArea {
+                id: 4,
+                label: Some(AreaLabel::Own),
+                name: Some("Garden".into()),
+                points: square(0.0),
+                enabled: true,
+            },
+            LabelledArea {
+                id: 9,
+                label: Some(AreaLabel::Neighbour),
+                name: None,
+                points: square(10.0),
+                enabled: true,
+            },
+        ];
+        f.limit_figures_to = Some(4);
+        f.targets = vec![Target {
+            id: 1,
+            name: "Gate".into(),
+            at: TargetPlace::Ground {
+                points: square(1.0),
+            },
+        }];
+        let mut doc = Document::default();
+        doc.load_file(f.clone(), &mut models);
+        assert_eq!(doc.to_file(&models), Some(f.clone()));
+        let before = doc.snapshot(&models);
+        // The Region tool redraws the limiting area: its label, its name and
+        // the other areas stay.
+        doc.set_region(Some(Region {
+            points: square(2.0),
+            enabled: false,
+        }));
+        let saved = doc.to_file(&models).expect("an area");
+        assert_eq!(saved.areas[0].label, Some(AreaLabel::Own));
+        assert_eq!(saved.areas[0].name.as_deref(), Some("Garden"));
+        assert_eq!(
+            (saved.areas[0].points[0], saved.areas[0].enabled),
+            ([2.0, 0.0], false)
+        );
+        assert_eq!(saved.areas[1], f.areas[1]);
+        assert_eq!(saved.targets, f.targets);
+        doc.restore(&before, &mut models);
+        assert_eq!(doc.to_file(&models), Some(f));
+        doc.clear_document(&mut models);
+        assert!(doc.areas.is_empty() && doc.targets.is_empty() && doc.region().is_none());
     }
 
     #[test]

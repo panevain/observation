@@ -1,6 +1,6 @@
 //! A drawn region the figures can be limited to.
 
-use super::StaticLayers;
+use super::{GroundGrid, StaticLayers};
 use crate::util::planar::{point_in_ring, signed_area2};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -47,16 +47,7 @@ const REGION_WALL_PROBE_M: f32 = 0.5;
 impl Region {
     /// Why the outline cannot enclose an area, if it cannot.
     pub fn problem(&self) -> Option<RegionProblem> {
-        if self.points.len() < 3 {
-            Some(RegionProblem::TooFewCorners)
-        } else if self.self_intersects() {
-            // Checked first: a symmetric bow-tie also has a net area of zero.
-            Some(RegionProblem::SelfIntersecting)
-        } else if self.area_m2() <= 0.01 {
-            Some(RegionProblem::NoArea)
-        } else {
-            None
-        }
+        outline_problem(&self.points)
     }
 
     /// The figures should be limited to this region.
@@ -66,21 +57,42 @@ impl Region {
 
     /// Enclosed area of a simple outline (either winding), m².
     pub fn area_m2(&self) -> f32 {
-        signed_area2(&self.points).abs() / 2.0
+        outline_area_m2(&self.points)
     }
+}
 
-    /// Two edges that do not share a corner cross or touch.
-    fn self_intersects(&self) -> bool {
-        let p: Vec<Vec2> = self.points.iter().map(|p| Vec2::from_array(*p)).collect();
-        let n = p.len();
-        let edge = |i: usize| (p[i], p[(i + 1) % n]);
-        (0..n).any(|i| {
-            // Edges i and j are adjacent when j == i + 1, or i == 0 and j == n - 1.
-            (i + 2..n)
-                .filter(|&j| !(i == 0 && j == n - 1))
-                .any(|j| segments_cross(edge(i), edge(j)))
-        })
+/// Why a drawn outline (corners in world `[x, z]`, not repeated at the end)
+/// cannot enclose an area, if it cannot. Regions, labelled areas and ground
+/// targets share the rule.
+pub fn outline_problem(points: &[[f32; 2]]) -> Option<RegionProblem> {
+    if points.len() < 3 {
+        Some(RegionProblem::TooFewCorners)
+    } else if self_intersects(points) {
+        // Checked first: a symmetric bow-tie also has a net area of zero.
+        Some(RegionProblem::SelfIntersecting)
+    } else if outline_area_m2(points) <= 0.01 {
+        Some(RegionProblem::NoArea)
+    } else {
+        None
     }
+}
+
+/// Enclosed area of a simple outline (either winding), m².
+pub fn outline_area_m2(points: &[[f32; 2]]) -> f32 {
+    signed_area2(points).abs() / 2.0
+}
+
+/// Two edges that do not share a corner cross or touch.
+fn self_intersects(points: &[[f32; 2]]) -> bool {
+    let p: Vec<Vec2> = points.iter().map(|p| Vec2::from_array(*p)).collect();
+    let n = p.len();
+    let edge = |i: usize| (p[i], p[(i + 1) % n]);
+    (0..n).any(|i| {
+        // Edges i and j are adjacent when j == i + 1, or i == 0 and j == n - 1.
+        (i + 2..n)
+            .filter(|&j| !(i == 0 && j == n - 1))
+            .any(|j| segments_cross(edge(i), edge(j)))
+    })
 }
 
 /// Segments `a` and `b` share a point (touching counts).
@@ -104,34 +116,13 @@ pub struct RegionMask {
 }
 
 impl RegionMask {
-    pub fn new(layers: &StaticLayers, region: &Region) -> Self {
-        let ring: Vec<Vec2> = region.points.iter().map(|p| Vec2::from_array(*p)).collect();
+    /// The cells inside the outline `points` (world `[x, z]`): ground cells
+    /// by their centres, wall patches by the ground just in front of them.
+    pub fn new(layers: &StaticLayers, points: &[[f32; 2]]) -> Self {
         let grid = layers.grid();
-        // Scanline fill: on each row of cell centres, the cells between pairs
-        // of edge crossings are inside (even-odd, like `point_in_ring`).
         let mut ground = vec![false; grid.len()];
-        let mut xs = Vec::new();
-        for row in 0..grid.h {
-            let z = grid.min.y + (row as f32 + 0.5) * grid.cell_m;
-            xs.clear();
-            for (i, a) in ring.iter().enumerate() {
-                let b = ring[(i + 1) % ring.len()];
-                if (a.y > z) != (b.y > z) {
-                    xs.push(a.x + (z - a.y) * (b.x - a.x) / (b.y - a.y));
-                }
-            }
-            xs.sort_by(f32::total_cmp);
-            for pair in xs.as_chunks::<2>().0 {
-                // Columns whose centre x lies in [pair[0], pair[1]).
-                let col = |x: f32| {
-                    ((x - grid.min.x) / grid.cell_m - 0.5)
-                        .ceil()
-                        .clamp(0.0, grid.w as f32) as usize
-                };
-                let start = row as usize * grid.w as usize;
-                ground[start + col(pair[0])..start + col(pair[1])].fill(true);
-            }
-        }
+        scan_inside(grid, points, |start, end| ground[start..end].fill(true));
+        let ring: Vec<Vec2> = points.iter().map(|p| Vec2::from_array(*p)).collect();
         let facade = layers
             .facades()
             .iter()
@@ -141,6 +132,44 @@ impl RegionMask {
             })
             .collect();
         Self { ground, facade }
+    }
+}
+
+/// Calls `inside(start, end)` for each run of ground cells, `start..end` in
+/// grid index order, whose centres lie inside the outline `points`.
+///
+/// Scanline fill: on each row of cell centres, the cells between pairs of
+/// edge crossings are inside (even-odd, like `point_in_ring`).
+pub(crate) fn scan_inside(
+    grid: &GroundGrid,
+    points: &[[f32; 2]],
+    mut inside: impl FnMut(usize, usize),
+) {
+    let ring: Vec<Vec2> = points.iter().map(|p| Vec2::from_array(*p)).collect();
+    let mut xs = Vec::new();
+    for row in 0..grid.h {
+        let z = grid.min.y + (row as f32 + 0.5) * grid.cell_m;
+        xs.clear();
+        for (i, a) in ring.iter().enumerate() {
+            let b = ring[(i + 1) % ring.len()];
+            if (a.y > z) != (b.y > z) {
+                xs.push(a.x + (z - a.y) * (b.x - a.x) / (b.y - a.y));
+            }
+        }
+        xs.sort_by(f32::total_cmp);
+        for pair in xs.as_chunks::<2>().0 {
+            // Columns whose centre x lies in [pair[0], pair[1]).
+            let col = |x: f32| {
+                ((x - grid.min.x) / grid.cell_m - 0.5)
+                    .ceil()
+                    .clamp(0.0, grid.w as f32) as usize
+            };
+            let start = row as usize * grid.w as usize;
+            let (a, b) = (col(pair[0]), col(pair[1]));
+            if a < b {
+                inside(start + a, start + b);
+            }
+        }
     }
 }
 
@@ -176,7 +205,7 @@ mod tests {
         };
         assert!(west.is_active());
         assert_eq!(west.area_m2(), 500.0);
-        let mask = RegionMask::new(&l, &west);
+        let mask = RegionMask::new(&l, &west.points);
         let s = CoverageStats::compute_in(&l, &counts, Some(&mask));
         assert!(
             (s.street_m2 - all.street_m2 / 2.0).abs() < 10.0,
@@ -193,7 +222,7 @@ mod tests {
             points: vec![[-10.0, -30.0], [10.0, -30.0], [10.0, -10.0], [-10.0, -10.0]],
             enabled: true,
         };
-        let s = CoverageStats::compute_in(&l, &counts, Some(&RegionMask::new(&l, &house)));
+        let s = CoverageStats::compute_in(&l, &counts, Some(&RegionMask::new(&l, &house.points)));
         assert_eq!(s.street_m2, 0.0);
         assert!((s.facade_m2 - all.facade_m2).abs() < 1e-3);
 
@@ -238,7 +267,7 @@ mod tests {
         };
         assert_eq!(r.problem(), None);
         let ring: Vec<Vec2> = r.points.iter().map(|p| Vec2::from_array(*p)).collect();
-        let mask = RegionMask::new(&l, &r);
+        let mask = RegionMask::new(&l, &r.points);
         for (i, &inside) in mask.ground.iter().enumerate() {
             assert_eq!(inside, point_in_ring(l.grid().center(i), &ring), "cell {i}");
         }
@@ -254,12 +283,12 @@ mod tests {
             points: vec![[-5.0, -25.0], [5.0, -25.0], [5.0, -15.0], [-5.0, -15.0]],
             enabled: true,
         };
-        assert!(RegionMask::new(&l, &house).facade.iter().all(|b| !b));
+        assert!(RegionMask::new(&l, &house.points).facade.iter().all(|b| !b));
         // A lot one metre wider all round takes every wall.
         let lot = Region {
             points: vec![[-6.0, -26.0], [6.0, -26.0], [6.0, -14.0], [-6.0, -14.0]],
             enabled: true,
         };
-        assert!(RegionMask::new(&l, &lot).facade.iter().all(|b| *b));
+        assert!(RegionMask::new(&l, &lot.points).facade.iter().all(|b| *b));
     }
 }

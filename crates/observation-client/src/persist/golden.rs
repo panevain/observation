@@ -170,10 +170,10 @@ fn fixture_scene() -> (Scene, Models) {
     scene.params.dori = observation_core::camera::DoriLevel::Recognise;
     scene.params.lighting = observation_core::camera::Lighting::Night;
     scene.params.subject_height_m = 1.5;
-    scene.region = Some(Region {
+    scene.set_region(Some(Region {
         points: vec![[-20.0, -20.0], [25.0, -18.5], [22.0, 30.0], [-15.0, 28.0]],
         enabled: true,
-    });
+    }));
     scene.provenance = Some(Provenance {
         osm_data_unix: Some(1_793_475_782),
         bundle_built_unix: Some(1_793_479_382),
@@ -259,7 +259,7 @@ fn undo_snapshots_put_the_saved_document_back() {
     let json = scene.to_file(&models).expect("an area is set").to_json();
     scene.remove_camera(2);
     models.custom.clear();
-    scene.region = None;
+    scene.set_region(None);
     assert_ne!(scene.snapshot(&models), before);
     scene.restore(&before, &mut models);
     assert_eq!(scene.snapshot(&models), before);

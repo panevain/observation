@@ -191,7 +191,9 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         origin,
         cameras,
         params,
-        region,
+        areas,
+        limit_figures_to,
+        targets,
         custom_models: b,
     } = before;
     let a = &after.custom_models;
@@ -199,7 +201,9 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         && *origin == after.origin
         && *cameras == after.cameras
         && *params == after.params
-        && *region == after.region;
+        && *areas == after.areas
+        && *limit_figures_to == after.limit_figures_to
+        && *targets == after.targets;
     if !rest_equal || b.len() != a.len() + 1 {
         return None;
     }
@@ -236,7 +240,10 @@ fn describe(before: &Snapshot, after: &Snapshot) -> String {
         .collect();
     match changed.as_slice() {
         [c] => format!("edit {}", c.label),
-        [] if before.region != after.region => "region change".to_owned(),
+        [] if before.areas != after.areas || before.limit_figures_to != after.limit_figures_to => {
+            "region change".to_owned()
+        }
+        [] if before.targets != after.targets => "target change".to_owned(),
         [] if before.params != after.params => "analysis settings".to_owned(),
         [] if before.custom_models != after.custom_models => "custom model".to_owned(),
         [] => "change".to_owned(),
@@ -507,10 +514,10 @@ mod tests {
         f.doc.camera_mut(id).expect("camera").yaw_deg = 90.0;
         f.observe(false);
         assert_eq!(f.history.undo_label().as_deref(), Some("edit Porch"));
-        f.doc.region = Some(Region {
+        f.doc.set_region(Some(Region {
             points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
             enabled: true,
-        });
+        }));
         f.doc.touch();
         f.observe(false);
         assert_eq!(f.history.undo_label().as_deref(), Some("region change"));

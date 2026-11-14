@@ -338,7 +338,7 @@ proptest! {
     ) {
         let layers = s.layers();
         let sights: Vec<Sight> = cams.iter().map(|c| layers.sight(&c.cone(&layers), 1.0)).collect();
-        let mask = region.as_ref().map(|r| RegionMask::new(&layers, r));
+        let mask = region.as_ref().map(|r| RegionMask::new(&layers, &r.points));
         let (tally, _) = run(&layers, mask.as_ref(), &sights, &ops);
         let kept = tally.stats(&layers);
         same_figures(kept, CoverageStats::compute_in(&layers, tally.counts(), mask.as_ref()))?;
@@ -365,7 +365,7 @@ proptest! {
     fn prop_region_mask_is_the_point_in_ring_test(s in street(), region in region()) {
         let Some(region) = region else { return Ok(()) };
         let layers = s.layers();
-        let mask = RegionMask::new(&layers, &region);
+        let mask = RegionMask::new(&layers, &region.points);
         let ring: Vec<Vec2> = region.points.iter().map(|p| Vec2::from_array(*p)).collect();
         for (i, &inside) in mask.ground.iter().enumerate() {
             let c = layers.grid().center(i);
@@ -426,7 +426,7 @@ proptest! {
         let layers = s.layers();
         let sight = layers.sight(&cams[0].cone(&layers), 1.0);
         prop_assume!(!sight.ground.is_empty());
-        let mask = region.as_ref().map(|r| RegionMask::new(&layers, r));
+        let mask = region.as_ref().map(|r| RegionMask::new(&layers, &r.points));
         let mut tally = Tally::new(&layers, mask.as_ref());
         let added = 256 + extra;
         let left = left.min(added);

@@ -264,7 +264,6 @@ impl Tally {
 mod tests {
     use super::super::tests::layers;
     use super::*;
-    use crate::coverage::Region;
     use crate::frustum::ViewCone;
     use glam::Vec3;
 
@@ -284,10 +283,7 @@ mod tests {
         let vis = sight.within(cone.range);
         let west = RegionMask::new(
             &l,
-            &Region {
-                points: vec![[-50.0, -30.0], [0.0, -30.0], [0.0, 30.0], [-50.0, 30.0]],
-                enabled: true,
-            },
+            &[[-50.0, -30.0], [0.0, -30.0], [0.0, 30.0], [-50.0, 30.0]],
         );
         // A ground cell and a façade patch the camera sees inside the
         // region, and one of each outside it.
@@ -349,10 +345,7 @@ mod tests {
             .collect();
         let west = RegionMask::new(
             &l,
-            &Region {
-                points: vec![[-50.0, -30.0], [5.0, -30.0], [5.0, 30.0], [-50.0, 30.0]],
-                enabled: true,
-            },
+            &[[-50.0, -30.0], [5.0, -30.0], [5.0, 30.0], [-50.0, 30.0]],
         );
         let check = |t: &Tally, region: Option<&RegionMask>| {
             let (got, want) = (

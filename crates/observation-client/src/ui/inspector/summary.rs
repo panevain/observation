@@ -107,7 +107,7 @@ fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
         .size(t.font.caption)
         .color(if active { t.accent } else { t.text_muted });
     ui.menu_button(label, |ui| {
-        let Some(r) = &d.scene.region else {
+        let Some(r) = d.scene.region() else {
             if ui
                 .button("Draw region…")
                 .on_hover_text("Limit the figures to an area you outline on the ground (R)")

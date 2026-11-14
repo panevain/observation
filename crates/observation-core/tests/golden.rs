@@ -24,6 +24,7 @@ use glam::Vec3;
 use observation_core::bundle::{AreaBundle, BUNDLE_MAGIC, BUNDLE_VERSION};
 use observation_core::camera::Catalog;
 use observation_core::coverage_job::{JOB_VERSION, Job, JobRequest, JobResponse, LayerInputs};
+use observation_core::footage::AreaLabel;
 use observation_core::frustum::ViewCone;
 use observation_core::geo::LatLon;
 use observation_core::scene::SceneFile;
@@ -269,14 +270,20 @@ fn golden_scene_v1_flat() {
 fn golden_scene_v2() {
     let s = scene_round_trip("v2");
     assert!(!s.on_flat_ground());
-    assert!(s.region.is_some());
+    // The old single region is now the area the figures are limited to.
+    assert!(s.figures_area().is_some_and(|a| a.label.is_none()));
+    assert_eq!(s.areas.len(), 1);
 }
 
 #[test]
 fn golden_scene_v2_provenance() {
     let s = scene_round_trip("v2_provenance");
     assert!(s.provenance.is_some());
-    assert_eq!(s.region, None, "an out-of-range region is dropped");
+    assert_eq!(
+        (s.areas.len(), s.limit_figures_to),
+        (0, None),
+        "an out-of-range region is dropped"
+    );
 }
 
 #[test]
@@ -302,9 +309,31 @@ fn golden_scene_v2_sanitise() {
 #[test]
 fn golden_scene_v2_region_default() {
     let s = scene_round_trip("v2_region_default");
-    let region = s.region.expect("a region without `enabled` is kept");
+    let region = s
+        .figures_area()
+        .expect("a region without `enabled` is kept");
     assert!(region.enabled, "and is on, as before the field existed");
     assert_eq!(region.points.len(), 4);
+}
+
+#[test]
+fn golden_scene_v2_areas() {
+    let s = scene_round_trip("v2_areas");
+    let labels: Vec<_> = s.areas.iter().map(|a| a.label).collect();
+    assert_eq!(
+        labels,
+        [Some(AreaLabel::Own), Some(AreaLabel::Neighbour), None, None],
+        "the out-of-range area is dropped"
+    );
+    assert_eq!(s.areas[2].id, 6, "a repeated id is replaced");
+    assert_eq!(s.areas[1].name.as_deref(), Some("Next door"));
+    assert_eq!(
+        s.figures_area().map(|a| a.id),
+        Some(2),
+        "the copied region is ignored"
+    );
+    assert_eq!(s.targets.len(), 2, "the oversized target is dropped");
+    assert_eq!(s.targets[0].name, "Front door");
 }
 
 #[test]
