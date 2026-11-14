@@ -21,6 +21,21 @@ const STREET_DISTANCE_M: (f32, f32) = (2.0, 30.0);
 /// is too small to fit them all.
 const SPACING_M: f32 = 30.0;
 
+/// Catalogue models used, in turn, for the example cameras on the demo street
+/// (by the app, and by default in the MCP server): a mix of types and brands.
+pub const EXAMPLE_MODELS: [&str; 10] = [
+    "ring-wired-doorbell-pro",
+    "ring-floodlight-cam-wired-plus",
+    "google-nest-doorbell-battery",
+    "reolink-rlc-810a",
+    "arlo-pro-4",
+    "eufy-eufycam-s3-pro",
+    "ubiquiti-unifi-g5-dome",
+    "wyze-cam-floodlight-pro",
+    "tp-link-tapo-c320ws",
+    "blink-outdoor-4",
+];
+
 /// A camera must sit at least this far below the roof of its building, metres.
 const BELOW_ROOF_M: f32 = 0.5;
 
@@ -44,6 +59,18 @@ pub fn example_cameras(
     bundle: &AreaBundle,
     models: &[&CameraModel],
     count: usize,
+) -> Vec<CameraPlacement> {
+    example_cameras_around(bundle, models, count, &[])
+}
+
+/// [`example_cameras`] for an area that already has cameras at `taken`
+/// (world `[x, z]`): new placements keep the same distance from those as
+/// from each other, so none lands where a camera already is.
+pub fn example_cameras_around(
+    bundle: &AreaBundle,
+    models: &[&CameraModel],
+    count: usize,
+    taken: &[[f32; 2]],
 ) -> Vec<CameraPlacement> {
     if models.is_empty() || count == 0 {
         return Vec::new();
@@ -146,10 +173,12 @@ pub fn example_cameras(
                 break;
             }
             let model = models[picked.len() % models.len()];
+            let clear = spacing.max(1.0);
             if suits(c, model)
-                && picked
+                && picked.iter().all(|(p, _)| p.at.distance(c.at) > clear)
+                && taken
                     .iter()
-                    .all(|(p, _)| p.at.distance(c.at) > spacing.max(1.0))
+                    .all(|&t| Vec2::from_array(t).distance(c.at) > clear)
             {
                 picked.push((*c, model));
             }
@@ -283,6 +312,26 @@ mod tests {
         }
         // Deterministic.
         assert_eq!(cams, example_cameras(&b, &[&door, &flood], 10));
+    }
+
+    #[test]
+    fn keeps_clear_of_cameras_already_placed() {
+        let b = street();
+        let door = model("door", CameraKind::Doorbell);
+        let first = example_cameras(&b, &[&door], 4);
+        let taken: Vec<[f32; 2]> = first
+            .iter()
+            .map(|c| [c.position[0], c.position[2]])
+            .collect();
+        let more = example_cameras_around(&b, &[&door], 4, &taken);
+        assert_eq!(more.len(), 4);
+        for c in &more {
+            for t in &taken {
+                let d = Vec2::new(c.position[0], c.position[2]).distance(Vec2::from_array(*t));
+                assert!(d > 10.0, "{d} m from a camera already placed: {c:?}");
+            }
+        }
+        assert_eq!(example_cameras_around(&b, &[&door], 4, &[]), first);
     }
 
     #[test]

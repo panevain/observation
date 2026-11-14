@@ -17,6 +17,7 @@ A Cargo workspace under `crates/` ([Workspace in docs/design.md](docs/design.md#
 - `observation-regions-api`: the HTTP contract between the server and the region agent.
 - `observation-upstream`: every outbound HTTP request of the server and the agent, behind SSRF guards.
 - `observation-tokens`: design token values, and the `token-css` binary that trunk runs to write `web/tokens.css`.
+- `observation-mcp`: an MCP server over stdio (spec 2026-07-28, `rmcp`) exposing the camera catalogue, scene editing and coverage on the demo street. `.mcp.json` registers it as the `observation` server for Claude Code.
 - `observation-client`: the Bevy/egui app for `wasm32-unknown-unknown` and its coverage worker. Not a default member.
 - `observation-client-model`: the client's engine-free logic (no Bevy, egui or `web-sys`).
 

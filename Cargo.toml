@@ -12,6 +12,7 @@ default-members = [
     "crates/observation-upstream",
     "crates/observation-tokens",
     "crates/observation-client-model",
+    "crates/observation-mcp",
 ]
 # Separate workspaces, each with its own Cargo.lock: the fuzz targets (nightly only; see
 # fuzz/README.md) and the repository's tooling (`cargo xtask`, see xtask/Cargo.toml), whose
