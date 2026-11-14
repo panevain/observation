@@ -209,6 +209,31 @@ jobs:
       - uses: $/.github/actions/setup-rust
       - run: mise run shear
 
+  # .github/workflows/actions.lock covers every action the workflows use, under the SHA keys
+  # the runner looks up and with commits it would accept (mise.ci.toml's actions-lock:verify). GitHub enforces the lockfile when
+  # a job starts, so a stale one would first show in the release, bot and scheduled workflows
+  # that a pull request does not run; this fails the pull request instead (`mise -E ci run
+  # actions-lock` fixes it). A required check (.github/rulesets), so Dependabot auto-merge
+  # waits for it too.
+  actions-lock:
+    name: actions lockfile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/setup-mise
+        with:
+          tools: gh-actions-lock
+      # It reads the actions' repositories (public) through the API with the job's read-only
+      # token.
+      - run: mise run actions-lock:verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   wasm:
     name: wasm (trunk build)
     runs-on: ubuntu-24.04
