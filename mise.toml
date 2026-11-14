@@ -253,12 +253,12 @@ run = "scripts/subset-fonts.sh"
 
 [tasks."fixtures:demo"]
 description = "Re-record the demo street's Overpass response (one real request; OBS_OVERPASS_URL picks the interpreter)"
-dir = "{{config_root}}/crates/observation-server/fixtures"
+dir = "{{config_root}}/crates/observation-mapdata/fixtures"
 run = "./fetch.sh"
 
 [tasks."fixtures:demo-dem"]
 description = "Re-record the demo street's elevation tiles (two real requests; OBS_DEM_URL picks the source)"
-dir = "{{config_root}}/crates/observation-server/fixtures"
+dir = "{{config_root}}/crates/observation-mapdata/fixtures"
 run = "./fetch-dem.sh"
 
 [tasks."rulesets:check"]

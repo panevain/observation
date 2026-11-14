@@ -177,7 +177,8 @@ mod tests {
     use super::*;
 
     /// A seeded xorshift64* value in `[lo, hi)`: the same inputs every run.
-    /// The same generator as `observation-server`'s `test_rng`; keep them alike.
+    /// The same generator as `observation-server`'s and `observation-mapdata`'s
+    /// `test_rng`; keep them alike.
     fn uniform(state: &mut u64, lo: f64, hi: f64) -> f64 {
         *state ^= *state >> 12;
         *state ^= *state << 25;

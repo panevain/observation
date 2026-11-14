@@ -5,7 +5,8 @@ use observation_core::bundle::AreaBundle;
 use observation_core::coverage::StaticLayers;
 use observation_core::glam::Vec2;
 use observation_core::scene::{AreaRef, SceneFile};
-use observation_server::config::{DEFAULT_ATTRIBUTION, DEFAULT_DEM_ATTRIBUTION};
+use observation_core::terrain::TERRAIN_TILES_ATTRIBUTION;
+use observation_mapdata::OSM_ATTRIBUTION;
 use std::sync::LazyLock;
 
 /// Ground raster resolution, metres (the client's `GROUND_CELL_M`).
@@ -14,12 +15,11 @@ pub const GROUND_CELL_M: f32 = 0.5;
 pub const FACADE_CELL_M: f32 = 1.0;
 
 static DEMO: LazyLock<Result<AreaBundle, String>> = LazyLock::new(|| {
-    // Built from the server's committed fixture, so it needs no network. The build time is
-    // left at 0 ("unknown"): the data date that matters is the fixture's own.
-    let bytes =
-        observation_server::demo::build_demo(DEFAULT_ATTRIBUTION, DEFAULT_DEM_ATTRIBUTION, 0)
-            .map_err(|e| e.to_string())?;
-    AreaBundle::decode(&bytes).map_err(|e| e.to_string())
+    // Built from the committed fixtures, so it needs no network, with the server's default
+    // credits. The build time is left at 0 ("unknown"): the data date that matters is the
+    // fixture's own.
+    observation_mapdata::demo::demo_bundle(OSM_ATTRIBUTION, TERRAIN_TILES_ATTRIBUTION, 0)
+        .map_err(|e| e.to_string())
 });
 
 static DEMO_LAYERS: LazyLock<Result<StaticLayers, String>> = LazyLock::new(|| {

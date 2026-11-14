@@ -7,9 +7,9 @@ use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use tower::ServiceExt;
 
-pub(crate) const BBOX: &str = include_str!("../../fixtures/demo-bbox.txt");
+pub(crate) const BBOX: &str = observation_mapdata::demo::BBOX_TXT;
 
-pub(crate) const FIXTURE: &str = include_str!("../../fixtures/demo-overpass.json");
+pub(crate) const FIXTURE: &str = observation_mapdata::demo::OVERPASS_JSON;
 
 /// A valid 1x1 PNG.
 pub(crate) const PNG: &[u8] = &[

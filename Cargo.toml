@@ -5,6 +5,7 @@ members = [
 ]
 default-members = [
     "crates/observation-core",
+    "crates/observation-mapdata",
     "crates/observation-server",
     "crates/observation-regions",
     "crates/observation-regions-api",
@@ -27,11 +28,11 @@ publish = false
 
 [workspace.dependencies]
 observation-core = { path = "crates/observation-core" }
+observation-mapdata = { path = "crates/observation-mapdata" }
 observation-upstream = { path = "crates/observation-upstream" }
 observation-tokens = { path = "crates/observation-tokens" }
 observation-client-model = { path = "crates/observation-client-model" }
 observation-regions-api = { path = "crates/observation-regions-api" }
-observation-server = { path = "crates/observation-server" }
 
 # shared
 glam = { version = "0.33", features = ["serde"] }

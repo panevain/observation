@@ -14,6 +14,7 @@ testing = ["observation-regions-api/testing", "observation-upstream/testing"]
 
 [dependencies]
 observation-core.workspace = true
+observation-mapdata.workspace = true
 observation-upstream.workspace = true
 observation-regions-api.workspace = true
 axum.workspace = true
@@ -28,8 +29,6 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 httpdate = "1.0"
-# Decodes the Terrarium elevation tiles areas are built on.
-png = "0.18"
 
 [dev-dependencies]
 # The integration tests build the app over fakes (`testing::TestApp`).
@@ -39,6 +38,8 @@ observation-upstream = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { workspace = true, features = ["util"] }
 tempfile = "3"
+# Writes the Terrarium elevation tiles the tests serve.
+png = "0.18"
 
 [lints]
 workspace = true

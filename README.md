@@ -76,6 +76,7 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | Path | Contents |
 | --- | --- |
 | `crates/observation-core` | Engine-free logic shared by client and server: projection, tiles, building extrusion, bundle format, cameras, view cones, occlusion, coverage, scene files |
+| `crates/observation-mapdata` | Map data without I/O: the Overpass response parser, Terrarium elevation tile decoding, and the demo street with its committed fixtures |
 | `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, region management relay, static files |
 | `crates/observation-regions` | Optional region agent (`regions` image target): imports Geofabrik extracts into local Overpass databases and answers queries for them |
 | `crates/observation-tokens` | Design token values (scales, minimum viewport, UI colour roles) shared by the client theme and `web/index.html`'s CSS, which trunk writes with its `token-css` binary |
