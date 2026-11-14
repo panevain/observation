@@ -35,6 +35,12 @@ pub const MAX_POLLS_PER_PAIRING: usize = 4;
 pub const MAX_POSTS_PER_WINDOW: usize = 40;
 /// The window [`MAX_POSTS_PER_WINDOW`] counts over.
 pub const POST_WINDOW: Duration = Duration::from_secs(10);
+/// How long the agent of an ended pairing is still told why it ended,
+/// rather than that its token is unknown: its long poll may have been
+/// between requests when the pairing ended.
+pub const ENDED_MEMORY: Duration = Duration::from_secs(60);
+/// At most this many ended pairings are remembered for [`ENDED_MEMORY`].
+pub const MAX_ENDED_REMEMBERED: usize = 32;
 
 /// What a pairing's followers (its event streams and long polls) watch.
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +138,17 @@ struct Registry {
     pairings: Vec<Pairing>,
     next_id: u64,
     failed_claims: u32,
+    /// Agent tokens of recently ended pairings, with why and when they
+    /// ended, oldest first (see [`ENDED_MEMORY`]).
+    ended: VecDeque<Ended>,
+}
+
+#[derive(Debug)]
+struct Ended {
+    agent_token: String,
+    reason: EndReason,
+    revision: u64,
+    at: Instant,
 }
 
 /// The bridge's pairings. Cheap to share behind an `Arc`.
@@ -247,6 +264,18 @@ impl AgentBridge {
     fn end_at(reg: &mut Registry, index: usize, reason: EndReason) {
         let p = reg.pairings.swap_remove(index);
         p.signal.send_modify(|s| s.ended = Some(reason));
+        // The agent that ended it already knows why.
+        if let Some(agent_token) = p.agent_token.clone().filter(|_| reason != EndReason::Agent) {
+            if reg.ended.len() >= MAX_ENDED_REMEMBERED {
+                reg.ended.pop_front();
+            }
+            reg.ended.push_back(Ended {
+                agent_token,
+                reason,
+                revision: p.revision,
+                at: Instant::now(),
+            });
+        }
         count("ended");
         tracing::info!(pairing = p.id, reason = ?reason, "agent pairing ended");
     }
@@ -400,6 +429,31 @@ impl AgentBridge {
         Ok(p.revision)
     }
 
+    /// What the agent of a pairing that ended within [`ENDED_MEMORY`] is
+    /// told: that it ended, and why. Compares every remembered token, like
+    /// [`find`], so timing says nothing about which one matched.
+    fn recently_ended(reg: &mut Registry, agent_token: &str, now: Instant) -> Option<StateView> {
+        while reg
+            .ended
+            .front()
+            .is_some_and(|e| now.saturating_duration_since(e.at) >= ENDED_MEMORY)
+        {
+            reg.ended.pop_front();
+        }
+        let mut found = None;
+        for e in &reg.ended {
+            if same_secret(&e.agent_token, agent_token) {
+                found = Some((e.reason, e.revision));
+            }
+        }
+        found.map(|(reason, revision)| StateView {
+            v: PROTOCOL_VERSION,
+            revision,
+            state: None,
+            ended: Some(reason),
+        })
+    }
+
     /// The state as the agent reads it. With `since`, waits up to `wait`
     /// for a revision newer than it (or for the pairing to end).
     pub async fn read_state(
@@ -412,8 +466,10 @@ impl AgentBridge {
             let now = Instant::now();
             let mut reg = self.lock();
             Self::sweep_locked(&mut reg, now);
-            let i = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref())
-                .ok_or(BridgeError::Unauthorized)?;
+            let Some(i) = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref()) else {
+                return Self::recently_ended(&mut reg, agent_token, now)
+                    .ok_or(BridgeError::Unauthorized);
+            };
             let p = &mut reg.pairings[i];
             p.last_used = now;
             match since {

@@ -194,8 +194,11 @@ async fn the_agent_hears_when_the_app_disconnects() {
     connect(&mcp, &base, &browser.code).await.unwrap();
     let mut changes = mcp.link().subscribe();
     browser.disconnect().await;
-    next_change(&mut changes).await;
-    assert!(!mcp.link().is_connected());
+    // The follower may still report the state it read after connecting, so
+    // wait for the change that ends the connection rather than the first one.
+    while mcp.link().is_connected() {
+        next_change(&mut changes).await;
+    }
     let Json(state) = mcp.get_app_state().await.unwrap();
     assert_eq!(state.ended.as_deref(), Some("the app disconnected"));
 }

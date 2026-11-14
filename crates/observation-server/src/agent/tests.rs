@@ -193,6 +193,20 @@ async fn either_side_ends_it_and_its_tokens_stop_working() {
     let (bridge, browser, agent, stream) = claimed();
     assert_eq!(bridge.end(&browser), Ok(EndReason::Browser));
     assert_eq!(stream.signal.borrow().ended, Some(EndReason::Browser));
+    // An agent whose poll was between requests is still told why, for a
+    // while; then its token is simply unknown.
+    for since in [None, Some(0)] {
+        let view = bridge
+            .read_state(&agent, since, Duration::ZERO)
+            .await
+            .unwrap();
+        assert_eq!((view.state, view.ended), (None, Some(EndReason::Browser)));
+    }
+    assert_eq!(
+        bridge.read_state("not a token", None, Duration::ZERO).await,
+        Err(BridgeError::Unauthorized)
+    );
+    advance(ENDED_MEMORY.as_secs()).await;
     assert_eq!(
         bridge.read_state(&agent, None, Duration::ZERO).await,
         Err(BridgeError::Unauthorized)
