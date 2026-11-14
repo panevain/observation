@@ -80,6 +80,13 @@ pub enum ConfigError {
     RegionsUrl(String),
     #[error("OBS_TRUSTED_PROXIES entry `{0}` is not an IP address or a block like 10.0.0.0/8")]
     TrustedProxy(String),
+    #[error("OBS_AGENT_BRIDGE `{0}` is not on, off, 1, 0, true, false, yes or no")]
+    AgentBridge(String),
+    #[error(
+        "OBS_AGENT_BRIDGE is on but OBS_TRUSTED_PROXIES is set: behind a reverse proxy the server \
+         is reachable from other computers, and the agent bridge is for this computer only"
+    )]
+    AgentBridgeBehindProxy,
     #[error("{var} `{value}` is not a whole number from {min} to {MAX_RATE}")]
     Rate {
         var: &'static str,
@@ -167,6 +174,9 @@ pub struct Config {
     /// Per-client limit on tiles that go upstream
     /// (`OBS_TILE_RATE_PER_MIN`, `OBS_TILE_BURST`).
     pub tile_rate: Rate,
+    /// Serve the agent bridge's `/api/agent/...` routes to loopback peers
+    /// (`OBS_AGENT_BRIDGE`). Refused together with `trusted_proxies`.
+    pub agent_bridge: bool,
 }
 
 /// Whether two listen addresses would collide: same port and the same IP, or either
@@ -237,6 +247,14 @@ impl Config {
                 _ => return Err(ConfigError::AllowPrivate(raw)),
             },
         };
+        let agent_bridge = match get("OBS_AGENT_BRIDGE") {
+            None => false,
+            Some(raw) => match raw.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => return Err(ConfigError::AgentBridge(raw)),
+            },
+        };
         let tile_url = or("OBS_TILE_URL", DEFAULT_TILE_URL);
         let dem_url = match get("OBS_DEM_URL") {
             Some(u) if u.eq_ignore_ascii_case(DEM_OFF) => None,
@@ -289,6 +307,7 @@ impl Config {
             burst: number("OBS_TILE_BURST", DEFAULT_TILE_RATE.burst, 1)?,
         };
         let config = Self {
+            agent_bridge,
             trusted_proxies,
             area_rate,
             tile_rate,
@@ -315,7 +334,8 @@ impl Config {
         Ok(config)
     }
 
-    /// Checks the upstream URLs and the per-client limits. Run by
+    /// Checks the upstream URLs, the per-client limits and that the agent
+    /// bridge is not on behind a reverse proxy. Run by
     /// [`Config::from_lookup`] and again by `AppState::new`, so a hand-built
     /// config cannot skip it. Hosts that are names rather than literal addresses
     /// are checked when connecting instead (see `observation_upstream::FilteringResolver`).
@@ -333,6 +353,9 @@ impl Config {
                     min,
                 });
             }
+        }
+        if self.agent_bridge && !self.trusted_proxies.is_empty() {
+            return Err(ConfigError::AgentBridgeBehindProxy);
         }
         let allow = self.allow_private_upstreams;
         for u in &self.overpass_urls {
@@ -387,6 +410,7 @@ impl Config {
             trusted_proxies: Vec::new(),
             area_rate: DEFAULT_AREA_RATE,
             tile_rate: DEFAULT_TILE_RATE,
+            agent_bridge: false,
         }
     }
 
@@ -766,6 +790,43 @@ mod tests {
             flag("maybe"),
             Err(ConfigError::AllowPrivate("maybe".into()))
         );
+    }
+
+    #[test]
+    fn the_agent_bridge_is_off_by_default_and_never_behind_a_proxy() {
+        assert!(!Config::from_lookup(lookup(&[])).unwrap().agent_bridge);
+        for on in ["on", "1", "TRUE", "yes"] {
+            let c = Config::from_lookup(lookup(&[("OBS_AGENT_BRIDGE", on)])).unwrap();
+            assert!(c.agent_bridge, "{on}");
+        }
+        for off in ["off", "0", "false", "No", ""] {
+            let c = Config::from_lookup(lookup(&[("OBS_AGENT_BRIDGE", off)])).unwrap();
+            assert!(!c.agent_bridge, "{off}");
+        }
+        assert_eq!(
+            Config::from_lookup(lookup(&[("OBS_AGENT_BRIDGE", "maybe")])).unwrap_err(),
+            ConfigError::AgentBridge("maybe".into())
+        );
+        assert_eq!(
+            Config::from_lookup(lookup(&[
+                ("OBS_AGENT_BRIDGE", "on"),
+                ("OBS_TRUSTED_PROXIES", "10.0.0.0/8"),
+            ]))
+            .unwrap_err(),
+            ConfigError::AgentBridgeBehindProxy
+        );
+        // A proxy alone, or the bridge off, is fine.
+        assert!(
+            Config::from_lookup(lookup(&[
+                ("OBS_AGENT_BRIDGE", "off"),
+                ("OBS_TRUSTED_PROXIES", "10.0.0.0/8"),
+            ]))
+            .is_ok()
+        );
+        // A hand-built config cannot skip the check either.
+        let mut c = Config::from_lookup(lookup(&[("OBS_AGENT_BRIDGE", "on")])).unwrap();
+        c.trusted_proxies = vec![Cidr::parse("::1").unwrap()];
+        assert_eq!(c.validate(), Err(ConfigError::AgentBridgeBehindProxy));
     }
 
     #[test]

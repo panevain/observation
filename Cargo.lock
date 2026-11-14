@@ -4872,6 +4872,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-agent-api"
+version = "0.1.0"
+dependencies = [
+ "observation-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "observation-client"
 version = "0.1.0"
 dependencies = [
@@ -4981,9 +4990,11 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
+ "getrandom 0.4.3",
  "httpdate",
  "metrics",
  "metrics-exporter-prometheus",
+ "observation-agent-api",
  "observation-core",
  "observation-mapdata",
  "observation-regions-api",

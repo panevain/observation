@@ -35,6 +35,9 @@ pub const REGION_QUERY: &str = "observation_region_queries_total";
 /// Upstream-bound requests over a client's limit (a 429, or an expired tile
 /// served instead of revalidated): `route` is `area` or `tiles`.
 pub const CLIENT_LIMITED: &str = "observation_client_rate_limited_total";
+/// Agent bridge pairings: `event` is `created`, `claimed`, `claim_refused`
+/// (a wrong code) or `ended`.
+pub const AGENT_PAIRINGS: &str = "observation_agent_pairings_total";
 
 /// Latency bucket upper bounds in seconds; the request timeout is 80 s.
 const DURATION_BUCKETS: &[f64] = &[
@@ -149,6 +152,7 @@ mod tests {
                 OVERPASS_FETCH,
                 REGION_QUERY,
                 CLIENT_LIMITED,
+                AGENT_PAIRINGS,
             ],
             [
                 "observation_http_requests_total",
@@ -159,6 +163,7 @@ mod tests {
                 "observation_overpass_fetches_total",
                 "observation_region_queries_total",
                 "observation_client_rate_limited_total",
+                "observation_agent_pairings_total",
             ]
         );
         assert_eq!(

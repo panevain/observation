@@ -1,0 +1,522 @@
+//! The agent bridge's pairings: one open app and one local agent, relayed
+//! through this server (see [`observation_agent_api`] for the protocol).
+//!
+//! Everything is held in memory and nothing is written anywhere: a restart
+//! ends every pairing. Expiry is lazy: every operation first ends the
+//! pairings whose time is up ([`AgentBridge::sweep`]), and the long polls and
+//! event streams wake often enough to run it. Elapsed time is
+//! `tokio::time::Instant`, so paused-time tests drive it.
+//!
+//! Secrets (the two tokens and the code) are compared in constant time,
+//! looked up by comparing against every pairing (there are at most
+//! [`MAX_PAIRINGS`]), and never logged.
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
+
+use observation_agent_api::{
+    BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, Claimed, EndReason,
+    IDLE_TIMEOUT_SECS, LONG_POLL_SECS, MAX_AGENT_NAME_CHARS, MAX_FAILED_CLAIMS, MAX_PAIRINGS,
+    PROTOCOL_VERSION, PairingCreated, PairingPhase, SharedState, StateView, tidy_text,
+};
+use tokio::sync::watch;
+use tokio::time::Instant;
+
+use crate::metrics::AGENT_PAIRINGS;
+
+/// Most event streams one pairing may have open (a browser reconnecting
+/// briefly holds two).
+pub const MAX_STREAMS_PER_PAIRING: usize = 4;
+/// Most long polls one pairing may have waiting.
+pub const MAX_POLLS_PER_PAIRING: usize = 4;
+/// Most state posts one pairing may make in [`POST_WINDOW`]; the app posts
+/// at most every half second.
+pub const MAX_POSTS_PER_WINDOW: usize = 40;
+/// The window [`MAX_POSTS_PER_WINDOW`] counts over.
+pub const POST_WINDOW: Duration = Duration::from_secs(10);
+
+/// What a pairing's followers (its event streams and long polls) watch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Signal {
+    pub phase: PairingPhase,
+    pub agent: Option<String>,
+    pub revision: u64,
+    /// Set as the pairing ends; its sender is dropped right after.
+    pub ended: Option<EndReason>,
+}
+
+/// Why a bridge operation was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeError {
+    /// No pairing has this token (wrong, or the pairing has ended).
+    Unauthorized,
+    /// No unclaimed pairing has this code.
+    NoSuchCode,
+    /// [`MAX_PAIRINGS`] are open already.
+    Full,
+    /// Too many streams or polls are open, or posts were made, for one
+    /// pairing; try again after this many seconds.
+    TooMany(u64),
+    /// The system's random number source failed.
+    NoRandomness,
+}
+
+#[derive(Debug)]
+struct Pairing {
+    /// For logs: never a secret.
+    id: u64,
+    /// `None` once claimed.
+    code: Option<String>,
+    browser_token: String,
+    agent_token: Option<String>,
+    agent_name: Option<String>,
+    created: Instant,
+    last_used: Instant,
+    browser_streams: usize,
+    /// When the browser last had a stream open (or the pairing was created).
+    browser_seen: Instant,
+    state: Option<Arc<SharedState>>,
+    revision: u64,
+    posts: VecDeque<Instant>,
+    polls: usize,
+    signal: watch::Sender<Signal>,
+}
+
+impl Pairing {
+    fn phase(&self) -> PairingPhase {
+        if self.agent_token.is_some() {
+            PairingPhase::Claimed
+        } else {
+            PairingPhase::Waiting
+        }
+    }
+
+    fn publish(&self) {
+        let phase = self.phase();
+        self.signal.send_modify(|s| {
+            s.phase = phase;
+            s.agent.clone_from(&self.agent_name);
+            s.revision = self.revision;
+        });
+    }
+
+    /// Why this pairing should end at `now`, if it should.
+    fn expired(&self, now: Instant) -> Option<EndReason> {
+        let since = |t: Instant| now.saturating_duration_since(t);
+        if self.code.is_some() && since(self.created) >= Duration::from_secs(CODE_TTL_SECS) {
+            Some(EndReason::CodeExpired)
+        } else if since(self.last_used) >= Duration::from_secs(IDLE_TIMEOUT_SECS) {
+            Some(EndReason::Idle)
+        } else if self.browser_streams == 0
+            && since(self.browser_seen) >= Duration::from_secs(BROWSER_GONE_SECS)
+        {
+            Some(EndReason::BrowserGone)
+        } else {
+            None
+        }
+    }
+
+    fn view(&self) -> StateView {
+        StateView {
+            v: PROTOCOL_VERSION,
+            revision: self.revision,
+            state: self.state.as_deref().cloned(),
+            ended: None,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Registry {
+    pairings: Vec<Pairing>,
+    next_id: u64,
+    failed_claims: u32,
+}
+
+/// The bridge's pairings. Cheap to share behind an `Arc`.
+#[derive(Debug, Default)]
+pub struct AgentBridge {
+    inner: Mutex<Registry>,
+}
+
+/// Compares two secrets without stopping at the first difference.
+pub fn same_secret(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+/// The index of the pairing whose `secret` matches `given`, comparing every
+/// one.
+fn find(
+    pairings: &[Pairing],
+    given: &str,
+    secret: impl Fn(&Pairing) -> Option<&str>,
+) -> Option<usize> {
+    let mut found = None;
+    for (i, p) in pairings.iter().enumerate() {
+        if secret(p).is_some_and(|s| same_secret(s, given)) {
+            found = Some(i);
+        }
+    }
+    found
+}
+
+fn random_bytes<const N: usize>() -> Result<[u8; N], BridgeError> {
+    let mut buf = [0u8; N];
+    getrandom::fill(&mut buf).map_err(|_| BridgeError::NoRandomness)?;
+    Ok(buf)
+}
+
+/// 32 random bytes as hex.
+fn new_token() -> Result<String, BridgeError> {
+    Ok(random_bytes::<32>()?
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// [`CODE_LEN`] characters of [`CODE_ALPHABET`] from 40 random bits.
+fn new_code() -> Result<String, BridgeError> {
+    let bytes = random_bytes::<5>()?;
+    let bits = bytes.iter().fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
+    Ok((0..CODE_LEN)
+        .rev()
+        .map(|i| char::from(CODE_ALPHABET[((bits >> (5 * i)) & 31) as usize]))
+        .collect())
+}
+
+fn count(event: &'static str) {
+    metrics::counter!(AGENT_PAIRINGS, "event" => event).increment(1);
+}
+
+/// What an open event stream holds: the pairing's signal, and a guard that
+/// counts the stream as the browser's presence until it is dropped.
+#[derive(Debug)]
+pub struct BrowserStream {
+    pub signal: watch::Receiver<Signal>,
+    pub guard: StreamGuard,
+}
+
+/// Counts one open browser stream; dropping it uncounts it.
+#[derive(Debug)]
+pub struct StreamGuard {
+    bridge: Arc<AgentBridge>,
+    id: u64,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        let mut reg = self.bridge.lock();
+        if let Some(p) = reg.pairings.iter_mut().find(|p| p.id == self.id) {
+            p.browser_streams = p.browser_streams.saturating_sub(1);
+            p.browser_seen = Instant::now();
+        }
+    }
+}
+
+/// Counts one waiting long poll; dropping it uncounts it.
+struct PollGuard<'a> {
+    bridge: &'a AgentBridge,
+    id: u64,
+}
+
+impl Drop for PollGuard<'_> {
+    fn drop(&mut self) {
+        let mut reg = self.bridge.lock();
+        if let Some(p) = reg.pairings.iter_mut().find(|p| p.id == self.id) {
+            p.polls = p.polls.saturating_sub(1);
+        }
+    }
+}
+
+impl AgentBridge {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Registry> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Ends the pairing at `index` for `reason`: its followers see the
+    /// reason, then its sender is dropped.
+    fn end_at(reg: &mut Registry, index: usize, reason: EndReason) {
+        let p = reg.pairings.swap_remove(index);
+        p.signal.send_modify(|s| s.ended = Some(reason));
+        count("ended");
+        tracing::info!(pairing = p.id, reason = ?reason, "agent pairing ended");
+    }
+
+    fn sweep_locked(reg: &mut Registry, now: Instant) {
+        while let Some((i, reason)) = reg
+            .pairings
+            .iter()
+            .enumerate()
+            .find_map(|(i, p)| p.expired(now).map(|r| (i, r)))
+        {
+            Self::end_at(reg, i, reason);
+        }
+    }
+
+    /// Ends the pairings whose time is up.
+    pub fn sweep(&self) {
+        Self::sweep_locked(&mut self.lock(), Instant::now());
+    }
+
+    /// How many pairings are open (after a sweep).
+    pub fn len(&self) -> usize {
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, Instant::now());
+        reg.pairings.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// A new pairing, waiting for an agent.
+    pub fn create(&self) -> Result<PairingCreated, BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        if reg.pairings.len() >= MAX_PAIRINGS {
+            return Err(BridgeError::Full);
+        }
+        let code = loop {
+            let code = new_code()?;
+            if !reg
+                .pairings
+                .iter()
+                .any(|p| p.code.as_deref() == Some(code.as_str()))
+            {
+                break code;
+            }
+        };
+        let browser_token = new_token()?;
+        reg.next_id += 1;
+        let id = reg.next_id;
+        let (signal, _) = watch::channel(Signal {
+            phase: PairingPhase::Waiting,
+            agent: None,
+            revision: 0,
+            ended: None,
+        });
+        reg.pairings.push(Pairing {
+            id,
+            code: Some(code.clone()),
+            browser_token: browser_token.clone(),
+            agent_token: None,
+            agent_name: None,
+            created: now,
+            last_used: now,
+            browser_streams: 0,
+            browser_seen: now,
+            state: None,
+            revision: 0,
+            posts: VecDeque::new(),
+            polls: 0,
+            signal,
+        });
+        count("created");
+        tracing::info!(pairing = id, "agent pairing created");
+        Ok(PairingCreated {
+            v: PROTOCOL_VERSION,
+            code,
+            browser_token,
+            code_expires_in_s: CODE_TTL_SECS,
+            idle_timeout_s: IDLE_TIMEOUT_SECS,
+        })
+    }
+
+    /// Claims the unclaimed pairing with `code` (already normalised; `None`
+    /// for a code that could never be valid, which counts as a wrong one).
+    /// After [`MAX_FAILED_CLAIMS`] wrong codes, every unclaimed pairing ends
+    /// ([`EndReason::CodeBurnt`]).
+    pub fn claim(&self, code: Option<&str>, agent: Option<&str>) -> Result<Claimed, BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let index = code.and_then(|code| find(&reg.pairings, code, |p| p.code.as_deref()));
+        let Some(index) = index else {
+            count("claim_refused");
+            reg.failed_claims += 1;
+            if reg.failed_claims >= MAX_FAILED_CLAIMS {
+                reg.failed_claims = 0;
+                while let Some(i) = reg.pairings.iter().position(|p| p.code.is_some()) {
+                    Self::end_at(&mut reg, i, EndReason::CodeBurnt);
+                }
+                tracing::warn!("too many wrong agent pairing codes: every unclaimed code burnt");
+            }
+            return Err(BridgeError::NoSuchCode);
+        };
+        let agent_token = new_token()?;
+        reg.failed_claims = 0;
+        let p = &mut reg.pairings[index];
+        p.code = None;
+        p.agent_token = Some(agent_token.clone());
+        p.agent_name = agent.and_then(|a| tidy_text(a, MAX_AGENT_NAME_CHARS));
+        p.last_used = now;
+        p.publish();
+        count("claimed");
+        tracing::info!(pairing = p.id, "agent pairing claimed");
+        Ok(Claimed {
+            v: PROTOCOL_VERSION,
+            agent_token,
+            idle_timeout_s: IDLE_TIMEOUT_SECS,
+            long_poll_s: LONG_POLL_SECS,
+        })
+    }
+
+    /// Takes the browser's state; returns its revision.
+    pub fn post_state(&self, browser_token: &str, state: SharedState) -> Result<u64, BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let i = find(&reg.pairings, browser_token, |p| Some(&p.browser_token))
+            .ok_or(BridgeError::Unauthorized)?;
+        let p = &mut reg.pairings[i];
+        while p
+            .posts
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= POST_WINDOW)
+        {
+            p.posts.pop_front();
+        }
+        if p.posts.len() >= MAX_POSTS_PER_WINDOW {
+            let wait = p.posts.front().map_or(POST_WINDOW, |t| {
+                POST_WINDOW - now.saturating_duration_since(*t)
+            });
+            return Err(BridgeError::TooMany(wait.as_secs().max(1)));
+        }
+        p.posts.push_back(now);
+        p.last_used = now;
+        p.state = Some(Arc::new(state));
+        p.revision += 1;
+        p.publish();
+        Ok(p.revision)
+    }
+
+    /// The state as the agent reads it. With `since`, waits up to `wait`
+    /// for a revision newer than it (or for the pairing to end).
+    pub async fn read_state(
+        &self,
+        agent_token: &str,
+        since: Option<u64>,
+        wait: Duration,
+    ) -> Result<StateView, BridgeError> {
+        let (mut rx, id) = {
+            let now = Instant::now();
+            let mut reg = self.lock();
+            Self::sweep_locked(&mut reg, now);
+            let i = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref())
+                .ok_or(BridgeError::Unauthorized)?;
+            let p = &mut reg.pairings[i];
+            p.last_used = now;
+            match since {
+                Some(since) if p.revision <= since => {}
+                _ => return Ok(p.view()),
+            }
+            if p.polls >= MAX_POLLS_PER_PAIRING {
+                return Err(BridgeError::TooMany(1));
+            }
+            p.polls += 1;
+            (p.signal.subscribe(), p.id)
+        };
+        let _guard = PollGuard { bridge: self, id };
+        let since = since.unwrap_or(0);
+        // A timeout is the ordinary end of a long poll: the current state is
+        // the answer either way.
+        let _ = tokio::time::timeout(wait, async {
+            loop {
+                {
+                    let s = rx.borrow_and_update();
+                    if s.ended.is_some() || s.revision > since {
+                        return;
+                    }
+                }
+                if rx.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+        .await;
+        let ended = |s: Signal| StateView {
+            v: PROTOCOL_VERSION,
+            revision: s.revision,
+            state: None,
+            ended: Some(s.ended.unwrap_or(EndReason::Other)),
+        };
+        let last = rx.borrow().clone();
+        if last.ended.is_some() {
+            return Ok(ended(last));
+        }
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        match reg.pairings.iter_mut().find(|p| p.id == id) {
+            Some(p) => {
+                p.last_used = now;
+                Ok(p.view())
+            }
+            // Ended by the sweep just now.
+            None => Ok(ended(rx.borrow().clone())),
+        }
+    }
+
+    /// Ends the pairing that `token` belongs to, as the browser or the
+    /// agent, whichever it is.
+    pub fn end(&self, token: &str) -> Result<EndReason, BridgeError> {
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, Instant::now());
+        let (i, reason) = match find(&reg.pairings, token, |p| Some(&p.browser_token)) {
+            Some(i) => (i, EndReason::Browser),
+            None => (
+                find(&reg.pairings, token, |p| p.agent_token.as_deref())
+                    .ok_or(BridgeError::Unauthorized)?,
+                EndReason::Agent,
+            ),
+        };
+        Self::end_at(&mut reg, i, reason);
+        Ok(reason)
+    }
+
+    /// Opens an event stream for the browser that holds `browser_token`.
+    pub fn open_stream(
+        self: &Arc<Self>,
+        browser_token: &str,
+    ) -> Result<BrowserStream, BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let i = find(&reg.pairings, browser_token, |p| Some(&p.browser_token))
+            .ok_or(BridgeError::Unauthorized)?;
+        let p = &mut reg.pairings[i];
+        if p.browser_streams >= MAX_STREAMS_PER_PAIRING {
+            return Err(BridgeError::TooMany(5));
+        }
+        p.browser_streams += 1;
+        p.browser_seen = now;
+        Ok(BrowserStream {
+            signal: p.signal.subscribe(),
+            guard: StreamGuard {
+                bridge: Arc::clone(self),
+                id: p.id,
+            },
+        })
+    }
+
+    /// Ends every pairing (the server is shutting down).
+    pub fn end_all(&self, reason: EndReason) {
+        let mut reg = self.lock();
+        while !reg.pairings.is_empty() {
+            Self::end_at(&mut reg, 0, reason);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

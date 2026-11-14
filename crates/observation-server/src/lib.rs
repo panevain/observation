@@ -2,10 +2,12 @@
 //!
 //! Serves pre-processed OSM area bundles (`/api/area`, `/api/demo`), a caching
 //! tile proxy (`/api/tiles/...`), local region management (`/api/regions...`,
-//! when a region agent is configured) and the static client, with security
+//! when a region agent is configured), the agent bridge (`/api/agent/...`,
+//! when `OBS_AGENT_BRIDGE` is on) and the static client, with security
 //! headers, compression and request timeouts. [`app`] builds the whole
 //! [`Router`] so tests can drive it without a socket.
 
+pub mod agent;
 pub mod bundles;
 pub mod cache;
 pub mod clock;
@@ -42,6 +44,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::agent::AgentBridge;
 use crate::bundles::BundleService;
 use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
@@ -77,6 +80,8 @@ struct Inner {
     demo: Option<Bytes>,
     /// `None` without `OBS_REGIONS_URL`.
     regions: Option<Arc<Regions>>,
+    /// The agent bridge's pairings; `None` unless `OBS_AGENT_BRIDGE` is on.
+    agent: Option<Arc<AgentBridge>>,
     /// Flipped to `true` when the server starts shutting down, to end event streams.
     shutdown: tokio::sync::watch::Sender<bool>,
     /// Bounds the open region event streams.
@@ -155,12 +160,14 @@ impl AppState {
                 None
             }
         };
+        let agent = config.agent_bridge.then(|| Arc::new(AgentBridge::new()));
         Self(Arc::new(Inner {
             config,
             bundles,
             tiles,
             demo,
             regions,
+            agent,
             shutdown: tokio::sync::watch::Sender::new(false),
             streams: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_STREAMS)),
         }))
@@ -171,8 +178,17 @@ impl AppState {
         self.0.regions.as_ref()
     }
 
-    /// Ends open event streams so a graceful shutdown does not wait on them.
+    /// The agent bridge, if `OBS_AGENT_BRIDGE` is on.
+    pub fn agent(&self) -> Option<&Arc<AgentBridge>> {
+        self.0.agent.as_ref()
+    }
+
+    /// Ends open event streams (and every agent pairing) so a graceful
+    /// shutdown does not wait on them.
     pub fn begin_shutdown(&self) {
+        if let Some(agent) = &self.0.agent {
+            agent.end_all(observation_agent_api::EndReason::Shutdown);
+        }
         self.0.shutdown.send_replace(true);
     }
 
@@ -213,13 +229,15 @@ pub fn app(state: AppState) -> Router {
     // Layers added last are outermost: request id > trace > security headers >
     // compression > metrics > timeout. Metrics sit outside the timeout so timed-out
     // requests are counted too. Event streams stay open, so they skip the timeout.
+    // The agent bridge's routes have their own body limit (and their own timeout).
     routes::router(state.clone())
         .layer(RequestBodyLimitLayer::new(16 * 1024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             timeout,
         ))
-        .merge(routes::streams(state))
+        .merge(routes::streams(state.clone()))
+        .merge(routes::agent(state))
         .layer(axum::middleware::from_fn(
             move |req: axum::extract::Request, next: axum::middleware::Next| async move {
                 if metrics_on {
