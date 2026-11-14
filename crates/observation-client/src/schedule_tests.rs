@@ -50,7 +50,7 @@ const ORDERED: &[(&str, &str, &str)] = &[
         "a camera deleted with the Delete key loses its body in the frame its cone goes",
     ),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "cameras::sync_bodies",
         "imported cameras get their bodies in the frame their cones appear",
     ),
@@ -70,7 +70,7 @@ const ORDERED: &[(&str, &str, &str)] = &[
         "a key edit is recorded in its own frame, so a click or panel edit in the next frame is a step of its own, and an undo from the toolbar in that frame reverts the key edit",
     ),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "history::record",
         "an import is recorded as its own undo step in its frame, before its area starts loading",
     ),
@@ -90,7 +90,7 @@ const ORDERED: &[(&str, &str, &str)] = &[
         "`record` stays busy in the frame an area reply arrives, so an edit made while the area loads is recorded together with the load, and an undo in that frame is dropped",
     ),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "net::start_area_loads",
         "the import's area request and loading card come in the frame of the \"Imported\" toast",
     ),
@@ -104,6 +104,11 @@ const ORDERED: &[(&str, &str, &str)] = &[
         "net::drain_replies",
         "an arrived tile shows in the map panel one frame before it textures the 3D ground",
     ),
+    (
+        "persist::open_scenes",
+        "persist::autosave",
+        "a scene just opened is not written back to its own key, and the one left is not written again after the switch wrote it",
+    ),
     ("history::record", "persist::handle_actions", EXPORT),
     ("input::keyboard", "persist::handle_actions", EXPORT),
     ("input::pointer", "persist::handle_actions", EXPORT),
@@ -114,11 +119,7 @@ const ORDERED: &[(&str, &str, &str)] = &[
     ("cameras::draw_frustums", "input::pointer", CLICK_DRAWN),
     ("history::record", "cameras::draw_frustums", EDIT_DRAWN),
     ("input::keyboard", "cameras::draw_frustums", EDIT_DRAWN),
-    (
-        "persist::receive_imports",
-        "cameras::draw_frustums",
-        EDIT_DRAWN,
-    ),
+    ("persist::open_scenes", "cameras::draw_frustums", EDIT_DRAWN),
     (
         "world::on_area_loaded",
         "cameras::draw_frustums",
@@ -132,35 +133,31 @@ const ORDERED: &[(&str, &str, &str)] = &[
     ("history::record", "coverage::update_coverage", EDIT_DRAWN),
     ("input::keyboard", "coverage::update_coverage", EDIT_DRAWN),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "coverage::update_coverage",
         EDIT_DRAWN,
     ),
     ("history::record", "coverage::paint_overlay", EDIT_DRAWN),
     ("input::keyboard", "coverage::paint_overlay", EDIT_DRAWN),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "coverage::paint_overlay",
         EDIT_DRAWN,
     ),
     ("history::record", "coverage::draw_region", EDIT_DRAWN),
     ("input::keyboard", "coverage::draw_region", EDIT_DRAWN),
-    (
-        "persist::receive_imports",
-        "coverage::draw_region",
-        EDIT_DRAWN,
-    ),
+    ("persist::open_scenes", "coverage::draw_region", EDIT_DRAWN),
     ("history::record", "coverage::draw_outside_area", EDIT_DRAWN),
     ("input::keyboard", "coverage::draw_outside_area", EDIT_DRAWN),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "coverage::draw_outside_area",
         EDIT_DRAWN,
     ),
     ("history::record", "world::highlight_address", EDIT_DRAWN),
     ("input::keyboard", "world::highlight_address", EDIT_DRAWN),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "world::highlight_address",
         EDIT_DRAWN,
     ),
@@ -220,9 +217,10 @@ const COMMUTES: &[(&str, &str, &[&str], &str)] = &[
     ("input::pointer", "persist::autosave", &[SCENE], AUTOSAVE),
     (
         "persist::autosave",
-        "persist::receive_imports",
-        &[MODELS, SCENE],
-        AUTOSAVE,
+        "persist::handle_actions",
+        &["persist::SceneSlots"],
+        "the autosave only puts the open scene back in the list if another tab removed it; \
+         Export reads the open scene's name, which that leaves as it is",
     ),
     (
         "persist::autosave",
@@ -261,7 +259,7 @@ const COMMUTES: &[(&str, &str, &[&str], &str)] = &[
         TOAST_LIFETIME,
     ),
     (
-        "persist::receive_imports",
+        "persist::open_scenes",
         "ui::tick_toasts",
         &[TOASTS],
         TOAST_LIFETIME,
@@ -286,7 +284,7 @@ const COMMUTES: &[(&str, &str, &[&str], &str)] = &[
     ),
     (
         "input::keyboard",
-        "persist::receive_imports",
+        "persist::open_scenes",
         &[EDITOR, SCENE, TOASTS],
         "the imported file is picked up from the file dialog: whether a key edit of its frame \
          lands on the old or the new scene already depends on when the file arrives",

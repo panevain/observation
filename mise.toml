@@ -218,20 +218,25 @@ description = "Check that a published image was signed and attested by Release o
 # `mise run sync` checks they agree, and the Pins workflow moves them together).
 tools.cosign = "3.1.4"
 usage = '''
-arg "<image>" help="ghcr.io/panevain/observation or ghcr.io/panevain/observation-regions, with :TAG or @sha256:DIGEST"
+arg "<image>" help="ghcr.io/panevain/observation, ghcr.io/panevain/observation-regions or ghcr.io/panevain/observation-mcp, with :TAG or @sha256:DIGEST"
 arg "[ref]" help="The ref Release must have run on (default: refs/tags/vX.Y.Z for :X.Y.Z, any release tag for :latest)"
 '''
 run = 'scripts/verify-image.sh "${usage_image}" ${usage_ref:+"${usage_ref}"}'
 
 [tasks.up]
-description = "Start the Docker Compose stack (app + region agent) from the released images, checked against their signatures, with the fnox secrets"
+description = "Start the Docker Compose stack (app + region agent) from the released images, checked against their signatures, with the fnox secrets; `--build` builds every image here instead, the MCP server's too"
 # Task tools: installed and locked for this task only, so `mise install` and CI skip them.
 tools.fnox = "1.46.0"
 tools.cosign = "3.1.4"
-usage = 'flag "--build" help="Build both images from this checkout (tagged :local) instead of pulling OBS_VERSION"'
+usage = 'flag "--build" help="Build all three images from this checkout (tagged :local) instead of pulling OBS_VERSION: the app, the region agent and the MCP server, which up does not start"'
 run = '''
 if [ "${usage_build:-false}" = true ]; then
-  OBS_VERSION=local OBS_IMAGE= OBS_REGIONS_IMAGE= fnox exec -- docker compose up -d --build
+  # The mcp profile adds the MCP server's image to the build; `up` then starts only the app and
+  # the agent (an MCP client runs the MCP server: `docker run --rm -i --network none
+  # ghcr.io/panevain/observation-mcp:local`).
+  export OBS_VERSION=local OBS_IMAGE= OBS_REGIONS_IMAGE= OBS_MCP_IMAGE=
+  fnox exec -- docker compose --profile mcp build
+  fnox exec -- docker compose up -d
 else
   # Each image must carry Release's signature and provenance for OBS_VERSION's tag, and runs by
   # the digest that was checked, so a tag moved in between is never pulled. A patch release

@@ -1,7 +1,7 @@
 name: Prune images
 
 # Keeps `devel`, `latest` and every X.Y.Z (or X.Y.Z-pre) tag of the container images
-# (observation and observation-regions) and deletes any other tagged version; attestation tags
+# (observation, observation-regions and observation-mcp) and deletes any other tagged version; attestation tags
 # stay while their image exists, and untagged versions are never touched
 # (scripts/prune-images.sh). Superseded `devel` builds therefore stay as untagged versions.
 #
@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [observation, observation-regions]
+        package: [observation, observation-regions, observation-mcp]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'

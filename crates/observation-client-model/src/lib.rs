@@ -12,6 +12,8 @@ pub mod history;
 pub mod net;
 pub mod persist;
 pub mod platform;
+pub mod scenes;
+pub mod slots;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod toasts;

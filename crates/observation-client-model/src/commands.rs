@@ -141,6 +141,7 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: boo
         ctx.panels.map_open = false;
         ctx.panels.help_open = false;
         ctx.panels.regions_open = false;
+        ctx.panels.scenes_open = false;
     }
     if ctx.editor.tool == Tool::Region {
         // Drawing a region: Enter closes it, Backspace undoes a corner.
@@ -804,12 +805,18 @@ mod tests {
         f.panels.help_open = true;
         f.panels.map_open = true;
         f.panels.regions_open = true;
+        f.panels.scenes_open = true;
         assert!(!f.press(&[Key::Tool(Tool::Aim)]));
         assert_eq!(f.editor.tool, Tool::Aim);
         // From another tool, Esc keeps the selection and closes the dialogs.
         f.press(&[Key::Escape]);
         assert_eq!((f.editor.tool, f.editor.selected), (Tool::Select, Some(1)));
-        assert!(!(f.panels.help_open || f.panels.map_open || f.panels.regions_open));
+        assert!(
+            !(f.panels.help_open
+                || f.panels.map_open
+                || f.panels.regions_open
+                || f.panels.scenes_open)
+        );
         // In Select, it clears the selection.
         f.press(&[Key::Escape]);
         assert_eq!(f.editor.selected, None);

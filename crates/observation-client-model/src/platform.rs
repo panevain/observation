@@ -98,6 +98,15 @@ pub trait KeyValueStore: Send + Sync + 'static {
     fn set(&self, key: &str, value: &str) -> Result<(), SaveFailure>;
     /// Forgets the key (best effort).
     fn remove(&self, key: &str);
+    /// Every stored key that can be read (none if storage cannot be read).
+    fn keys(&self) -> Vec<String>;
+}
+
+/// A file the user picked: its name (without a path) and its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickedFile {
+    pub name: String,
+    pub text: String,
 }
 
 /// Files the user saves or opens.
@@ -105,11 +114,12 @@ pub trait FileDialogs: Send + Sync + 'static {
     /// Offers `text` as a file named `name` of type `mime`.
     fn download(&self, name: &str, mime: &str, text: &str) -> Result<(), String>;
     /// Lets the user pick a file of the `accept` types (an `<input accept>`
-    /// list); `done` is called with its text or why it could not be read.
+    /// list); `done` is called with its name and text, or why it could not
+    /// be read.
     /// A picker that cannot be shown calls `done` with an error before this
     /// returns. `done` is never called when the user cancels, nor in the
     /// native build, which has no picker.
-    fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<String, String>) + Send>);
+    fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<PickedFile, String>) + Send>);
 }
 
 /// The wall clock.

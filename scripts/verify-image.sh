@@ -5,8 +5,8 @@
 # checked.
 #
 # Usage: scripts/verify-image.sh IMAGE [REF]
-#   IMAGE  ghcr.io/panevain/observation or ghcr.io/panevain/observation-regions, with :TAG or
-#          @sha256:DIGEST.
+#   IMAGE  ghcr.io/panevain/observation, ghcr.io/panevain/observation-regions or
+#          ghcr.io/panevain/observation-mcp, with :TAG or @sha256:DIGEST.
 #   REF    The git ref Release must have run on. Defaults: refs/tags/vX.Y.Z for :X.Y.Z (and
 #          :X.Y.Z-dev.N), refs/heads/develop for :devel, and any release tag for :latest or a
 #          digest.
@@ -36,7 +36,7 @@ if [[ "${image}" == *@* ]]; then digest="${image#*@}"; fi
 tag=""
 if [[ "${name##*/}" == *:* ]]; then tag="${name##*:}"; name="${name%:*}"; fi
 case "${name}" in
-  "ghcr.io/${repo}" | "ghcr.io/${repo}-regions") ;;
+  "ghcr.io/${repo}" | "ghcr.io/${repo}-regions" | "ghcr.io/${repo}-mcp") ;;
   *) echo "not an image this repository publishes: ${name}" >&2; exit 2 ;;
 esac
 if [[ -n "${digest}" && ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then

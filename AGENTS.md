@@ -17,7 +17,7 @@ A Cargo workspace under `crates/` ([Workspace in docs/design.md](docs/design.md#
 - `observation-regions-api`: the HTTP contract between the server and the region agent.
 - `observation-upstream`: every outbound HTTP request of the server and the agent, behind SSRF guards.
 - `observation-tokens`: design token values, and the `token-css` binary that trunk runs to write `web/tokens.css`.
-- `observation-mcp`: an MCP server over stdio (spec 2026-07-28, `rmcp`) exposing the camera catalogue, scene editing and coverage on the demo street. `.mcp.json` registers it as the `observation` server for Claude Code.
+- `observation-mcp`: an MCP server over stdio (spec 2026-07-28, `rmcp`) exposing the camera catalogue, scene editing and coverage on the demo street, also published as an image (Dockerfile target `mcp`). `.mcp.json` registers it as the `observation` server for Claude Code.
 - `observation-client`: the Bevy/egui app for `wasm32-unknown-unknown` and its coverage worker. Not a default member.
 - `observation-client-model`: the client's engine-free logic (no Bevy, egui or `web-sys`).
 
@@ -25,7 +25,7 @@ Two separate workspaces, each with its own `Cargo.lock`: `xtask/` (repository to
 
 ## Tech stack
 
-Rust, edition 2024, with the toolchain pinned in `rust-toolchain.toml`. Bevy with bevy_egui, axum and tokio, reqwest with rustls, postcard for the bundle wire format, and trunk for the wasm build. mise installs every tool from a lockfile and defines the tasks (`mise.toml`, `mise.dev.toml`, `mise.ci.toml`): cargo-nextest, cargo-deny (`deny.toml`), typos (`.typos.toml`) and cargo-shear. Images build from `Dockerfile`; `compose.yaml` runs the app and the region agent.
+Rust, edition 2024, with the toolchain pinned in `rust-toolchain.toml`. Bevy with bevy_egui, axum and tokio, reqwest with rustls, postcard for the bundle wire format, and trunk for the wasm build. mise installs every tool from a lockfile and defines the tasks (`mise.toml`, `mise.dev.toml`, `mise.ci.toml`): cargo-nextest, cargo-deny (`deny.toml`), typos (`.typos.toml`) and cargo-shear. Images build from `Dockerfile` (targets `runtime`, `regions` and `mcp`); `compose.yaml` runs the app and the region agent, and has the MCP server as the `mcp` service (profile `mcp`, run on demand).
 
 ## Checking your work
 

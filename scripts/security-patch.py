@@ -33,6 +33,7 @@ IMAGES = {
     #        whether a rebuild picks up every Debian fix: the region agent runs apt-get upgrade)
     "observation": ("ghcr.io/panevain/observation", "runtime-base", False),
     "observation-regions": ("ghcr.io/panevain/observation-regions", "regions", True),
+    "observation-mcp": ("ghcr.io/panevain/observation-mcp", "mcp", False),
 }
 TRIGGER = {"CRITICAL", "HIGH"}
 REPORT = "MEDIUM,HIGH,CRITICAL"
