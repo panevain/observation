@@ -6,7 +6,7 @@ name: Fuzz
 # coverage geometry. Short smoke runs on PRs; longer runs nightly.
 on:
   pull_request:
-    # The targets link observation-core and observation-server, plus their path dependencies,
+    # The targets link observation-core and observation-mapdata, plus their path dependencies,
     # which inherit versions from the root Cargo.toml. Neither the client, its model nor the
     # region agent is among them.
     paths:

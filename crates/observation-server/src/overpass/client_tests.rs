@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::error::ApiError;
 use crate::testing::MetricCounts;
 
-const FIXTURE: &str = include_str!("../../fixtures/demo-overpass.json");
+const FIXTURE: &str = observation_mapdata::demo::OVERPASS_JSON;
 const URLS: [&str; 4] = [
     "http://a.example/api/interpreter",
     "http://b.example/api/interpreter",

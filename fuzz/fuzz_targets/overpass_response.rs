@@ -7,7 +7,7 @@ use libfuzzer_sys::fuzz_target;
 use observation_core::bundle::{AreaBundle, build_bundle};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::terrain::Terrain;
-use observation_server::overpass::parse_response;
+use observation_mapdata::overpass::parse_response;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(osm) = parse_response(data) else {

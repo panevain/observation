@@ -23,11 +23,10 @@ use crate::config::Config;
 use crate::error::ApiError;
 use crate::ports::MapDataSource;
 
-mod parse;
 mod query;
 
-pub use self::parse::{OsmData, ParseError, parse_response, stitch_rings};
 pub use self::query::build_query;
+pub use observation_mapdata::overpass::{OsmData, ParseError, parse_response, stitch_rings};
 
 /// Largest Overpass response we are willing to buffer.
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
