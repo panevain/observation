@@ -1,6 +1,7 @@
 //! egui front-end: docked panels around the 3D viewport, plus overlays.
 
 mod actions;
+mod agent;
 mod inspector;
 pub mod map_picker;
 mod overlays;
@@ -101,6 +102,8 @@ pub struct UiData<'w> {
     pub font: ResMut<'w, UiFont>,
     pub address_jump: ResMut<'w, crate::state::AddressJump>,
     pub regions: ResMut<'w, crate::regions::Regions>,
+    /// The link to a local agent (Connect agent).
+    pub agent: ResMut<'w, crate::agent::AgentLinkRes>,
 }
 
 fn draw_ui(
@@ -260,6 +263,9 @@ fn draw_ui(
     }
     if d.panels.help_open {
         overlays::help(&ctx, &t, &mut d.panels);
+    }
+    if d.agent.dialog_open {
+        agent::window(&ctx, &t, &mut d.agent, &*platform.http);
     }
     if d.panels.regions_open {
         regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);

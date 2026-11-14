@@ -10,7 +10,7 @@ use super::{
 };
 use bevy::log::warn;
 use observation_client_model::coverage::backend::not_started;
-use observation_client_model::platform::{JobChannel, Reply};
+use observation_client_model::platform::{JobChannel, Reply, StreamEvent, StreamStop};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
@@ -39,6 +39,16 @@ impl Http for Fetch {
 
     fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>) {
         spawn_event_source(url, event, on);
+    }
+
+    fn follow(
+        &self,
+        url: &str,
+        event: &str,
+        stop: StreamStop,
+        on: Box<dyn Fn(StreamEvent) + Send>,
+    ) {
+        follow_event_source(url, event, stop, on);
     }
 }
 
@@ -271,6 +281,87 @@ fn open_event_source(url: String, event: String, on: std::rc::Rc<dyn Fn(Result<V
     // closed and replaced, which is rare enough not to matter.
     on_message.forget();
     on_error.forget();
+}
+
+/// How often a followed stream checks whether it was told to stop.
+const STOP_CHECK_MS: i32 = 1_000;
+
+/// An `EventSource` that the browser may reconnect but that is never
+/// replaced once closed, and that closes once `stop` is set.
+fn follow_event_source(
+    url: &str,
+    event: &str,
+    stop: StreamStop,
+    on: impl Fn(StreamEvent) + 'static,
+) {
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+
+    let source = match web_sys::EventSource::new(url) {
+        Ok(s) => s,
+        Err(e) => {
+            on(StreamEvent::Closed(js_cause(&e)));
+            return;
+        }
+    };
+    let on = Rc::new(on);
+    let on_message = {
+        let (on, stop) = (Rc::clone(&on), stop.clone());
+        Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            if stop.is_stopped() {
+                return;
+            }
+            if let Some(data) = e.data().as_string() {
+                on(StreamEvent::Data(data.into_bytes()));
+            }
+        })
+    };
+    let on_error = {
+        let (on, stop, source) = (Rc::clone(&on), stop.clone(), source.clone());
+        Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            if stop.is_stopped() {
+                return;
+            }
+            if source.ready_state() == web_sys::EventSource::CLOSED {
+                stop.stop();
+                on(StreamEvent::Closed(
+                    "the server closed the live connection".to_owned(),
+                ));
+            } else {
+                on(StreamEvent::Dropped);
+            }
+        })
+    };
+    let _ = source.add_event_listener_with_callback(event, on_message.as_ref().unchecked_ref());
+    source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+    // Checks the stop flag every second; closes the source, frees the
+    // handlers and stops checking once it is set.
+    let handlers = std::cell::RefCell::new(Some((on_message, on_error)));
+    let interval: Rc<std::cell::Cell<Option<i32>>> = Rc::default();
+    let check = {
+        let interval = Rc::clone(&interval);
+        Closure::<dyn Fn()>::new(move || {
+            if !stop.is_stopped() {
+                return;
+            }
+            source.close();
+            source.set_onerror(None);
+            handlers.borrow_mut().take();
+            if let (Some(window), Some(id)) = (web_sys::window(), interval.take()) {
+                window.clear_interval_with_handle(id);
+            }
+        })
+    };
+    if let Some(window) = web_sys::window()
+        && let Ok(id) = window.set_interval_with_callback_and_timeout_and_arguments_0(
+            check.as_ref().unchecked_ref(),
+            STOP_CHECK_MS,
+        )
+    {
+        interval.set(Some(id));
+    }
+    // The check lives as long as the page: a few bytes per connection made.
+    check.forget();
 }
 
 // `localStorage` and files.

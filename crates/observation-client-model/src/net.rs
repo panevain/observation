@@ -22,6 +22,9 @@ pub struct ServerConfig {
     /// Side limits of an area the server will load, metres (min < max).
     pub min_bbox_side_m: f64,
     pub max_bbox_side_m: f64,
+    /// The server offers the agent bridge to this browser (it is on, and
+    /// the page is open on the server's own computer).
+    pub agent_bridge: bool,
     /// The server has answered (or failed to): tiles may be requested.
     answered: bool,
 }
@@ -33,6 +36,7 @@ impl Default for ServerConfig {
             tile_template: "/api/tiles/{z}/{x}/{y}.png".to_owned(),
             min_bbox_side_m: MIN_BBOX_SIDE_M,
             max_bbox_side_m: MAX_BBOX_SIDE_M,
+            agent_bridge: false,
             answered: false,
         }
     }
@@ -76,6 +80,9 @@ impl ServerConfig {
                 && ["{z}", "{x}", "{y}"].iter().all(|p| u.contains(p))
         }) {
             u.clone_into(&mut self.tile_template);
+        }
+        if let Some(on) = v.get("agent_bridge").and_then(serde_json::Value::as_bool) {
+            self.agent_bridge = on;
         }
         // An older server publishes only the maximum.
         let side = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
@@ -334,6 +341,17 @@ mod tests {
             assert_eq!(c.tile_template, d.tile_template, "{v}");
             assert_eq!(c.tile_attribution, d.tile_attribution, "{v}");
         }
+    }
+
+    #[test]
+    fn the_agent_bridge_is_offered_only_when_the_server_says_so() {
+        let mut c = ServerConfig::default();
+        c.answer(Some(br#"{"regions": false}"#));
+        assert!(!c.agent_bridge, "an older server says nothing");
+        c.answer(Some(br#"{"agent_bridge": "yes"}"#));
+        assert!(!c.agent_bridge);
+        c.answer(Some(br#"{"agent_bridge": true}"#));
+        assert!(c.agent_bridge);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::platform::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore, PickedFile,
-    Reply, SaveFailure,
+    Reply, SaveFailure, StreamEvent, StreamStop,
 };
 use observation_core::coverage::StaticLayers;
 use observation_core::coverage_job::{JobRequest, JobResponse};
@@ -23,6 +23,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 type Done = Box<dyn FnOnce(Reply) + Send>;
 type Listener = Box<dyn Fn(Reply) + Send>;
+type Follower = Box<dyn Fn(StreamEvent) + Send>;
 
 /// Holds requests until the test answers them, in any order, or answers
 /// each one at once (see [`FakeHttp::answering`]).
@@ -35,6 +36,8 @@ pub struct FakeHttp {
     sent: Mutex<Vec<HttpRequest>>,
     /// Subscriptions: url, event name, listener.
     streams: Mutex<Vec<(String, String, Listener)>>,
+    /// Followed streams: url, event name, stop flag, listener.
+    followed: Mutex<Vec<(String, String, StreamStop, Follower)>>,
 }
 
 impl std::fmt::Debug for FakeHttp {
@@ -130,6 +133,32 @@ impl FakeHttp {
         n
     }
 
+    /// Delivers `event` to every follower of `url` that has not been
+    /// stopped; returns how many there were. A [`StreamEvent::Closed`] ends
+    /// the stream, as the browser's does.
+    pub fn emit_follow(&self, url: &str, event: &StreamEvent) -> usize {
+        let mut n = 0;
+        call_unlocked(&self.followed, |(u, _, stop, on)| {
+            if u == url && !stop.is_stopped() {
+                on(event.clone());
+                n += 1;
+            }
+        });
+        if matches!(event, StreamEvent::Closed(_)) {
+            lock(&self.followed).retain(|(u, ..)| u != url);
+        }
+        n
+    }
+
+    /// The url and event name of every followed stream not stopped yet, in order.
+    pub fn followed(&self) -> Vec<(String, String)> {
+        lock(&self.followed)
+            .iter()
+            .filter(|(_, _, stop, _)| !stop.is_stopped())
+            .map(|(u, e, _, _)| (u.clone(), e.clone()))
+            .collect()
+    }
+
     /// The url and event name of every subscription, in order.
     pub fn subscriptions(&self) -> Vec<(String, String)> {
         lock(&self.streams)
@@ -150,6 +179,16 @@ impl Http for FakeHttp {
 
     fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>) {
         lock(&self.streams).push((url.to_owned(), event.to_owned(), on));
+    }
+
+    fn follow(
+        &self,
+        url: &str,
+        event: &str,
+        stop: StreamStop,
+        on: Box<dyn Fn(StreamEvent) + Send>,
+    ) {
+        lock(&self.followed).push((url.to_owned(), event.to_owned(), stop, on));
     }
 }
 
