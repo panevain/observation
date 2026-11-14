@@ -47,10 +47,17 @@ extent. If the user has the Observation app open on this computer, they can conn
 for the code in its Connect agent dialog and call connect_app with the app's address (such as \
 http://127.0.0.1:8080). Then get_app_state returns their open scene (pass it to the scene \
 tools), its area, the selected cameras and a point they shared, the resource \
-observation://app/state follows it, and coverage and addresses work on their real area. Edits \
+observation://app/state follows it, and every tool works on their real area. Edits \
 made here do not change the app; give the user the scene to import. \
+Places have names the user and you share: label_area marks ground the user drew as their own, \
+a neighbour's, public or other (as drawn, never property records), and add_target marks a \
+named target such as a front door. camera_split says where each camera's footage lands, \
+target_verdicts and who_sees_point say whether the model rules out that a camera sees a place \
+and why, and find_gaps lists the largest stretches of street no camera sees. Verdicts are \
+one-sided: say \"not ruled out\" or \"ruled out: <reason>\", never that a camera sees \
+something. Name buildings by index and distance, never by a neighbour's address. \
 Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
-the caveats that compute_coverage returns.";
+the data date and the caveats the tools return.";
 
 const USAGE_MD: &str = include_str!("../../../docs/usage.md");
 const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
@@ -86,9 +93,13 @@ impl ObservationMcp {
         area::scope_areas(self.link.areas(), tool).await
     }
 
-    /// Every tool: the scene tools and the app tools.
+    /// Every tool: the scene tools, the app tools, and the place and query
+    /// tools.
     pub fn all_tools() -> ToolRouter<Self> {
-        Self::tool_router() + Self::app_tool_router()
+        Self::tool_router()
+            + Self::app_tool_router()
+            + Self::places_tool_router()
+            + Self::query_tool_router()
     }
 }
 
@@ -417,6 +428,8 @@ pub struct CoverageOut {
     pub cameras_skipped: Vec<SkippedOut>,
     /// Figures per detail level, least detail first.
     pub levels: Vec<LevelOut>,
+    /// When the OpenStreetMap data was current, if known.
+    pub osm_data_as_of: Option<String>,
     /// One line to show with the figures.
     pub caveats_summary: String,
     /// Everything the figures leave out; pass it on.
@@ -752,6 +765,7 @@ fn coverage(scene: &Value) -> Result<CoverageOut, ToolError> {
     let cat = catalog()?;
     let s = edit::parse(scene)?;
     let layers = area::layers_for(&s)?;
+    let osm_data_as_of = area::bundle_for(&s)?.osm_base_unix.map(format_date);
     let f = scene_figures(&s, cat, &layers);
     let levels = f
         .levels
@@ -785,6 +799,7 @@ fn coverage(scene: &Value) -> Result<CoverageOut, ToolError> {
             })
             .collect(),
         levels,
+        osm_data_as_of,
         caveats_summary: CAVEATS_SUMMARY.to_owned(),
         caveats: caveats_text(),
     })
@@ -814,8 +829,35 @@ impl ObservationMcp {
              where I describe). Run compute_coverage by day and again at night \
              (set_coverage_params). Report the share of street seen at each detail level, \
              by day and at night, in a short table, then quote the caveats_summary and \
-             explain that the figures are estimates, read as \"up to\". Finally give me the \
-             scene JSON so I can import it into the Observation app.",
+             explain that the figures are estimates, read as \"up to\". Then run find_gaps \
+             and describe the largest stretches of street no camera sees, by street name and \
+             position (never by a neighbour's address). Finally give me the scene JSON so I can \
+             import it into the Observation app.",
+        )]
+    }
+
+    #[prompt(
+        name = "where_footage_lands",
+        description = "Mark my land, my neighbours' and the places I care about, then report where each camera's footage lands and whether the model rules out each place, with the caveats"
+    )]
+    fn where_footage_lands(&self) -> Vec<PromptMessage> {
+        vec![PromptMessage::new_text(
+            Role::User,
+            "Using the Observation tools, help me see where my cameras' footage lands. Work on \
+             my open scene if the app is connected (get_app_state), otherwise on a scene on the \
+             demo street. Ask me which ground is mine and which is my neighbours', and mark \
+             each with label_area (label own, neighbour or public, with a short name); the \
+             outlines are as I describe them, not property records. Ask which places matter to \
+             me, such as my front door, a side gate or a path, and mark each with add_target. \
+             Then run camera_split and report for each camera, in a short table, the m² of \
+             visible ground on my land, on each neighbour's, on the public street and \
+             elsewhere, as the low to high range beside each outline's own area. Run \
+             target_verdicts and report each target camera by camera: say \"not ruled out\" \
+             or \"ruled out\" with the reason, at each detail level by day and at night, and \
+             never that a camera \"sees\" a place. Name buildings by index and distance, \
+             never by address. Quote the data date and the caveats_summary, and explain that \
+             hedges, fences, trees and vehicles are not modelled and can only block more. \
+             Finally give me the scene JSON so I can import it into the Observation app.",
         )]
     }
 
@@ -1112,6 +1154,16 @@ mod tests {
             "connect_app",
             "disconnect_app",
             "get_app_state",
+            "label_area",
+            "remove_area",
+            "limit_figures_to",
+            "add_target",
+            "update_target",
+            "remove_target",
+            "target_verdicts",
+            "camera_split",
+            "who_sees_point",
+            "find_gaps",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }
@@ -1137,5 +1189,22 @@ mod tests {
         assert_eq!(out.levels.len(), 4);
         assert!(out.levels[0].street_seen_m2 > 0.0);
         assert!(out.caveats.contains("trees"));
+        assert!(out.osm_data_as_of.is_some());
+    }
+
+    #[test]
+    fn the_prompts_are_listed() {
+        let names: Vec<String> = ObservationMcp::prompt_router()
+            .list_all()
+            .into_iter()
+            .map(|p| p.name.to_string())
+            .collect();
+        for n in [
+            "assess_street_coverage",
+            "compare_cameras",
+            "where_footage_lands",
+        ] {
+            assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
+        }
     }
 }

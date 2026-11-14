@@ -399,3 +399,138 @@ async fn a_failed_area_fetch_is_reported_to_the_tool() {
         .expect_err("an error");
     assert!(e.contains("could not send the area"), "{e}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn places_and_queries_work_on_the_users_real_area() {
+    use crate::places::{AddTargetArgs, AreaEdit, LabelAreaArgs, LabelArg, PlaceArg};
+    use crate::queries::{CameraSplitArgs, FindGapsArgs, TargetVerdictsArgs, WhoSeesArgs};
+
+    let bbox = BBox::parse(observation_mapdata::demo::BBOX_TXT.trim()).unwrap();
+    let scene = osm_scene(bbox);
+    let mcp = ObservationMcp::new();
+    let area = AreaEdit {
+        points: Some(vec![[-6.0, 6.0], [7.0, 6.0], [7.0, 14.0], [-6.0, 14.0]]),
+        label: Some(LabelArg::Own),
+        ..AreaEdit::default()
+    };
+    // Offline, a real area is refused.
+    let offline = mcp
+        .label_area(Parameters(LabelAreaArgs {
+            scene: scene.clone(),
+            area: area.clone(),
+        }))
+        .map(drop)
+        .expect_err("an error");
+    assert!(offline.contains("connect_app"), "{offline}");
+
+    let overpass = FakeHttp::new();
+    overpass.on(
+        http::Method::POST,
+        observation_server::config::DEFAULT_OVERPASS_URL,
+        FakeReply::ok(observation_mapdata::demo::OVERPASS_JSON),
+    );
+    let app = bridge_app(overpass);
+    let base = serve(&app).await;
+    let browser = Browser::open(&base).await;
+    connect(&mcp, &base, &browser.code).await.unwrap();
+    let args = |scene: &Value| json!({ "scene": scene }).as_object().cloned();
+
+    let placed = mcp
+        .in_tool_scope(args(&scene).as_ref(), async {
+            mcp.add_example_cameras(Parameters(ExampleArgs {
+                scene: scene.clone(),
+                count: 3,
+                model_ids: Vec::new(),
+            }))
+        })
+        .await
+        .unwrap()
+        .0
+        .scene;
+    let labelled = mcp
+        .in_tool_scope(args(&placed).as_ref(), async {
+            mcp.label_area(Parameters(LabelAreaArgs {
+                scene: placed.clone(),
+                area,
+            }))
+        })
+        .await
+        .unwrap()
+        .0
+        .scene;
+    let marked = mcp
+        .in_tool_scope(args(&labelled).as_ref(), async {
+            mcp.add_target(Parameters(AddTargetArgs {
+                scene: labelled.clone(),
+                name: "Front door".into(),
+                at: PlaceArg::Wall {
+                    x: 0.0,
+                    z: 7.0,
+                    height_m: None,
+                    normal: None,
+                    facing_camera: None,
+                    facing_street: false,
+                },
+            }))
+        })
+        .await
+        .unwrap()
+        .0;
+    assert!(marked.wall.and_then(|w| w.building).is_some());
+    let scene = marked.scene;
+
+    let Json(verdicts) = mcp
+        .in_tool_scope(
+            args(&scene).as_ref(),
+            mcp.target_verdicts(Parameters(TargetVerdictsArgs {
+                scene: scene.clone(),
+                target_id: None,
+            })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(verdicts.targets[0].cameras.len(), 3);
+    assert!(verdicts.sources.osm_data_as_of.is_some());
+    let Json(split) = mcp
+        .in_tool_scope(
+            args(&scene).as_ref(),
+            mcp.camera_split(Parameters(CameraSplitArgs {
+                scene: scene.clone(),
+                camera_id: None,
+                dori: None,
+                lighting: None,
+            })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(split.cameras.len(), 3);
+    assert_eq!(split.cameras[0].areas.len(), 1);
+    let Json(point) = mcp
+        .in_tool_scope(
+            args(&scene).as_ref(),
+            mcp.who_sees_point(Parameters(WhoSeesArgs {
+                scene: scene.clone(),
+                x: 0.0,
+                z: 10.0,
+                height_m: None,
+            })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(point.cameras.len(), 3);
+    let Json(gaps) = mcp
+        .in_tool_scope(
+            args(&scene).as_ref(),
+            mcp.find_gaps(Parameters(FindGapsArgs {
+                scene: scene.clone(),
+                dori: None,
+                lighting: None,
+                max_gaps: None,
+                min_area_m2: None,
+            })),
+        )
+        .await
+        .unwrap();
+    assert!(gaps.street_m2 > 1000.0 && !gaps.gaps.is_empty());
+    assert!(mcp.link().areas().contains(&bbox));
+}

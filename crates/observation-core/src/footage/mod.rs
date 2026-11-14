@@ -1,6 +1,7 @@
 //! Where footage lands (issue #89): each camera's visible ground split over
 //! the areas the user drew and labelled, the wall it sees per building, and
-//! verdicts on named targets and on single points.
+//! verdicts on named targets and on single points; and the gaps, the
+//! connected runs of street no camera sees.
 //!
 //! Everything here is computed from the same sight lines as the coverage
 //! overlay ([`StaticLayers`](crate::coverage::StaticLayers)), deterministically
@@ -23,8 +24,10 @@
 //! these figures.
 
 mod area;
+mod gaps;
 mod split;
 mod verdict;
+mod wall;
 
 #[cfg(test)]
 mod tests;
@@ -34,6 +37,7 @@ pub use area::{
     MAX_TARGETS, Target, TargetPlace, TargetProblem, WALL_TARGET_SIZE_M, area_by_id,
     area_by_id_mut, fresh_id, set_figures_area,
 };
+pub use gaps::{Gap, gaps_where, seen_ground, street_gaps, unseen_street};
 pub use split::{
     AreaMasks, AreaSeen, CameraSplit, DEFAULT_OFFSET_M, LabelSeen, SeenRange, Split, WallSeen,
     camera_splits, split_seen,
@@ -42,6 +46,7 @@ pub use verdict::{
     CameraVerdicts, LevelVerdict, MAX_TARGET_SAMPLES, Probe, Reach, Reason, TargetVerdicts,
     Verdict, camera_verdicts, point_verdicts, target_verdicts,
 };
+pub use wall::{WallSpot, nearest_wall};
 
 use crate::camera::{CameraModel, CameraPlacement};
 

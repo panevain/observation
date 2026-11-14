@@ -31,7 +31,7 @@ docker run --rm -i --network none ghcr.io/panevain/observation-mcp   # or `docke
 
 #### AI agents
 
-The MCP server (`observation-mcp`) gives an agent the camera catalogue, scene editing and coverage figures. To let it see what you have open in the app, and work on your real area instead of the demo street, start the server with the agent bridge on and open the app on the same computer:
+The MCP server (`observation-mcp`) gives an agent the camera catalogue, scene editing and coverage figures, and the places you and the agent both name: areas labelled as your own, a neighbour's or public, and targets such as a front door. It reports where each camera's footage lands, whether the model rules out that a camera sees a target or a point and why, and the largest stretches of street no camera sees. To let it see what you have open in the app, and work on your real area instead of the demo street, start the server with the agent bridge on and open the app on the same computer:
 
 ```sh
 OBS_AGENT_BRIDGE=on OBS_BIND=127.0.0.1:8080 cargo run -p observation-server   # or the image with --network host

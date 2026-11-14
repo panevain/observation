@@ -633,3 +633,71 @@ fn results_are_deterministic() {
         )
     );
 }
+
+#[test]
+fn a_camera_splits_the_unseen_street_in_two() {
+    let l = street();
+    let m = model();
+    let params = CoverageParams::default();
+    let street_m2: f32 = l.street_mask().iter().filter(|s| **s).count() as f32;
+    // No cameras: the whole road is one gap.
+    let none = street_gaps(&l, &params, &[], None);
+    assert_eq!(none.len(), 1);
+    assert_eq!(none[0].area_m2, street_m2);
+    assert!(none[0].centroid[0].abs() < 0.5 && none[0].centroid[1].abs() < 0.5);
+    assert_eq!((none[0].min[0], none[0].max[0]), (-50.0, 50.0));
+
+    // One camera looking north across the road from 10 m south of it sees a
+    // stretch in the middle, leaving a gap on each side.
+    let cams = [camera(1, 0.0, 10.0, 0.0)];
+    let fc = split_cams(&m, &cams);
+    let gaps = street_gaps(&l, &params, &fc, None);
+    let seen = seen_ground(&l, &params, &fc);
+    let seen_street = l
+        .street_mask()
+        .iter()
+        .zip(&seen)
+        .filter(|(s, v)| **s && **v)
+        .count() as f32;
+    assert!(seen_street > 0.0);
+    let big: Vec<&Gap> = gaps.iter().filter(|g| g.area_m2 > 50.0).collect();
+    assert_eq!(big.len(), 2, "{gaps:?}");
+    assert!(big.iter().any(|g| g.centroid[0] < -10.0));
+    assert!(big.iter().any(|g| g.centroid[0] > 10.0));
+    let unseen: f32 = gaps.iter().map(|g| g.area_m2).sum();
+    assert_eq!(unseen + seen_street, street_m2);
+    assert!(gaps.windows(2).all(|w| w[0].area_m2 >= w[1].area_m2));
+    // Every gap cell is street the camera does not see.
+    for g in &gaps {
+        for &i in &g.cells {
+            assert!(l.street_mask()[i as usize] && !seen[i as usize]);
+        }
+    }
+    // The camera is in neither gap; its nearest cell of each is on the road.
+    for g in &big {
+        let (d, at) = g.nearest_to(l.grid(), [0.0, 10.0]);
+        assert!(d > 7.0 && at[1].abs() < 3.0, "{d} {at:?}");
+    }
+    // A disabled camera sees nothing.
+    let mut off = cams.clone();
+    off[0].enabled = false;
+    let off = split_cams(&m, &off);
+    assert_eq!(street_gaps(&l, &params, &off, None), none);
+    // Night shortens the range, so the gaps grow.
+    let night = CoverageParams {
+        lighting: Lighting::Night,
+        ..params
+    };
+    let dark: f32 = street_gaps(&l, &night, &fc, None)
+        .iter()
+        .map(|g| g.area_m2)
+        .sum();
+    assert!(dark > unseen, "{dark} > {unseen}");
+    // Limited to a region, only the street inside it counts.
+    let west = crate::coverage::RegionMask::new(&l, &rect(-50.0, -10.0, -20.0, 10.0));
+    let inside = street_gaps(&l, &params, &fc, Some(&west));
+    assert_eq!(inside.len(), 1);
+    assert_eq!(inside[0].area_m2, 30.0 * 6.0);
+    // The same inputs give the same gaps.
+    assert_eq!(street_gaps(&l, &params, &fc, None), gaps);
+}
