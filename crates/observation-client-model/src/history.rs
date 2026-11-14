@@ -11,6 +11,7 @@ use crate::editor::{Editor, Tool};
 use crate::toasts::{ToastAction, Toasts};
 use observation_core::camera::CameraModel;
 use observation_core::scene::AreaRef;
+use observation_core::scene::agent_log::AgentLogEntry;
 
 /// Steps kept in each direction.
 pub const MAX_STEPS: usize = 100;
@@ -162,8 +163,13 @@ impl History {
     }
 }
 
-/// A step that removes work worth offering an Undo for, described.
+/// A step that removes work, or applies an agent's proposal, worth offering
+/// an Undo for, described.
 fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
+    // An accepted proposal can change much at once: always offer its Undo.
+    if let Some(entry) = accepted_proposal(&before.agent_log, &after.agent_log) {
+        return Some(format!("Applied the agent's proposal: {}", entry.summary));
+    }
     let lost = before
         .cameras
         .iter()
@@ -198,6 +204,7 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         limit_figures_to,
         targets,
         custom_models: b,
+        agent_log,
     } = before;
     let a = &after.custom_models;
     let rest_equal = *area == after.area
@@ -206,7 +213,8 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         && *params == after.params
         && *areas == after.areas
         && *limit_figures_to == after.limit_figures_to
-        && *targets == after.targets;
+        && *targets == after.targets
+        && *agent_log == after.agent_log;
     if !rest_equal || b.len() != a.len() + 1 {
         return None;
     }
@@ -240,10 +248,24 @@ fn deleted_place(before: &Snapshot, after: &Snapshot) -> Option<String> {
     }
 }
 
+/// The proposal whose acceptance turned the change log `before` into
+/// `after`: one entry appended (and, with the log full, its oldest dropped).
+fn accepted_proposal<'a>(
+    before: &[AgentLogEntry],
+    after: &'a [AgentLogEntry],
+) -> Option<&'a AgentLogEntry> {
+    let (last, rest) = after.split_last()?;
+    (before.ends_with(rest) && before.last() != Some(last)).then_some(last)
+}
+
 /// A short name for the change from `before` to `after`.
 fn describe(before: &Snapshot, after: &Snapshot) -> String {
     if before.area != after.area {
         return "area change".to_owned();
+    }
+    // An accepted proposal is one step, named after its summary.
+    if let Some(entry) = accepted_proposal(&before.agent_log, &after.agent_log) {
+        return format!("Agent: {}", entry.summary);
     }
     let added: Vec<_> = after
         .cameras

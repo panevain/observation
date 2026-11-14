@@ -48,7 +48,12 @@ for the code in its Connect agent dialog and call connect_app with the app's add
 http://127.0.0.1:8080). Then get_app_state returns their open scene (pass it to the scene \
 tools), its area, the selected cameras and a point they shared, the resource \
 observation://app/state follows it, and every tool works on their real area. Edits \
-made here do not change the app; give the user the scene to import. \
+made here do not change the app by themselves. To suggest a change to the open scene, edit a \
+copy of get_app_state's scene with the scene tools and call propose_changes with the result and \
+a one-sentence summary: the user reviews it in the app and accepts or rejects it as a whole. It \
+is only a proposal until get_proposal (or observation://app/state) says accepted, so never say \
+it has been applied before then; if it comes back stale, read the state again and propose \
+afresh. Without a connection, give the user the scene to import. \
 Places have names the user and you share: label_area marks ground the user drew as their own, \
 a neighbour's, public or other (as drawn, never property records), and add_target marks a \
 named target such as a front door. camera_split says where each camera's footage lands, \
@@ -93,13 +98,14 @@ impl ObservationMcp {
         area::scope_areas(self.link.areas(), tool).await
     }
 
-    /// Every tool: the scene tools, the app tools, and the place and query
-    /// tools.
+    /// Every tool: the scene tools, the app tools, the place and query
+    /// tools, and the proposal tools.
     pub fn all_tools() -> ToolRouter<Self> {
         Self::tool_router()
             + Self::app_tool_router()
             + Self::places_tool_router()
             + Self::query_tool_router()
+            + Self::proposal_tool_router()
     }
 }
 
@@ -1164,6 +1170,9 @@ mod tests {
             "camera_split",
             "who_sees_point",
             "find_gaps",
+            "propose_changes",
+            "get_proposal",
+            "withdraw_proposal",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }

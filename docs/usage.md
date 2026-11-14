@@ -229,7 +229,7 @@ Imports are checked: at most 256 cameras and 64 custom models, finite positions 
 
 ## Connect an AI agent
 
-An AI agent running on your computer, through the Observation MCP server (see the [README](../README.md#ai-agents)), can read what you have open: the scene, its area, the selected camera and a point you share. It cannot change your scene; it gives you scenes to import. Coverage and address questions then work on your real area, not only the demo street.
+An AI agent running on your computer, through the Observation MCP server (see the [README](../README.md#ai-agents)), can read what you have open: the scene, its area, the selected camera and a point you share. It cannot change your scene by itself: it can propose a change, which you accept or reject (see [Review a proposal](#review-a-proposal)). Coverage and address questions then work on your real area, not only the demo street.
 
 The server offers this only when it runs with `OBS_AGENT_BRIDGE=on` and you open the app on the same computer (at `http://localhost:...` or `http://127.0.0.1:...`); otherwise there is no **Connect agent** button.
 
@@ -240,6 +240,20 @@ The server offers this only when it runs with `OBS_AGENT_BRIDGE=on` and you open
 The connection ends when you click **Disconnect** (in the dialog), when the agent disconnects, when you close the tab, or after 30 minutes in which neither side used it. Nothing about it is stored on the server, and a reload starts afresh.
 
 Offline or connected, the agent can mark the places you talk about: label ground you describe as your own, a neighbour's, public or other (`label_area`; as you describe it, not from property records) and name targets such as your front door or a side gate (`add_target`, on a patch of ground or a building wall). It can then say where each camera's footage lands (`camera_split`: square metres of visible ground in each area, on the public street and elsewhere, as a range with the outlines moved 1 m in and out, and the wall seen per building), whether the model rules out that a camera sees each target or a point, and why (`target_verdicts`, `who_sees_point`), and which stretches of street no camera sees (`find_gaps`). Verdicts are one-sided: *not ruled out* or *ruled out* with the reason, never *seen*, since hedges, fences, trees and vehicles are not modelled and can only block more. Buildings are named by number and distance, never by a neighbour's address. Every answer carries the map data's date and the caveats. The prompt `where_footage_lands` walks an agent through it.
+
+### Review a proposal
+
+When the agent proposes a change, a message says so and a **proposal card** opens at the top left of the 3D view. It shows:
+
+- the agent's summary, and a line for every change it would make (cameras added, moved, aimed, changed or removed, custom models, areas, targets, analysis settings);
+- the street seen now and after accepting, at the selected detail level and lighting ("computing…" while the new cameras' views are worked out), with the map data date and what the figures leave out;
+- in the 3D view, a **ghost** of the proposal: new and moved cameras drawn translucent with their view cones (a moved one with a line from where it stands now), removed cameras crossed out, and new or changed areas and targets outlined.
+
+**Accept** applies every change at once; there is no partial acceptance, so the figures you saw are the ones you get. Your own edits to other cameras stay as they are. The whole proposal is one undo step, named "Agent: " and the summary, and **Undo** in the message after accepting reverts it. Accepted proposals are recorded in the scene's change log (their summary and when you accepted them), which is saved and exported with the scene. **Reject** leaves the scene as it is; anything you type in the reason box goes to the agent.
+
+If you change a camera, area, target or setting that the proposal touches before you decide, the card says it is **stale** and Accept is disabled: the proposal no longer fits your scene, and it is never adjusted to fit. The agent is told, and can propose again from your current scene. A newer proposal from the agent replaces the one on the card, and one the agent withdraws, or that is left when the connection ends, can no longer be accepted. Closing the card keeps an undecided proposal waiting: **Proposal waiting** in the top bar opens it again.
+
+Everything on the card comes from the agent: read the change lines and look at the ghost, not only the summary.
 
 ## Keyboard, mouse and touch
 

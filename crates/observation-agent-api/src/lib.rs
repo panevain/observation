@@ -22,19 +22,37 @@
 //!   ◀── event: agent {ended: browser}  {ended: browser} to a waiting poll ▶
 //! ```
 //!
+//! The agent can also **propose** a change to the open scene (see
+//! [`proposal`]): it posts a whole change set, the browser hears of it as an
+//! event and shows it to the user, and the user's decision comes back to
+//! the agent through the same long poll.
+//!
+//! ```text
+//!   ◀── event: agent {proposal}        ◀───────────────── POST /api/agent/proposal (bearer)
+//!                                      {id} ────────────────────────────▶
+//!   POST /api/agent/decision ───────▶  revision n+1, {proposals: [{id, accepted}]} ▶
+//! ```
+//!
 //! Every body is JSON and carries `v`, the protocol version
 //! ([`PROTOCOL_VERSION`]). New fields are added with defaults, so a reader
 //! ignores what it does not know; `v` changes only when a field changes its
 //! meaning or a reader must refuse a body. Browser events are one envelope
 //! ([`BrowserEvent`]) whose `type` names the kind: a reader skips a type it
 //! does not know ([`BrowserEventKind::Unknown`]), which is how later kinds
-//! (the agent's proposals) can be added without breaking older clients.
+//! (such as the agent's proposals) are added without breaking older clients.
 //!
 //! The crate holds only types and constants, with no I/O, so the server, the
 //! MCP process and the browser client (in WebAssembly) share them.
 
 use observation_core::scene::AreaRef;
 use serde::{Deserialize, Serialize};
+
+pub mod proposal;
+
+pub use proposal::{
+    Decision, DecisionPost, MAX_OUTCOMES, MAX_PROPOSAL_BYTES, MAX_REASON_CHARS, MAX_SUMMARY_CHARS,
+    Proposal, ProposalOutcome, ProposalPost, ProposalStatus, ProposalSubmitted, tidy_line,
+};
 
 /// The protocol version every body carries as `v`.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -62,6 +80,15 @@ pub mod paths {
     pub const CLAIM: &str = "/api/agent/claim";
     /// `DELETE` (either side, bearer its own token): ends the pairing.
     pub const PAIRING: &str = "/api/agent/pairing";
+    /// `POST` [`ProposalPost`](super::ProposalPost) (agent, bearer agent
+    /// token): proposes a change set, answered with
+    /// [`ProposalSubmitted`](super::ProposalSubmitted); it supersedes a
+    /// proposal still pending. `DELETE ?id=<id>` (agent): withdraws that
+    /// proposal while it is pending (204).
+    pub const PROPOSAL: &str = "/api/agent/proposal";
+    /// `POST` [`DecisionPost`](super::DecisionPost) (browser, bearer browser
+    /// token): the user's decision on a proposal (204).
+    pub const DECISION: &str = "/api/agent/decision";
     /// The `event` name of every server-sent event on [`EVENTS`].
     pub const EVENT: &str = "agent";
     /// The query parameter that carries the browser token on [`EVENTS`].
@@ -268,7 +295,8 @@ pub struct StateAccepted {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateView {
     pub v: u32,
-    /// Starts at 0 (nothing posted yet) and grows with every post.
+    /// Starts at 0 (nothing posted yet) and grows with every post, and with
+    /// every change of a proposal's status, so a long poll hears of both.
     pub revision: u64,
     /// The latest state; `None` until the browser has posted one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -277,6 +305,10 @@ pub struct StateView {
     /// requests with the token are refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<EndReason>,
+    /// Where this pairing's latest proposals stand, oldest first (at most
+    /// [`MAX_OUTCOMES`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<ProposalOutcome>,
 }
 
 /// Where a pairing stands.
@@ -346,11 +378,8 @@ impl BrowserEvent {
     }
 }
 
-/// What a [`BrowserEvent`] says, by its `type`.
-///
-/// Part 3 of the feature (proposals: the agent sends a whole change set and
-/// the user accepts or rejects it) adds a kind here; older clients read it
-/// as [`Self::Unknown`] and skip it.
+/// What a [`BrowserEvent`] says, by its `type`. A later kind reads as
+/// [`Self::Unknown`] and is skipped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BrowserEventKind {
@@ -363,6 +392,12 @@ pub enum BrowserEventKind {
     },
     /// The pairing ended; the stream closes after this.
     Ended { reason: EndReason },
+    /// The agent proposes a change set (sent when it arrives, and again to
+    /// a stream opened while it is pending). It replaces any proposal shown
+    /// before, which the agent's new one superseded.
+    Proposal { proposal: Proposal },
+    /// The agent withdrew the pending proposal with this id.
+    ProposalWithdrawn { id: u64 },
     /// A kind this build does not know.
     #[serde(other)]
     Unknown,
@@ -388,14 +423,18 @@ mod tests {
                 paths::EVENTS,
                 paths::STATE,
                 paths::CLAIM,
-                paths::PAIRING
+                paths::PAIRING,
+                paths::PROPOSAL,
+                paths::DECISION
             ],
             [
                 "/api/agent/pairings",
                 "/api/agent/events",
                 "/api/agent/state",
                 "/api/agent/claim",
-                "/api/agent/pairing"
+                "/api/agent/pairing",
+                "/api/agent/proposal",
+                "/api/agent/decision"
             ]
         );
         assert_eq!(paths::EVENT, "agent");
@@ -448,7 +487,7 @@ mod tests {
         );
         // A later kind, and a later reason, still read.
         let later: BrowserEvent =
-            serde_json::from_value(json!({"v": 1, "type": "proposal", "id": 3})).unwrap();
+            serde_json::from_value(json!({"v": 1, "type": "telepathy", "id": 3})).unwrap();
         assert_eq!(later.kind, BrowserEventKind::Unknown);
         let reason: BrowserEvent =
             serde_json::from_value(json!({"v": 1, "type": "ended", "reason": "moon"})).unwrap();

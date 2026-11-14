@@ -14,6 +14,7 @@ use observation_core::footage::{
 };
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::{DataChange, Provenance};
+use observation_core::scene::agent_log::AgentLogEntry;
 use observation_core::scene::{AreaRef, SceneFile};
 
 pub mod area_load;
@@ -106,6 +107,9 @@ pub struct Document {
     /// against its area once that loads (see
     /// [`Provenance::data_change`]).
     pub saved_provenance: Option<Provenance>,
+    /// The agent proposals accepted into this scene, oldest first (saved
+    /// with it; see [`observation_core::scene::agent_log`]).
+    pub agent_log: Vec<AgentLogEntry>,
     next_id: u32,
     /// Bumped on every change; drives sync, coverage and autosave.
     pub revision: u64,
@@ -124,6 +128,7 @@ impl Default for Document {
             on_flat_ground: false,
             provenance: None,
             saved_provenance: None,
+            agent_log: Vec::new(),
             next_id: 1,
             revision: 0,
         }
@@ -196,6 +201,7 @@ impl Document {
         file.targets = self.targets.clone();
         file.custom_models = models.custom.clone();
         file.provenance = self.provenance.clone();
+        file.agent_log = self.agent_log.clone();
         if self.on_flat_ground {
             // Saved before the area loaded: still in the old frame.
             file.version = observation_core::scene::FLAT_GROUND_VERSION;
@@ -214,6 +220,7 @@ impl Document {
             limit_figures_to: self.limit_figures_to,
             targets: self.targets.clone(),
             custom_models: models.custom.clone(),
+            agent_log: self.agent_log.clone(),
         }
     }
 
@@ -232,6 +239,7 @@ impl Document {
         self.areas = s.areas.clone();
         self.limit_figures_to = s.limit_figures_to;
         self.targets = s.targets.clone();
+        self.agent_log = s.agent_log.clone();
         // Every step was recorded with its cameras on the terrain (none is
         // while a flat-ground scene waits for its area).
         self.on_flat_ground = false;
@@ -262,6 +270,25 @@ impl Document {
         self.limit_figures_to = file.limit_figures_to;
         self.targets = file.targets;
         self.saved_provenance = file.provenance;
+        self.agent_log = file.agent_log;
+        models.custom = file.custom_models;
+        self.touch();
+    }
+
+    /// Takes the items of `file`, a scene on this document's area: its
+    /// cameras, settings, areas, targets, custom models and change log. The
+    /// area, origin and provenance stay as they are. This is how an accepted
+    /// proposal ([`crate::proposal`]), applied to this document's own
+    /// scene, comes back.
+    pub fn take_items(&mut self, file: SceneFile, models: &mut Models) {
+        let max = file.cameras.iter().map(|c| c.id).max().unwrap_or(0);
+        self.next_id = self.next_id.max(max.saturating_add(1));
+        self.cameras = file.cameras;
+        self.params = file.params;
+        self.areas = file.areas;
+        self.limit_figures_to = file.limit_figures_to;
+        self.targets = file.targets;
+        self.agent_log = file.agent_log;
         models.custom = file.custom_models;
         self.touch();
     }
@@ -282,6 +309,7 @@ impl Document {
         self.areas.clear();
         self.limit_figures_to = None;
         self.targets.clear();
+        self.agent_log.clear();
         self.on_flat_ground = false;
         self.saved_provenance = None;
         self.next_id = 1;
@@ -311,6 +339,8 @@ pub struct Snapshot {
     pub limit_figures_to: Option<u32>,
     pub targets: Vec<Target>,
     pub custom_models: Vec<CameraModel>,
+    /// The change log, so undoing an accepted proposal takes its entry out.
+    pub agent_log: Vec<AgentLogEntry>,
 }
 
 /// Request to (re)load an area.

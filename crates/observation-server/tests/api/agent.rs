@@ -448,3 +448,212 @@ async fn shutting_down_ends_pairings_and_their_streams() {
     assert!(rest.contains(r#""reason":"shutdown""#), "{rest}");
     assert!(app.state.agent().unwrap().is_empty());
 }
+
+/// A claimed pairing: `(browser token, agent token)`.
+async fn paired(router: &Router) -> (String, String) {
+    let created = create(router).await;
+    let (_, claimed) = claim(router, &created.code).await;
+    let agent = claimed["agent_token"].as_str().unwrap().to_owned();
+    (created.browser_token, agent)
+}
+
+fn proposal_body(summary: &str, new: u32) -> Value {
+    json!({
+        "v": 1,
+        "summary": summary,
+        "base_revision": 0,
+        "changes": {"changes": [{"item": "limit_figures_to", "new": new}]}
+    })
+}
+
+async fn propose(router: &Router, token: &str, body: Value) -> (StatusCode, Value) {
+    let (status, _, body) = send(
+        router,
+        local(Method::POST, paths::PROPOSAL, Some(token), Some(body)),
+    )
+    .await;
+    (status, json(&body))
+}
+
+async fn decide(router: &Router, token: &str, body: Value) -> StatusCode {
+    send(
+        router,
+        local(Method::POST, paths::DECISION, Some(token), Some(body)),
+    )
+    .await
+    .0
+}
+
+fn withdraw_req(agent: &str, id: Option<u64>) -> Request<Body> {
+    let uri = match id {
+        Some(id) => format!("{}?id={id}", paths::PROPOSAL),
+        None => paths::PROPOSAL.to_owned(),
+    };
+    local(Method::DELETE, &uri, Some(agent), None)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_proposal_reaches_the_browser_and_its_decision_the_agent() {
+    let app = bridge_app();
+    let (browser, agent) = paired(&app.router).await;
+    let (_, _, mut stream) = open(
+        &app.router,
+        local(Method::GET, &events_uri(&browser), None, None),
+    )
+    .await;
+    stream.until("claimed").await;
+
+    // A long poll is waiting when the proposal arrives.
+    let poll = {
+        let (router, agent) = (app.router.clone(), agent.clone());
+        tokio::spawn(async move { get_state(&router, &agent, Some(0)).await })
+    };
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let (status, submitted) = propose(
+        &app.router,
+        &agent,
+        proposal_body("  Limit\nthe figures ", 1),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{submitted}");
+    assert_eq!(submitted, json!({"v": 1, "id": 1}));
+    let seen = stream.until("\"type\":\"proposal\"").await;
+    assert!(
+        seen.contains(
+            r#""proposal":{"id":1,"summary":"Limit the figures","base_revision":0,"changes":{"changes":[{"item":"limit_figures_to","new":1}]}}"#
+        ),
+        "{seen}"
+    );
+    let (_, view) = poll.await.unwrap();
+    assert_eq!(view["revision"], 1);
+    assert_eq!(
+        view["proposals"],
+        json!([{"id": 1, "summary": "Limit the figures", "status": "pending"}])
+    );
+
+    // A stream opened while it is pending gets it at once.
+    let (_, _, mut late) = open(
+        &app.router,
+        local(Method::GET, &events_uri(&browser), None, None),
+    )
+    .await;
+    let replay = late.until("\"type\":\"proposal\"").await;
+    assert!(replay.contains(r#""id":1"#), "{replay}");
+
+    // The user rejects it, with a reason.
+    let status = decide(
+        &app.router,
+        &browser,
+        json!({"v": 1, "id": 1, "decision": "rejected", "reason": "  not\non the hedge "}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, view) = get_state(&app.router, &agent, Some(1)).await;
+    assert_eq!(
+        view["proposals"],
+        json!([{"id": 1, "summary": "Limit the figures", "status": "rejected",
+                "reason": "not on the hedge"}])
+    );
+    // Decided once only.
+    let again = json!({"v": 1, "id": 1, "decision": "accepted"});
+    assert_eq!(
+        decide(&app.router, &browser, again).await,
+        StatusCode::CONFLICT
+    );
+
+    // A withdrawn proposal is announced to the browser.
+    let (_, submitted) = propose(&app.router, &agent, proposal_body("second", 2)).await;
+    assert_eq!(submitted["id"], 2);
+    stream.until(r#""id":2"#).await;
+    let (status, _, _) = send(&app.router, withdraw_req(&agent, Some(2))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let seen = stream.until("proposal_withdrawn").await;
+    assert!(
+        seen.contains(r#"{"v":1,"type":"proposal_withdrawn","id":2}"#),
+        "{seen}"
+    );
+    // Withdrawing a decided proposal is refused, withdrawing twice is not,
+    // and an unknown one is not found.
+    let status = |id| {
+        let (router, agent) = (app.router.clone(), agent.clone());
+        async move { send(&router, withdraw_req(&agent, Some(id))).await.0 }
+    };
+    assert_eq!(status(1).await, StatusCode::CONFLICT);
+    assert_eq!(status(2).await, StatusCode::NO_CONTENT);
+    assert_eq!(status(9).await, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(start_paused = true)]
+async fn proposals_and_decisions_are_checked() {
+    let app = bridge_app();
+    let (browser, agent) = paired(&app.router).await;
+    // Only the agent proposes, only the browser decides.
+    assert_eq!(
+        propose(&app.router, &browser, proposal_body("x", 1))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (_, submitted) = propose(&app.router, &agent, proposal_body("x", 1)).await;
+    assert_eq!(submitted["id"], 1);
+    let decision = json!({"v": 1, "id": 1, "decision": "accepted"});
+    assert_eq!(
+        decide(&app.router, &agent, decision.clone()).await,
+        StatusCode::UNAUTHORIZED
+    );
+    // No summary, an empty change set, malformed ones.
+    let (status, body) = propose(&app.router, &agent, proposal_body(" \n ", 1)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap().contains("summary"),
+        "{body}"
+    );
+    for changes in [
+        json!({"changes": []}),
+        json!({"changes": [{"item": "limit_figures_to", "base": 1, "new": 1}]}),
+        json!({"changes": [{"item": "camera", "id": 3}]}),
+        json!({"changes": [{"item": "unknown"}]}),
+    ] {
+        let body = json!({"v": 1, "summary": "s", "changes": changes});
+        let (status, answer) = propose(&app.router, &agent, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    }
+    // A decision for no such proposal, and a withdrawal without an id.
+    let unknown = json!({"v": 1, "id": 9, "decision": "accepted"});
+    assert_eq!(
+        decide(&app.router, &browser, unknown).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(&app.router, withdraw_req(&agent, None)).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    // From another computer the routes are not there; addressed by another
+    // name they are refused.
+    let away = request(
+        Method::POST,
+        paths::PROPOSAL,
+        Some("192.168.1.20"),
+        "127.0.0.1:8080",
+        Some(&agent),
+        Some(proposal_body("x", 1).to_string()),
+    );
+    assert_eq!(send(&app.router, away).await.0, StatusCode::NOT_FOUND);
+    let renamed = request(
+        Method::POST,
+        paths::DECISION,
+        Some(HOME),
+        "evil.example",
+        Some(&browser),
+        Some(decision.to_string()),
+    );
+    assert_eq!(send(&app.router, renamed).await.0, StatusCode::FORBIDDEN);
+    // The bridge's own size limit applies.
+    let huge = json!({"v": 1, "summary": "x".repeat(MAX_STATE_BYTES + 8192),
+                      "changes": {"changes": []}});
+    let req = local(Method::POST, paths::PROPOSAL, Some(&agent), Some(huge));
+    assert_eq!(
+        send(&app.router, req).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}

@@ -93,7 +93,7 @@ fn the_link_is_connected_once_claimed_and_ends_when_told() {
     http.emit_follow(&events_url(), &StreamEvent::Dropped);
     http.emit_follow(
         &events_url(),
-        &StreamEvent::Data(br#"{"v":1,"type":"proposal"}"#.to_vec()),
+        &StreamEvent::Data(br#"{"v":1,"type":"telepathy"}"#.to_vec()),
     );
     link.update(&http, 0.0, |_| None);
     assert!(link.is_connected());
@@ -228,4 +228,177 @@ fn the_shared_state_is_the_exported_scene_with_the_selection() {
     assert_eq!(s.scene_name.as_deref(), Some("Home"));
     assert_eq!(s.area, Some(AreaRef::Demo));
     assert_eq!(s.selection, [3]);
+}
+
+/// The demo area with cameras 1 and 2.
+fn document() -> (Document, Models) {
+    let models = Models::new(Catalog::default());
+    let mut doc = Document::default();
+    doc.area = Some(AreaRef::Demo);
+    for x in [0.0, 10.0] {
+        doc.add_camera(observation_core::camera::CameraPlacement {
+            id: 0,
+            label: String::new(),
+            model_id: "m".into(),
+            position: [x, 3.0, -6.0],
+            yaw_deg: 180.0,
+            pitch_deg: -10.0,
+            roll_deg: 0.0,
+            color: None,
+            enabled: true,
+            group: None,
+        });
+    }
+    (doc, models)
+}
+
+/// A proposal event that turns camera 1, made against `doc`.
+fn proposal_event(id: u64, doc: &Document, models: &Models) -> StreamEvent {
+    let base = crate::proposal::current_scene(doc, models).unwrap();
+    let mut proposed = base.clone();
+    proposed.cameras[0].yaw_deg = 90.0;
+    let changes = observation_core::scene::changes::ChangeSet::between(&base, &proposed).unwrap();
+    event(BrowserEventKind::Proposal {
+        proposal: Proposal {
+            id,
+            summary: "Face camera 1 east".into(),
+            base_revision: 1,
+            changes,
+        },
+    })
+}
+
+fn decisions(http: &FakeHttp) -> Vec<Value> {
+    http.sent()
+        .iter()
+        .filter(|r| r.method == "POST" && r.url == paths::DECISION)
+        .map(|r| {
+            assert_eq!(r.bearer.as_deref(), Some(TOKEN));
+            serde_json::from_str(r.body.as_deref().unwrap()).unwrap()
+        })
+        .collect()
+}
+
+/// A connected link over `http` with proposal 1 on its card.
+fn with_proposal(http: &FakeHttp, doc: &Document, models: &Models) -> AgentLink {
+    let mut link = waiting(http);
+    http.emit_follow(&events_url(), &claimed());
+    http.emit_follow(&events_url(), &proposal_event(1, doc, models));
+    link.update(http, 0.0, |_| None);
+    link.follow_proposal(http, doc, models);
+    link
+}
+
+#[test]
+fn a_proposal_opens_the_card_and_accepting_applies_it_and_tells_the_agent() {
+    let http = FakeHttp::default();
+    let (mut doc, mut models) = document();
+    let mut link = with_proposal(&http, &doc, &models);
+    assert!(link.card_open);
+    assert_eq!(
+        link.take_notices(),
+        ["The agent proposes: Face camera 1 east"]
+    );
+    let p = link.proposal().unwrap();
+    assert_eq!(p.id, 1);
+    assert!(
+        p.proposed().is_some(),
+        "ready for the figures and the ghost"
+    );
+    assert_eq!(link.agent_name(), Some("claude"));
+
+    link.accept(&http, &mut doc, &mut models, 100).unwrap();
+    assert_eq!(doc.camera(1).unwrap().yaw_deg, 90.0);
+    assert_eq!(doc.agent_log.len(), 1);
+    assert_eq!(
+        decisions(&http),
+        [json!({"v": 1, "id": 1, "decision": "accepted"})]
+    );
+    // Accepting twice does nothing more.
+    assert!(link.accept(&http, &mut doc, &mut models, 100).is_err());
+    assert_eq!(decisions(&http).len(), 1);
+    // The card closes and forgets a decided proposal.
+    link.close_card();
+    assert!(link.proposal().is_none() && !link.card_open);
+}
+
+#[test]
+fn a_stale_proposal_is_reported_once_and_cannot_be_accepted() {
+    let http = FakeHttp::default();
+    let (mut doc, mut models) = document();
+    let mut link = with_proposal(&http, &doc, &models);
+    doc.camera_mut(1).unwrap().position[0] = 2.0;
+    link.follow_proposal(&http, &doc, &models);
+    link.follow_proposal(&http, &doc, &models);
+    assert_eq!(
+        decisions(&http),
+        [json!({"v": 1, "id": 1, "decision": "stale",
+                "reason": "The user changed camera 1 before deciding"})]
+    );
+    assert!(link.accept(&http, &mut doc, &mut models, 0).is_err());
+    assert_eq!(decisions(&http).len(), 1);
+    assert_eq!(doc.camera(1).unwrap().yaw_deg, 180.0, "nothing applied");
+}
+
+#[test]
+fn rejecting_sends_the_reason_and_a_failed_send_is_shown() {
+    let http = FakeHttp::default();
+    let (doc, models) = document();
+    let mut link = with_proposal(&http, &doc, &models);
+    link.proposal_mut().unwrap().reason = " not that one ".into();
+    link.reject(&http);
+    assert_eq!(
+        decisions(&http),
+        [json!({"v": 1, "id": 1, "decision": "rejected", "reason": "not that one"})]
+    );
+    assert!(http.respond_to("POST", paths::DECISION, Err("HTTP 409: decided".into())));
+    link.update(&http, 0.0, |_| None);
+    assert_eq!(
+        link.proposal().unwrap().decision_error.as_deref(),
+        Some("HTTP 409: decided")
+    );
+}
+
+#[test]
+fn a_new_proposal_replaces_the_shown_one_and_a_withdrawal_closes_it() {
+    let http = FakeHttp::default();
+    let (doc, models) = document();
+    let mut link = with_proposal(&http, &doc, &models);
+    http.emit_follow(&events_url(), &proposal_event(2, &doc, &models));
+    link.update(&http, 0.0, |_| None);
+    link.follow_proposal(&http, &doc, &models);
+    assert_eq!(link.proposal().unwrap().id, 2);
+    link.take_notices();
+    // A withdrawal of another proposal changes nothing.
+    http.emit_follow(
+        &events_url(),
+        &event(BrowserEventKind::ProposalWithdrawn { id: 1 }),
+    );
+    link.update(&http, 0.0, |_| None);
+    assert!(link.proposal().unwrap().standing.is_open());
+    http.emit_follow(
+        &events_url(),
+        &event(BrowserEventKind::ProposalWithdrawn { id: 2 }),
+    );
+    link.update(&http, 0.0, |_| None);
+    assert_eq!(
+        link.proposal().unwrap().standing,
+        crate::proposal::Standing::Closed {
+            why: "The agent withdrew this proposal.".into()
+        }
+    );
+    assert_eq!(link.take_notices(), ["The agent withdrew its proposal"]);
+    assert!(decisions(&http).is_empty());
+}
+
+#[test]
+fn a_proposal_left_undecided_closes_when_the_connection_ends() {
+    let http = FakeHttp::default();
+    let (mut doc, mut models) = document();
+    let mut link = with_proposal(&http, &doc, &models);
+    link.disconnect(&http);
+    let p = link.proposal().unwrap();
+    assert!(!p.standing.is_open());
+    assert!(link.accept(&http, &mut doc, &mut models, 0).is_err());
+    assert!(decisions(&http).is_empty());
 }

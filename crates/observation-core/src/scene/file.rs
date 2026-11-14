@@ -5,6 +5,7 @@ use crate::coverage::{CoverageParams, Region};
 use crate::footage::{FootageCamera, LabelledArea, Target, area_by_id, set_figures_area};
 use crate::geo::{BBox, LatLon};
 use crate::provenance::{Provenance, lenient_provenance};
+use crate::scene::agent_log::{AgentLogEntry, lenient_log};
 use crate::terrain::Terrain;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -55,6 +56,9 @@ pub struct SceneFile {
     /// Optional and additive: files without it load, and a malformed block
     /// is dropped rather than failing the file.
     pub provenance: Option<Provenance>,
+    /// The agent proposals the user accepted, oldest first (see
+    /// [`super::agent_log`]). Optional and additive like `provenance`.
+    pub agent_log: Vec<AgentLogEntry>,
 }
 
 /// The scene file's JSON, field for field. Scenes from before labelled areas
@@ -89,6 +93,12 @@ struct SceneWire {
         deserialize_with = "lenient_provenance"
     )]
     provenance: Option<Provenance>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_log"
+    )]
+    agent_log: Vec<AgentLogEntry>,
 }
 
 /// The id an old file's single `region` gets as an area.
@@ -118,6 +128,7 @@ impl From<SceneWire> for SceneFile {
             limit_figures_to,
             targets: w.targets,
             provenance: w.provenance,
+            agent_log: w.agent_log,
         }
     }
 }
@@ -138,6 +149,7 @@ impl From<SceneFile> for SceneWire {
             region,
             targets: s.targets,
             provenance: s.provenance,
+            agent_log: s.agent_log,
         }
     }
 }
@@ -177,6 +189,7 @@ impl SceneFile {
             limit_figures_to: None,
             targets: Vec::new(),
             provenance: None,
+            agent_log: Vec::new(),
         }
     }
 

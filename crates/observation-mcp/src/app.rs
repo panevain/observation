@@ -64,6 +64,10 @@ pub struct AppStateOut {
     /// The point the user shared last, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned: Option<PinnedOut>,
+    /// Where this connection's latest proposals stand (see propose_changes),
+    /// oldest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<crate::propose::ProposalStatusOut>,
 }
 
 impl AppStateOut {
@@ -78,6 +82,11 @@ impl AppStateOut {
             return out;
         };
         out.revision = view.revision;
+        out.proposals = view
+            .proposals
+            .iter()
+            .map(crate::propose::ProposalStatusOut::of)
+            .collect();
         let Some(state) = view.state else {
             return out;
         };

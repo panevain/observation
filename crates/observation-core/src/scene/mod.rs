@@ -1,5 +1,7 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
+pub mod agent_log;
+pub mod changes;
 mod file;
 mod sanitise;
 

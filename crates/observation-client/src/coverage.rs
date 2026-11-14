@@ -19,9 +19,12 @@ use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texe
 use bevy::prelude::*;
 use observation_client_model::coverage;
 use observation_client_model::coverage::backend::{self, WorkerNote};
+use observation_client_model::coverage::preview::{Preview, Proposed};
 use observation_client_model::editor::AreaDraw;
+use observation_client_model::proposal::Settings;
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::CoverageParams;
+use observation_core::coverage::CoverageStats;
 use observation_core::footage::{TargetPlace, WALL_TARGET_SIZE_M};
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
@@ -29,6 +32,17 @@ use std::hash::{Hash, Hasher};
 /// The coverage counts, as a resource.
 #[derive(Default, Resource, Deref, DerefMut)]
 pub struct CoverageState(coverage::CoverageState);
+
+/// The coverage of the scene the agent's proposal would leave, for the
+/// proposal card's after figures (see
+/// [`observation_client_model::coverage::preview`]).
+#[derive(Default, Resource)]
+pub struct ProposalCoverage {
+    preview: Preview,
+    /// The proposed scene's figures at its selected level and lighting,
+    /// once every camera's sight lines are in.
+    pub after: Option<(Settings, CoverageStats)>,
+}
 
 /// Where coverage jobs run, as a non-send resource: in the browser it owns
 /// the worker, which is tied to the main thread.
@@ -45,6 +59,7 @@ impl Plugin for CoveragePlugin {
         let backend =
             backend::CoverageBackend::new(platform::coverage_worker(), platform.clock.clone());
         app.init_resource::<CoverageState>()
+            .init_resource::<ProposalCoverage>()
             .insert_non_send(CoverageBackend(backend))
             .insert_gizmo_config(
                 RegionGizmos,
@@ -112,12 +127,15 @@ fn update_coverage(
     area: Option<Res<Area>>,
     mut state: ResMut<CoverageState>,
     mut backend: NonSendMut<CoverageBackend>,
+    link: Res<crate::agent::AgentLinkRes>,
+    mut proposal: ResMut<ProposalCoverage>,
 ) {
     let Some(area) = area else { return };
     if area.is_changed() {
         // `Area` is only ever inserted, so this is a new area (on_area_loaded
         // has reset the state).
         backend.load_area(&area.bundle, GROUND_CELL_M, FACADE_CELL_M);
+        proposal.preview.clear();
     }
     let layers = &area.layers;
     let (results, notes) = backend.drain(layers);
@@ -127,10 +145,43 @@ fn update_coverage(
             WorkerNote::Failed(_) => warn!("{note}"),
         }
     }
-    if results.is_empty() && !scene.is_changed() && !models.is_changed() && state.counted() {
-        return;
+    // The scene the agent's proposal would leave, while it can be accepted.
+    let proposed = link.proposal().and_then(|p| {
+        p.proposed().map(|(revision, scene)| Proposed {
+            id: p.id,
+            revision,
+            scene,
+        })
+    });
+    // Both states are offered every result; each keeps its own cameras'.
+    let preview_results = if proposed.is_some() {
+        results.clone()
+    } else {
+        Vec::new()
+    };
+    if !results.is_empty() || scene.is_changed() || models.is_changed() || !state.counted() {
+        coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
     }
-    coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
+    match proposed {
+        Some(p) => {
+            let proposal = &mut *proposal;
+            proposal
+                .preview
+                .update(p, &state, &models, layers, preview_results, &mut backend);
+            let after = proposal
+                .preview
+                .settings()
+                .zip(proposal.preview.stats(&backend));
+            if proposal.after != after {
+                proposal.after = after;
+            }
+        }
+        None if proposal.preview.is_active() || proposal.after.is_some() => {
+            proposal.preview.clear();
+            proposal.after = None;
+        }
+        None => {}
+    }
 }
 
 fn paint_overlay(
@@ -558,6 +609,8 @@ mod tests {
                 layers,
             })
             .init_resource::<CoverageState>()
+            .init_resource::<ProposalCoverage>()
+            .init_resource::<crate::agent::AgentLinkRes>()
             .insert_non_send(CoverageBackend(backend))
             .add_systems(Update, update_coverage);
         app.update();
@@ -734,6 +787,87 @@ mod tests {
         let mut out = Vec::new();
         hatch(inner, outer, spacing, |a, b| out.push((a, b)));
         out
+    }
+
+    /// A proposal on the agent link's card, turning camera 2 away from the
+    /// street, made against the app's scene.
+    fn propose_turning_camera_2(app: &mut App) {
+        use observation_agent_api::{BrowserEvent, BrowserEventKind, Proposal, paths};
+        use observation_client_model::agent::AgentLink;
+        use observation_client_model::platform::StreamEvent;
+        use observation_client_model::proposal::current_scene;
+        use observation_client_model::testing::FakeHttp;
+        use observation_core::scene::changes::ChangeSet;
+
+        edit(app, |doc| doc.area = Some(AreaRef::Demo));
+        let http = FakeHttp::default();
+        let mut link = AgentLink::default();
+        link.available = true;
+        link.connect(&http);
+        assert!(http.respond_to(
+            "POST",
+            paths::PAIRINGS,
+            Ok(br#"{"v":1,"code":"ABCDEFGH","browser_token":"t","code_expires_in_s":600,"idle_timeout_s":1800}"#.to_vec()),
+        ));
+        link.update(&http, 0.0, |_| None);
+        let w = app.world();
+        let (scene, models) = (w.resource::<Scene>(), w.resource::<Models>());
+        let base = current_scene(scene, models).unwrap();
+        let mut proposed = base.clone();
+        proposed.cameras[1].yaw_deg = 90.0;
+        proposed.cameras[1].pitch_deg = 80.0;
+        let event = BrowserEvent::new(BrowserEventKind::Proposal {
+            proposal: Proposal {
+                id: 1,
+                summary: "Point camera 2 at the sky".into(),
+                base_revision: 0,
+                changes: ChangeSet::between(&base, &proposed).unwrap(),
+            },
+        });
+        http.emit_follow(
+            &format!("{}?token=t", paths::EVENTS),
+            &StreamEvent::Data(serde_json::to_vec(&event).unwrap()),
+        );
+        link.update(&http, 0.0, |_| None);
+        link.follow_proposal(&http, scene, models);
+        assert!(link.proposal().and_then(|p| p.proposed()).is_some());
+        **app.world_mut().resource_mut::<crate::agent::AgentLinkRes>() = link;
+    }
+
+    #[test]
+    fn a_proposals_figures_come_from_the_same_backend() {
+        let mut app = app();
+        app.update();
+        let before = app.world().resource::<CoverageState>().stats;
+        assert!(app.world().resource::<ProposalCoverage>().after.is_none());
+        propose_turning_camera_2(&mut app);
+        app.update();
+        let jobs = submitted(&app);
+        let (settings, after) = app
+            .world()
+            .resource::<ProposalCoverage>()
+            .after
+            .expect("computed inline");
+        assert_eq!(settings, (DoriLevel::Detect, Lighting::Day));
+        assert!(
+            after.street_seen_m2 < before.street_seen_m2,
+            "{after:?} {before:?}"
+        );
+        assert_eq!(
+            app.world().resource::<CoverageState>().stats,
+            before,
+            "the document's figures are untouched"
+        );
+        // Camera 1 is unchanged and kept its sight lines: one job, for camera 2.
+        app.update();
+        assert_eq!(submitted(&app), jobs);
+        // Without a proposal the preview goes.
+        let mut link = app.world_mut().resource_mut::<crate::agent::AgentLinkRes>();
+        let http = observation_client_model::testing::FakeHttp::default();
+        link.disconnect(&http);
+        link.close_card();
+        app.update();
+        assert!(app.world().resource::<ProposalCoverage>().after.is_none());
     }
 
     #[test]
