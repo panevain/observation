@@ -201,10 +201,10 @@ pub fn update(
     let params = scene.params;
 
     // The region first: every count is limited to it.
-    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
+    let usable = scene.region().filter(|r| r.problem().is_none());
     let mut region_changed = false;
     if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
-        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
+        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, &r.points)));
         region_changed = true;
     }
     let on = usable.is_some_and(|r| r.enabled);

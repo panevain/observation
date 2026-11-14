@@ -350,7 +350,8 @@ pub struct CoverageOut {
     pub subject_height_m: f32,
     /// The level the scene has selected.
     pub selected_level: String,
-    /// Whether the figures are limited to the scene's drawn region.
+    /// Whether the figures are limited to the scene's area for the figures
+    /// (its `limit_figures_to`, which an old single `region` becomes).
     pub region_limited: bool,
     pub cameras_counted: Vec<u32>,
     pub cameras_skipped: Vec<SkippedOut>,

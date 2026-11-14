@@ -213,7 +213,7 @@ pub fn finish_region(ctx: &mut EditCtx) {
                 "Coverage now counts only the {:.0} m² region",
                 region.area_m2()
             ));
-            doc.region = Some(region);
+            doc.set_region(Some(region));
             doc.touch();
             editor.tool = Tool::Select;
         }
@@ -491,9 +491,9 @@ pub fn set_params(doc: &mut dyn Tracked<Document>, params: CoverageParams) {
 
 /// Removes the region the figures are limited to, if there is one.
 pub fn clear_region(doc: &mut dyn Tracked<Document>) {
-    if doc.get().region.is_some() {
+    if doc.get().region().is_some() {
         let doc = doc.get_mut();
-        doc.region = None;
+        doc.set_region(None);
         doc.touch();
     }
 }
@@ -501,9 +501,9 @@ pub fn clear_region(doc: &mut dyn Tracked<Document>) {
 /// Limits the figures to the region, or stops doing so, if there is one.
 /// The Coverage card calls it only when its checkbox changed.
 pub fn set_region_enabled(doc: &mut dyn Tracked<Document>, enabled: bool) {
-    if doc.get().region.is_some() {
+    if doc.get().region().is_some() {
         let doc = doc.get_mut();
-        if let Some(r) = &mut doc.region {
+        if let Some(r) = doc.region_mut() {
             r.enabled = enabled;
         }
         doc.touch();
@@ -749,7 +749,7 @@ mod tests {
         f.editor.region_draft[2] = [10.0, 10.0];
         region_click(&mut f.ctx(), [0.5, 0.5]);
         assert_eq!(f.editor.region_draft, Vec::<[f32; 2]>::new());
-        let region = f.doc.region.as_ref().expect("closed");
+        let region = f.doc.region().expect("closed");
         assert_eq!(region.points, [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
         assert!(region.enabled);
         assert_eq!(f.editor.tool, Tool::Select);
@@ -788,7 +788,7 @@ mod tests {
         let revision = f.doc.revision;
         finish_region(&mut f.ctx());
         assert_eq!(f.editor.region_draft, [[0.0, 0.0], [10.0, 0.0]]);
-        assert_eq!((f.doc.region.is_none(), f.doc.revision), (true, revision));
+        assert_eq!((f.doc.region().is_none(), f.doc.revision), (true, revision));
         assert_eq!(f.editor.tool, Tool::Region);
         assert_eq!(
             f.toasts(),
@@ -874,7 +874,7 @@ mod tests {
         f.editor.tool = Tool::Region;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
         f.press(&[Key::Finish]);
-        assert!(f.doc.region.is_some());
+        assert!(f.doc.region().is_some());
         f.press(&[Key::Help, Key::Overlay]);
         assert!(f.panels.help_open);
         assert_eq!(f.panels.overlay, OverlayMode::PerCamera);
@@ -1200,7 +1200,7 @@ mod tests {
         assert_eq!(doc.writes, 0);
         assert_eq!(doc.value.cameras.len(), 1);
         assert_eq!(f.editor.region_draft.len(), 3);
-        assert!(doc.value.region.is_none() && f.toasts.is_empty());
+        assert!(doc.value.region().is_none() && f.toasts.is_empty());
     }
 
     #[test]
@@ -1213,7 +1213,7 @@ mod tests {
         assert_eq!(f.editor.region_draft.len(), 4);
         f.editor.region_draft.pop();
         region_click(&mut f.ctx(), [0.0, 1.0]);
-        assert!(f.doc.region.is_some());
+        assert!(f.doc.region().is_some());
         assert!(f.editor.region_draft.is_empty());
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
         f.editor.tool = Tool::Region;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
         super::keys(&mut f.ctx(), &|k| k == Key::Finish, true);
-        assert!(f.doc.region.is_some());
+        assert!(f.doc.region().is_some());
         super::keys(&mut f.ctx(), &|k| k == Key::Erase, true);
         assert!(f.doc.cameras.is_empty());
         f.panels.help_open = true;
@@ -1282,10 +1282,10 @@ mod tests {
     /// region, at revision `r` once set up.
     fn counted() -> (Counting<Document>, u64) {
         let mut f = Fixture::default().with_camera();
-        f.doc.region = Some(Region {
+        f.doc.set_region(Some(Region {
             points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
             enabled: true,
-        });
+        }));
         let r = f.doc.revision;
         (Counting::new(f.doc), r)
     }
@@ -1313,7 +1313,7 @@ mod tests {
     fn clear_region_removes_it_once() {
         let (mut doc, r) = counted();
         clear_region(&mut doc);
-        assert_eq!(doc.value.region, None);
+        assert_eq!(doc.value.region(), None);
         assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
 
         clear_region(&mut doc);
@@ -1324,15 +1324,15 @@ mod tests {
     fn set_region_enabled_turns_the_limit_off_and_on() {
         let (mut doc, r) = counted();
         set_region_enabled(&mut doc, false);
-        assert_eq!(doc.value.region.as_ref().map(|g| g.enabled), Some(false));
+        assert_eq!(doc.value.region().map(|g| g.enabled), Some(false));
         assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
         set_region_enabled(&mut doc, true);
-        assert_eq!(doc.value.region.as_ref().map(|g| g.enabled), Some(true));
+        assert_eq!(doc.value.region().map(|g| g.enabled), Some(true));
         assert_eq!((doc.writes, doc.value.revision), (2, r + 2));
 
-        doc.value.region = None;
+        doc.value.set_region(None);
         set_region_enabled(&mut doc, true);
-        assert_eq!(doc.value.region, None, "no region to enable");
+        assert_eq!(doc.value.region(), None, "no region to enable");
         assert_eq!((doc.writes, doc.value.revision), (2, r + 2));
     }
 

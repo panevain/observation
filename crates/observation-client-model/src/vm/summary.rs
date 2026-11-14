@@ -44,7 +44,7 @@ pub struct Rung {
 
 impl CoverageSummaryVm {
     pub fn new(doc: &Document, coverage: &CoverageState) -> Self {
-        let in_region = doc.region.as_ref().is_some_and(|r| r.is_active());
+        let in_region = doc.region().is_some_and(|r| r.is_active());
         let s = coverage.stats;
         let figures = (!doc.cameras.is_empty()).then(|| Figures {
             stats: [
@@ -199,13 +199,13 @@ mod tests {
     #[test]
     fn an_active_region_titles_the_figures() {
         let mut doc = Document::default();
-        doc.region = Some(Region {
+        doc.set_region(Some(Region {
             points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
             enabled: true,
-        });
+        }));
         let vm = CoverageSummaryVm::new(&doc, &CoverageState::default());
         assert_eq!((vm.title, vm.in_region), ("Coverage inside region", true));
-        doc.region.as_mut().expect("a region").enabled = false;
+        doc.region_mut().expect("a region").enabled = false;
         let vm = CoverageSummaryVm::new(&doc, &CoverageState::default());
         assert_eq!((vm.title, vm.in_region), ("Coverage", false));
     }

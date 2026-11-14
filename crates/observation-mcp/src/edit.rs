@@ -869,4 +869,38 @@ mod tests {
         assert_eq!(from_obj.cameras, s.cameras);
         assert!(parse(&serde_json::json!({"format": "nope"})).is_err());
     }
+
+    #[test]
+    fn edits_keep_areas_and_targets() {
+        let mut s = new_demo_scene().unwrap();
+        let mut value: Value = serde_json::from_str(&s.to_json()).unwrap();
+        value["areas"] = serde_json::json!([
+            {"id": 1, "label": "own", "name": "Garden", "points": [[0, 0], [10, 0], [10, 10]]},
+            {"id": 2, "label": "neighbour", "points": [[20, 0], [30, 0], [30, 10]]}
+        ]);
+        value["limit_figures_to"] = serde_json::json!(1);
+        value["targets"] = serde_json::json!([
+            {"id": 1, "name": "Gate", "at": {"kind": "wall", "point": [0, 1.5, 0], "normal": [0, 1]}}
+        ]);
+        s = parse(&value).unwrap();
+        set_coverage_params(
+            &mut s,
+            ParamsUpdate {
+                subject_height_m: Some(1.6),
+                ..ParamsUpdate::default()
+            },
+        );
+        let (checked, out) = finish(&s).unwrap();
+        assert_eq!((checked.areas.len(), checked.targets.len()), (2, 1));
+        assert_eq!(checked.figures_area().map(|a| a.id), Some(1));
+        assert_eq!(out["areas"][1]["label"], "neighbour");
+        assert_eq!(out["targets"][0]["name"], "Gate");
+        // The copy of the limiting area that older apps read.
+        assert_eq!(out["region"]["points"][1][0], 10.0);
+        // An old scene's region still limits the figures.
+        let mut old: Value = serde_json::from_str(&new_demo_scene().unwrap().to_json()).unwrap();
+        old["region"] = serde_json::json!({"points": [[0, 0], [10, 0], [10, 10]]});
+        let s = parse(&old).unwrap();
+        assert!(s.figures_area().is_some_and(|a| a.is_active()));
+    }
 }

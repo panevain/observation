@@ -246,7 +246,7 @@ fn draw_region(
         out.extend(points.last().map(|p| at(*p)));
         out
     };
-    if let Some(r) = &scene.region
+    if let Some(r) = scene.region()
         && editor.region_draft.is_empty()
     {
         let c = if r.is_active() {
@@ -487,10 +487,9 @@ mod tests {
             ));
         }
         let mask = scene
-            .region
-            .as_ref()
+            .region()
             .filter(|r| r.is_active())
-            .map(|r| RegionMask::new(layers, r));
+            .map(|r| RegionMask::new(layers, &r.points));
         CoverageStats::compute_in(layers, &counts, mask.as_ref())
     }
 
@@ -566,10 +565,12 @@ mod tests {
         // Limiting the figures to a region, or lifting the limit, recounts
         // every level without recomputing.
         let whole = stats(&app);
-        app.world_mut().resource_mut::<Scene>().region = Some(Region {
-            points: vec![[-80.0, -50.0], [0.0, -50.0], [0.0, 50.0], [-80.0, 50.0]],
-            enabled: true,
-        });
+        app.world_mut()
+            .resource_mut::<Scene>()
+            .set_region(Some(Region {
+                points: vec![[-80.0, -50.0], [0.0, -50.0], [0.0, 50.0], [-80.0, 50.0]],
+                enabled: true,
+            }));
         app.update();
         let west = stats(&app);
         assert_eq!(west, direct(&app));
@@ -578,8 +579,7 @@ mod tests {
         assert_eq!(stats(&app), direct(&app));
         app.world_mut()
             .resource_mut::<Scene>()
-            .region
-            .as_mut()
+            .region_mut()
             .unwrap()
             .enabled = false;
         set(&mut app, |p| p.dori = DoriLevel::Custom);
