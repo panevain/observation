@@ -121,6 +121,13 @@ impl CoverageState {
         Some(sight.within(range))
     }
 
+    /// A camera's cached sight lines, which may still fall short of the
+    /// range now needed while they are being recomputed (see
+    /// [`Sight::covers`]).
+    pub fn sight(&self, id: u32) -> Option<&Sight> {
+        self.cams.get(&id).map(|(_, s)| s)
+    }
+
     /// What [`Self::visibility`] of a camera is worked out from: the cache
     /// key of its sight lines, how far they reach and the range counted at
     /// the selected level. When none of them changed, neither did the cells.

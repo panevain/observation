@@ -13,7 +13,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 pub use observation_client_model::platform::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, PickedFile, SaveFailure,
-    unix_secs,
+    SheetOutput, unix_secs,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,6 +42,8 @@ pub struct Platform {
     /// Lives as long as the browser tab (`sessionStorage`).
     pub session: Arc<dyn KeyValueStore>,
     pub files: Arc<dyn FileDialogs>,
+    /// The evidence sheet as PNG and on paper.
+    pub sheet: Arc<dyn SheetOutput>,
     pub clock: Arc<dyn Clock>,
     pub scheme: Arc<dyn ColorScheme>,
 }

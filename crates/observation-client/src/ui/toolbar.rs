@@ -103,6 +103,15 @@ pub fn top_bar(
                 super::agent::top_bar_button(ui, &t, &mut d.agent);
             }
             if ui
+                .add(secondary(&t, "Sheet…"))
+                .on_hover_text(
+                    "Evidence sheet: the figures with their settings, data date and limits, as SVG, PNG or print (Aggregate by default: no camera positions)",
+                )
+                .clicked()
+            {
+                d.panels.sheet_open = !d.panels.sheet_open;
+            }
+            if ui
                 .add(secondary(&t, "Export"))
                 .on_hover_text("Download the scene as JSON")
                 .clicked()

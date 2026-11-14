@@ -99,6 +99,10 @@ web-sys = { version = "0.3", features = [
     "WorkerType",
     "DedicatedWorkerGlobalScope",
     "ErrorEvent",
+    "HtmlImageElement",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "AddEventListenerOptions",
 ] }
 # Not used in code: it selects getrandom's browser backend (wasm_js) for the crates that use it.
 getrandom = { version = "0.4", features = ["wasm_js"] }

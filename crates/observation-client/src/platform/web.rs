@@ -1,16 +1,18 @@
 //! The browser build's side of [`crate::platform`]: `fetch`, `EventSource`,
-//! `localStorage` and `sessionStorage`, file download and upload, the colour
-//! scheme media query, the page's loading screen and the coverage worker.
+//! `localStorage` and `sessionStorage`, file download and upload, the
+//! evidence sheet's canvas and print, the colour scheme media query, the
+//! page's loading screen and the coverage worker.
 
 use std::sync::Arc;
 
 use super::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, PickedFile, Platform,
-    SaveFailure,
+    SaveFailure, SheetOutput,
 };
 use bevy::log::warn;
 use observation_client_model::coverage::backend::not_started;
 use observation_client_model::platform::{JobChannel, Reply, StreamEvent, StreamStop};
+use observation_core::evidence::{PAGE_HEIGHT, PAGE_WIDTH, SheetSvg};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
@@ -20,6 +22,7 @@ pub fn platform() -> Platform {
         local: Arc::new(LocalStorage),
         session: Arc::new(SessionStorage),
         files: Arc::new(BrowserFiles),
+        sheet: Arc::new(BrowserSheet),
         clock: Arc::new(DateNow),
         scheme: Arc::new(MediaQuery),
     }
@@ -404,15 +407,25 @@ fn storage_set(key: &str, value: &str) -> Result<(), SaveFailure> {
 }
 
 fn download(name: &str, mime: &str, text: &str) -> Result<(), String> {
-    let doc = web_sys::window()
-        .and_then(|w| w.document())
-        .ok_or("the browser gave the app no page to download from")?;
+    let blob = text_blob(mime, text)?;
+    download_blob(name, &blob)
+}
+
+/// `text` as a blob of type `mime`.
+fn text_blob(mime: &str, text: &str) -> Result<web_sys::Blob, String> {
     let parts = js_sys::Array::of1(&JsValue::from_str(text));
     let opts = web_sys::BlobPropertyBag::new();
     opts.set_type(mime);
-    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts)
-        .map_err(|e| format!("could not prepare the file ({})", js_cause(&e)))?;
-    let url = web_sys::Url::create_object_url_with_blob(&blob)
+    web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts)
+        .map_err(|e| format!("could not prepare the file ({})", js_cause(&e)))
+}
+
+/// Offers `blob` as a download named `name`.
+fn download_blob(name: &str, blob: &web_sys::Blob) -> Result<(), String> {
+    let doc = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or("the browser gave the app no page to download from")?;
+    let url = web_sys::Url::create_object_url_with_blob(blob)
         .map_err(|e| format!("could not prepare the download ({})", js_cause(&e)))?;
     let a = doc
         .create_element("a")
@@ -422,6 +435,209 @@ fn download(name: &str, mime: &str, text: &str) -> Result<(), String> {
     a.set_download(name);
     a.click();
     let _ = web_sys::Url::revoke_object_url(&url);
+    Ok(())
+}
+
+// The evidence sheet.
+
+/// Draws the sheet on a canvas and prints it, all on the page's own origin:
+/// the SVG is a `blob:` URL loaded into an `<img>` (the CSP's `img-src`
+/// allows `blob:`), which neither runs scripts nor fetches anything, so the
+/// canvas it is drawn on stays clean and can be read back as a PNG.
+struct BrowserSheet;
+
+impl SheetOutput for BrowserSheet {
+    fn download_png(
+        &self,
+        name: &str,
+        sheet: &SheetSvg,
+        done: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) {
+        sheet_png(name.to_owned(), sheet, done);
+    }
+
+    fn print(&self, sheet: &SheetSvg) -> Result<(), String> {
+        print_sheet(sheet)
+    }
+}
+
+/// How many canvas pixels a sheet pixel becomes in a PNG.
+const PNG_SCALE: f32 = 2.0;
+/// Longest canvas side the browsers draw, px (Chrome's limit is 32,767).
+const MAX_CANVAS_PX: f32 = 32_000.0;
+
+fn sheet_png(name: String, sheet: &SheetSvg, done: Box<dyn FnOnce(Result<(), String>) + Send>) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+
+    let height = PAGE_HEIGHT * sheet.pages.max(1) as f32;
+    let scale = PNG_SCALE.min(MAX_CANVAS_PX / height);
+    let (w, h) = ((PAGE_WIDTH * scale) as u32, (height * scale) as u32);
+    let url = match text_blob("image/svg+xml", &sheet.svg)
+        .and_then(|b| web_sys::Url::create_object_url_with_blob(&b).map_err(|e| js_cause(&e)))
+    {
+        Ok(url) => url,
+        Err(e) => return done(Err(e)),
+    };
+    let img = match web_sys::HtmlImageElement::new() {
+        Ok(img) => img,
+        Err(e) => return done(Err(js_cause(&e))),
+    };
+    // Whichever of load and error comes first answers.
+    let done = Rc::new(RefCell::new(Some(done)));
+    let answer = {
+        let done = done.clone();
+        move |r: Result<(), String>| {
+            if let Some(d) = done.borrow_mut().take() {
+                d(r);
+            }
+        }
+    };
+    let on_error = {
+        let (answer, url) = (answer.clone(), url.clone());
+        Closure::once_into_js(move || {
+            let _ = web_sys::Url::revoke_object_url(&url);
+            answer(Err(
+                "the browser could not read the sheet as an image".to_owned()
+            ));
+        })
+    };
+    let on_load = {
+        let (img2, url) = (img.clone(), url.clone());
+        Closure::once_into_js(move || {
+            let drawn = draw_png(&img2, w, h);
+            let _ = web_sys::Url::revoke_object_url(&url);
+            let canvas = match drawn {
+                Ok(c) => c,
+                Err(e) => return answer(Err(e)),
+            };
+            let answer2 = answer.clone();
+            let on_blob = Closure::once_into_js(move |blob: Option<web_sys::Blob>| {
+                answer2(match blob {
+                    Some(b) => download_blob(&name, &b),
+                    None => Err("the browser could not encode the picture".to_owned()),
+                });
+            });
+            if let Err(e) = canvas.to_blob(on_blob.unchecked_ref()) {
+                answer(Err(js_cause(&e)));
+            }
+        })
+    };
+    img.set_onload(Some(on_load.unchecked_ref()));
+    img.set_onerror(Some(on_error.unchecked_ref()));
+    img.set_src(&url);
+}
+
+/// A canvas of `w` × `h` px with `img` drawn over all of it.
+fn draw_png(
+    img: &web_sys::HtmlImageElement,
+    w: u32,
+    h: u32,
+) -> Result<web_sys::HtmlCanvasElement, String> {
+    let doc = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or("the browser gave the app no page to draw on")?;
+    let canvas = doc
+        .create_element("canvas")
+        .map_err(|e| js_cause(&e))?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| "the browser gave no canvas")?;
+    canvas.set_width(w);
+    canvas.set_height(h);
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(|e| js_cause(&e))?
+        .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
+        .ok_or("the browser gave no 2D canvas")?;
+    ctx.draw_image_with_html_image_element_and_dw_and_dh(img, 0.0, 0.0, f64::from(w), f64::from(h))
+        .map_err(|e| js_cause(&e))?;
+    Ok(canvas)
+}
+
+/// The id of the print-only copy of the sheet.
+const PRINT_ID: &str = "obs-print";
+
+/// Hides the copy on screen; in print, hides everything else and shows the
+/// copy one A4 page at a time. Each page is a window onto the one image,
+/// moved up by a page height per page, so no page cuts through a line.
+const PRINT_CSS: &str = "#obs-print { display: none; }
+@media print {
+  @page { size: A4 portrait; margin: 0; }
+  html, body { margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; }
+  body > *:not(#obs-print) { display: none !important; }
+  #obs-print { display: block; }
+  #obs-print .obs-page { position: relative; width: 210mm; height: 297mm; overflow: hidden; break-after: page; }
+  #obs-print .obs-page:last-child { break-after: auto; }
+  #obs-print img { position: absolute; left: 0; width: 210mm; height: auto; }
+}";
+
+/// Opens the print dialog on the sheet. The sheet is put in the page itself
+/// (a pop-up could be blocked, and the CSP's `default-src 'self'` keeps
+/// `blob:` documents out of frames), as `<img>` elements of a `blob:` URL
+/// with an inline stylesheet (both allowed by the CSP), printed once the
+/// image has loaded and removed after printing.
+fn print_sheet(sheet: &SheetSvg) -> Result<(), String> {
+    use wasm_bindgen::closure::Closure;
+
+    let fail = |e: JsValue| format!("could not prepare the page ({})", js_cause(&e));
+    let win = web_sys::window().ok_or("the browser gave the app no window")?;
+    let doc = win.document().ok_or("the browser gave the app no page")?;
+    let body = doc.body().ok_or("the page has no body")?;
+    if let Some(old) = doc.get_element_by_id(PRINT_ID) {
+        old.remove();
+    }
+    let blob = text_blob("image/svg+xml", &sheet.svg)?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(fail)?;
+    let root = doc.create_element("div").map_err(fail)?;
+    root.set_id(PRINT_ID);
+    let style = doc.create_element("style").map_err(fail)?;
+    style.set_text_content(Some(PRINT_CSS));
+    root.append_child(&style).map_err(fail)?;
+    let mut first = None;
+    for k in 0..sheet.pages.max(1) {
+        let page = doc.create_element("div").map_err(fail)?;
+        page.set_class_name("obs-page");
+        let img = web_sys::HtmlImageElement::new().map_err(fail)?;
+        img.set_alt("Evidence sheet");
+        img.set_attribute("style", &format!("top: -{}%", k * 100))
+            .map_err(fail)?;
+        img.set_src(&url);
+        page.append_child(&img).map_err(fail)?;
+        root.append_child(&page).map_err(fail)?;
+        first.get_or_insert(img);
+    }
+    body.append_child(&root).map_err(fail)?;
+    // Removed once the dialog closes, whatever the user chose.
+    let cleanup = {
+        let (root, url) = (root.clone(), url.clone());
+        Closure::once_into_js(move || {
+            root.remove();
+            let _ = web_sys::Url::revoke_object_url(&url);
+        })
+    };
+    let opts = web_sys::AddEventListenerOptions::new();
+    opts.set_once(true);
+    win.add_event_listener_with_callback_and_add_event_listener_options(
+        "afterprint",
+        cleanup.unchecked_ref(),
+        &opts,
+    )
+    .map_err(fail)?;
+    let print = Closure::once_into_js(move || {
+        if let Some(w) = web_sys::window()
+            && let Err(e) = w.print()
+        {
+            warn!("could not open the print dialog: {}", js_cause(&e));
+        }
+    });
+    match first {
+        Some(img) if !img.complete() => img.set_onload(Some(print.unchecked_ref())),
+        _ => {
+            let f: &js_sys::Function = print.unchecked_ref();
+            f.call0(&JsValue::NULL).map_err(fail)?;
+        }
+    }
     Ok(())
 }
 

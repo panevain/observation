@@ -8,6 +8,7 @@ mod overlays;
 mod provenance;
 mod regions;
 mod scenes;
+mod sheet;
 mod toolbar;
 mod widgets;
 
@@ -36,6 +37,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         let changes = SchemeChanges::watch(&*Platform::of(app.world()).scheme);
         app.init_resource::<MapPicker>()
+            .init_resource::<sheet::SheetResults>()
             .insert_resource(changes)
             // Before every `Tokens` reader, so the panels and the scene switch
             // in the same frame.
@@ -117,6 +119,7 @@ fn draw_ui(
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
     platform: Res<Platform>,
+    sheet_results: Res<sheet::SheetResults>,
 ) -> Result {
     let clock = &*platform.clock;
     // Register tile textures with egui before borrowing the context.
@@ -275,6 +278,10 @@ fn draw_ui(
     }
     if d.panels.help_open {
         overlays::help(&ctx, &t, &mut d.panels);
+    }
+    sheet::drain(&sheet_results, &mut d);
+    if d.panels.sheet_open {
+        sheet::window(&ctx, &t, &mut d, &platform, &sheet_results);
     }
     if d.agent.dialog_open {
         agent::window(&ctx, &t, &mut d.agent, &*platform.http);

@@ -1,6 +1,7 @@
 //! What the client needs from the page it runs in, as traits: HTTP and
-//! server-sent events, key-value storage, file download and upload, the wall
-//! clock, the system colour scheme and the coverage worker.
+//! server-sent events, key-value storage, file download and upload, the
+//! evidence sheet's PNG and print output, the wall clock, the system colour
+//! scheme and the coverage worker.
 //!
 //! The client implements each trait once for the browser and once for native
 //! builds (`observation-client`'s `platform` module); tests use the fakes in
@@ -155,6 +156,26 @@ pub trait FileDialogs: Send + Sync + 'static {
     /// returns. `done` is never called when the user cancels, nor in the
     /// native build, which has no picker.
     fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<PickedFile, String>) + Send>);
+}
+
+/// What the browser does with an evidence sheet besides saving its SVG
+/// (which goes through [`FileDialogs::download`]).
+///
+/// The sheet is A4 pages stacked in one SVG
+/// ([`observation_core::evidence::SheetSvg`]).
+pub trait SheetOutput: Send + Sync + 'static {
+    /// Draws the sheet on a canvas at twice its size and offers it as a PNG
+    /// named `name`; `done` is called once with the outcome, possibly before
+    /// this returns (the native build has no canvas and refuses at once).
+    fn download_png(
+        &self,
+        name: &str,
+        sheet: &observation_core::evidence::SheetSvg,
+        done: Box<dyn FnOnce(Result<(), String>) + Send>,
+    );
+    /// Opens the browser's print dialog on the sheet, one page per sheet
+    /// page (the dialog saves it as PDF), or says why it could not.
+    fn print(&self, sheet: &observation_core::evidence::SheetSvg) -> Result<(), String>;
 }
 
 /// The wall clock.

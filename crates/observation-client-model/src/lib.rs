@@ -9,6 +9,7 @@ pub mod commands;
 pub mod coverage;
 pub mod document;
 pub mod editor;
+pub mod evidence;
 pub mod footage;
 pub mod history;
 pub mod net;
