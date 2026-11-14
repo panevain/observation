@@ -155,7 +155,7 @@ pub struct Place {
     pub roll_deg: Option<f32>,
     /// Point the camera at this spot instead of using yaw and pitch.
     pub look_at: Option<Target>,
-    /// Name shown in the app. Defaults to "Camera <id>".
+    /// Name shown in the app. Defaults to "Camera `<id>`".
     pub label: Option<String>,
 }
 

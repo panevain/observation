@@ -12,7 +12,7 @@ use serde_json::Value;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ConnectArgs {
     /// The address the app is open at on this computer, such as
-    /// `http://127.0.0.1:8080` (plain http on 127.0.0.1, [::1] or localhost).
+    /// `http://127.0.0.1:8080` (plain http on 127.0.0.1, `[::1]` or localhost).
     pub url: String,
     /// The code shown in the app's Connect agent dialog, such as `ABCD-EFGH`.
     pub code: String,
