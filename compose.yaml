@@ -47,6 +47,11 @@ services:
       OBS_LOG_FORMAT: ${OBS_LOG_FORMAT:-text}
       # Your reverse proxy's address, if one sits in front, so clients are rate limited apart.
       OBS_TRUSTED_PROXIES: ${OBS_TRUSTED_PROXIES:-}
+      # Place search: off unless set (searches then go to that geocoder), e.g.
+      # https://nominatim.openstreetmap.org/search under its usage policy.
+      OBS_GEOCODER_URL: ${OBS_GEOCODER_URL:-}
+      # Your contact for the geocoder's operator, added to its User-Agent.
+      OBS_GEOCODER_CONTACT: ${OBS_GEOCODER_CONTACT:-}
     volumes:
       - cache:/var/cache/observation
     depends_on:
