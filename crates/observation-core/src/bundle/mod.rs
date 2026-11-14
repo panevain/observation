@@ -19,3 +19,4 @@ pub use crate::road::Road;
 pub use format::{
     AreaBundle, BUNDLE_CONTENT_TYPE, BUNDLE_MAGIC, BUNDLE_VERSION, Building, BundleError,
 };
+pub use query::RoadNear;
