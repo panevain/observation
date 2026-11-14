@@ -27,8 +27,8 @@ ENTRY = re.compile(r"(?m)^(?=    ')")
 
 
 def norm(key):
-    nwo, ref = key.split("@", 1)
-    return nwo.lower() + "@" + ref
+    repo, ref = key.split("@", 1)
+    return repo.lower() + "@" + ref
 
 
 def references():
