@@ -3,7 +3,7 @@
     "observation": {
       "type": "stdio",
       "command": "cargo",
-      "args": ["run", "--quiet", "--locked", "-p", "observation-mcp"],
+      "args": ["run", "--quiet", "--locked", "--release", "-p", "observation-mcp"],
       "env": {
         "RUST_LOG": "warn"
       }

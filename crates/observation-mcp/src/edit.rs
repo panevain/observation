@@ -10,7 +10,7 @@ use crate::catalog::{is_custom, model, new_custom_id};
 use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, DoriLevel, Lighting, MAX_GROUP_CHARS,
 };
-use observation_core::example::example_cameras;
+use observation_core::example::{EXAMPLE_MODELS, example_cameras_around};
 use observation_core::glam::Vec3;
 use observation_core::scene::{
     AreaRef, MAX_CAMERAS, MAX_CUSTOM_MODELS, SCENE_VERSION, SceneFile, lift_onto_terrain,
@@ -36,11 +36,14 @@ pub fn parse(scene: &Value) -> Result<SceneFile, ToolError> {
 }
 
 /// Checks an edited scene the way the app checks one it imports, and
-/// returns it as a JSON value.
+/// returns it as the app would load it (tidied by `from_json`), also as a
+/// JSON value.
 pub fn finish(scene: &SceneFile) -> Result<(SceneFile, Value), ToolError> {
-    let text = scene.to_json();
-    let checked = SceneFile::from_json(&text)?;
-    let value = serde_json::from_str(&text).map_err(|e| ToolError::invalid(e.to_string()))?;
+    let checked = SceneFile::from_json(&scene.to_json())?;
+    // Through the text, not `serde_json::to_value`, which would widen each
+    // f32 to its f64 digits (2.7 as 2.700000047683716).
+    let value =
+        serde_json::from_str(&checked.to_json()).map_err(|e| ToolError::invalid(e.to_string()))?;
     Ok((checked, value))
 }
 
@@ -156,13 +159,18 @@ pub struct Place {
     pub label: Option<String>,
 }
 
+/// An id no camera in the scene has: one above the highest, or the lowest
+/// free one once the highest is `u32::MAX` (a scene holds at most
+/// [`MAX_CAMERAS`], so there is always one).
 fn next_camera_id(scene: &SceneFile) -> u32 {
-    scene
-        .cameras
-        .iter()
-        .map(|c| c.id)
-        .max()
-        .map_or(1, |m| m.saturating_add(1))
+    let taken = |id| scene.cameras.iter().any(|c| c.id == id);
+    match scene.cameras.iter().map(|c| c.id).max() {
+        None => 1,
+        Some(m) => m
+            .checked_add(1)
+            .or_else(|| (1..u32::MAX).find(|&id| !taken(id)))
+            .unwrap_or(0),
+    }
 }
 
 fn camera_mut(scene: &mut SceneFile, id: u32) -> Result<&mut CameraPlacement, ToolError> {
@@ -203,6 +211,16 @@ fn check_angle(what: &str, a: f32) -> Result<f32, ToolError> {
     }
 }
 
+/// Points `cam` at `p`, refusing a target where the camera is (it gives no
+/// direction).
+fn aim_at(cam: &mut CameraPlacement, p: Vec3) -> Result<(), ToolError> {
+    if (p - cam.eye()).length() < 0.01 {
+        return Err(ToolError::invalid("the target is where the camera is"));
+    }
+    cam.look_at(p);
+    Ok(())
+}
+
 /// The world position of `t`.
 fn target_point(scene: &SceneFile, t: Target) -> Result<Vec3, ToolError> {
     let bundle = bundle_for(scene)?;
@@ -241,7 +259,7 @@ pub fn place_camera(scene: &mut SceneFile, catalog: &Catalog, p: Place) -> Resul
         group: None,
     };
     if let Some(t) = p.look_at {
-        cam.look_at(target_point(scene, t)?);
+        aim_at(&mut cam, target_point(scene, t)?)?;
     }
     scene.cameras.push(cam);
     Ok(id)
@@ -294,12 +312,7 @@ pub fn aim_camera(
 /// Points a camera at a spot on the area (keeps its roll).
 pub fn point_camera_at(scene: &mut SceneFile, id: u32, t: Target) -> Result<(), ToolError> {
     let p = target_point(scene, t)?;
-    let cam = camera_mut(scene, id)?;
-    if (p - cam.eye()).length() < 0.01 {
-        return Err(ToolError::invalid("the target is where the camera is"));
-    }
-    cam.look_at(p);
-    Ok(())
+    aim_at(camera_mut(scene, id)?, p)
 }
 
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -341,8 +354,9 @@ pub fn update_camera(
         cam.enabled = e;
     }
     if let Some(g) = u.group {
+        // As the app tidies a group: cut short, then trimmed again.
         let g: String = g.trim().chars().take(MAX_GROUP_CHARS).collect();
-        cam.group = Some(g).filter(|g| !g.is_empty());
+        cam.group = Some(g.trim_end().to_owned()).filter(|g| !g.is_empty());
     }
     Ok(())
 }
@@ -498,8 +512,8 @@ pub fn delete_custom_model(scene: &mut SceneFile, id: &str) -> Result<(), ToolEr
 }
 
 /// Adds up to `count` example cameras on house fronts facing the street,
-/// cycling through `model_ids` (the catalogue's first model of each kind
-/// when empty); returns their ids.
+/// clear of the cameras already in the scene, cycling through `model_ids`
+/// (the app's [`EXAMPLE_MODELS`] when empty); returns their ids.
 pub fn add_example_cameras(
     scene: &mut SceneFile,
     catalog: &Catalog,
@@ -509,16 +523,9 @@ pub fn add_example_cameras(
     let room = MAX_CAMERAS.saturating_sub(scene.cameras.len());
     let count = count.min(room);
     let models: Vec<CameraModel> = if model_ids.is_empty() {
-        let mut seen = Vec::new();
-        catalog
-            .models
+        EXAMPLE_MODELS
             .iter()
-            .filter(|m| {
-                m.kind != CameraKind::Indoor && !seen.contains(&m.kind) && {
-                    seen.push(m.kind);
-                    true
-                }
-            })
+            .filter_map(|id| catalog.get(id))
             .cloned()
             .collect()
     } else {
@@ -532,7 +539,12 @@ pub fn add_example_cameras(
             .collect::<Result<_, _>>()?
     };
     let refs: Vec<&CameraModel> = models.iter().collect();
-    let placed = example_cameras(bundle_for(scene)?, &refs, count);
+    let taken: Vec<[f32; 2]> = scene
+        .cameras
+        .iter()
+        .map(|c| [c.position[0], c.position[2]])
+        .collect();
+    let placed = example_cameras_around(bundle_for(scene)?, &refs, count, &taken);
     let mut ids = Vec::with_capacity(placed.len());
     for mut c in placed {
         c.id = next_camera_id(scene);
@@ -751,6 +763,85 @@ mod tests {
         assert!(!ids.is_empty());
         assert_eq!(ids[0], 2);
         finish(&s).unwrap();
+    }
+
+    #[test]
+    fn the_app_s_example_models_are_in_the_catalogue_and_used_by_default() {
+        let cat = catalog().unwrap();
+        for id in EXAMPLE_MODELS {
+            assert!(cat.get(id).is_some(), "{id} is not in the catalogue");
+        }
+        let mut s = new_demo_scene().unwrap();
+        add_example_cameras(&mut s, cat, 3, &[]).unwrap();
+        let used: Vec<&str> = s.cameras.iter().map(|c| c.model_id.as_str()).collect();
+        assert_eq!(used, EXAMPLE_MODELS[..3]);
+    }
+
+    #[test]
+    fn example_cameras_added_again_go_elsewhere() {
+        let mut s = new_demo_scene().unwrap();
+        let cat = catalog().unwrap();
+        add_example_cameras(&mut s, cat, 5, &[]).unwrap();
+        add_example_cameras(&mut s, cat, 5, &[]).unwrap();
+        assert_eq!(s.cameras.len(), 10);
+        for (i, a) in s.cameras.iter().enumerate() {
+            for b in &s.cameras[i + 1..] {
+                let d = Vec3::from_array(a.position).distance(Vec3::from_array(b.position));
+                assert!(d > 1.0, "cameras {} and {} are {d} m apart", a.id, b.id);
+            }
+        }
+    }
+
+    #[test]
+    fn camera_ids_stay_unique_past_the_largest_id() {
+        let mut s = new_demo_scene().unwrap();
+        let a = place_at(&mut s, 0.0, 0.0);
+        s.cameras[0].id = u32::MAX;
+        place_at(&mut s, 1.0, 0.0);
+        assert_eq!(a, 1);
+        assert_eq!(s.cameras[1].id, 1, "the lowest free id");
+        assert_eq!(place_at(&mut s, 2.0, 0.0), 2);
+    }
+
+    #[test]
+    fn placing_a_camera_looking_at_itself_fails() {
+        let mut s = new_demo_scene().unwrap();
+        let cat = catalog().unwrap();
+        let r = place_camera(
+            &mut s,
+            cat,
+            Place {
+                model_id: cat.models[0].id.clone(),
+                x: 5.0,
+                z: 5.0,
+                height_m: Some(1.0),
+                yaw_deg: None,
+                pitch_deg: None,
+                roll_deg: None,
+                look_at: Some(Target {
+                    x: 5.0,
+                    z: 5.0,
+                    height_m: Some(1.0),
+                }),
+                label: None,
+            },
+        );
+        assert!(matches!(r, Err(ToolError::Invalid(_))), "{r:?}");
+        assert!(s.cameras.is_empty());
+    }
+
+    #[test]
+    fn finish_returns_the_scene_as_the_app_loads_it() {
+        let mut s = new_demo_scene().unwrap();
+        place_at(&mut s, 0.0, 0.0);
+        // A group the app trims on load, set directly rather than through
+        // `update_camera` (which trims it too).
+        let long = format!("{} tail", "a".repeat(MAX_GROUP_CHARS - 1));
+        s.cameras[0].group = Some(long);
+        let (checked, value) = finish(&s).unwrap();
+        let want = "a".repeat(MAX_GROUP_CHARS - 1);
+        assert_eq!(checked.cameras[0].group.as_deref(), Some(want.as_str()));
+        assert_eq!(value["cameras"][0]["group"], want.as_str());
     }
 
     #[test]

@@ -9,6 +9,7 @@ use crate::area::{self, extent};
 use crate::catalog::{catalog, is_custom, model};
 use crate::edit::{self, CameraUpdate, Kind, ModelUpdate, NewModel, ParamsUpdate, Place, Target};
 use crate::figures::scene_figures;
+use observation_core::address::ON_OUTLINE_M;
 use observation_core::camera::{ASSUMED_IR_RANGE_M, CameraKind, CameraModel, DoriLevel, Lighting};
 use observation_core::provenance::{CAVEATS_SUMMARY, caveats_text, format_date};
 use observation_core::scene::SceneFile;
@@ -140,7 +141,8 @@ pub struct ExampleArgs {
     pub scene: Value,
     /// How many cameras to add (1 to 20).
     pub count: usize,
-    /// Models to cycle through; omit for one of each kind.
+    /// Models to cycle through; omit for the app's example models (a mix of
+    /// types and brands).
     #[serde(default)]
     pub model_ids: Vec<String>,
 }
@@ -583,7 +585,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Add example cameras on house fronts facing the street, as the app does for a new area.",
+        description = "Add example cameras on house fronts facing the street, clear of the cameras already in the scene, like those the app puts on a new demo street.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn add_example_cameras(
@@ -673,7 +675,9 @@ impl ObservationMcp {
         let b = area::bundle_for(&s).map_err(fail)?;
         area::check_inside(b, a.x, a.z).map_err(fail)?;
         Ok(Json(AddressOut {
-            address: b.address_pointed_at([a.x, a.z], 1.0).map(|ad| ad.label()),
+            address: b
+                .address_pointed_at([a.x, a.z], ON_OUTLINE_M)
+                .map(|ad| ad.label()),
         }))
     }
 }
