@@ -1,22 +1,21 @@
-//! What the client keeps in browser storage: the autosaved scene and two
-//! preferences, under fixed keys, and the rules for writing and restoring
-//! the scene. The keys and the JSON are a frozen format: builds already in
-//! use read what these write.
+//! What the client keeps in browser storage: the autosaved scenes and two
+//! preferences, under fixed keys, and the rules for writing the open scene.
+//! The keys and the JSON are a frozen format: builds already in use read
+//! what these write. Which scenes there are, and under which keys, is
+//! [`crate::slots`]; opening and restoring them is [`crate::scenes`].
 
-use crate::commands::Tracked;
-use crate::document::{Document, LoadArea, Models};
-use crate::editor::Panels;
 use crate::platform::{KeyValueStore, SaveFailure};
-use crate::toasts::Toasts;
 use observation_core::scene::SceneFile;
 
-/// The autosaved scene (a [`SceneFile`] as JSON).
-pub const STORAGE_KEY: &str = "observation.scene.v1";
+/// The first autosaved scene (a [`SceneFile`] as JSON), and the only one
+/// before a browser kept several: see [`crate::slots`].
+pub const STORAGE_KEY: &str = crate::slots::DEFAULT_KEY;
 /// The chosen UI font (the client's font key).
 pub const FONT_KEY: &str = "observation.font";
 /// Whether an Address tool click scrolls the camera list (`on` or `off`).
 pub const ADDRESS_JUMP_KEY: &str = "observation.address-jump";
-/// File name of an exported scene.
+/// File name of an exported scene whose name leaves nothing to use (see
+/// [`export_name`]).
 pub const EXPORT_NAME: &str = "observation-scene.json";
 /// What an exported scene is, and what the import dialog offers.
 pub const SCENE_MIME: &str = "application/json";
@@ -36,15 +35,19 @@ pub enum SaveState {
     Failed(SaveFailure),
 }
 
-/// Writes the scene to storage at most once per [`AUTOSAVE_INTERVAL`], and
-/// only when its JSON differs from what was last stored.
+/// Writes the open scene to storage at most once per [`AUTOSAVE_INTERVAL`],
+/// and only when its JSON differs from what was last stored.
 #[derive(Debug, Default)]
 pub struct Autosaver {
-    /// The JSON last stored; a refused write leaves it alone, so the next
-    /// check tries again.
+    /// The JSON last stored for the open scene; a refused write leaves it
+    /// alone, so the next check tries again.
     last_saved: String,
     timer: f32,
     status: SaveState,
+    /// Nothing is written: the open scene's key holds a scene that could not
+    /// be read (and no other could be opened), or the list of scenes is in
+    /// a newer format. Opening or starting a scene ends it.
+    paused: bool,
 }
 
 impl Autosaver {
@@ -64,74 +67,90 @@ impl Autosaver {
         true
     }
 
-    /// Stores `json` under [`STORAGE_KEY`] unless it is what was last
-    /// stored, recording the outcome; `now` is seconds since start-up.
-    pub fn save(&mut self, json: String, now: f64, store: &dyn KeyValueStore) {
-        if json == self.last_saved {
-            return;
+    /// Stores `json` under `key` unless it is what was last stored or the
+    /// autosave is paused, recording the outcome; `now` is seconds since
+    /// start-up. `Ok(true)` when it was written.
+    pub fn save(
+        &mut self,
+        store: &dyn KeyValueStore,
+        key: &str,
+        json: String,
+        now: f64,
+    ) -> Result<bool, SaveFailure> {
+        if self.paused || json == self.last_saved {
+            return Ok(false);
         }
-        match store.set(STORAGE_KEY, &json) {
+        match store.set(key, &json) {
             Ok(()) => {
                 self.status = SaveState::Saved(now);
                 self.last_saved = json;
+                Ok(true)
             }
-            Err(why) => self.status = SaveState::Failed(why),
+            Err(why) => {
+                self.status = SaveState::Failed(why);
+                Err(why)
+            }
         }
+    }
+
+    /// Another scene was opened: `stored` is what its key holds (empty if
+    /// nothing), so the autosave writes it only once it changes. Ends a
+    /// pause.
+    pub fn opened(&mut self, stored: String, now: f64) {
+        self.last_saved = stored;
+        self.paused = false;
+        self.status = SaveState::Saved(now);
+    }
+
+    /// Stops writing until another scene is opened.
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
     }
 }
 
-/// What start-up finds in storage.
+/// A download file name for a scene: its name with anything a file system
+/// might object to replaced, then `.json`; [`EXPORT_NAME`] if nothing is left.
+pub fn export_name(scene: &str) -> String {
+    let stem: String = scene
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = stem.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if stem.is_empty() {
+        EXPORT_NAME.to_owned()
+    } else {
+        format!("{stem}.json")
+    }
+}
+
+/// What start-up finds under the open scene's key.
 #[derive(Debug)]
 pub enum RestoreOutcome {
     /// An autosaved scene.
     Saved(Box<SceneFile>),
     /// Stored text that is not a scene this build reads, and why.
     Unreadable(String),
-    /// Nothing stored (or storage could not be read): a first visit.
-    FirstVisit,
+    /// Nothing stored (or storage could not be read).
+    Nothing,
 }
 
 impl RestoreOutcome {
-    /// Reads the autosave from `store`.
-    pub fn read(store: &dyn KeyValueStore) -> Self {
-        match store.get(STORAGE_KEY).map(|s| SceneFile::from_json(&s)) {
+    /// Reads the scene stored under `key`.
+    pub fn read(store: &dyn KeyValueStore, key: &str) -> Self {
+        match store.get(key).map(|s| SceneFile::from_json(&s)) {
             Some(Ok(file)) => Self::Saved(Box::new(file)),
             Some(Err(e)) => Self::Unreadable(e.to_string()),
-            None => Self::FirstVisit,
-        }
-    }
-
-    /// Puts the outcome into effect and returns the area to load: a saved
-    /// scene becomes the document and keeps its cameras over its area; an
-    /// unreadable one is reported and the demo street loads; a first visit
-    /// opens the help over the demo street. The document and the models are
-    /// written only for a saved scene.
-    pub fn apply(
-        self,
-        doc: &mut dyn Tracked<Document>,
-        models: &mut dyn Tracked<Models>,
-        panels: &mut Panels,
-        toasts: &mut Toasts,
-    ) -> LoadArea {
-        match self {
-            Self::Saved(file) => {
-                let area = file.area;
-                doc.get_mut().load_file(*file, models.get_mut());
-                LoadArea {
-                    area,
-                    keep_cameras: true,
-                }
-            }
-            Self::Unreadable(e) => {
-                toasts.error_sticky(format!(
-                    "Your saved scene could not be restored: {e}. Starting with the demo street instead"
-                ));
-                LoadArea::demo()
-            }
-            Self::FirstVisit => {
-                panels.help_open = true;
-                LoadArea::demo()
-            }
+            None => Self::Nothing,
         }
     }
 }
@@ -139,25 +158,15 @@ impl RestoreOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{Counting, MemoryStore, StoreOp};
-    use crate::toasts::ToastKind;
-    use observation_core::camera::Catalog;
-    use observation_core::geo::BBox;
-    use observation_core::scene::AreaRef;
-
-    fn area() -> AreaRef {
-        AreaRef::Osm {
-            bbox: BBox {
-                south: 51.5,
-                west: -0.125,
-                north: 51.5015,
-                east: -0.1225,
-            },
-        }
-    }
+    use crate::testing::{MemoryStore, StoreOp};
 
     fn set(json: &str) -> StoreOp {
         StoreOp::Set(STORAGE_KEY.to_owned(), json.to_owned())
+    }
+
+    fn save(saver: &mut Autosaver, json: &str, now: f64, store: &MemoryStore) {
+        // The outcome is in the status; tests check that.
+        let _ = saver.save(store, STORAGE_KEY, json.to_owned(), now);
     }
 
     #[test]
@@ -186,8 +195,14 @@ mod tests {
         let mut saver = Autosaver::default();
         assert_eq!(saver.status(), SaveState::Pending);
 
-        saver.save("a".to_owned(), 2.0, &store);
-        saver.save("a".to_owned(), 3.0, &store);
+        assert_eq!(
+            saver.save(&store, STORAGE_KEY, "a".to_owned(), 2.0),
+            Ok(true)
+        );
+        assert_eq!(
+            saver.save(&store, STORAGE_KEY, "a".to_owned(), 3.0),
+            Ok(false)
+        );
         assert_eq!(store.take_ops(), [set("a")]);
         assert_eq!(
             saver.status(),
@@ -195,7 +210,7 @@ mod tests {
             "stamped at the write"
         );
 
-        saver.save("b".to_owned(), 4.0, &store);
+        save(&mut saver, "b", 4.0, &store);
         assert_eq!(store.take_ops(), [set("b")]);
         assert_eq!(saver.status(), SaveState::Saved(4.0));
     }
@@ -204,107 +219,72 @@ mod tests {
     fn a_refused_write_is_tried_again_and_reported_until_it_is_stored() {
         let store = MemoryStore::default();
         let mut saver = Autosaver::default();
-        saver.save("a".to_owned(), 1.0, &store);
+        save(&mut saver, "a", 1.0, &store);
         store.take_ops();
 
         store.refuse_writes(Some(SaveFailure::Blocked));
         let refused = StoreOp::Refused(STORAGE_KEY.to_owned(), "b".to_owned());
-        saver.save("b".to_owned(), 2.0, &store);
+        assert_eq!(
+            saver.save(&store, STORAGE_KEY, "b".to_owned(), 2.0),
+            Err(SaveFailure::Blocked)
+        );
         assert_eq!(saver.status(), SaveState::Failed(SaveFailure::Blocked));
-        saver.save("b".to_owned(), 3.0, &store);
+        save(&mut saver, "b", 3.0, &store);
         assert_eq!(store.take_ops(), [refused.clone(), refused]);
 
         store.refuse_writes(None);
-        saver.save("b".to_owned(), 4.0, &store);
-        saver.save("b".to_owned(), 5.0, &store);
+        save(&mut saver, "b", 4.0, &store);
+        save(&mut saver, "b", 5.0, &store);
         assert_eq!(store.take_ops(), [set("b")]);
         assert_eq!(saver.status(), SaveState::Saved(4.0));
         assert_eq!(store.get(STORAGE_KEY).as_deref(), Some("b"));
     }
 
-    struct Restored {
-        load: LoadArea,
-        doc: Counting<Document>,
-        models: Counting<Models>,
-        panels: Panels,
-        toasts: Toasts,
-    }
+    #[test]
+    fn a_paused_autosave_writes_nothing_until_a_scene_is_opened() {
+        let store = MemoryStore::default();
+        let mut saver = Autosaver::default();
+        saver.pause();
+        assert!(saver.is_paused());
+        save(&mut saver, "a", 1.0, &store);
+        assert_eq!(store.take_ops(), []);
+        assert_eq!(saver.status(), SaveState::Pending);
 
-    fn restore(store: &MemoryStore) -> Restored {
-        let mut doc = Counting::new(Document::default());
-        let mut models = Counting::new(Models::new(Catalog::default()));
-        let mut panels = Panels::default();
-        let mut toasts = Toasts::default();
-        let load =
-            RestoreOutcome::read(store).apply(&mut doc, &mut models, &mut panels, &mut toasts);
-        Restored {
-            load,
-            doc,
-            models,
-            panels,
-            toasts,
-        }
+        // Opening a scene ends the pause, and what its key holds already
+        // is not written again.
+        saver.opened("a".to_owned(), 2.0);
+        assert!(!saver.is_paused());
+        assert_eq!(saver.status(), SaveState::Saved(2.0));
+        save(&mut saver, "a", 3.0, &store);
+        assert_eq!(store.take_ops(), []);
+        save(&mut saver, "b", 4.0, &store);
+        assert_eq!(store.take_ops(), [set("b")]);
     }
 
     #[test]
-    fn a_saved_scene_becomes_the_document_and_loads_its_area_with_its_cameras() {
-        let file = SceneFile::new(area(), Document::default().origin);
-        let store = MemoryStore::default();
-        store.set(STORAGE_KEY, &file.to_json()).expect("stored");
-        let r = restore(&store);
+    fn export_names_follow_the_scene_name() {
+        assert_eq!(export_name("Front of house"), "Front of house.json");
         assert_eq!(
-            r.load,
-            LoadArea {
-                area: area(),
-                keep_cameras: true
-            }
+            export_name("12/14 High St: rear"),
+            "12-14 High St- rear.json"
         );
-        assert_eq!(r.doc.value.area, Some(area()));
-        assert_eq!((r.doc.writes, r.models.writes), (1, 1));
-        assert!(!r.panels.help_open);
-        assert_eq!(r.toasts.iter().count(), 0);
+        assert_eq!(export_name("  ..hidden.. "), "hidden.json");
+        assert_eq!(export_name(""), EXPORT_NAME);
+        assert_eq!(export_name(" . "), EXPORT_NAME);
     }
 
     #[test]
-    fn unreadable_text_is_reported_and_the_demo_street_loads() {
+    fn storage_that_cannot_be_read_restores_nothing() {
         let store = MemoryStore::default();
         store.set(STORAGE_KEY, "{not json").expect("stored");
-        let r = restore(&store);
-        assert_eq!(r.load, LoadArea::demo());
-        assert_eq!((r.doc.writes, r.models.writes), (0, 0));
-        assert!(!r.panels.help_open);
-        let toasts: Vec<_> = r
-            .toasts
-            .iter()
-            .map(|t| (t.kind, t.ttl.is_infinite()))
-            .collect();
-        assert_eq!(toasts, [(ToastKind::Error, true)]);
-        let text = &r.toasts.iter().next().expect("one toast").text;
-        assert!(
-            text.starts_with("Your saved scene could not be restored: ")
-                && text.ends_with(". Starting with the demo street instead"),
-            "{text}"
-        );
-    }
-
-    #[test]
-    fn a_first_visit_opens_the_help_over_the_demo_street() {
-        let store = MemoryStore::default();
-        let r = restore(&store);
-        assert_eq!(r.load, LoadArea::demo());
-        assert_eq!((r.doc.writes, r.models.writes), (0, 0));
-        assert!(r.panels.help_open);
-        assert_eq!(r.toasts.iter().count(), 0);
-    }
-
-    #[test]
-    fn storage_that_cannot_be_read_counts_as_a_first_visit() {
-        let store = MemoryStore::default();
-        store.set(STORAGE_KEY, "{not json").expect("stored");
+        assert!(matches!(
+            RestoreOutcome::read(&store, STORAGE_KEY),
+            RestoreOutcome::Unreadable(_)
+        ));
         store.block_reads(true);
         assert!(matches!(
-            RestoreOutcome::read(&store),
-            RestoreOutcome::FirstVisit
+            RestoreOutcome::read(&store, STORAGE_KEY),
+            RestoreOutcome::Nothing
         ));
     }
 }

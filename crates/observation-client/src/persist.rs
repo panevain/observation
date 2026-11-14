@@ -1,22 +1,29 @@
-//! Autosave to `localStorage`, and JSON scene import/export.
+//! Autosave to `localStorage`, one scene at a time (see
+//! [`observation_client_model::scenes`]), and JSON scene import/export.
 
-use crate::platform::{KeyValueStore, Platform};
+use crate::history::History;
+use crate::platform::{KeyValueStore, PickedFile, Platform};
 use crate::state::{
-    AddressJump, Editor, LoadArea, Models, Panels, Scene, Toasts, TrackModels, TrackScene,
+    AddressJump, DataChangeNotice, Editor, LoadArea, Loading, Models, Panels, Scene, Toasts,
+    TrackModels, TrackScene,
 };
 use crate::theme::UiFont;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_client_model::persist::{
-    ADDRESS_JUMP_KEY, Autosaver, EXPORT_NAME, FONT_KEY, RestoreOutcome, SCENE_ACCEPT, SCENE_MIME,
+    ADDRESS_JUMP_KEY, Autosaver, FONT_KEY, SCENE_ACCEPT, SCENE_MIME, export_name,
 };
-use observation_core::scene::SceneFile;
+use observation_client_model::scenes::{self, SceneAction, SceneCtx};
+use observation_client_model::slots::Slots;
 
 #[derive(Resource)]
 pub struct Persist {
-    /// The text of a picked file, or why it could not be read.
-    import_tx: Sender<Result<String, String>>,
-    import_rx: Receiver<Result<String, String>>,
+    /// A picked file, or why it could not be read.
+    import_tx: Sender<Result<PickedFile, String>>,
+    import_rx: Receiver<Result<PickedFile, String>>,
+    /// Picked files waiting for an area load to finish.
+    pending: Vec<PickedFile>,
 }
 
 impl Default for Persist {
@@ -25,19 +32,26 @@ impl Default for Persist {
         Self {
             import_tx,
             import_rx,
+            pending: Vec::new(),
         }
     }
 }
 
-/// The scene's autosave and how its last write went, as a resource.
+/// The open scene's autosave and how its last write went, as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
 pub struct Autosave(Autosaver);
 
+/// The scenes saved in this browser as this tab knows them, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct SceneSlots(Slots);
+
 /// Requests from the UI.
-#[derive(Debug, Clone, Copy, Message)]
+#[derive(Debug, Clone, Message)]
 pub enum PersistAction {
     Export,
     Import,
+    /// A change from the Scenes dialog.
+    Scene(SceneAction),
 }
 
 pub struct PersistPlugin;
@@ -46,6 +60,7 @@ impl Plugin for PersistPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Persist>()
             .init_resource::<Autosave>()
+            .init_resource::<SceneSlots>()
             .add_message::<PersistAction>()
             .add_systems(Startup, restore)
             .add_systems(
@@ -55,8 +70,10 @@ impl Plugin for PersistPlugin {
                     handle_actions
                         .after(crate::history::record)
                         .after(crate::input::PointerSet),
-                    receive_imports,
-                    autosave,
+                    open_scenes,
+                    // After a switch: the scene just opened is not written
+                    // back, and the one left was written by the switch.
+                    autosave.after(open_scenes),
                     save_font.run_if(resource_changed::<UiFont>),
                     save_address_jump.run_if(resource_changed::<AddressJump>),
                 ),
@@ -98,16 +115,21 @@ fn save_address_jump(jump: Res<AddressJump>, platform: Res<Platform>) {
     }
 }
 
-/// Loads the autosaved scene, or the demo street on first run.
+/// Restores the scene open last, or the demo street on a first visit.
 fn restore(
     mut scene: ResMut<Scene>,
     mut models: ResMut<Models>,
+    mut slots: ResMut<SceneSlots>,
+    mut saver: ResMut<Autosave>,
     mut load: MessageWriter<LoadArea>,
     mut panels: ResMut<Panels>,
     mut toasts: ResMut<Toasts>,
     platform: Res<Platform>,
 ) {
-    let area = RestoreOutcome::read(&*platform.local).apply(
+    let area = scenes::restore(
+        &*platform.local,
+        &mut slots,
+        &mut saver,
         &mut TrackScene(&mut scene),
         &mut TrackModels(&mut models),
         &mut panels,
@@ -121,6 +143,7 @@ fn autosave(
     real: Res<Time<Real>>,
     scene: Res<Scene>,
     models: Res<Models>,
+    mut slots: ResMut<SceneSlots>,
     mut saver: ResMut<Autosave>,
     platform: Res<Platform>,
 ) {
@@ -130,7 +153,14 @@ fn autosave(
     let Some(file) = scene.to_file(&models) else {
         return;
     };
-    saver.save(file.to_json(), real.elapsed_secs_f64(), &*platform.local);
+    // A refusal is in the status bar; the next check tries again.
+    let _ = scenes::autosave(
+        &*platform.local,
+        &mut slots,
+        &mut saver,
+        file.to_json(),
+        real.elapsed_secs_f64(),
+    );
 }
 
 fn handle_actions(
@@ -138,6 +168,7 @@ fn handle_actions(
     p: Res<Persist>,
     scene: Res<Scene>,
     models: Res<Models>,
+    slots: Res<SceneSlots>,
     mut toasts: ResMut<Toasts>,
     platform: Res<Platform>,
 ) {
@@ -145,11 +176,8 @@ fn handle_actions(
         match a {
             PersistAction::Export => match scene.to_file(&models) {
                 Some(file) => {
-                    if let Err(e) =
-                        platform
-                            .files
-                            .download(EXPORT_NAME, SCENE_MIME, &file.to_json())
-                    {
+                    let name = export_name(slots.index.active_name());
+                    if let Err(e) = platform.files.download(&name, SCENE_MIME, &file.to_json()) {
                         toasts.error(format!("Could not export the scene: {e}"));
                     }
                 }
@@ -165,37 +193,76 @@ fn handle_actions(
                     }),
                 );
             }
+            // `open_scenes` carries these out.
+            PersistAction::Scene(_) => {}
         }
     }
 }
 
-pub fn receive_imports(
-    p: Res<Persist>,
-    mut scene: ResMut<Scene>,
-    mut models: ResMut<Models>,
-    mut editor: ResMut<Editor>,
-    mut toasts: ResMut<Toasts>,
+/// What opening a scene changes, for [`open_scenes`].
+#[derive(SystemParam)]
+pub struct OpenScenes<'w> {
+    p: ResMut<'w, Persist>,
+    slots: ResMut<'w, SceneSlots>,
+    saver: ResMut<'w, Autosave>,
+    scene: ResMut<'w, Scene>,
+    models: ResMut<'w, Models>,
+    editor: ResMut<'w, Editor>,
+    history: ResMut<'w, History>,
+    notice: ResMut<'w, DataChangeNotice>,
+    toasts: ResMut<'w, Toasts>,
+    loading: Res<'w, Loading>,
+    real: Res<'w, Time<Real>>,
+    platform: Res<'w, Platform>,
+}
+
+/// Carries out the Scenes dialog's requests and imports picked files, each
+/// as a scene of its own; files picked while an area loads wait for it.
+pub fn open_scenes(
+    mut actions: MessageReader<PersistAction>,
+    mut d: OpenScenes,
     mut load: MessageWriter<LoadArea>,
 ) {
-    for picked in p.import_rx.try_iter() {
-        let text = match picked {
-            Ok(text) => text,
-            Err(e) => {
-                toasts.error_sticky(format!("Import failed: could not read the file: {e}"));
-                continue;
-            }
-        };
-        match SceneFile::from_json(&text) {
-            Ok(file) => {
-                let area = file.area;
-                let n = file.cameras.len();
-                scene.load_file(file, &mut models);
-                editor.selected = None;
-                load.write(LoadArea::new(area, true));
-                toasts.info(format!("Imported scene with {n} camera(s)"));
-            }
-            Err(e) => toasts.error_sticky(format!("Import failed: {e}")),
+    for picked in d.p.import_rx.try_iter().collect::<Vec<_>>() {
+        match picked {
+            Ok(file) => d.p.pending.push(file),
+            Err(e) => d
+                .toasts
+                .error_sticky(format!("Import failed: could not read the file: {e}")),
         }
+    }
+    let scene_actions: Vec<SceneAction> = actions
+        .read()
+        .filter_map(|a| match a {
+            PersistAction::Scene(action) => Some(action.clone()),
+            PersistAction::Export | PersistAction::Import => None,
+        })
+        .collect();
+    if scene_actions.is_empty() && d.p.pending.is_empty() {
+        return;
+    }
+    let mut ctx = SceneCtx {
+        store: &*d.platform.local,
+        slots: &mut d.slots,
+        saver: &mut d.saver,
+        doc: &mut TrackScene(&mut d.scene),
+        models: &mut TrackModels(&mut d.models),
+        editor: &mut d.editor,
+        history: &mut d.history,
+        notice: &mut d.notice,
+        toasts: &mut d.toasts,
+        loading: d.loading.area().is_some(),
+        now: d.real.elapsed_secs_f64(),
+    };
+    for action in scene_actions {
+        if let Some(area) = ctx.apply(action) {
+            load.write(area.into());
+            // The new area request holds back what follows in this frame.
+            ctx.loading = true;
+        }
+    }
+    if let Some(area) = ctx.import_pending(&mut d.p.pending) {
+        load.write(area.into());
     }
 }
 

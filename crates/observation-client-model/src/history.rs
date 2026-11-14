@@ -40,6 +40,13 @@ pub struct History {
 }
 
 impl History {
+    /// Forgets every step: another scene was opened, and the steps recorded
+    /// were edits of the one left. The next settled document is the first
+    /// step of the new history.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

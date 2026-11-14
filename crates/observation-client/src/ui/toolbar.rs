@@ -9,8 +9,12 @@ use crate::state::{LoadArea, Tool};
 use crate::theme::{Tokens, UiFont, strong_family};
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Layout, RichText, vec2};
+use observation_client_model::scenes::SceneAction;
 use observation_client_model::vm::{HistoryVm, SaveVm, StatusVm};
 use observation_core::scene::AreaRef;
+
+/// Characters of the open scene's name shown in the top bar.
+const SCENE_NAME_CHARS: usize = 18;
 
 pub fn top_bar(
     ui: &mut egui::Ui,
@@ -104,10 +108,26 @@ pub fn top_bar(
             }
             if ui
                 .add(secondary(&t, "Import"))
-                .on_hover_text("Open a scene JSON file")
+                .on_hover_text("Open a scene JSON file as a new scene")
                 .clicked()
             {
                 persist.write(PersistAction::Import);
+            }
+            let name = d.slots.index.active_name();
+            let label = format!(
+                "{} {}",
+                icons::FOLDERS,
+                super::scenes::short_name(name, SCENE_NAME_CHARS)
+            );
+            if ui
+                .add(secondary(&t, &label))
+                .on_hover_text(format!("Scenes saved in this browser (open: {name})"))
+                .clicked()
+            {
+                d.panels.scenes_open = !d.panels.scenes_open;
+                if d.panels.scenes_open {
+                    persist.write(PersistAction::Scene(SceneAction::Refresh));
+                }
             }
         });
     });

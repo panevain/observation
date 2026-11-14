@@ -212,6 +212,8 @@ pub struct Panels {
     pub help_open: bool,
     /// The local map-data regions dialog.
     pub regions_open: bool,
+    /// The Scenes dialog (the scenes saved in this browser).
+    pub scenes_open: bool,
     pub custom_model_open: bool,
     pub inspector_tab: InspectorTab,
     /// The selection the inspector last saw, so it can open the Camera tab
@@ -228,6 +230,7 @@ impl Default for Panels {
             map_open: false,
             help_open: false,
             regions_open: false,
+            scenes_open: false,
             custom_model_open: false,
             inspector_tab: InspectorTab::Cameras,
             inspector_seen: None,
@@ -367,7 +370,9 @@ mod tests {
     fn panels_start_with_both_overlays_shown_and_the_camera_list() {
         let p = Panels::default();
         assert!(p.show_facades && p.show_frustums);
-        assert!(!(p.map_open || p.help_open || p.regions_open || p.custom_model_open));
+        assert!(
+            !(p.map_open || p.help_open || p.regions_open || p.scenes_open || p.custom_model_open)
+        );
         assert_eq!(
             (p.overlay, p.inspector_tab, p.inspector_seen),
             (OverlayMode::Overlap, InspectorTab::Cameras, None)

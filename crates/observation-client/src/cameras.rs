@@ -76,7 +76,7 @@ impl Plugin for CamerasPlugin {
                 (
                     sync_bodies
                         .after(crate::input::keyboard)
-                        .after(crate::persist::receive_imports)
+                        .after(crate::persist::open_scenes)
                         .before(crate::world::AreaLoadSet),
                     draw_frustums
                         .after(crate::history::record)

@@ -231,6 +231,27 @@ impl Document {
         self.touch();
     }
 
+    /// An empty scene on the current area (no cameras, region or custom
+    /// models, default settings), or `None` before an area has loaded.
+    pub fn blank_file(&self) -> Option<SceneFile> {
+        let mut file = SceneFile::new(self.area?, self.origin);
+        file.provenance = self.provenance.clone();
+        Some(file)
+    }
+
+    /// Empties the document, keeping the area it is on: what
+    /// [`Self::blank_file`] describes.
+    pub fn clear_document(&mut self, models: &mut Models) {
+        self.cameras.clear();
+        self.params = CoverageParams::default();
+        self.region = None;
+        self.on_flat_ground = false;
+        self.saved_provenance = None;
+        self.next_id = 1;
+        models.custom.clear();
+        self.touch();
+    }
+
     /// Records the provenance of an area that just loaded, and when it
     /// brings back a restored or imported scene (`kept`), how its map data
     /// changed since that scene was saved.
@@ -347,6 +368,42 @@ mod tests {
         assert_eq!(scene.provenance, Some(on_screen.clone()));
         // When the reload arrives, the file is checked against it.
         assert!(scene.area_loaded(on_screen, true).is_some());
+    }
+
+    fn camera() -> CameraPlacement {
+        CameraPlacement {
+            id: 0,
+            label: "Porch".to_owned(),
+            model_id: "m".to_owned(),
+            position: [0.0, 3.0, 0.0],
+            yaw_deg: 0.0,
+            pitch_deg: 0.0,
+            roll_deg: 0.0,
+            color: None,
+            enabled: true,
+            group: None,
+        }
+    }
+
+    #[test]
+    fn a_cleared_document_is_its_blank_file() {
+        let mut models = Models::new(Catalog::default());
+        let mut scene = Document::default();
+        assert!(scene.blank_file().is_none(), "no area yet");
+        let mut f = file(Some(provenance("00000000000000aa", 0)));
+        f.cameras.push(CameraPlacement { id: 7, ..camera() });
+        scene.load_file(f, &mut models);
+        let blank = scene.blank_file().expect("an area is set");
+        assert!(blank.cameras.is_empty());
+        let revision = scene.revision;
+        scene.clear_document(&mut models);
+        assert_ne!(scene.revision, revision, "a change for autosave");
+        assert_eq!(
+            scene.to_file(&models).map(|f| f.to_json()),
+            Some(blank.to_json())
+        );
+        assert_eq!(scene.saved_provenance, None);
+        assert_eq!(scene.add_camera(camera()), 1, "ids start again");
     }
 
     #[test]

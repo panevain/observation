@@ -27,6 +27,7 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use observation_client_model::document::Snapshot;
 use observation_client_model::persist::{ADDRESS_JUMP_KEY, FONT_KEY, STORAGE_KEY, SaveState};
+use observation_client_model::slots::{INDEX_KEY, slot_key};
 use observation_client_model::testing::{
     FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore, StoreOp,
 };
@@ -299,6 +300,9 @@ fn harness(stored: Option<&str>) -> Harness {
             250,
         )))
         .add_message::<LoadArea>()
+        // Opening a scene clears the history and waits for an area load.
+        .init_resource::<crate::history::History>()
+        .init_resource::<crate::state::Loading>()
         .add_plugins((PlatformPlugin, crate::ResourcesPlugin, PersistPlugin));
     app.update();
     Harness { app, store, files }
@@ -388,7 +392,7 @@ fn a_first_visit_opens_help_over_the_demo_street() {
 }
 
 #[test]
-fn an_unreadable_autosave_falls_back_to_the_demo_street_and_says_why() {
+fn an_unreadable_autosave_is_kept_and_the_demo_street_opens_as_a_new_scene() {
     let too_many = {
         let mut file = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
         file.cameras = (1..=257)
@@ -423,15 +427,27 @@ fn an_unreadable_autosave_falls_back_to_the_demo_street_and_says_why() {
         assert_eq!(*kind, ToastKind::Error);
         assert!(*sticky, "a lost scene is never missed");
         assert!(
-            text.starts_with("Your saved scene could not be restored: ")
-                && text.ends_with(". Starting with the demo street instead"),
+            text.starts_with("“Scene 1” could not be restored: ")
+                && text.ends_with(
+                    ". It is kept as it was (delete it under Scenes if it is of no use), and the demo street opens as a new scene"
+                ),
             "{text}"
         );
         assert!(text.contains(why), "{text}");
         assert!(!h.app.world().resource::<Panels>().help_open);
-        // The unreadable text is left alone until something replaces it,
-        // also once autosave intervals have passed.
-        h.store.take_ops();
+        // The demo street goes into a second scene, which the list opens.
+        let ops = h.store.take_ops();
+        assert_eq!(ops.len(), 2, "{ops:?}");
+        assert_eq!(
+            ops[1],
+            StoreOp::Set(
+                INDEX_KEY.to_owned(),
+                r#"{"version":1,"active":1,"slots":[{"id":0,"name":"Scene 1"},{"id":1,"name":"Scene 2"}]}"#
+                    .to_owned()
+            )
+        );
+        // The unreadable text is never written over, also once autosave
+        // intervals have passed.
         h.frames(2 * INTERVAL_FRAMES);
         assert_eq!(h.store.ops(), []);
         assert_eq!(h.store.get(STORAGE_KEY).as_deref(), Some(stored));
@@ -439,7 +455,7 @@ fn an_unreadable_autosave_falls_back_to_the_demo_street_and_says_why() {
 }
 
 #[test]
-fn export_downloads_the_autosave_json() {
+fn export_downloads_the_autosave_json_named_after_the_scene() {
     let golden = golden_autosave();
     let mut h = harness(Some(&golden));
     h.app.world_mut().write_message(PersistAction::Export);
@@ -447,7 +463,7 @@ fn export_downloads_the_autosave_json() {
     assert_eq!(
         h.files.downloads(),
         [(
-            "observation-scene.json".to_owned(),
+            "Scene 1.json".to_owned(),
             "application/json".to_owned(),
             golden
         )]
@@ -471,7 +487,7 @@ fn export_before_an_area_says_there_is_nothing_yet() {
 }
 
 #[test]
-fn import_replaces_the_document_and_loads_its_area() {
+fn import_adds_a_scene_named_after_the_file_and_loads_its_area() {
     let golden = golden_autosave();
     let mut h = harness(None);
     h.loads();
@@ -485,13 +501,14 @@ fn import_replaces_the_document_and_loads_its_area() {
         h.toasts(),
         [(
             ToastKind::Info,
-            "Imported scene with 3 camera(s)".to_owned(),
+            "Imported “scene” with 3 camera(s) as a new scene".to_owned(),
             false
         )]
     );
     assert_eq!(h.saved_json().as_deref(), Some(golden.as_str()));
     h.run_past_autosave();
-    assert_eq!(h.store.get(STORAGE_KEY).as_deref(), Some(golden.as_str()));
+    assert_eq!(h.store.get(&slot_key(1)).as_deref(), Some(golden.as_str()));
+    assert_eq!(h.store.get(STORAGE_KEY), None, "the first scene is kept");
 }
 
 #[test]
@@ -631,8 +648,13 @@ fn a_first_visit_and_an_import_write_exactly_what_they_should() {
         None,
         "an import clears the selection"
     );
+    // Written once, as a scene of its own, and then left alone.
+    let ops = h.store.take_ops();
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert_eq!(ops[0], StoreOp::Set(slot_key(1), golden));
+    assert!(matches!(&ops[1], StoreOp::Set(key, _) if key == INDEX_KEY));
     h.frames(2 * INTERVAL_FRAMES);
-    assert_eq!(h.store.take_ops(), [autosaved(&golden)]);
+    assert_eq!(h.store.ops(), []);
 }
 
 #[test]
