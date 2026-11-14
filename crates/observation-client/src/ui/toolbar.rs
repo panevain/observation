@@ -175,7 +175,7 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
             )
             .on_hover_text(tip);
             if resp.clicked() {
-                d.editor.tool = tool;
+                d.editor.set_tool(tool);
             }
         }
         ui.add_space(t.space.md);

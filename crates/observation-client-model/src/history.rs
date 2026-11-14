@@ -1,5 +1,5 @@
 //! Undo and redo for the whole document: cameras, analysis settings, the
-//! region, custom models and the loaded area.
+//! areas and targets, custom models and the loaded area.
 //!
 //! Edits are recorded as snapshots once they settle: the client says when an
 //! edit is in progress (a drag, a held key, a focused text field, an area in
@@ -155,6 +155,7 @@ impl History {
         if editor.selected.is_none() && editor.tool.needs_selection() {
             editor.tool = Tool::Select;
         }
+        editor.forget_missing_places(doc);
         self.last = Some(target);
         self.last_revision = doc.revision;
         Some(StepOutcome { reload })
@@ -172,7 +173,9 @@ fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
         return Some(format!("New area loaded; {lost} camera(s) removed"));
     }
     match lost {
-        0 => deleted_model(before, after).map(|m| format!("Deleted model {}", m.display_name())),
+        0 => deleted_model(before, after)
+            .map(|m| format!("Deleted model {}", m.display_name()))
+            .or_else(|| deleted_place(before, after)),
         1 => before
             .cameras
             .iter()
@@ -212,6 +215,31 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
     b.get(i).filter(|_| b.get(i + 1..) == a.get(i..))
 }
 
+/// The area or target a step deleted, described, when that is all it did
+/// to them (as the Places tab does; loading another area clears them along
+/// with the cameras, which the caller reports).
+fn deleted_place(before: &Snapshot, after: &Snapshot) -> Option<String> {
+    if before.area != after.area {
+        return None;
+    }
+    let gone_areas: Vec<_> = before
+        .areas
+        .iter()
+        .filter(|a| !after.areas.iter().any(|b| b.id == a.id))
+        .collect();
+    let gone_targets: Vec<_> = before
+        .targets
+        .iter()
+        .filter(|t| !after.targets.iter().any(|b| b.id == t.id))
+        .collect();
+    match (gone_areas.as_slice(), gone_targets.as_slice()) {
+        ([], []) => None,
+        ([a], []) => Some(format!("Deleted {}", crate::places::area_title(a))),
+        ([], [t]) => Some(format!("Deleted {}", crate::places::target_title(t))),
+        (a, t) => Some(format!("{} areas and {} targets removed", a.len(), t.len())),
+    }
+}
+
 /// A short name for the change from `before` to `after`.
 fn describe(before: &Snapshot, after: &Snapshot) -> String {
     if before.area != after.area {
@@ -241,7 +269,7 @@ fn describe(before: &Snapshot, after: &Snapshot) -> String {
     match changed.as_slice() {
         [c] => format!("edit {}", c.label),
         [] if before.areas != after.areas || before.limit_figures_to != after.limit_figures_to => {
-            "region change".to_owned()
+            "drawn areas".to_owned()
         }
         [] if before.targets != after.targets => "target change".to_owned(),
         [] if before.params != after.params => "analysis settings".to_owned(),
@@ -520,7 +548,7 @@ mod tests {
         }));
         f.doc.touch();
         f.observe(false);
-        assert_eq!(f.history.undo_label().as_deref(), Some("region change"));
+        assert_eq!(f.history.undo_label().as_deref(), Some("drawn areas"));
         f.doc.params.subject_height_m += 0.5;
         f.doc.touch();
         f.observe(false);

@@ -9,7 +9,8 @@ use observation_core::coverage::{CoverageParams, CoverageStats};
 #[derive(Debug, Clone, PartialEq)]
 pub struct CoverageSummaryVm {
     pub title: &'static str,
-    /// Whether the region menu shows the region as active.
+    /// Whether the figures are limited to an area (the Limit menu shows it
+    /// as active).
     pub in_region: bool,
     /// The headline figures and the area line; `None` with no cameras.
     pub figures: Option<Figures>,
@@ -60,7 +61,7 @@ impl CoverageSummaryVm {
         });
         Self {
             title: if in_region {
-                "Coverage inside region"
+                "Coverage inside area"
             } else {
                 "Coverage"
             },
@@ -204,7 +205,7 @@ mod tests {
             enabled: true,
         }));
         let vm = CoverageSummaryVm::new(&doc, &CoverageState::default());
-        assert_eq!((vm.title, vm.in_region), ("Coverage inside region", true));
+        assert_eq!((vm.title, vm.in_region), ("Coverage inside area", true));
         doc.region_mut().expect("a region").enabled = false;
         let vm = CoverageSummaryVm::new(&doc, &CoverageState::default());
         assert_eq!((vm.title, vm.in_region), ("Coverage", false));
