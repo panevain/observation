@@ -5,6 +5,7 @@ use observation_agent_api::{
     BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, EndReason, IDLE_TIMEOUT_SECS,
     MAX_FAILED_CLAIMS, MAX_PAIRINGS, PairingPhase, SharedState, TOKEN_HEX_LEN,
 };
+use observation_core::scene::changes::Change;
 use serde_json::json;
 
 use super::*;
@@ -348,4 +349,154 @@ async fn ending_everything_tells_every_follower() {
     bridge.end_all(EndReason::Shutdown);
     assert_eq!(stream.signal.borrow().ended, Some(EndReason::Shutdown));
     assert!(bridge.is_empty());
+}
+
+fn changes(new: u32) -> ChangeSet {
+    ChangeSet {
+        changes: vec![Change::LimitFiguresTo {
+            base: None,
+            new: Some(new),
+        }],
+    }
+}
+
+fn statuses(view: &StateView) -> Vec<(u64, ProposalStatus)> {
+    view.proposals.iter().map(|o| (o.id, o.status)).collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_new_proposal_supersedes_the_pending_one_and_wakes_the_poll() {
+    let (bridge, _browser, agent, stream) = claimed();
+    let poll = {
+        let (bridge, agent) = (Arc::clone(&bridge), agent.clone());
+        tokio::spawn(async move {
+            bridge
+                .read_state(&agent, Some(0), Duration::from_secs(25))
+                .await
+        })
+    };
+    advance(1).await;
+    assert_eq!(bridge.propose(&agent, "first".into(), 0, changes(1)), Ok(1));
+    let view = poll.await.unwrap().unwrap();
+    assert_eq!(view.revision, 1);
+    assert_eq!(statuses(&view), [(1, ProposalStatus::Pending)]);
+    assert_eq!(
+        stream.signal.borrow().proposal.as_ref().map(|p| p.id),
+        Some(1)
+    );
+
+    assert_eq!(
+        bridge.propose(&agent, "second".into(), 1, changes(2)),
+        Ok(2)
+    );
+    let view = bridge
+        .read_state(&agent, Some(1), Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(
+        statuses(&view),
+        [
+            (1, ProposalStatus::Superseded),
+            (2, ProposalStatus::Pending)
+        ]
+    );
+    let pending = stream.signal.borrow().proposal.clone().unwrap();
+    assert_eq!((pending.id, pending.summary.as_str()), (2, "second"));
+    // The browser's token cannot propose.
+    assert_eq!(
+        bridge.propose(&_browser, "x".into(), 0, changes(3)),
+        Err(BridgeError::Unauthorized)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_users_decision_reaches_the_agent_and_is_final() {
+    let (bridge, browser, agent, stream) = claimed();
+    bridge.propose(&agent, "p".into(), 0, changes(1)).unwrap();
+    assert_eq!(
+        bridge.decide(&agent, 1, Decision::Accepted, None),
+        Err(BridgeError::Unauthorized),
+        "only the browser decides"
+    );
+    bridge
+        .decide(&browser, 1, Decision::Rejected, Some("too close".into()))
+        .unwrap();
+    assert_eq!(stream.signal.borrow().proposal, None);
+    let view = bridge
+        .read_state(&agent, None, Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(statuses(&view), [(1, ProposalStatus::Rejected)]);
+    assert_eq!(view.proposals[0].reason.as_deref(), Some("too close"));
+    assert_eq!(
+        bridge.decide(&browser, 1, Decision::Accepted, None),
+        Err(BridgeError::Decided(ProposalStatus::Rejected))
+    );
+    assert_eq!(
+        bridge.decide(&browser, 9, Decision::Accepted, None),
+        Err(BridgeError::NoSuchProposal)
+    );
+    // A proposal superseded after the user accepted it: the acceptance counts,
+    // and the newer one stays pending.
+    bridge.propose(&agent, "a".into(), 0, changes(1)).unwrap();
+    bridge.propose(&agent, "b".into(), 0, changes(2)).unwrap();
+    bridge
+        .decide(&browser, 2, Decision::Accepted, None)
+        .unwrap();
+    let view = bridge
+        .read_state(&agent, None, Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(
+        statuses(&view)[1..],
+        [(2, ProposalStatus::Accepted), (3, ProposalStatus::Pending)]
+    );
+    assert_eq!(
+        stream.signal.borrow().proposal.as_ref().map(|p| p.id),
+        Some(3)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_agent_withdraws_a_pending_proposal_only() {
+    let (bridge, browser, agent, stream) = claimed();
+    bridge.propose(&agent, "p".into(), 0, changes(1)).unwrap();
+    assert_eq!(bridge.withdraw(&agent, 1), Ok(()));
+    let s = stream.signal.borrow().clone();
+    assert_eq!((s.proposal, s.withdrawn), (None, Some(1)));
+    assert_eq!(
+        bridge.withdraw(&agent, 1),
+        Err(BridgeError::Decided(ProposalStatus::Withdrawn))
+    );
+    assert_eq!(bridge.withdraw(&agent, 7), Err(BridgeError::NoSuchProposal));
+    bridge.propose(&agent, "q".into(), 0, changes(1)).unwrap();
+    bridge.decide(&browser, 2, Decision::Stale, None).unwrap();
+    assert_eq!(
+        bridge.withdraw(&agent, 2),
+        Err(BridgeError::Decided(ProposalStatus::Stale))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn proposals_count_against_the_post_limit_and_outcomes_are_capped() {
+    let (bridge, _browser, agent, _stream) = claimed();
+    for n in 0..MAX_POSTS_PER_WINDOW {
+        bridge
+            .propose(&agent, format!("p{n}"), 0, changes(1))
+            .unwrap();
+    }
+    assert!(matches!(
+        bridge.propose(&agent, "over".into(), 0, changes(1)),
+        Err(BridgeError::TooMany(_))
+    ));
+    let view = bridge
+        .read_state(&agent, None, Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(view.proposals.len(), MAX_OUTCOMES);
+    let last = view.proposals.last().unwrap();
+    assert_eq!(
+        (last.id, last.status),
+        (MAX_POSTS_PER_WINDOW as u64, ProposalStatus::Pending)
+    );
 }

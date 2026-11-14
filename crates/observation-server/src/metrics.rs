@@ -39,7 +39,8 @@ pub const CLIENT_LIMITED: &str = "observation_client_rate_limited_total";
 /// `busy` (the geocoder limited us, or the queue for it was full).
 pub const GEOCODER: &str = "observation_geocoder_searches_total";
 /// Agent bridge pairings: `event` is `created`, `claimed`, `claim_refused`
-/// (a wrong code) or `ended`.
+/// (a wrong code) or `ended`, or for the agent's proposals `proposed` or
+/// `decided`.
 pub const AGENT_PAIRINGS: &str = "observation_agent_pairings_total";
 
 /// Latency bucket upper bounds in seconds; the request timeout is 80 s.

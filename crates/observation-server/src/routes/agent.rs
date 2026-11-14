@@ -18,8 +18,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use futures_util::stream::{self, Stream};
 use observation_agent_api::{
-    BrowserEvent, BrowserEventKind, ClaimRequest, CreatePairing, LONG_POLL_SECS, MAX_STATE_BYTES,
-    PROTOCOL_VERSION, PairingPhase, StateAccepted, StatePost, normalise_code, paths, version_ok,
+    BrowserEvent, BrowserEventKind, ClaimRequest, CreatePairing, DecisionPost, LONG_POLL_SECS,
+    MAX_PROPOSAL_BYTES, MAX_REASON_CHARS, MAX_STATE_BYTES, MAX_SUMMARY_CHARS, PROTOCOL_VERSION,
+    PairingPhase, ProposalPost, ProposalStatus, ProposalSubmitted, StateAccepted, StatePost,
+    normalise_code, paths, tidy_line, version_ok,
 };
 use serde::Deserialize;
 use tokio::sync::{OwnedSemaphorePermit, watch};
@@ -45,7 +47,11 @@ pub fn router(state: AppState) -> Router {
         .route(paths::CLAIM, post(claim))
         .route(paths::STATE, get(read_state).put(post_state))
         .route(paths::PAIRING, delete(end))
-        .layer(RequestBodyLimitLayer::new(MAX_STATE_BYTES + 4096))
+        .route(paths::PROPOSAL, post(propose).delete(withdraw))
+        .route(paths::DECISION, post(decide))
+        .layer(RequestBodyLimitLayer::new(
+            MAX_STATE_BYTES.max(MAX_PROPOSAL_BYTES) + 4096,
+        ))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             timeout,
@@ -146,6 +152,26 @@ fn refused(e: BridgeError) -> ApiError {
         BridgeError::NoRandomness => {
             ApiError::Internal("the system's random number source failed".into())
         }
+        BridgeError::NoSuchProposal => {
+            ApiError::NotFound("this connection has no proposal with that id")
+        }
+        BridgeError::Decided(status) => ApiError::Conflict(format!(
+            "that proposal is no longer pending: it is {}",
+            status_word(status)
+        )),
+    }
+}
+
+/// A proposal's status in words.
+fn status_word(status: ProposalStatus) -> &'static str {
+    match status {
+        ProposalStatus::Pending => "pending",
+        ProposalStatus::Accepted => "accepted",
+        ProposalStatus::Rejected => "rejected",
+        ProposalStatus::Stale => "stale",
+        ProposalStatus::Superseded => "superseded",
+        ProposalStatus::Withdrawn => "withdrawn",
+        ProposalStatus::Other => "decided",
     }
 }
 
@@ -282,6 +308,90 @@ async fn read_state(
     Ok(no_store(Json(view).into_response()))
 }
 
+/// `POST /api/agent/proposal` (agent): a change set for the user to decide
+/// on. The summary must say something and the change set must be well
+/// formed; whether it fits the user's scene is the browser's to judge.
+async fn propose(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let bridge = bridge(&state)?;
+    let token = token(&headers)?;
+    let post = parse::<ProposalPost>(
+        &headers,
+        &body,
+        |b| b.v,
+        r#"{"v": 1, "summary": "...", "changes": {"changes": [...]}}"#,
+    )?;
+    let summary = tidy_line(&post.summary, MAX_SUMMARY_CHARS)
+        .ok_or_else(|| ApiError::BadRequest("a proposal needs a summary of what it does".into()))?;
+    post.changes
+        .check()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let id = bridge
+        .propose(token, summary, post.base_revision, post.changes)
+        .map_err(refused)?;
+    Ok(no_store(
+        (
+            StatusCode::CREATED,
+            Json(ProposalSubmitted {
+                v: PROTOCOL_VERSION,
+                id,
+            }),
+        )
+            .into_response(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct ProposalId {
+    id: Option<u64>,
+}
+
+/// `DELETE /api/agent/proposal?id=<id>` (agent): withdraws a pending
+/// proposal. Withdrawing one already withdrawn is no error.
+async fn withdraw(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ProposalId>,
+) -> Result<Response, ApiError> {
+    let bridge = bridge(&state)?;
+    let token = token(&headers)?;
+    let id =
+        q.id.ok_or_else(|| ApiError::BadRequest("say which proposal: ?id=<id>".into()))?;
+    match bridge.withdraw(token, id) {
+        Ok(()) | Err(BridgeError::Decided(ProposalStatus::Withdrawn)) => {
+            Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+        }
+        Err(e) => Err(refused(e)),
+    }
+}
+
+/// `POST /api/agent/decision` (browser): the user's decision on a proposal.
+async fn decide(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let bridge = bridge(&state)?;
+    let token = token(&headers)?;
+    let post = parse::<DecisionPost>(
+        &headers,
+        &body,
+        |b| b.v,
+        r#"{"v": 1, "id": 1, "decision": "accepted"}"#,
+    )?;
+    let reason = post
+        .reason
+        .as_deref()
+        .and_then(|r| tidy_line(r, MAX_REASON_CHARS));
+    bridge
+        .decide(token, post.id, post.decision, reason)
+        .map_err(refused)?;
+    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
 /// `DELETE /api/agent/pairing` (either side).
 async fn end(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
     let bridge = bridge(&state)?;
@@ -295,9 +405,10 @@ struct EventsQuery {
 }
 
 /// `GET /api/agent/events?token=<browser token>` (browser): the pairing's
-/// [`BrowserEvent`]s. The first says where it stands; after an `ended`
-/// event the stream closes. Not subject to the request timeout; counts
-/// against the event-stream cap shared with `/api/regions/events`.
+/// [`BrowserEvent`]s. The first says where it stands, then the pending
+/// proposal follows if there is one; after an `ended` event the stream
+/// closes. Not subject to the request timeout; counts against the
+/// event-stream cap shared with `/api/regions/events`.
 async fn events(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -337,6 +448,8 @@ struct Follow {
     _permit: OwnedSemaphorePermit,
     /// The phase and agent last sent.
     sent: Option<(PairingPhase, Option<String>)>,
+    /// The id of the pending proposal last sent.
+    sent_proposal: Option<u64>,
     done: bool,
 }
 
@@ -352,6 +465,7 @@ fn event_stream(
         shutdown,
         _permit: permit,
         sent: None,
+        sent_proposal: None,
         done: false,
     };
     stream::unfold(follow, |mut f| async move {
@@ -372,6 +486,26 @@ fn event_stream(
                     agent: now.agent,
                 };
                 return Some((Ok(event(kind)), f));
+            }
+            // The proposal pending now, if it is not the one sent last; or
+            // that the one sent was withdrawn. One decided by the browser
+            // needs no event.
+            let pending = now.proposal.as_ref().map(|p| p.id);
+            if pending != f.sent_proposal {
+                let previous = std::mem::replace(&mut f.sent_proposal, pending);
+                match (now.proposal, previous) {
+                    (Some(p), _) => {
+                        let kind = BrowserEventKind::Proposal {
+                            proposal: (*p).clone(),
+                        };
+                        return Some((Ok(event(kind)), f));
+                    }
+                    (None, Some(id)) if now.withdrawn == Some(id) => {
+                        let kind = BrowserEventKind::ProposalWithdrawn { id };
+                        return Some((Ok(event(kind)), f));
+                    }
+                    _ => {}
+                }
             }
             if *f.shutdown.borrow() {
                 return None;

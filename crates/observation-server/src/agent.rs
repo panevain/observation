@@ -10,16 +10,24 @@
 //! Secrets (the two tokens and the code) are compared in constant time,
 //! looked up by comparing against every pairing (there are at most
 //! [`MAX_PAIRINGS`]), and never logged.
+//!
+//! A pairing also holds the agent's pending proposal, if any, and the
+//! outcomes of its latest proposals (see [`observation_agent_api::proposal`]).
+//! The pending proposal is part of what its followers watch, so the event
+//! streams send it to the browser without a queue: a stream sends the one
+//! pending now whenever it differs from the one it sent last.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use observation_agent_api::{
-    BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, Claimed, EndReason,
-    IDLE_TIMEOUT_SECS, LONG_POLL_SECS, MAX_AGENT_NAME_CHARS, MAX_FAILED_CLAIMS, MAX_PAIRINGS,
-    PROTOCOL_VERSION, PairingCreated, PairingPhase, SharedState, StateView, tidy_text,
+    BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, Claimed, Decision, EndReason,
+    IDLE_TIMEOUT_SECS, LONG_POLL_SECS, MAX_AGENT_NAME_CHARS, MAX_FAILED_CLAIMS, MAX_OUTCOMES,
+    MAX_PAIRINGS, PROTOCOL_VERSION, PairingCreated, PairingPhase, Proposal, ProposalOutcome,
+    ProposalStatus, SharedState, StateView, tidy_text,
 };
+use observation_core::scene::changes::ChangeSet;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
@@ -30,8 +38,9 @@ use crate::metrics::AGENT_PAIRINGS;
 pub const MAX_STREAMS_PER_PAIRING: usize = 4;
 /// Most long polls one pairing may have waiting.
 pub const MAX_POLLS_PER_PAIRING: usize = 4;
-/// Most state posts one pairing may make in [`POST_WINDOW`]; the app posts
-/// at most every half second.
+/// Most posts one pairing may make in [`POST_WINDOW`]: the browser's state
+/// posts and decisions and the agent's proposals together. The app posts
+/// its state at most every half second.
 pub const MAX_POSTS_PER_WINDOW: usize = 40;
 /// The window [`MAX_POSTS_PER_WINDOW`] counts over.
 pub const POST_WINDOW: Duration = Duration::from_secs(10);
@@ -50,6 +59,10 @@ pub struct Signal {
     pub revision: u64,
     /// Set as the pairing ends; its sender is dropped right after.
     pub ended: Option<EndReason>,
+    /// The agent's pending proposal.
+    pub proposal: Option<Arc<Proposal>>,
+    /// The id of the proposal the agent withdrew last.
+    pub withdrawn: Option<u64>,
 }
 
 /// Why a bridge operation was refused.
@@ -66,6 +79,11 @@ pub enum BridgeError {
     TooMany(u64),
     /// The system's random number source failed.
     NoRandomness,
+    /// The pairing has no proposal with this id.
+    NoSuchProposal,
+    /// The user has decided the proposal already (or, for a withdrawal,
+    /// it is no longer pending): its status.
+    Decided(ProposalStatus),
 }
 
 #[derive(Debug)]
@@ -87,6 +105,13 @@ struct Pairing {
     posts: VecDeque<Instant>,
     polls: usize,
     signal: watch::Sender<Signal>,
+    /// The agent's pending proposal.
+    proposal: Option<Arc<Proposal>>,
+    /// How many proposals the agent has made: the last one's id.
+    proposals_made: u64,
+    /// Where the latest proposals stand, oldest first.
+    outcomes: VecDeque<ProposalOutcome>,
+    withdrawn: Option<u64>,
 }
 
 impl Pairing {
@@ -104,7 +129,40 @@ impl Pairing {
             s.phase = phase;
             s.agent.clone_from(&self.agent_name);
             s.revision = self.revision;
+            s.proposal.clone_from(&self.proposal);
+            s.withdrawn = self.withdrawn;
         });
+    }
+
+    /// Counts a post against [`MAX_POSTS_PER_WINDOW`], or says how long to
+    /// wait.
+    fn take_post(&mut self, now: Instant) -> Result<(), BridgeError> {
+        while self
+            .posts
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= POST_WINDOW)
+        {
+            self.posts.pop_front();
+        }
+        if self.posts.len() >= MAX_POSTS_PER_WINDOW {
+            let wait = self.posts.front().map_or(POST_WINDOW, |t| {
+                POST_WINDOW - now.saturating_duration_since(*t)
+            });
+            return Err(BridgeError::TooMany(wait.as_secs().max(1)));
+        }
+        self.posts.push_back(now);
+        Ok(())
+    }
+
+    fn outcome_mut(&mut self, id: u64) -> Option<&mut ProposalOutcome> {
+        self.outcomes.iter_mut().find(|o| o.id == id)
+    }
+
+    /// A proposal's status changed: the agent's long poll and the browser's
+    /// streams hear of it.
+    fn proposals_changed(&mut self) {
+        self.revision += 1;
+        self.publish();
     }
 
     /// Why this pairing should end at `now`, if it should.
@@ -129,6 +187,7 @@ impl Pairing {
             revision: self.revision,
             state: self.state.as_deref().cloned(),
             ended: None,
+            proposals: self.outcomes.iter().cloned().collect(),
         }
     }
 }
@@ -333,6 +392,8 @@ impl AgentBridge {
             agent: None,
             revision: 0,
             ended: None,
+            proposal: None,
+            withdrawn: None,
         });
         reg.pairings.push(Pairing {
             id,
@@ -349,6 +410,10 @@ impl AgentBridge {
             posts: VecDeque::new(),
             polls: 0,
             signal,
+            proposal: None,
+            proposals_made: 0,
+            outcomes: VecDeque::new(),
+            withdrawn: None,
         });
         count("created");
         tracing::info!(pairing = id, "agent pairing created");
@@ -408,20 +473,7 @@ impl AgentBridge {
         let i = find(&reg.pairings, browser_token, |p| Some(&p.browser_token))
             .ok_or(BridgeError::Unauthorized)?;
         let p = &mut reg.pairings[i];
-        while p
-            .posts
-            .front()
-            .is_some_and(|t| now.saturating_duration_since(*t) >= POST_WINDOW)
-        {
-            p.posts.pop_front();
-        }
-        if p.posts.len() >= MAX_POSTS_PER_WINDOW {
-            let wait = p.posts.front().map_or(POST_WINDOW, |t| {
-                POST_WINDOW - now.saturating_duration_since(*t)
-            });
-            return Err(BridgeError::TooMany(wait.as_secs().max(1)));
-        }
-        p.posts.push_back(now);
+        p.take_post(now)?;
         p.last_used = now;
         p.state = Some(Arc::new(state));
         p.revision += 1;
@@ -451,6 +503,7 @@ impl AgentBridge {
             revision,
             state: None,
             ended: Some(reason),
+            proposals: Vec::new(),
         })
     }
 
@@ -505,6 +558,7 @@ impl AgentBridge {
             revision: s.revision,
             state: None,
             ended: Some(s.ended.unwrap_or(EndReason::Other)),
+            proposals: Vec::new(),
         };
         let last = rx.borrow().clone();
         if last.ended.is_some() {
@@ -521,6 +575,114 @@ impl AgentBridge {
             // Ended by the sweep just now.
             None => Ok(ended(rx.borrow().clone())),
         }
+    }
+
+    /// Takes the agent's proposal (its summary already tidied, its changes
+    /// checked) as the pending one, superseding any still pending; returns
+    /// its id.
+    pub fn propose(
+        &self,
+        agent_token: &str,
+        summary: String,
+        base_revision: u64,
+        changes: ChangeSet,
+    ) -> Result<u64, BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let i = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref())
+            .ok_or(BridgeError::Unauthorized)?;
+        let p = &mut reg.pairings[i];
+        p.take_post(now)?;
+        p.last_used = now;
+        if let Some(old) = p.proposal.take().map(|o| o.id)
+            && let Some(o) = p.outcome_mut(old)
+        {
+            o.status = ProposalStatus::Superseded;
+        }
+        p.proposals_made += 1;
+        let id = p.proposals_made;
+        p.outcomes.push_back(ProposalOutcome {
+            id,
+            summary: summary.clone(),
+            status: ProposalStatus::Pending,
+            reason: None,
+        });
+        while p.outcomes.len() > MAX_OUTCOMES {
+            p.outcomes.pop_front();
+        }
+        p.proposal = Some(Arc::new(Proposal {
+            id,
+            summary,
+            base_revision,
+            changes,
+        }));
+        p.proposals_changed();
+        count("proposed");
+        tracing::info!(pairing = p.id, proposal = id, "agent proposal received");
+        Ok(id)
+    }
+
+    /// Withdraws the agent's proposal `id` if it is pending. Otherwise its
+    /// status is [`BridgeError::Decided`] (a withdrawn one too: withdrawing
+    /// twice changes nothing).
+    pub fn withdraw(&self, agent_token: &str, id: u64) -> Result<(), BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let i = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref())
+            .ok_or(BridgeError::Unauthorized)?;
+        let p = &mut reg.pairings[i];
+        p.last_used = now;
+        if p.proposal.as_ref().is_none_or(|pending| pending.id != id) {
+            let status = p
+                .outcomes
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| o.status)
+                .ok_or(BridgeError::NoSuchProposal)?;
+            return Err(BridgeError::Decided(status));
+        }
+        p.proposal = None;
+        p.withdrawn = Some(id);
+        if let Some(o) = p.outcome_mut(id) {
+            o.status = ProposalStatus::Withdrawn;
+        }
+        p.proposals_changed();
+        Ok(())
+    }
+
+    /// The user's decision on proposal `id` (the reason already tidied). A
+    /// decision is final; one for a proposal superseded or withdrawn since
+    /// the user acted on it still counts.
+    pub fn decide(
+        &self,
+        browser_token: &str,
+        id: u64,
+        decision: Decision,
+        reason: Option<String>,
+    ) -> Result<(), BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let i = find(&reg.pairings, browser_token, |p| Some(&p.browser_token))
+            .ok_or(BridgeError::Unauthorized)?;
+        let p = &mut reg.pairings[i];
+        p.take_post(now)?;
+        p.last_used = now;
+        let o = p.outcome_mut(id).ok_or(BridgeError::NoSuchProposal)?;
+        if o.status.is_decided() {
+            return Err(BridgeError::Decided(o.status));
+        }
+        o.status = decision.into();
+        o.reason = reason;
+        if p.proposal.as_ref().is_some_and(|pending| pending.id == id) {
+            p.proposal = None;
+        }
+        p.proposals_changed();
+        count("decided");
+        tracing::info!(pairing = p.id, proposal = id, decision = ?decision, "agent proposal decided");
+        Ok(())
     }
 
     /// Ends the pairing that `token` belongs to, as the browser or the
