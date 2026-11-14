@@ -21,12 +21,20 @@
 //! Replies come back through the [`Http`] port's callbacks into a shared
 //! inbox, so the link needs no channel of the client's; each carries the
 //! pairing it belongs to, and replies for an older pairing are dropped.
+//!
+//! The link also holds the agent's proposal, if one came (see
+//! [`crate::proposal`]): a new one replaces the one shown, which the agent
+//! superseded. [`AgentLink::follow_proposal`] keeps it checked against the
+//! document and tells the agent, once, when it goes stale; Accept and
+//! Reject send the user's decision.
 
 use crate::document::{Document, Models};
 use crate::platform::{Http, HttpRequest, Reply, StreamEvent, StreamStop};
+use crate::proposal::{Accepted, PendingProposal, stale_reason};
 use observation_agent_api::{
-    BrowserEvent, BrowserEventKind, CreatePairing, PROTOCOL_VERSION, PairingCreated, PairingPhase,
-    PinnedPoint, SharedState, StatePost, display_code, paths, version_ok,
+    BrowserEvent, BrowserEventKind, CreatePairing, Decision, DecisionPost, PROTOCOL_VERSION,
+    PairingCreated, PairingPhase, PinnedPoint, Proposal, SharedState, StatePost, display_code,
+    paths, version_ok,
 };
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -55,6 +63,8 @@ enum Incoming {
     Created(Reply),
     Posted(Reply),
     Stream(StreamEvent),
+    /// The reply to a decision on this proposal.
+    Decided(u64, Reply),
 }
 
 type Inbox = Arc<Mutex<Vec<(u64, Incoming)>>>;
@@ -82,6 +92,14 @@ pub struct AgentLink {
     pub post_error: Option<String>,
     pinned: Option<PinnedPoint>,
     pin_seq: u64,
+    /// The proposal shown on the card, if any.
+    proposal: Option<PendingProposal>,
+    /// A proposal that arrived and is not on the card yet.
+    arrived: Option<Proposal>,
+    /// The proposal card is open.
+    pub card_open: bool,
+    /// What to tell the user in a toast.
+    notices: Vec<String>,
 }
 
 impl Default for AgentLink {
@@ -101,6 +119,10 @@ impl Default for AgentLink {
             post_error: None,
             pinned: None,
             pin_seq: 0,
+            proposal: None,
+            arrived: None,
+            card_open: false,
+            notices: Vec::new(),
         }
     }
 }
@@ -163,6 +185,127 @@ impl AgentLink {
     /// The point shared last in this pairing.
     pub fn pinned(&self) -> Option<PinnedPoint> {
         self.pinned
+    }
+
+    /// The agent's name, while connected (if it gave one).
+    pub fn agent_name(&self) -> Option<&str> {
+        match &self.phase {
+            LinkPhase::Connected { agent } => agent.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The proposal on the card, if any.
+    pub fn proposal(&self) -> Option<&PendingProposal> {
+        self.proposal.as_ref()
+    }
+
+    /// The same, to edit the reason being typed.
+    pub fn proposal_mut(&mut self) -> Option<&mut PendingProposal> {
+        self.proposal.as_mut()
+    }
+
+    /// What to tell the user in toasts since the last call.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Puts a proposal that arrived on the card, then checks the card's
+    /// proposal against the document; when that makes it stale, tells the
+    /// agent. Run after every frame's edits.
+    pub fn follow_proposal(&mut self, http: &dyn Http, doc: &Document, models: &Models) {
+        if let Some(p) = self.arrived.take() {
+            let p = PendingProposal::new(p, models);
+            self.notices
+                .push(format!("The agent proposes: {}", p.summary));
+            self.proposal = Some(p);
+            self.card_open = true;
+        }
+        let Some(p) = self.proposal.as_mut() else {
+            return;
+        };
+        if let Some(what) = p.follow(doc, models) {
+            let id = p.id;
+            self.send_decision(http, id, Decision::Stale, Some(stale_reason(&what)));
+        }
+    }
+
+    /// Accept: applies the proposal to the document as one edit (the history
+    /// records it as one step) and tells the agent. An error says why
+    /// nothing was applied.
+    pub fn accept(
+        &mut self,
+        http: &dyn Http,
+        doc: &mut Document,
+        models: &mut Models,
+        now_unix: u64,
+    ) -> Result<(), String> {
+        let p = self.proposal.as_mut().ok_or("There is no proposal.")?;
+        let id = p.id;
+        match p.accept(doc, models, now_unix) {
+            Accepted::Applied => {
+                self.send_decision(http, id, Decision::Accepted, None);
+                Ok(())
+            }
+            Accepted::Stale(what) => {
+                self.send_decision(http, id, Decision::Stale, Some(stale_reason(&what)));
+                Err("The proposal is stale: the scene changed under it.".into())
+            }
+            Accepted::Refused(why) => Err(format!("The proposal could not be applied: {why}")),
+        }
+    }
+
+    /// Reject: tells the agent, with the reason typed on the card.
+    pub fn reject(&mut self, http: &dyn Http) {
+        let Some(p) = self.proposal.as_mut().filter(|p| p.standing.is_open()) else {
+            return;
+        };
+        let (id, reason) = (p.id, p.reject());
+        self.send_decision(http, id, Decision::Rejected, reason);
+    }
+
+    /// Closes the card; a decided or closed proposal is forgotten.
+    pub fn close_card(&mut self) {
+        self.card_open = false;
+        if self
+            .proposal
+            .as_ref()
+            .is_some_and(|p| !p.standing.is_open())
+        {
+            self.proposal = None;
+        }
+    }
+
+    fn send_decision(
+        &mut self,
+        http: &dyn Http,
+        id: u64,
+        decision: Decision,
+        reason: Option<String>,
+    ) {
+        let Some(token) = self.token.clone() else {
+            if let Some(p) = self.proposal.as_mut().filter(|p| p.id == id) {
+                p.decision_error = Some("the connection to the agent has ended".into());
+            }
+            return;
+        };
+        let body = serde_json::to_string(&DecisionPost {
+            v: PROTOCOL_VERSION,
+            id,
+            decision,
+            reason,
+        })
+        .ok();
+        let (inbox, generation) = (Arc::clone(&self.inbox), self.generation);
+        http.fetch(
+            HttpRequest {
+                url: paths::DECISION.to_owned(),
+                method: "POST",
+                body,
+                bearer: Some(token),
+            },
+            Box::new(move |reply| push(&inbox, generation, Incoming::Decided(id, reply))),
+        );
     }
 
     /// Asks for a new pairing (Connect agent), unless one is open.
@@ -234,6 +377,10 @@ impl AgentLink {
         self.post_error = None;
         self.pinned = None;
         self.pin_seq = 0;
+        self.arrived = None;
+        if let Some(p) = &mut self.proposal {
+            p.close("The connection to the agent ended before you decided.");
+        }
     }
 
     fn end(&mut self, why: impl Into<String>) {
@@ -318,6 +465,12 @@ impl AgentLink {
                     }
                 }
                 Incoming::Stream(event) => self.stream(event),
+                Incoming::Decided(id, Err(why)) => {
+                    if let Some(p) = self.proposal.as_mut().filter(|p| p.id == id) {
+                        p.decision_error = Some(why);
+                    }
+                }
+                Incoming::Decided(_, Ok(_)) => {}
             }
         }
     }
@@ -387,6 +540,25 @@ impl AgentLink {
                             .map(|c| c.to_uppercase().chain(words).collect::<String>())
                             .unwrap_or_default();
                         self.end(format!("Disconnected: {why}."));
+                    }
+                    BrowserEventKind::Proposal { proposal } => {
+                        // The card takes it after the frame's edits, with
+                        // the models' names (see `follow_proposal`).
+                        self.arrived = Some(proposal);
+                    }
+                    BrowserEventKind::ProposalWithdrawn { id } => {
+                        if self.arrived.as_ref().is_some_and(|p| p.id == id) {
+                            self.arrived = None;
+                        }
+                        if let Some(p) = self
+                            .proposal
+                            .as_mut()
+                            .filter(|p| p.id == id && p.standing.is_open())
+                        {
+                            p.close("The agent withdrew this proposal.");
+                            self.notices
+                                .push("The agent withdrew its proposal".to_owned());
+                        }
                     }
                     // A kind this build does not know (a later feature).
                     BrowserEventKind::Unknown => {}

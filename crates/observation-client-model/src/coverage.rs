@@ -20,6 +20,7 @@ use crate::editor::OverlayMode;
 use backend::CoverageBackend;
 
 pub mod backend;
+pub mod preview;
 
 #[derive(Debug, Default)]
 pub struct CoverageState {
