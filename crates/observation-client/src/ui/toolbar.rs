@@ -99,6 +99,9 @@ pub fn top_bar(
                 d.panels.help_open = !d.panels.help_open;
             }
             settings_menu(ui, d);
+            if d.agent.available {
+                super::agent::top_bar_button(ui, &t, &mut d.agent);
+            }
             if ui
                 .add(secondary(&t, "Export"))
                 .on_hover_text("Download the scene as JSON")

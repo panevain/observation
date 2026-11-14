@@ -9,6 +9,7 @@
 //! binary runs them.
 
 mod addresses;
+mod agent;
 mod cameras;
 mod coverage;
 mod history;
@@ -87,6 +88,7 @@ impl PluginGroup for ClientPlugins {
             .add(input::InputPlugin)
             .add(persist::PersistPlugin)
             .add(history::HistoryPlugin)
+            .add(agent::AgentPlugin)
             .add(ui::UiPlugin)
             .add(LoaderPlugin)
     }

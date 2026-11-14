@@ -21,6 +21,7 @@ path = "src/bin/coverage_worker.rs"
 [dependencies]
 observation-core.workspace = true
 observation-client-model.workspace = true
+observation-agent-api.workspace = true
 observation-tokens.workspace = true
 serde_json.workspace = true
 bevy = { workspace = true, features = [

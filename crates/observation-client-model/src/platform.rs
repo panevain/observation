@@ -45,6 +45,34 @@ impl HttpRequest {
     }
 }
 
+/// What a followed event stream ([`Http::follow`]) reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamEvent {
+    /// The data of one message of the followed event type.
+    Data(Vec<u8>),
+    /// The connection dropped; the browser is reconnecting.
+    Dropped,
+    /// The stream is closed for good (the server refused it, or it could
+    /// not be opened), with why; nothing more follows.
+    Closed(String),
+}
+
+/// Ends a followed stream ([`Http::follow`]) when [`StreamStop::stop`] is
+/// called: the browser closes it within a second, and nothing more is
+/// reported. Clones share the flag.
+#[derive(Debug, Clone, Default)]
+pub struct StreamStop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl StreamStop {
+    pub fn stop(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// HTTP requests and event streams to the server the page came from.
 ///
 /// Callbacks may run before `fetch` or `subscribe` returns (the native build
@@ -61,6 +89,13 @@ pub trait Http: Send + Sync + 'static {
     /// called once with an error, possibly before this returns, and never
     /// again.
     fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>);
+    /// Follows a server-sent event stream until `stop` is set: `on` is
+    /// called with the data of every `event` message and whenever the
+    /// connection drops (the browser reconnects by itself). Unlike
+    /// [`Self::subscribe`] it is not reopened once the browser gives up (the
+    /// server refused it): `on` then gets [`StreamEvent::Closed`] and nothing
+    /// more. Nothing is reported once `stop` is set.
+    fn follow(&self, url: &str, event: &str, stop: StreamStop, on: Box<dyn Fn(StreamEvent) + Send>);
 }
 
 /// Why the browser refused the autosave.

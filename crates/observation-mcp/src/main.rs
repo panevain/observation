@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         version = env!("CARGO_PKG_VERSION"),
         "observation-mcp serving on stdio"
     );
-    let running = ObservationMcp.serve(stdio()).await?;
+    let running = ObservationMcp::new().serve(stdio()).await?;
     running.waiting().await?;
     Ok(())
 }

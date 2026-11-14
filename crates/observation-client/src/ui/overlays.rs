@@ -427,6 +427,7 @@ pub fn help(ctx: &egui::Context, t: &Tokens, panels: &mut Panels) {
                     ("Two-finger drag", "Pan (touch)"),
                     ("F", "Focus selected camera"),
                     ("N", "Toggle overlap / per-camera colours"),
+                    ("S", "Share the point under the pointer with a connected agent"),
                     ("Delete", "Remove selected camera"),
                     ("Esc", "Back to Select / close dialogs"),
                     ("?", "This help"),

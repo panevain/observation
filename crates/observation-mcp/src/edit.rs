@@ -28,8 +28,8 @@ pub fn parse(scene: &Value) -> Result<SceneFile, ToolError> {
         other => SceneFile::from_json(&other.to_string())?,
     };
     if file.on_flat_ground() && file.area == AreaRef::Demo {
-        let terrain = &bundle_for(&file)?.terrain;
-        lift_onto_terrain(&mut file.cameras, terrain);
+        let bundle = bundle_for(&file)?;
+        lift_onto_terrain(&mut file.cameras, &bundle.terrain);
         file.version = SCENE_VERSION;
     }
     Ok(file)
@@ -224,6 +224,7 @@ fn aim_at(cam: &mut CameraPlacement, p: Vec3) -> Result<(), ToolError> {
 /// The world position of `t`.
 fn target_point(scene: &SceneFile, t: Target) -> Result<Vec3, ToolError> {
     let bundle = bundle_for(scene)?;
+    let bundle = &*bundle;
     check_inside(bundle, t.x, t.z)?;
     let h = check_height(t.height_m.unwrap_or(scene.params.subject_height_m))?;
     Ok(Vec3::new(t.x, ground_y(bundle, t.x, t.z) + h, t.z))
@@ -240,6 +241,7 @@ pub fn place_camera(scene: &mut SceneFile, catalog: &Catalog, p: Place) -> Resul
         .ok_or_else(|| ToolError::NoModel(p.model_id.clone()))?
         .kind;
     let bundle = bundle_for(scene)?;
+    let bundle = &*bundle;
     check_inside(bundle, p.x, p.z)?;
     let height = check_height(p.height_m.unwrap_or(kind.default_mount_height_m()))?;
     let id = next_camera_id(scene);
@@ -276,6 +278,7 @@ pub fn move_camera(
     height_m: Option<f32>,
 ) -> Result<(), ToolError> {
     let bundle = bundle_for(scene)?;
+    let bundle = &*bundle;
     let cam = camera_mut(scene, id)?;
     let [ox, oy, oz] = cam.position;
     let (nx, nz) = (x.unwrap_or(ox), z.unwrap_or(oz));
@@ -544,7 +547,7 @@ pub fn add_example_cameras(
         .iter()
         .map(|c| [c.position[0], c.position[2]])
         .collect();
-    let placed = example_cameras_around(bundle_for(scene)?, &refs, count, &taken);
+    let placed = example_cameras_around(&*bundle_for(scene)?, &refs, count, &taken);
     let mut ids = Vec::with_capacity(placed.len());
     for mut c in placed {
         c.id = next_camera_id(scene);
@@ -617,6 +620,7 @@ mod tests {
         let b = place_at(&mut s, 5.0, 5.0);
         assert_eq!((a, b), (1, 2));
         let bundle = bundle_for(&s).unwrap();
+        let bundle = &*bundle;
         let ground = ground_y(bundle, 0.0, 0.0);
         assert!((s.cameras[0].position[1] - ground - 2.0).abs() < 1e-3);
         assert_eq!(s.cameras[0].label, "Camera 1");

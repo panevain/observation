@@ -9,6 +9,7 @@ default-members = [
     "crates/observation-server",
     "crates/observation-regions",
     "crates/observation-regions-api",
+    "crates/observation-agent-api",
     "crates/observation-upstream",
     "crates/observation-tokens",
     "crates/observation-client-model",
@@ -33,6 +34,7 @@ observation-upstream = { path = "crates/observation-upstream" }
 observation-tokens = { path = "crates/observation-tokens" }
 observation-client-model = { path = "crates/observation-client-model" }
 observation-regions-api = { path = "crates/observation-regions-api" }
+observation-agent-api = { path = "crates/observation-agent-api" }
 
 # shared
 glam = { version = "0.33", features = ["serde"] }

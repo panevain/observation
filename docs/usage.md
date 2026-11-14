@@ -8,7 +8,7 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 
 | Region | What is in it |
 | --- | --- |
-| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right the **Scenes** button (with the open scene's name), **Import**, **Export**, **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
+| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right the **Scenes** button (with the open scene's name), **Import**, **Export**, **Connect agent** (when the server offers it; see [Connect an AI agent](#connect-an-ai-agent)), **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
 | Tool rail (left) | Six tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move**, **Region** and **Address**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
 | 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, in Region the corners so far, or in Address the selected address). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move, a cell cursor for Region and a question-mark cursor for Address. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | At the top, always in view: **Coverage** (the figures, a **Region** menu, what the figures leave out, a line with the analysis settings that opens the Analysis tab, and the date of the map data; see [Read the coverage](#read-the-coverage)). Below it three tabs, each scrolling on its own: **Cameras** (the model for new cameras, **Place camera...**, the camera list and **Custom models**), **Camera** (the selected camera) and **Analysis**. Selecting a camera anywhere opens the Camera tab; deselecting it there goes back to Cameras |
@@ -172,6 +172,18 @@ Scene files are plain JSON:
 
 Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, custom pixel density 1-2000 px/m, and valid custom models. A malformed `provenance` block, or a time in it that is not a UTC timestamp, is dropped rather than failing the import. A custom model whose `id` repeats an earlier one or does not start with `custom-` is given a new `custom-` id (cameras that used it follow it). A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and an area with more than 256 corners or corners beyond 10,000 m, or a target that is out of range or too large, is removed from the scene, rather than failing the import. Area and target names are trimmed and cut to 60 characters. A bad file shows an error toast and adds no scene.
 
+## Connect an AI agent
+
+An AI agent running on your computer, through the Observation MCP server (see the [README](../README.md#ai-agents)), can read what you have open: the scene, its area, the selected camera and a point you share. It cannot change your scene; it gives you scenes to import. Coverage and address questions then work on your real area, not only the demo street.
+
+The server offers this only when it runs with `OBS_AGENT_BRIDGE=on` and you open the app on the same computer (at `http://localhost:...` or `http://127.0.0.1:...`); otherwise there is no **Connect agent** button.
+
+1. Click **Connect agent** in the top bar, then **Connect**. The dialog shows a code such as `ABCD-EFGH`.
+2. Ask your agent to connect to the Observation app with that code and the address the app is open at (for example *"connect to Observation at http://127.0.0.1:8080 with code ABCD-EFGH"*). It calls `connect_app`. The code works once and expires after 10 minutes; a few wrong tries withdraw it, and the dialog says so.
+3. Once connected, the top bar shows **Agent connected**. The agent sees your changes within about a second. Point at the ground and press **S** to share that spot ("why can't this camera see here?").
+
+The connection ends when you click **Disconnect** (in the dialog), when the agent disconnects, when you close the tab, or after 30 minutes in which neither side used it. Nothing about it is stored on the server, and a reload starts afresh.
+
 ## Keyboard, mouse and touch
 
 | Input | Action |
@@ -184,6 +196,7 @@ Imports are checked: at most 256 cameras and 64 custom models, finite positions 
 | Click | Select a camera, or use the active tool |
 | **F** | Focus the view on the selected camera (moving in to within 60 m if you were farther away) |
 | **N** | Toggle Overlap / Per camera colours |
+| **S** | With an agent connected: share the point of the ground under the pointer with it |
 | **Delete** or **Backspace** | Remove the selected camera |
 | **Esc** | Return to Select (and, if already in Select, deselect); closes the help and map dialogs |
 | **?** (also **/** and **F1**) | Show or hide the help card |

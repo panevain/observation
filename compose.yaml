@@ -88,7 +88,11 @@ services:
   # `mise run up` does not check this image; set OBS_MCP_IMAGE to what `mise run verify
   # ghcr.io/panevain/observation-mcp:<version>` prints to run it by a checked digest. It works
   # offline on the demo street and keeps nothing, so it gets no network, a read-only
-  # filesystem and no capabilities.
+  # filesystem and no capabilities. The agent bridge (connect_app) needs the app's server
+  # on this computer's loopback with OBS_AGENT_BRIDGE=on, which this stack's published port
+  # does not give (the server sees the Docker network's address, not loopback): run the
+  # server on the host and this image with `docker run --rm -i --network host` instead (see
+  # the README).
   mcp:
     image: ${OBS_MCP_IMAGE:-ghcr.io/panevain/observation-mcp:${OBS_VERSION:-latest}}
     build:

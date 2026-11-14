@@ -9,7 +9,7 @@ use super::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, PickedFile, Platform,
     SaveFailure,
 };
-use observation_client_model::platform::{JobChannel, Reply};
+use observation_client_model::platform::{JobChannel, Reply, StreamEvent, StreamStop};
 
 pub fn platform() -> Platform {
     Platform {
@@ -50,6 +50,12 @@ impl Http for Offline {
     fn subscribe(&self, _: &str, _: &str, on: Box<dyn Fn(Reply) + Send>) {
         on(Err(
             "live updates are only available in the browser build".to_owned()
+        ));
+    }
+
+    fn follow(&self, _: &str, _: &str, _: StreamStop, on: Box<dyn Fn(StreamEvent) + Send>) {
+        on(StreamEvent::Closed(
+            "live updates are only available in the browser build".to_owned(),
         ));
     }
 }

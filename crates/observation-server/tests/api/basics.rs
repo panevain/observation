@@ -50,6 +50,7 @@ async fn config_endpoint() {
     assert_eq!(v["min_bbox_side_m"], 20.0);
     assert_eq!(v["max_bbox_side_m"], 500.0);
     assert_eq!(v["demo_available"], true);
+    assert_eq!(v["agent_bridge"], false);
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
 }
 

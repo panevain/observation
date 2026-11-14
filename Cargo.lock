@@ -4872,6 +4872,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation-agent-api"
+version = "0.1.0"
+dependencies = [
+ "observation-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "observation-client"
 version = "0.1.0"
 dependencies = [
@@ -4881,6 +4890,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.4.3",
  "js-sys",
+ "observation-agent-api",
  "observation-client-model",
  "observation-core",
  "observation-tokens",
@@ -4894,6 +4904,7 @@ dependencies = [
 name = "observation-client-model"
 version = "0.1.0"
 dependencies = [
+ "observation-agent-api",
  "observation-core",
  "serde",
  "serde_json",
@@ -4929,8 +4940,13 @@ dependencies = [
 name = "observation-mcp"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "http",
+ "observation-agent-api",
  "observation-core",
  "observation-mapdata",
+ "observation-server",
+ "observation-upstream",
  "rmcp",
  "schemars",
  "serde",
@@ -4981,9 +4997,11 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
+ "getrandom 0.4.3",
  "httpdate",
  "metrics",
  "metrics-exporter-prometheus",
+ "observation-agent-api",
  "observation-core",
  "observation-mapdata",
  "observation-regions-api",

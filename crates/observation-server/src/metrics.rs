@@ -38,6 +38,9 @@ pub const CLIENT_LIMITED: &str = "observation_client_rate_limited_total";
 /// Place searches: `result` is `hit` (cached answer), `fetched`, `error` or
 /// `busy` (the geocoder limited us, or the queue for it was full).
 pub const GEOCODER: &str = "observation_geocoder_searches_total";
+/// Agent bridge pairings: `event` is `created`, `claimed`, `claim_refused`
+/// (a wrong code) or `ended`.
+pub const AGENT_PAIRINGS: &str = "observation_agent_pairings_total";
 
 /// Latency bucket upper bounds in seconds; the request timeout is 80 s.
 const DURATION_BUCKETS: &[f64] = &[
@@ -152,6 +155,7 @@ mod tests {
                 OVERPASS_FETCH,
                 REGION_QUERY,
                 CLIENT_LIMITED,
+                AGENT_PAIRINGS,
             ],
             [
                 "observation_http_requests_total",
@@ -162,6 +166,7 @@ mod tests {
                 "observation_overpass_fetches_total",
                 "observation_region_queries_total",
                 "observation_client_rate_limited_total",
+                "observation_agent_pairings_total",
             ]
         );
         assert_eq!(

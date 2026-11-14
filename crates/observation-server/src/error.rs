@@ -58,6 +58,14 @@ pub enum ApiError {
         /// Value for the `retry-after` header, seconds.
         retry_after_secs: u64,
     },
+    /// Too many requests of one kind that are not about upstreams, such as
+    /// an agent pairing's state posts (429). The text says what.
+    #[error("{what}; try again in about {retry_after_secs} s")]
+    Limited {
+        what: &'static str,
+        /// Value for the `retry-after` header, seconds.
+        retry_after_secs: u64,
+    },
     /// Unexpected local failure (500). The detail is logged, never sent.
     #[error("the server hit an unexpected problem; please try again")]
     Internal(String),
@@ -75,7 +83,7 @@ impl ApiError {
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::RateLimited { .. } => StatusCode::SERVICE_UNAVAILABLE,
-            Self::TooManyRequests { .. } | Self::TooManySearches { .. } => {
+            Self::TooManyRequests { .. } | Self::TooManySearches { .. } | Self::Limited { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
             }
             Self::SearchBusy { .. } => StatusCode::SERVICE_UNAVAILABLE,
@@ -93,7 +101,10 @@ impl IntoResponse for ApiError {
         if let Self::RateLimited { retry_after_secs }
         | Self::TooManyRequests { retry_after_secs }
         | Self::TooManySearches { retry_after_secs }
-        | Self::SearchBusy { retry_after_secs } = self
+        | Self::SearchBusy { retry_after_secs }
+        | Self::Limited {
+            retry_after_secs, ..
+        } = self
             && let Ok(v) = HeaderValue::from_str(&retry_after_secs.to_string())
         {
             resp.headers_mut().insert(header::RETRY_AFTER, v);
@@ -168,6 +179,15 @@ mod tests {
                 503,
                 r#"{"error":"the place search is busy; try again in about 30 s"}"#,
                 Some("30"),
+            ),
+            (
+                ApiError::Limited {
+                    what: "too many posts",
+                    retry_after_secs: 3,
+                },
+                429,
+                r#"{"error":"too many posts; try again in about 3 s"}"#,
+                Some("3"),
             ),
             (
                 ApiError::Internal("disk on fire".into()),
