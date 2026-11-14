@@ -219,6 +219,7 @@ version = "0.1.0"
 dependencies = [
  "earcut",
  "glam",
+ "observation-tokens",
  "postcard",
  "ron",
  "serde",
@@ -246,6 +247,10 @@ dependencies = [
  "serde_json",
  "thiserror",
 ]
+
+[[package]]
+name = "observation-tokens"
+version = "0.1.0"
 
 [[package]]
 name = "png"

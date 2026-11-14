@@ -15,6 +15,8 @@ postcard.workspace = true
 thiserror.workspace = true
 earcut.workspace = true
 ron.workspace = true
+# The evidence sheet draws with the light scheme's colours and the coverage ramp.
+observation-tokens.workspace = true
 
 [features]
 # Fixture builders (`observation_core::testing`) for tests. Enable it only

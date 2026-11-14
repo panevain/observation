@@ -125,6 +125,15 @@ impl Autosaver {
 /// A download file name for a scene: its name with anything a file system
 /// might object to replaced, then `.json`; [`EXPORT_NAME`] if nothing is left.
 pub fn export_name(scene: &str) -> String {
+    match file_stem(scene) {
+        Some(stem) => format!("{stem}.json"),
+        None => EXPORT_NAME.to_owned(),
+    }
+}
+
+/// A scene's name with anything a file system might object to replaced, or
+/// `None` if nothing is left.
+pub fn file_stem(scene: &str) -> Option<String> {
     let stem: String = scene
         .chars()
         .map(|c| {
@@ -136,11 +145,7 @@ pub fn export_name(scene: &str) -> String {
         })
         .collect();
     let stem = stem.trim_matches(|c: char| c == '.' || c.is_whitespace());
-    if stem.is_empty() {
-        EXPORT_NAME.to_owned()
-    } else {
-        format!("{stem}.json")
-    }
+    (!stem.is_empty()).then(|| stem.to_owned())
 }
 
 /// What start-up finds under the open scene's key.

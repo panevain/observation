@@ -4,8 +4,10 @@
 //! UI colour roles live here as plain data. `theme.rs` builds its `Tokens`
 //! from them, and [`css`] writes them as CSS custom properties for the
 //! loading screen and the small-viewport gate in `web/index.html` (trunk's
-//! pre_build hook runs the `token-css` binary; see `Trunk.toml`). Colours
-//! used only by the 3D scene and the camera palettes stay in `theme.rs`.
+//! pre_build hook runs the `token-css` binary; see `Trunk.toml`). The
+//! coverage ramp and the light area colours are here too, because the
+//! evidence sheet in `observation-core` draws with them as well. Colours used
+//! only by the 3D scene and the camera palettes stay in `theme.rs`.
 
 use std::fmt::Write as _;
 
@@ -186,7 +188,28 @@ pub const DARK: UiColors = UiColors {
     scrim: [0x00, 0x00, 0x00, 170],
 };
 
-/// The tokens as a stylesheet: `--obs-*` custom properties on `:root` (the
+/// The overlap ramp: ground seen by 1, 2, 3 and 4 or more cameras, warm
+/// hues from yellow to purple with rising alpha. The same in both schemes.
+/// The app's coverage overlay and the evidence sheet's map both use it, so a
+/// printed map reads like the screen.
+pub const COVERAGE_RAMP: [Rgba; 4] = [
+    [0xF5, 0xC5, 0x42, 140],
+    [0xF2, 0x8C, 0x28, 165],
+    [0xE0, 0x45, 0x3A, 185],
+    [0x9B, 0x2C, 0x8C, 205],
+];
+
+/// Outlines of labelled areas in the light scheme, in label order (Own,
+/// Neighbour, Public, Other): cool hues, clear of [`COVERAGE_RAMP`]. The app
+/// (light scheme) and the evidence sheet, which is always light, use them.
+pub const AREA_COLORS_LIGHT: [Rgba; 4] = [
+    rgb(0x00, 0x9E, 0x73),
+    rgb(0x00, 0x72, 0xB2),
+    rgb(0x56, 0xB4, 0xE9),
+    rgb(0x8B, 0x7C, 0xF6),
+];
+
+/// The tokens as a stylesheet:`--obs-*` custom properties on `:root` (the
 /// colours swapped under `prefers-color-scheme: dark`), and the gate rules:
 /// `#gate` hidden, then shown (with `#loader` and `#app` hidden) below
 /// [`MIN_VIEWPORT`] by a media query, since custom properties cannot be used

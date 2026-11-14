@@ -1,0 +1,545 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="3369" viewBox="0 0 794 3369" font-family="Helvetica, Arial, sans-serif" fill="#1b1f24">
+<title>Camera coverage evidence sheet (Exact): Demo street</title>
+<desc>An estimate from a model, not recorded footage. Generated 2026-11-06 22:20 UTC by Observation 0.1.0.</desc>
+<rect x="0" y="0" width="794" height="3369" fill="#ffffff"/>
+<text x="397" y="561.5" font-size="40" font-weight="bold" text-anchor="middle" fill="#c92a2a" fill-opacity="0.08" transform="rotate(-35 397 561.5)">ESTIMATE · MODEL, NOT FOOTAGE</text>
+<text x="397" y="617.5" font-size="40" font-weight="bold" text-anchor="middle" fill="#c92a2a" fill-opacity="0.08" transform="rotate(-35 397 561.5)">SHOWS CAMERA POSITIONS</text>
+<text x="40" y="30" font-size="8" fill="#5f6772">Observation · camera coverage evidence sheet</text>
+<text x="754" y="30" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">Exact sheet · shows camera positions</text>
+<line x1="40" y1="38" x2="754" y2="38" stroke="#d9dce1" stroke-width="0.75"/>
+<line x1="40" y1="1079" x2="754" y2="1079" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1091" font-size="7" fill="#5f6772">Demo street · generated 2026-11-06 22:20 UTC · Observation 0.1.0 · OSM data as of 2026-10-31 00:00 UTC · fingerprint 16cee07416978eba</text>
+<text x="40" y="1101" font-size="7" fill="#5f6772">Map data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP via the demo fixtures. An estimate from a model, not recorded footage.</text>
+<text x="754" y="1091" font-size="7" fill="#5f6772" text-anchor="end">Page 1 of 3</text>
+<text x="397" y="1684.5" font-size="40" font-weight="bold" text-anchor="middle" fill="#c92a2a" fill-opacity="0.08" transform="rotate(-35 397 1684.5)">ESTIMATE · MODEL, NOT FOOTAGE</text>
+<text x="397" y="1740.5" font-size="40" font-weight="bold" text-anchor="middle" fill="#c92a2a" fill-opacity="0.08" transform="rotate(-35 397 1684.5)">SHOWS CAMERA POSITIONS</text>
+<text x="40" y="1153" font-size="8" fill="#5f6772">Observation · camera coverage evidence sheet</text>
+<text x="754" y="1153" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">Exact sheet · shows camera positions</text>
+<line x1="40" y1="1161" x2="754" y2="1161" stroke="#d9dce1" stroke-width="0.75"/>
+<line x1="40" y1="2202" x2="754" y2="2202" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="2214" font-size="7" fill="#5f6772">Demo street · generated 2026-11-06 22:20 UTC · Observation 0.1.0 · OSM data as of 2026-10-31 00:00 UTC · fingerprint 16cee07416978eba</text>
+<text x="40" y="2224" font-size="7" fill="#5f6772">Map data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP via the demo fixtures. An estimate from a model, not recorded footage.</text>
+<text x="754" y="2214" font-size="7" fill="#5f6772" text-anchor="end">Page 2 of 3</text>
+<text x="397" y="2807.5" font-size="40" font-weight="bold" text-anchor="middle" fill="#c92a2a" fill-opacity="0.08" transform="rotate(-35 397 2807.5)">ESTIMATE · MODEL, NOT FOOTAGE</text>
+<text x="397" y="2863.5" font-size="40" font-weight="bold" text-anchor="middle" fill="#c92a2a" fill-opacity="0.08" transform="rotate(-35 397 2807.5)">SHOWS CAMERA POSITIONS</text>
+<text x="40" y="2276" font-size="8" fill="#5f6772">Observation · camera coverage evidence sheet</text>
+<text x="754" y="2276" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">Exact sheet · shows camera positions</text>
+<line x1="40" y1="2284" x2="754" y2="2284" stroke="#d9dce1" stroke-width="0.75"/>
+<line x1="40" y1="3325" x2="754" y2="3325" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="3337" font-size="7" fill="#5f6772">Demo street · generated 2026-11-06 22:20 UTC · Observation 0.1.0 · OSM data as of 2026-10-31 00:00 UTC · fingerprint 16cee07416978eba</text>
+<text x="40" y="3347" font-size="7" fill="#5f6772">Map data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP via the demo fixtures. An estimate from a model, not recorded footage.</text>
+<text x="754" y="3337" font-size="7" fill="#5f6772" text-anchor="end">Page 3 of 3</text>
+<text x="40" y="82" font-size="20" font-weight="bold">Camera coverage evidence sheet</text>
+<text x="40" y="101" font-size="10" font-weight="bold">Scene: Demo street (the name as typed)</text>
+<text x="40" y="118" font-size="9" fill="#5f6772">Exact sheet. For the owner&#39;s own use: everything on the Aggregate sheet, plus a map with every camera&#39;s position and coverage, camera labels and the</text>
+<text x="40" y="130" font-size="9" fill="#5f6772">walls each camera sees per building. It shows where cameras are: do not share it without the agreement of everyone whose camera is on it.</text>
+<text x="40" y="144" font-size="9" fill="#c92a2a">Every figure here is an estimate from a model of the street, not a record of what any camera films. Read them as &quot;up to&quot;: see what the figures leave</text>
+<text x="40" y="156" font-size="9" fill="#c92a2a">out, below.</text>
+<text x="40" y="182" font-size="13" font-weight="bold">Provenance and settings</text>
+<line x1="40" y1="187" x2="754" y2="187" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="202" font-size="9" fill="#5f6772">Generated</text>
+<text x="190" y="202" font-size="9">2026-11-06 22:20 UTC</text>
+<text x="40" y="215" font-size="9" fill="#5f6772">App and engine</text>
+<text x="190" y="215" font-size="9">Observation 0.1.0</text>
+<text x="40" y="228" font-size="9" fill="#5f6772">OSM data as of</text>
+<text x="190" y="228" font-size="9">2026-10-31 00:00 UTC</text>
+<text x="40" y="241" font-size="9" fill="#5f6772">Area built</text>
+<text x="190" y="241" font-size="9">2026-11-06 21:20 UTC</text>
+<text x="40" y="254" font-size="9" fill="#5f6772">OSM fingerprint</text>
+<text x="190" y="254" font-size="9">16cee07416978eba</text>
+<text x="40" y="267" font-size="9" fill="#5f6772">Camera catalogue</text>
+<text x="190" y="267" font-size="9">c47a10900000f00d</text>
+<text x="40" y="280" font-size="9" fill="#5f6772">Caveats</text>
+<text x="190" y="280" font-size="9">version 1</text>
+<text x="40" y="293" font-size="9" fill="#5f6772">Detail level shown</text>
+<text x="190" y="293" font-size="9">Detect (25 px/m)</text>
+<text x="40" y="306" font-size="9" fill="#5f6772">Lighting shown</text>
+<text x="190" y="306" font-size="9">by day</text>
+<text x="40" y="319" font-size="9" fill="#5f6772">Subject height</text>
+<text x="190" y="319" font-size="9">1.0 m above the ground</text>
+<text x="40" y="332" font-size="9" fill="#5f6772">Figures limited to</text>
+<text x="190" y="332" font-size="9">the whole loaded area</text>
+<text x="40" y="359" font-size="13" font-weight="bold">Map: cameras and coverage</text>
+<line x1="40" y1="364" x2="754" y2="364" stroke="#d9dce1" stroke-width="0.75"/>
+<defs><clipPath id="map-clip"><rect x="69.4" y="370" width="655.2" height="560"/></clipPath></defs>
+<g clip-path="url(#map-clip)">
+<rect x="69.4" y="370" width="655.2" height="560" fill="#f4f5f7"/>
+<g transform="translate(69.42 370) scale(2.1875) translate(149.65 127.87)">
+<polyline points="-41.3,111.7 -41.6,84.3 -41.8,71.5 -39.1,69 -36.3,64.4 -36,62.2 -35.7,59 -35.3,21.4 -17.2,21.6" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="104.4,-73.5 102.1,-80.4 101.6,-87.5 104.2,-140.1" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="37.8,418.2 92.7,351.1 97.8,343.8 101.3,333.8 103.7,323 104.4,314.9 107.1,114.9" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-138.5,-94 -133.1,-93.8 -91.6,-92.7 -85.1,-94.3 -77.8,-97.5 -46.8,-99.5 -37.6,-97.9 -30.3,-93.3 -23.4,-93.3 -12.1,-100.9 1.2,-113.8 7.1,-123.1 10.7,-133.1 11.2,-141.7" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="104.4,-73.5 109.1,-69.3 117.3,-66.4 141.4,-63.7 174.8,-63.3 240.8,-84.9" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="50.4,114.3 50.5,80.8 50.6,50.1" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="174.3,21.2 93.3,20.1" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-141.6,111 -134.6,111 -90.3,111.4 -83.7,111.4 -41.3,111.7 -38.3,111.8 13.6,113.2 50.4,114.3 107.1,114.9 156.9,114.5 167.2,112.9 191.6,99.2" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-157.2,-120.5 -149.7,-114.5 -143.4,-109.5 -139.6,-105.3 -138.7,-99.4 -138.5,-94 -138.2,-37.9 -139.4,13.1 -139.6,17.3 -140.7,69.4 -140.7,71.3 -141.5,109.6 -141.6,111 -142.8,154.4 -143.2,169.4 -143.5,181.5 -144.2,224.6 -144.2,290.2 -144.4,319.4 -144.7,338.5 -145,354.9 -145.5,395.9 -145.5,405.9 -146.3,442 -146.9,461 -147.5,474.1 -147.4,506.5 -146.2,515.1" fill="none" stroke="#d9dce1" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-46.7,-57.7 -46.6,-29" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="19.3,-35.5 31.6,-39.9 47.8,-56.2" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-50.9,-19.4 -51.2,14 -51.7,58.9" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-89.9,67.2 -90.1,83.3 -90.2,96.9" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-31.6,133 -36.3,129.7 -38.3,123.4 -38.3,111.8" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-90.2,96.9 -90.3,111.4" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-76.7,-101.9 -74.4,-114.3" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-77.8,-97.5 -76.7,-101.9" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-138.5,-94 -145.1,-94.1 -153.5,-94.2" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-150.6,-99.4 -153.5,-94.2 -154.7,-92.2 -147.7,-84.7" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-115.7,17.5 -115.7,-23.2" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-122.5,17.4 -122.7,58.9" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-139.6,17.3 -122.5,17.4 -115.7,17.5 -64.3,17.9 -57,16.5 -51.2,14 -41.5,9 -34.8,8.9 12.4,8.6 15.9,6.9 18.1,3.4 19.3,-35.5 17.7,-40.3 2.7,-55.4 -3.2,-57.2 -46.7,-57.7 -82.3,-58.3 -91.7,-53.8 -104.8,-44.2 -116.5,-39.6 -122.3,-38.2 -134.3,-38 -138.2,-37.9" fill="none" stroke="#d9dce1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-139.4,13.1 -156.6,12.8" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-140.7,69.4 -198.1,68.6" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-144.2,-124.3 -141,-135.5 -133.2,-160.1 -130,-181.4 -128.8,-193.4 -128.2,-198 -124.2,-213.7 -123.6,-228.9 -123.3,-235.5 -122.5,-270.8 -120.2,-273.7" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-153.7,-106.3 -149.7,-114.5 -145,-122.9" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-138.2,-37.9 -147.5,-36.7 -193.3,-36.6" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="50.5,80.8 27.7,80.8" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-141.5,109.6 -178.4,108.3" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-83.7,111.4 -84.9,120.9 -84.9,134.2 -84.6,150.3 -84.9,158.9 -84.6,162.8 -82.2,166 -78.8,167.7 -71.1,168 -68,169.4 -67.3,171.7 -69.3,177.3 -70.6,180.1 -72.7,184.3 -76.4,189.3" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-41.6,84.3 -51.9,83.4 -79,83.2 -90.1,83.3 -98.7,82.4 -123.7,82.4" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-36,62.2 -20.2,62.9" fill="none" stroke="#d9dce1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-145,-122.9 -144.2,-124.3" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-144.2,-124.3 -143.6,-121.7 -142.8,-119 -141.6,-116.7 -139.6,-114.6 -137,-111.6 -135,-108 -133.8,-104.2 -133.3,-100.4 -133.1,-93.8 -132.8,-74.2 -133.9,-54.4 -134.4,-45.7 -134.3,-38" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-154.3,-105.1 -151.4,-105.1 -148.7,-104.2 -147.3,-102.4 -146,-99.9 -145.2,-97.2 -145.1,-94.1" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-137.2,176.4 -135.3,173.3 -135.3,169.8 -135.3,156.1 -137.1,153 -136.3,120.3 -134.6,117.7 -128.8,115.9 -122.5,115.9" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="-134.6,117.7 -134.6,111 -134.7,102.5" fill="none" stroke="#d9dce1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g transform="translate(-149.65 -127.87) scale(0.5)">
+<path fill="#f5c542" fill-opacity="0.55" d="M134 134h16v1h-16zM131 135h19v1h-19zM209 135h10v1h-10zM130 136h20v1h-20zM205 136h17v1h-17zM128 137h21v1h-21zM201 137h25v1h-25zM126 138h23v1h-23zM198 138h32v1h-32zM125 139h24v1h-24zM199 139h31v1h-31zM123 140h25v1h-25zM199 140h30v1h-30zM121 141h27v1h-27zM199 141h30v1h-30zM120 142h27v1h-27zM200 142h28v1h-28zM291 142h4v1h-4zM120 143h27v1h-27zM201 143h27v1h-27zM291 143h6v1h-6zM120 144h26v1h-26zM201 144h26v1h-26zM290 144h10v1h-10zM121 145h24v1h-24zM202 145h24v1h-24zM290 145h12v1h-12zM122 146h22v1h-22zM203 146h22v1h-22zM290 146h15v1h-15zM123 147h20v1h-20zM205 147h19v1h-19zM290 147h17v1h-17zM125 148h17v1h-17zM206 148h16v1h-16zM289 148h21v1h-21zM127 149h10v1h-10zM139 149h1v1h-1zM208 149h12v1h-12zM291 149h21v1h-21zM130 150h6v1h-6zM212 150h4v1h-4zM296 150h18v1h-18zM301 151h15v1h-15zM302 152h15v1h-15zM303 153h15v1h-15zM304 154h15v1h-15zM305 155h15v1h-15zM306 156h15v1h-15zM307 157h16v1h-16zM308 158h16v1h-16zM309 159h16v1h-16zM310 160h16v1h-16zM311 161h15v1h-15zM312 162h15v1h-15zM313 163h14v1h-14zM314 164h13v1h-13zM315 165h13v1h-13zM316 166h12v1h-12zM317 167h11v1h-11zM318 168h11v1h-11zM319 169h10v1h-10zM320 170h9v1h-9zM321 171h8v1h-8zM322 172h8v1h-8zM323 173h7v1h-7zM323 174h7v1h-7zM323 175h8v1h-8zM323 176h8v1h-8zM323 177h8v1h-8zM323 178h9v1h-9zM322 179h10v1h-10zM322 180h10v1h-10zM322 181h10v1h-10zM322 182h11v1h-11zM322 183h11v1h-11zM322 184h11v1h-11zM322 185h12v1h-12zM322 186h12v1h-12zM322 187h12v1h-12zM322 188h13v1h-13zM322 189h11v1h-11zM322 190h7v1h-7zM304 270h5v1h-5zM300 271h10v1h-10zM300 272h11v1h-11zM299 273h13v1h-13zM298 274h15v1h-15zM297 275h17v1h-17zM296 276h19v1h-19zM295 277h21v1h-21zM294 278h23v1h-23zM293 279h25v1h-25zM292 280h27v1h-27zM291 281h28v1h-28zM290 282h30v1h-30zM289 283h32v1h-32zM288 284h34v1h-34zM287 285h36v1h-36zM286 286h38v1h-38zM285 287h40v1h-40zM284 288h42v1h-42zM283 289h44v1h-44zM282 290h46v1h-46zM281 291h48v1h-48zM281 292h48v1h-48zM280 293h50v1h-50zM279 294h52v1h-52zM278 295h54v1h-54zM277 296h56v1h-56zM276 297h58v1h-58zM275 298h60v1h-60zM274 299h62v1h-62zM273 300h64v1h-64zM272 301h66v1h-66zM271 302h68v1h-68zM270 303h69v1h-69zM269 304h71v1h-71zM268 305h73v1h-73zM267 306h75v1h-75zM266 307h77v1h-77zM265 308h79v1h-79zM264 309h81v1h-81zM263 310h17v1h-17zM325 310h21v1h-21zM263 311h17v1h-17zM326 311h21v1h-21zM262 312h17v1h-17zM326 312h22v1h-22zM261 313h18v1h-18zM327 313h22v1h-22zM263 314h15v1h-15zM327 314h23v1h-23zM263 315h14v1h-14zM328 315h23v1h-23zM263 316h14v1h-14zM328 316h24v1h-24zM263 317h13v1h-13zM329 317h8v1h-8zM263 318h13v1h-13zM329 318h8v1h-8zM263 319h12v1h-12zM329 319h8v1h-8zM263 320h11v1h-11zM330 320h7v1h-7zM263 321h11v1h-11zM330 321h7v1h-7zM263 322h10v1h-10zM331 322h6v1h-6zM263 323h10v1h-10zM331 323h6v1h-6zM263 324h9v1h-9zM332 324h5v1h-5zM263 325h9v1h-9zM332 325h5v1h-5zM263 326h8v1h-8zM333 326h4v1h-4zM263 327h7v1h-7zM333 327h4v1h-4zM263 328h7v1h-7zM334 328h3v1h-3zM263 329h6v1h-6zM334 329h3v1h-3zM263 330h6v1h-6zM335 330h2v1h-2zM263 331h5v1h-5zM335 331h2v1h-2zM263 332h4v1h-4zM335 332h2v1h-2zM263 333h4v1h-4zM336 333h1v1h-1zM263 334h3v1h-3zM336 334h1v1h-1zM263 335h3v1h-3zM263 336h2v1h-2zM263 337h2v1h-2zM263 338h1v1h-1z"/>
+</g>
+<path d="M-91.1 124.8L-89.8 132.9L-87.2 132.5L-85.9 140.8L-88.7 141.3L-87.4 149.4L-100.3 151.5L-102 141.2L-98.3 140.6L-99 136.5L-102.4 137L-104.1 127Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M90.9 127.1L90.8 130.4L92.4 130.4L92.2 139L90.3 138.9L90.1 147.1L81.1 147L81.4 130L84.9 130.1L85 127Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-114.4 124.7L-114.6 150.4L-127.3 150.3L-127.3 139.9L-126.5 139.9L-126.4 135.2L-127.3 135.2L-127.3 124.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-148.4 -74.1L-155.6 -68.2L-157.8 -71L-161.8 -67.8L-168.7 -76.3L-157.6 -85.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-108.1 -112.3L-114.6 -109.4L-116.4 -113.4L-113.6 -114.6L-115.2 -118.3L-113.9 -118.8L-114.7 -120.6L-110.1 -122.6L-107.7 -117.2L-109.8 -116.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-95 -82.4L-90.8 -76.9L-90.1 -77.5L-87.4 -74L-88 -73.5L-86.8 -71.8L-100.1 -61.5L-101.3 -63L-103.5 -61.3L-102.5 -59.9L-106.9 -56.6L-109.3 -59.7L-110 -59.2L-112.8 -62.9L-112.2 -63.4L-116.4 -68.8L-109.1 -74.3L-108.5 -73.5L-102.4 -78.3L-101.6 -77.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-92.2 -101.2L-94.6 -99.9L-95.2 -100.9L-99.1 -98.7L-99.4 -99.2L-101.5 -98L-107.6 -109.2L-93.5 -117L-87.3 -105.7L-88.9 -104.8L-88.7 -104.4L-92.8 -102.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-74.5 -124.2L-75.6 -121.7L-77.1 -122.3L-77.4 -121.6L-76.8 -121.3L-78.4 -117.6L-79.1 -117.9L-79.9 -116.1L-92.1 -121.3L-91.5 -122.7L-89.6 -121.9L-84.4 -134.1L-85.9 -134.7L-85.3 -136L-73.1 -130.8L-75.4 -125.6L-76 -124.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-54 -84.3L-54 -79.9L-55.2 -79.9L-55.2 -77.6L-53.5 -77.6L-53.6 -73.1L-54.6 -73.1L-54.7 -70.6L-74.1 -70.7L-74.1 -69L-77.8 -69.1L-77.8 -73.2L-80.4 -73.2L-80.3 -77.6L-79.2 -77.6L-79.1 -84.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-65.3 -136.7L-61.6 -134.9L-60.7 -136.6L-58.3 -135.4L-57.7 -136.6L-53 -134.3L-58.3 -123.4L-59.7 -124.1L-61.8 -119.6L-64.7 -120.9L-66.5 -117.1L-73.2 -120.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-66.7 -49L-63.3 -43L-62.6 -43.4L-60.4 -39.5L-61.2 -39.1L-60 -36.9L-68.3 -32.2L-68.8 -33.2L-75.2 -29.6L-75.7 -30.6L-78.2 -29.2L-77.5 -27.9L-80.8 -26L-82.6 -29.3L-84.8 -28.1L-87.3 -32.4L-86.5 -32.9L-89.7 -38.6L-81.8 -43L-81.2 -41.8L-74.5 -45.6L-74.1 -44.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-114.6 85.5L-114.6 86.3L-110.8 86.3L-110.8 85.5L-103.7 85.6L-103.8 86.5L-101.3 86.5L-101.5 97.5L-123.9 97.2L-123.7 86.3L-121.8 86.3L-121.8 85.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-46.4 -128.6L-43.7 -125.5L-42.4 -126.6L-38.4 -122L-37.2 -123.1L-36.2 -122L-45.7 -113.5L-46.5 -114.4L-50.1 -111.1L-52.6 -113.9L-55.8 -111L-60.3 -116.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-22.6 -84.4L-22.6 -77.5L-21.8 -77.5L-21.9 -73.1L-23.1 -73.1L-23.1 -70.4L-42.7 -70.6L-42.7 -68.9L-46.1 -68.9L-46.1 -72.8L-48.8 -72.8L-48.7 -77.4L-48 -77.4L-48 -84.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-27 -114.2L-24.5 -114.1L-24.4 -116.3L-23 -116.2L-23.3 -97.5L-30 -97.6L-30 -101.9L-32.8 -101.9L-32.7 -107.1L-35.1 -107.1L-34.9 -118.3L-33 -118.3L-33 -116.6L-27 -116.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-101.4 69L-101.4 80.2L-103.5 80.2L-103.5 80.6L-110.8 80.6L-110.8 79.9L-114.5 79.9L-114.5 80.8L-121.8 80.8L-121.8 79.9L-123.7 79.9L-123.7 69Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-25.3 -131.4L-18.4 -129.6L-18.2 -130.3L-13.1 -129L-13.7 -126.9L-8.6 -125.5L-9.3 -122.8L-5.1 -121.7L-7 -114.5L-24.9 -119.1L-24 -122.6L-25.7 -123L-25 -125.8L-26.6 -126.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-15.2 -50.9L-10.2 -46L-9.8 -46.5L-6.6 -43.3L-7.4 -42.5L-5.8 -40.9L-12.4 -34.2L-13.2 -35L-18.4 -29.7L-19.4 -30.7L-21.2 -29L-19.9 -27.8L-22.7 -24.9L-25.6 -27.8L-27.2 -26.1L-30.6 -29.4L-30.2 -29.8L-35 -34.5L-28.3 -41.4L-27.4 -40.5L-22.3 -45.8L-21.2 -44.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M7.5 -83.7L9.7 -76.9L11 -77.4L12.4 -72.9L11.5 -72.6L12.4 -70.1L3.4 -67.1L3 -68.3L-4 -66L-4.3 -67.1L-6.9 -66.3L-6.4 -64.8L-10.2 -63.5L-11.4 -67L-14 -66.2L-15.5 -70.6L-14.4 -71L-16.5 -77.6L-7.8 -80.5L-7.4 -79.3L-0.2 -81.6L-0.1 -81.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M35 -103.4L45.6 -100.2L44 -95.2L42.7 -95.6L41.4 -91.5L38.8 -92.3L37.9 -89.4L22.2 -94.3L24.3 -101.2L28 -100L28.9 -102.9L34.3 -101.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M9.5 -30.5L4.9 -26L2.9 -28L1.3 -26.4L-1.1 -28.8L-1.7 -28.2L-3 -29.5L-5.5 -27.1L-10 -31.8L-0.6 -41Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M43.3 -110.3L43.4 -107.9L46.1 -108L46.1 -106.4L27.1 -105.9L26.9 -112.7L31.3 -112.8L31.3 -114.9L36.3 -115.1L36.3 -118.1L47.4 -118.4L47.4 -116.5L45.9 -116.4L46 -110.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-53.7 69.3L-53.7 80.2L-56.1 80.2L-56.1 81L-63.1 81L-63.1 80.1L-67.1 80.1L-67.1 80.8L-74.1 80.8L-74.1 80.2L-76.2 80.2L-76.2 69.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M23.8 -134.3L26.7 -132L27.3 -132.8L29.5 -131.1L30.7 -132.6L34.6 -129.4L33.4 -127.9L34.1 -127.4L27.8 -119.5L26.3 -120.7L22.9 -116.5L20.6 -118.4L18.1 -115.3L12.3 -119.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M34.1 -79L39 -74L39.6 -74.6L42.8 -71.4L41.9 -70.6L43.6 -68.9L29.9 -55.2L31 -54L28.5 -51.6L25.7 -54.5L23.8 -52.6L20.6 -55.8L21.1 -56.4L16.2 -61.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-67.1 85.6L-67.1 86.5L-63.2 86.5L-63.2 85.7L-56.1 85.7L-56.1 86.8L-53.7 86.8L-53.8 97.4L-76.1 97.2L-76.1 86.6L-74.2 86.6L-74.2 85.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M121.3 -51.1L120.9 -39.5L109.3 -39.8L109.2 -36.3L105.2 -36.4L105.4 -40.3L101.9 -40.4L102.1 -48.5L114.2 -48.1L114.3 -51.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M133.1 -90L131.8 -79.6L117.2 -81.4L118.4 -91.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M142.8 -47.5L142.6 -38.5L141.5 -38.5L141.5 -35.2L129.1 -35.4L129.1 -37.8L128.3 -37.9L128.5 -50.6L135.3 -50.5L135.2 -47.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M153.4 -86.6L152.2 -77.2L135.7 -79.3L137 -88.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M155.1 -47.5L155.2 -45.2L157.7 -45.3L157.8 -44.7L164.9 -45.2L165.4 -36.8L148.9 -35.8L148.2 -47.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M101 99.9L100.7 90L107.9 89.8L107.9 90.5L109.5 90.5L109.4 88.7L113.7 88.6L113.7 90.3L114.9 90.3L115.2 99.5Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M131.9 81.4L131.9 83.9L136.1 83.9L136.1 91.8L138.4 91.8L138.4 99.9L121.9 99.9L121.8 91.1L125.9 91.1L125.9 83.9L126.6 83.9L126.6 81.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M151.8 100.2L148.6 85L164 81.4L166.7 92.8L159.9 94.4L160.7 98.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M78.8 21.9L63.7 21.1L64.2 5.3L75.8 5.7L75.5 12.6L79.1 12.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M79.3 33.7L81.6 40.6L73.2 43.5L73 43L70.6 43.8L69.8 43.5L69 41.1L69.3 40.3L71.6 39.5L70.6 36.6L69.8 36.9L67.5 30.2L79.8 25.9L82.2 32.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M88.5 2.2L86.7 -3.8L78.6 -1.3L76 -9.6L90 -13.8L92 -7.2L93.8 -7.7L96.1 -0.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M108.6 39.5L108.7 42.9L115.4 42.7L115.7 58.3L109.2 58.5L109.1 54.5L98.4 54.8L98.4 53.3L97.4 53.3L97.3 48.1L99.3 48L99.1 39.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M116 -8.4L115.6 1L110.6 0.8L110.6 2.5L107 2.3L107.1 0.6L100.8 0.3L101.3 -9.8L108.7 -9.4L108.7 -8.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M120.6 38L128.2 37.7L128.4 43L136 42.6L136.4 51.8L121.4 52.5Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M140.4 -8L140.3 2.1L133.4 2L133.3 3.3L124.2 3.2L124.3 -8.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M161 -14.7L160.9 -5.3L155.6 -5.4L155.6 -4.3L153.8 -4.3L153.7 5.2L144.6 5.1L144.7 -3.7L145.8 -3.7L146 -14.6L153.5 -14.5L153.5 -14.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M86.7 87.4L86.5 101.2L71.1 100.9L71.1 98.2L64.8 98L65 88.8L70.1 88.9L70.2 87.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-18.4 74.1L-18.4 96.9L-29.6 96.9L-29.6 94.6L-30.5 94.6L-30.5 87.2L-29.7 87.2L-29.7 83.5L-30.6 83.5L-30.6 76.1L-29.7 76.1L-29.7 74.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-0.6 82.6L-0.6 83.3L2.9 83.4L2.9 82.5L10 82.7L10 83.5L12 83.6L11.7 94.8L-10.2 94.3L-9.9 83.3L-8 83.3L-8 82.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M83.3 72.9L83.1 82.1L70 81.9L70.1 79.1L64.1 79L64.3 69.6L71.2 69.8L71.2 72.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-0.5 63.7L3.2 63.8L3.2 62.9L11.2 63.1L11.2 63.9L12 63.9L11.8 75.2L-10.1 74.7L-9.8 63.9L-7.8 64L-7.7 62.8L-0.4 63Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M160.4 75.1L148.4 76.2L147.4 64.6L150.1 64.3L150.1 63.8L151.5 63.6L151 57.4L158.8 56.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M85.4 49.4L85.4 64.9L66.7 64.8L66.8 59.1L65.2 59.1L65.3 56.7L64 56.7L64.1 49.8L76.8 49.8L76.8 49.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M12.8 46.8L12.7 58L11.6 58L11.6 58.6L3.5 58.6L3.5 57.7L-0.6 57.6L-0.6 58.7L-7.7 58.6L-7.6 57.7L-9.7 57.7L-9.7 46.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-93.5 24.3L-93.5 28.3L-95.6 28.3L-95.6 30.9L-94.2 30.9L-94.2 34.7L-95.8 34.7L-95.8 37.4L-93.4 37.4L-93.5 45.5L-95.7 45.4L-95.7 48.1L-94.3 48.1L-94.3 51.8L-95.6 51.8L-95.6 54.4L-94.6 54.4L-93.8 55L-93.8 57.7L-94.5 58.7L-100.9 58.6L-101.9 60L-105.8 60L-105.8 57.7L-107 57.6L-107 56.8L-107.6 56.7L-107.6 51.6L-107.1 51.6L-107 48.5L-107.5 48.5L-107.5 43.4L-106.9 43.4L-106.9 42.4L-105.6 42.5L-105.6 40.7L-106.9 40.6L-106.9 39.5L-107.6 39.5L-107.6 34.4L-107.1 34.4L-107.1 31.2L-107.6 31.2L-107.6 26.2L-106.9 26.2L-106.9 25.2L-105.9 25.3L-105.8 22.9L-102.2 22.9L-100.4 24.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M13 27.3L12.9 38.3L11.6 38.3L11.6 39.3L3.7 39.2L3.7 38.1L-0.2 38.1L-0.2 39L-7.6 39L-7.6 38L-9.4 38L-9.3 27.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-76.3 49.4L-73.6 49.5L-73.6 47.8L-70 47.9L-70 49.4L-67.3 49.5L-67.3 47.2L-62.9 47.3L-63 54.6L-61.8 55.7L-61.9 61.1L-73.7 60.6L-73.7 61.1L-81.8 60.9L-81.7 55.9L-80.1 54.2L-79.9 47.3L-76.2 47.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-18.2 29.1L-18.2 51.5L-29.6 51.5L-29.6 49.5L-30.3 49.5L-30.3 42.3L-29.6 42.3L-29.7 38.6L-30.5 38.6L-30.5 31.4L-29.5 31.4L-29.6 29.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-57.9 22.4L-57.9 24.5L-57 24.5L-57 25.5L-56.3 25.5L-56.4 30.5L-57 30.5L-57.1 34L-56.5 34L-56.6 38.9L-57.3 38.9L-57.3 39.7L-58.2 39.7L-58.2 42.2L-61.9 42.1L-63.1 40.8L-70.6 40.7L-70.5 36.4L-68.2 36.4L-68.2 33.6L-70.2 33.5L-70.2 30L-68.3 30L-68.3 27.6L-70.3 27.6L-70.3 23.3L-62.9 23.4L-61.7 22.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-95.5 -21.4L-95.5 -19.6L-96.6 -19.6L-96.6 -17.1L-94.8 -17L-94.9 -8.8L-96.6 -8.8L-96.7 -6.5L-95.4 -6.4L-95.4 -2.7L-96.6 -2.7L-96.6 -0.2L-94.9 -0.1L-94.9 4.3L-101.9 4.2L-101.9 5.6L-107.1 5.5L-107 2.9L-108.2 2.9L-108 -6.5L-108.8 -6.5L-108.7 -10.9L-108 -10.9L-107.9 -12.1L-106.9 -12.1L-106.8 -14.2L-108.1 -14.2L-108 -15L-108.8 -15L-108.7 -19.8L-108 -19.8L-108 -21.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-64.4 -19.8L-64.5 -14.7L-65.2 -14.7L-65.2 -13.7L-66.3 -13.7L-66.3 -11.7L-65.3 -11.7L-65.3 -10.6L-64.7 -10.6L-64.8 -5.8L-65.3 -5.8L-65.3 -2.3L-64.7 -2.3L-64.7 2.4L-65.5 2.4L-65.5 3.3L-66.4 3.3L-66.4 5.4L-65.4 5.4L-65.4 6.4L-64.9 6.4L-64.9 11.3L-65.6 11.3L-65.6 13L-76.8 12.8L-76.8 8.3L-78.8 8.3L-78.7 0.1L-76.7 0.1L-76.7 -2.5L-78.4 -2.5L-78.4 -6L-76.7 -6L-76.7 -8.8L-78.9 -8.8L-78.8 -16.8L-76.4 -16.8L-76.3 -19.7L-77.9 -19.7L-77.9 -21.6L-65.2 -21.5L-65.3 -19.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-25.2 -21.4L-25.2 -19.3L-26.7 -19.3L-26.8 -16.7L-24.6 -16.7L-24.7 -8.5L-26.7 -8.6L-26.7 -5.9L-25.6 -5.9L-25.6 -2.4L-26.9 -2.4L-26.9 0.3L-24.9 0.3L-25 4.6L-32.2 4.5L-32.2 5.7L-37.3 5.6L-37.3 3.4L-38 3.4L-38 2.5L-38.6 2.5L-38.6 -2.6L-38 -2.6L-38 -6.6L-38.5 -6.6L-38.5 -10.9L-38 -10.9L-38 -12.1L-36.6 -12.1L-36.6 -13.5L-38 -13.6L-38 -14.9L-38.5 -14.9L-38.4 -19.6L-37.7 -19.6L-37.7 -21.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M7.2 -19.6L7.1 -14.8L6.5 -14.8L6.5 -13.9L5.7 -13.9L5.7 -11.9L6.5 -11.9L6.5 -10.6L7.2 -10.6L7.1 -5.7L6.5 -5.7L6.5 -2.5L7.1 -2.5L7 2.5L6.5 2.5L6.4 3.5L5.7 3.5L5.7 5.7L0.5 5.6L0.5 4.5L-6 4.4L-6.9 3.5L-6.9 1.1L-6 0.2L-5 0.2L-4.9 -2.4L-6.3 -2.4L-6.3 -5.6L-4.8 -5.6L-4.8 -8.7L-6 -8.8L-6.7 -9.5L-6.7 -16L-5.9 -16.8L-4.7 -16.8L-4.7 -19.6L-5.8 -19.6L-5.8 -21.6L6.7 -21.4L6.7 -19.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M90.2 -103.1L83.2 -102.7L83.6 -96.8L74.2 -96.3L73.3 -111.1L89.6 -112.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M141.2 -128.2L141.1 -120.5L134.6 -120.5L134.6 -121.3L132.8 -121.3L132.7 -112.1L120 -112.3L120.1 -119.6L122.5 -119.6L122.6 -128.5Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M82.4 -132L82.5 -126.8L89.7 -126.9L89.8 -117.6L73.3 -117.4L73.3 -119.9L71.3 -119.9L70.5 -121.3L66.5 -121.6L66.4 -127.7L67.5 -128L73.2 -128.1L73.2 -131.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M19.8 -42.7L4.5 -58.1L8.5 -62.1L23.8 -46.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M33.3 89.6L33.3 92.1L36 92.2L36 89.5L40.3 89.5L40.3 99.9L25.8 99.9L25.8 92.2L28.9 92.2L28.9 89.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M32 30.5L32 35L30.7 35L30.7 37.2L29.2 37.2L29.2 39.1L30.8 39.2L30.8 41.6L31.8 41.6L31.8 46.2L18.8 46.1L18.9 30.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M53.9 15.9L53.6 29L49.1 28.9L49.1 27.7L47.3 27.6L47.4 26.1L45 26L45 27.7L43.4 27.7L43.3 29L38.2 28.9L38.5 15.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M32.6 73.1L29.8 73L29.8 74.3L25.3 74.3L25.3 72.9L22.5 72.9L22.5 74.2L18.4 74.2L18.5 63.8L32.7 64L32.7 67.3L35.5 67.3L35.4 71L32.6 71.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M104.8 -26.9L104.8 -23.4L100.3 -23.3L100.3 -26.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M152.6 -103.3L152.1 -100.5L149.2 -100.9L149.7 -103.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-97.1 -29.7L-97.2 -26.6L-101.5 -26.7L-101.4 -29.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-49.6 -53L-49.6 -50L-55.1 -50.1L-55.1 -53.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M95.3 73.4L92.2 73.5L92.1 69.1L95.2 69.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M45.5 90.3L45.4 94.1L42.6 94L42.7 90.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-56.1 -53L-56.1 -51L-60.2 -51L-60.2 -53.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-86 -46L-96.9 -38.7L-100.1 -43.5L-89.2 -50.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M95.5 85.1L95.6 90.2L91.7 90.2L91.7 85.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M122.6 73.5L122.7 79.5L119.1 79.5L119 73.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-54.6 -14L-54.8 -3.1L-60.4 -3.2L-60.3 -14.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M71 -96.7L68.2 -96.5L67.8 -101.7L70.6 -101.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M55.1 -59.2L52.6 -56.9L50.3 -59.3L52.7 -61.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M148.1 -22.3L148.1 -20.2L145.5 -20.2L145.5 -22.3Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M100.9 -46.5L100.7 -38.4L97.4 -38.5L97.7 -46.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M144.9 -28.2L144.9 -24.7L141.6 -24.7L141.6 -28.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M149.3 -30.9L149 -27.8L146.1 -28.1L146.4 -31.1Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M95 54.2L92.2 54.3L92 49.6L94.9 49.5Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M97.4 -12.1L95.2 -11.6L94.6 -14.3L96.9 -14.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M27.2 -80.4L23.8 -77L22.2 -78.6L25.5 -82Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-15.8 -65L-15.9 -61.2L-19.3 -61.3L-19.2 -65Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M117.6 61.8L115.4 61.9L115.2 58.6L117.4 58.5Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-54.9 -1.9L-55 9.5L-60.6 9.5L-60.5 -1.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-118.6 -16.4L-118.6 -0.3L-124.2 -0.3L-124.1 -16.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M54.8 -47.9L38.3 -31.1L34.1 -35.2L50.7 -52Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-112.4 44.8L-112.4 56.3L-117.9 56.3L-117.9 44.8Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-40.7 -22.4L-40.8 -5.5L-46.4 -5.6L-46.2 -22.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-78.7 -60.8L-87.4 -60.9L-87.3 -66.8L-78.6 -66.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M29.6 -14.1L29.4 2.5L24 2.4L24.2 -14.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-37.1 -60.9L-48 -61L-47.9 -66.8L-37 -66.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-36.9 -37.2L-37.1 -26.2L-42.5 -26.2L-42.4 -37.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-40.9 27.7L-41 33.7L-46.4 33.7L-46.3 27.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-49.5 -26.2L-55.1 -26.2L-55.2 -47.6L-49.5 -47.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-112.2 27.4L-112.3 38.5L-117.9 38.5L-117.9 27.4Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-81.7 -48.6L-83.6 -51.3L-80.5 -53.4L-78.7 -50.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-55.1 -60.9L-70.8 -60.9L-70.8 -66.7L-55.1 -66.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-20.8 -60.9L-29.2 -61L-29.1 -66.6L-20.7 -66.5Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-26.9 -48L-35.5 -48.1L-35.5 -54L-26.8 -53.9Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-40.9 37.7L-41 54.4L-46.6 54.3L-46.4 37.6Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M7.6 -37L-3.6 -48.1L0.5 -52.3L11.7 -41.2Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<path d="M-104.2 -48.9L-113.6 -42.6L-116.8 -47.4L-107.5 -53.7Z" fill="#ffffff" fill-rule="evenodd" stroke="#8a919c" stroke-width="0.75" vector-effect="non-scaling-stroke"/>
+<polygon points="-91,-68.7 -75,-68.7 -75,-52.7 -91,-52.7" fill="none" stroke="#009e73" stroke-width="1.5" stroke-dasharray="5 3" vector-effect="non-scaling-stroke"/>
+<polygon points="-75,-68.7 -59,-68.7 -59,-52.7 -75,-52.7" fill="none" stroke="#0072b2" stroke-width="1.5" stroke-dasharray="5 3" vector-effect="non-scaling-stroke"/>
+</g>
+<rect x="217.1" y="521" width="7" height="7" fill="#ffffff" stroke="#1b1f24" transform="rotate(45 220.6 524.5)"/>
+<text x="226.6" y="527.5" font-size="8" stroke="#ffffff" stroke-width="3" paint-order="stroke">T1</text>
+<line x1="215.1" y1="516.9" x2="218.8" y2="529.4" stroke="#1b1f24" stroke-width="2"/>
+<circle cx="215.1" cy="516.9" r="4.5" fill="#1b1f24" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.1" y="511.9" font-size="9" font-weight="bold" stroke="#ffffff" stroke-width="3" paint-order="stroke">1</text>
+<line x1="403.6" y1="662.4" x2="403.6" y2="675.4" stroke="#1b1f24" stroke-width="2"/>
+<circle cx="403.6" cy="662.4" r="4.5" fill="#1b1f24" stroke="#ffffff" stroke-width="1.5"/>
+<text x="409.6" y="657.4" font-size="9" font-weight="bold" stroke="#ffffff" stroke-width="3" paint-order="stroke">2</text>
+<line x1="423.1" y1="539.7" x2="413.9" y2="548.8" stroke="#1b1f24" stroke-width="2"/>
+<circle cx="423.1" cy="539.7" r="4.5" fill="#1b1f24" stroke="#ffffff" stroke-width="1.5"/>
+<text x="429.1" y="534.7" font-size="9" font-weight="bold" stroke="#ffffff" stroke-width="3" paint-order="stroke">3</text>
+<line x1="303.7" y1="516.8" x2="303.5" y2="529.8" stroke="#1b1f24" stroke-width="2"/>
+<circle cx="303.7" cy="516.8" r="4.5" fill="#1b1f24" stroke="#ffffff" stroke-width="1.5"/>
+<text x="309.7" y="511.8" font-size="9" font-weight="bold" stroke="#ffffff" stroke-width="3" paint-order="stroke">4</text>
+<rect x="75.4" y="376" width="238.8" height="15" fill="#ffffff" stroke="#c92a2a" stroke-width="0.75"/>
+<text x="80.4" y="387" font-size="8" font-weight="bold" fill="#c92a2a">ESTIMATE · modelled from map data, not recorded footage</text>
+<rect x="75.4" y="909" width="209.7" height="15" fill="#ffffff" stroke="#c92a2a" stroke-width="0.75"/>
+<text x="80.4" y="920" font-size="8" font-weight="bold" fill="#c92a2a">SHOWS CAMERA POSITIONS · for the owner&#39;s own use</text>
+<path d="M706.6 384L712.6 402L706.6 397L700.6 402Z" fill="#1b1f24"/>
+<text x="706.6" y="414" font-size="8" font-weight="bold" text-anchor="middle">N</text>
+<rect x="603.2" y="916" width="109.4" height="4" fill="#1b1f24" stroke="#ffffff" stroke-width="0.75"/>
+<text x="657.9" y="913" font-size="8" font-weight="bold" text-anchor="middle">50 m</text>
+</g>
+<rect x="69.4" y="370" width="655.2" height="560" fill="none" stroke="#8a919c" stroke-width="0.75"/>
+<text x="40" y="946" font-size="8" font-weight="bold">Seen at Detect (25 px/m) by day:</text>
+<rect x="181.1" y="938" width="12" height="9" fill="#f5c542" fill-opacity="0.55" stroke="#8a919c" stroke-width="0.75"/>
+<text x="197.1" y="946" font-size="8">1 camera</text>
+<rect x="236.4" y="938" width="12" height="9" fill="#f28c28" fill-opacity="0.65" stroke="#8a919c" stroke-width="0.75"/>
+<text x="252.4" y="946" font-size="8">2</text>
+<rect x="262.6" y="938" width="12" height="9" fill="#e0453a" fill-opacity="0.73" stroke="#8a919c" stroke-width="0.75"/>
+<text x="278.6" y="946" font-size="8">3</text>
+<rect x="288.7" y="938" width="12" height="9" fill="#9b2c8c" fill-opacity="0.8" stroke="#8a919c" stroke-width="0.75"/>
+<text x="304.7" y="946" font-size="8">4 or more</text>
+<rect x="348.2" y="938" width="12" height="9" fill="#d9dce1" stroke="#8a919c" stroke-width="0.75"/>
+<text x="364.2" y="946" font-size="8">street</text>
+<rect x="395.1" y="938" width="12" height="9" fill="#ffffff" stroke="#8a919c" stroke-width="0.75"/>
+<text x="411.1" y="946" font-size="8">building</text>
+<text x="40" y="960" font-size="8" fill="#5f6772">Numbered dots are cameras, with a line in the direction each faces; diamonds are targets (T1, T2, …); dashed outlines are the areas as drawn, coloured by label. North is</text>
+<text x="40" y="971" font-size="8" fill="#5f6772">up. Map data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP via the demo fixtures</text>
+<text x="40" y="997" font-size="13" font-weight="bold">Cameras</text>
+<line x1="40" y1="1002" x2="754" y2="1002" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1017" font-size="9">4 cameras are enabled. Ranges are at Detect (25 px/m), from each model&#39;s published resolution and field of view. Labels are as the user typed them.</text>
+<rect x="40" y="1185" width="714" height="30" fill="#eceef1"/>
+<text x="44" y="1197" font-size="8" font-weight="bold">Cameras</text>
+<text x="44" y="1208" font-size="8" font-weight="bold">Camera</text>
+<text x="244" y="1208" font-size="8" font-weight="bold">Model</text>
+<text x="600" y="1208" font-size="8" font-weight="bold" text-anchor="end">Range by day</text>
+<text x="750" y="1208" font-size="8" font-weight="bold" text-anchor="end">Range at night</text>
+<line x1="40" y1="1215" x2="754" y2="1215" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="1227" font-size="8">Camera 1 · House 1 front</text>
+<text x="244" y="1227" font-size="8">Test doorbell</text>
+<text x="600" y="1227" font-size="8" text-anchor="end">8.2 m</text>
+<text x="750" y="1227" font-size="8" text-anchor="end">7.5 m (infrared range assumed)</text>
+<line x1="40" y1="1234" x2="754" y2="1234" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1246" font-size="8">Camera 2 · House 2 front</text>
+<text x="244" y="1246" font-size="8">Test bullet</text>
+<text x="600" y="1246" font-size="8" text-anchor="end">76.8 m</text>
+<text x="750" y="1246" font-size="8" text-anchor="end">30 m</text>
+<line x1="40" y1="1253" x2="754" y2="1253" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1265" font-size="8">Camera 3 · House 3 front</text>
+<text x="244" y="1265" font-size="8">Test floodlight</text>
+<text x="600" y="1265" font-size="8" text-anchor="end">17.9 m</text>
+<text x="750" y="1265" font-size="8" text-anchor="end">9 m</text>
+<line x1="40" y1="1272" x2="754" y2="1272" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1284" font-size="8">Camera 4 · House 4 front</text>
+<text x="244" y="1284" font-size="8">Test doorbell</text>
+<text x="600" y="1284" font-size="8" text-anchor="end">8.2 m</text>
+<text x="750" y="1284" font-size="8" text-anchor="end">7.5 m (infrared range assumed)</text>
+<line x1="40" y1="1291" x2="754" y2="1291" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1322" font-size="13" font-weight="bold">Detail × lighting</text>
+<line x1="40" y1="1327" x2="754" y2="1327" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1342" font-size="9">What the enabled cameras together can see, at every detail level by day and by night, with the area each figure is out of. No single figure stands for</text>
+<text x="40" y="1354" font-size="9">the whole: the higher the detail asked for, the less ground any camera covers.</text>
+<rect x="40" y="1361" width="714" height="30" fill="#eceef1"/>
+<text x="44" y="1373" font-size="8" font-weight="bold">Street seen by at least one camera (m² seen of the street in the figures)</text>
+<text x="750" y="1373" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">ESTIMATE · modelled, not recorded footage</text>
+<text x="44" y="1384" font-size="8" font-weight="bold">Detail level</text>
+<text x="194" y="1384" font-size="8" font-weight="bold">Footage there</text>
+<text x="570" y="1384" font-size="8" font-weight="bold" text-anchor="end">By day</text>
+<text x="750" y="1384" font-size="8" font-weight="bold" text-anchor="end">At night</text>
+<line x1="40" y1="1391" x2="754" y2="1391" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="1403" font-size="8">Detect (25 px/m)</text>
+<text x="44" y="1414" font-size="8">shown in the app</text>
+<text x="194" y="1403" font-size="8">can tell someone is there</text>
+<text x="570" y="1403" font-size="8" text-anchor="end">279 of 10,593 m²</text>
+<text x="570" y="1414" font-size="8" text-anchor="end">3%</text>
+<text x="750" y="1403" font-size="8" text-anchor="end">227 of 10,593 m²</text>
+<text x="750" y="1414" font-size="8" text-anchor="end">2%</text>
+<line x1="40" y1="1421" x2="754" y2="1421" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1433" font-size="8">Observe (62 px/m)</text>
+<text x="194" y="1433" font-size="8">can follow what someone does and wears</text>
+<text x="570" y="1433" font-size="8" text-anchor="end">112 of 10,593 m²</text>
+<text x="570" y="1444" font-size="8" text-anchor="end">1%</text>
+<text x="750" y="1433" font-size="8" text-anchor="end">112 of 10,593 m²</text>
+<text x="750" y="1444" font-size="8" text-anchor="end">1%</text>
+<line x1="40" y1="1451" x2="754" y2="1451" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1463" font-size="8">Recognise (125 px/m)</text>
+<text x="194" y="1463" font-size="8">can recognise someone already known</text>
+<text x="570" y="1463" font-size="8" text-anchor="end">48 of 10,593 m²</text>
+<text x="570" y="1474" font-size="8" text-anchor="end">&lt;1%</text>
+<text x="750" y="1463" font-size="8" text-anchor="end">48 of 10,593 m²</text>
+<text x="750" y="1474" font-size="8" text-anchor="end">&lt;1%</text>
+<line x1="40" y1="1481" x2="754" y2="1481" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1493" font-size="8">Identify (250 px/m)</text>
+<text x="194" y="1493" font-size="8">can identify a stranger, beyond doubt</text>
+<text x="570" y="1493" font-size="8" text-anchor="end">34 of 10,593 m²</text>
+<text x="570" y="1504" font-size="8" text-anchor="end">&lt;1%</text>
+<text x="750" y="1493" font-size="8" text-anchor="end">34 of 10,593 m²</text>
+<text x="750" y="1504" font-size="8" text-anchor="end">&lt;1%</text>
+<line x1="40" y1="1511" x2="754" y2="1511" stroke="#d9dce1" stroke-width="0.75"/>
+<rect x="40" y="1519" width="714" height="30" fill="#eceef1"/>
+<text x="44" y="1531" font-size="8" font-weight="bold">Street seen by two or more cameras</text>
+<text x="750" y="1531" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">ESTIMATE · modelled, not recorded footage</text>
+<text x="44" y="1542" font-size="8" font-weight="bold">Detail level</text>
+<text x="194" y="1542" font-size="8" font-weight="bold">Footage there</text>
+<text x="570" y="1542" font-size="8" font-weight="bold" text-anchor="end">By day</text>
+<text x="750" y="1542" font-size="8" font-weight="bold" text-anchor="end">At night</text>
+<line x1="40" y1="1549" x2="754" y2="1549" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="1561" font-size="8">Detect (25 px/m)</text>
+<text x="44" y="1572" font-size="8">shown in the app</text>
+<text x="194" y="1561" font-size="8">can tell someone is there</text>
+<text x="570" y="1561" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="570" y="1572" font-size="8" text-anchor="end">0%</text>
+<text x="750" y="1561" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="750" y="1572" font-size="8" text-anchor="end">0%</text>
+<line x1="40" y1="1579" x2="754" y2="1579" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1591" font-size="8">Observe (62 px/m)</text>
+<text x="194" y="1591" font-size="8">can follow what someone does and wears</text>
+<text x="570" y="1591" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="570" y="1602" font-size="8" text-anchor="end">0%</text>
+<text x="750" y="1591" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="750" y="1602" font-size="8" text-anchor="end">0%</text>
+<line x1="40" y1="1609" x2="754" y2="1609" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1621" font-size="8">Recognise (125 px/m)</text>
+<text x="194" y="1621" font-size="8">can recognise someone already known</text>
+<text x="570" y="1621" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="570" y="1632" font-size="8" text-anchor="end">0%</text>
+<text x="750" y="1621" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="750" y="1632" font-size="8" text-anchor="end">0%</text>
+<line x1="40" y1="1639" x2="754" y2="1639" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1651" font-size="8">Identify (250 px/m)</text>
+<text x="194" y="1651" font-size="8">can identify a stranger, beyond doubt</text>
+<text x="570" y="1651" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="570" y="1662" font-size="8" text-anchor="end">0%</text>
+<text x="750" y="1651" font-size="8" text-anchor="end">0 of 10,593 m²</text>
+<text x="750" y="1662" font-size="8" text-anchor="end">0%</text>
+<line x1="40" y1="1669" x2="754" y2="1669" stroke="#d9dce1" stroke-width="0.75"/>
+<rect x="40" y="1677" width="714" height="30" fill="#eceef1"/>
+<text x="44" y="1689" font-size="8" font-weight="bold">Building walls seen (m² seen of the walls in the figures)</text>
+<text x="750" y="1689" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">ESTIMATE · modelled, not recorded footage</text>
+<text x="44" y="1700" font-size="8" font-weight="bold">Detail level</text>
+<text x="194" y="1700" font-size="8" font-weight="bold">Footage there</text>
+<text x="570" y="1700" font-size="8" font-weight="bold" text-anchor="end">By day</text>
+<text x="750" y="1700" font-size="8" font-weight="bold" text-anchor="end">At night</text>
+<line x1="40" y1="1707" x2="754" y2="1707" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="1719" font-size="8">Detect (25 px/m)</text>
+<text x="44" y="1730" font-size="8">shown in the app</text>
+<text x="194" y="1719" font-size="8">can tell someone is there</text>
+<text x="570" y="1719" font-size="8" text-anchor="end">283 of 30,349 m²</text>
+<text x="570" y="1730" font-size="8" text-anchor="end">1%</text>
+<text x="750" y="1719" font-size="8" text-anchor="end">148 of 30,349 m²</text>
+<text x="750" y="1730" font-size="8" text-anchor="end">&lt;1%</text>
+<line x1="40" y1="1737" x2="754" y2="1737" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1749" font-size="8">Observe (62 px/m)</text>
+<text x="194" y="1749" font-size="8">can follow what someone does and wears</text>
+<text x="570" y="1749" font-size="8" text-anchor="end">121 of 30,349 m²</text>
+<text x="570" y="1760" font-size="8" text-anchor="end">&lt;1%</text>
+<text x="750" y="1749" font-size="8" text-anchor="end">114 of 30,349 m²</text>
+<text x="750" y="1760" font-size="8" text-anchor="end">&lt;1%</text>
+<line x1="40" y1="1767" x2="754" y2="1767" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1779" font-size="8">Recognise (125 px/m)</text>
+<text x="194" y="1779" font-size="8">can recognise someone already known</text>
+<text x="570" y="1779" font-size="8" text-anchor="end">0 of 30,349 m²</text>
+<text x="570" y="1790" font-size="8" text-anchor="end">0%</text>
+<text x="750" y="1779" font-size="8" text-anchor="end">0 of 30,349 m²</text>
+<text x="750" y="1790" font-size="8" text-anchor="end">0%</text>
+<line x1="40" y1="1797" x2="754" y2="1797" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1809" font-size="8">Identify (250 px/m)</text>
+<text x="194" y="1809" font-size="8">can identify a stranger, beyond doubt</text>
+<text x="570" y="1809" font-size="8" text-anchor="end">0 of 30,349 m²</text>
+<text x="570" y="1820" font-size="8" text-anchor="end">0%</text>
+<text x="750" y="1809" font-size="8" text-anchor="end">0 of 30,349 m²</text>
+<text x="750" y="1820" font-size="8" text-anchor="end">0%</text>
+<line x1="40" y1="1827" x2="754" y2="1827" stroke="#d9dce1" stroke-width="0.75"/>
+<rect x="40" y="1835" width="714" height="30" fill="#eceef1"/>
+<text x="44" y="1847" font-size="8" font-weight="bold">The street by kind, at Detect (25 px/m) (see what “street” means)</text>
+<text x="750" y="1847" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">ESTIMATE · modelled, not recorded footage</text>
+<text x="44" y="1858" font-size="8" font-weight="bold">Kind</text>
+<text x="194" y="1858" font-size="8" font-weight="bold">In the figures</text>
+<text x="570" y="1858" font-size="8" font-weight="bold" text-anchor="end">Seen by day</text>
+<text x="750" y="1858" font-size="8" font-weight="bold" text-anchor="end">Seen at night</text>
+<line x1="40" y1="1865" x2="754" y2="1865" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="1877" font-size="8">Carriageway</text>
+<text x="194" y="1877" font-size="8">8,689 m²</text>
+<text x="570" y="1877" font-size="8" text-anchor="end">275 of 8,689 m²</text>
+<text x="570" y="1888" font-size="8" text-anchor="end">3%</text>
+<text x="750" y="1877" font-size="8" text-anchor="end">225 of 8,689 m²</text>
+<text x="750" y="1888" font-size="8" text-anchor="end">3%</text>
+<line x1="40" y1="1895" x2="754" y2="1895" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1907" font-size="8">Footpath and service</text>
+<text x="194" y="1907" font-size="8">1,905 m²</text>
+<text x="570" y="1907" font-size="8" text-anchor="end">5 of 1,905 m²</text>
+<text x="570" y="1918" font-size="8" text-anchor="end">&lt;1%</text>
+<text x="750" y="1907" font-size="8" text-anchor="end">2 of 1,905 m²</text>
+<text x="750" y="1918" font-size="8" text-anchor="end">&lt;1%</text>
+<line x1="40" y1="1925" x2="754" y2="1925" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1941" font-size="8" fill="#5f6772">Up to: trees, hedges, fences and vehicles are not counted. &#39;Street&#39; includes driveways and footpaths.</text>
+<text x="40" y="1967" font-size="13" font-weight="bold">Where footage lands</text>
+<line x1="40" y1="1972" x2="754" y2="1972" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1987" font-size="9">Each camera&#39;s visible ground at Detect (25 px/m) by day, split by the areas drawn and labelled in the scene. Areas and labels are as drawn by the user,</text>
+<text x="40" y="1999" font-size="9">not property boundaries. A label figure is given as drawn, with below it the range it takes when every outline is moved 1 m in and 1 m out. Areas may</text>
+<text x="40" y="2011" font-size="9">overlap, so the columns need not add up.</text>
+<rect x="40" y="2018" width="714" height="30" fill="#eceef1"/>
+<text x="44" y="2030" font-size="8" font-weight="bold">Ground and walls each camera sees, m² (labels as drawn)</text>
+<text x="750" y="2030" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">ESTIMATE · modelled, not recorded footage</text>
+<text x="44" y="2041" font-size="8" font-weight="bold">Camera</text>
+<text x="246.7" y="2041" font-size="8" font-weight="bold" text-anchor="end">Ground seen</text>
+<text x="347.3" y="2041" font-size="8" font-weight="bold" text-anchor="end">On the street</text>
+<text x="448" y="2041" font-size="8" font-weight="bold" text-anchor="end">Own</text>
+<text x="548.7" y="2041" font-size="8" font-weight="bold" text-anchor="end">Neighbour</text>
+<text x="649.3" y="2041" font-size="8" font-weight="bold" text-anchor="end">Unlabelled ground</text>
+<text x="750" y="2041" font-size="8" font-weight="bold" text-anchor="end">Walls seen</text>
+<line x1="40" y1="2048" x2="754" y2="2048" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="2060" font-size="8">Camera 1 · House 1 front</text>
+<text x="246.7" y="2060" font-size="8" text-anchor="end">89</text>
+<text x="347.3" y="2060" font-size="8" text-anchor="end">73</text>
+<text x="448" y="2060" font-size="8" text-anchor="end">87</text>
+<text x="448" y="2071" font-size="8" text-anchor="end">76–89</text>
+<text x="548.7" y="2060" font-size="8" text-anchor="end">1</text>
+<text x="548.7" y="2071" font-size="8" text-anchor="end">0–4</text>
+<text x="649.3" y="2060" font-size="8" text-anchor="end">2</text>
+<text x="649.3" y="2071" font-size="8" text-anchor="end">0–8</text>
+<text x="750" y="2060" font-size="8" text-anchor="end">9</text>
+<line x1="40" y1="2078" x2="754" y2="2078" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="2090" font-size="8">Camera 2 · House 2 front</text>
+<text x="246.7" y="2090" font-size="8" text-anchor="end">568</text>
+<text x="347.3" y="2090" font-size="8" text-anchor="end">34</text>
+<text x="448" y="2090" font-size="8" text-anchor="end">0</text>
+<text x="548.7" y="2090" font-size="8" text-anchor="end">0</text>
+<text x="649.3" y="2090" font-size="8" text-anchor="end">535</text>
+<text x="750" y="2090" font-size="8" text-anchor="end">203</text>
+<line x1="40" y1="2097" x2="754" y2="2097" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="2109" font-size="8">Camera 3 · House 3 front</text>
+<text x="246.7" y="2109" font-size="8" text-anchor="end">149</text>
+<text x="347.3" y="2109" font-size="8" text-anchor="end">98</text>
+<text x="448" y="2109" font-size="8" text-anchor="end">0</text>
+<text x="548.7" y="2109" font-size="8" text-anchor="end">0</text>
+<text x="649.3" y="2109" font-size="8" text-anchor="end">51</text>
+<text x="750" y="2109" font-size="8" text-anchor="end">72</text>
+<line x1="40" y1="2116" x2="754" y2="2116" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="2128" font-size="8">Camera 4 · House 4 front</text>
+<text x="246.7" y="2128" font-size="8" text-anchor="end">88</text>
+<text x="347.3" y="2128" font-size="8" text-anchor="end">75</text>
+<text x="448" y="2128" font-size="8" text-anchor="end">0</text>
+<text x="548.7" y="2128" font-size="8" text-anchor="end">0</text>
+<text x="649.3" y="2128" font-size="8" text-anchor="end">14</text>
+<text x="750" y="2128" font-size="8" text-anchor="end">0</text>
+<line x1="40" y1="2135" x2="754" y2="2135" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="2157" font-size="10" font-weight="bold">Areas as drawn (names as the user typed them)</text>
+<text x="44" y="2172" font-size="9">•</text>
+<text x="54" y="2172" font-size="9">Front garden: Own, outline 256 m² as drawn; ground seen by Camera 1 · House 1 front: 87 m² (76–89).</text>
+<text x="44" y="2317" font-size="9">•</text>
+<text x="54" y="2317" font-size="9">Next door: Neighbour, outline 256 m² as drawn; ground seen by Camera 1 · House 1 front: 1 m² (0–4).</text>
+<text x="40" y="2337" font-size="10" font-weight="bold">Walls seen per building (buildings by their number in the loaded map)</text>
+<text x="44" y="2352" font-size="9">•</text>
+<text x="54" y="2352" font-size="9">Camera 1 · House 1 front: building 94 at 3 m: 3 m²; building 101 at 8 m: 5 m².</text>
+<text x="44" y="2367" font-size="9">•</text>
+<text x="54" y="2367" font-size="9">Camera 2 · House 2 front: building 51 at 21 m: 89 m²; building 64 at 29 m: 44 m²; building 53 at 32 m: 69 m².</text>
+<text x="44" y="2382" font-size="9">•</text>
+<text x="54" y="2382" font-size="9">Camera 3 · House 3 front: building 106 at 7 m: 72 m².</text>
+<text x="40" y="2411" font-size="13" font-weight="bold">Targets</text>
+<line x1="40" y1="2416" x2="754" y2="2416" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="2431" font-size="9">For each target, whether the model rules out that each camera sees it. ✓ not ruled out: some of the target is visible in the model. ✗ ruled out, for the</text>
+<text x="40" y="2443" font-size="9">reason given. The wording is one-sided because hedges, fences, trees and vehicles are not modelled and can only block more. Target names are as the user</text>
+<text x="40" y="2455" font-size="9">typed them.</text>
+<text x="40" y="2472" font-size="10" font-weight="bold">Path to the door (ground)</text>
+<text x="40" y="2487" font-size="9">At Detect (25 px/m) by day: not ruled out for Camera 1 · House 1 front; ruled out for 3: outside the view (2), out of range (1).</text>
+<text x="44" y="2501" font-size="8">•</text>
+<text x="54" y="2501" font-size="8">Camera 1 · House 1 front: by day Detect ✓, Observe ✓, Recognise ✗ (out of range), Identify ✗ (out of range); at night Detect ✓, Observe ✓, Recognise ✗ (out of range),</text>
+<text x="54" y="2512" font-size="8">Identify ✗ (out of range).</text>
+<text x="40" y="2541" font-size="13" font-weight="bold">Methodology</text>
+<line x1="40" y1="2546" x2="754" y2="2546" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="2566" font-size="10" font-weight="bold">What “street” means</text>
+<text x="40" y="2581" font-size="9">Street is the ground on every road, path and service way mapped in OpenStreetMap whose highway type is one of these, each as a band of the width in</text>
+<text x="40" y="2593" font-size="9">brackets centred on the mapped line: motorway, trunk (14 m); primary (10 m); secondary (8 m); tertiary (7 m); residential, unclassified (6 m);</text>
+<text x="40" y="2605" font-size="9">living_street (5 m); service (4 m); footway, path, pedestrian, cycleway, steps (2 m); motorway_link, trunk_link, primary_link, secondary_link,</text>
+<text x="40" y="2617" font-size="9">tertiary_link (6 m). A way tagged with a width of at least 1 m and below 60 m uses that width; failing that, a lanes tag of at least 1 and below 12</text>
+<text x="40" y="2629" font-size="9">gives 3.25 m a lane. Ground under a building is never street.</text>
+<text x="40" y="2644" font-size="9">Carriageway is the street on every type above but service, footway, path, pedestrian, cycleway and steps. Footpath and service is the rest of the</text>
+<text x="40" y="2656" font-size="9">street: ground on one of those and on no carriageway. Driveways are usually mapped as service ways, so they count here.</text>
+<text x="40" y="2676" font-size="10" font-weight="bold">What “seen” means</text>
+<text x="40" y="2691" font-size="9">A spot counts as seen by a camera when a point 1.0 m above the ground there (the subject height) lies inside the camera&#39;s field of view and within its</text>
+<text x="40" y="2703" font-size="9">range, and the straight line from the camera to it passes through no building and stays clear of the ground. Ground is tested at the centre of every 0.5</text>
+<text x="40" y="2715" font-size="9">m square cell outside buildings, walls in patches of about 1 m. A figure is the area of the cells or patches seen.</text>
+<text x="40" y="2730" font-size="9">Range at a detail level of D pixels per metre is R = W ÷ (2 × D × tan(H ÷ 2)), where W is the camera&#39;s published horizontal resolution in pixels and H</text>
+<text x="40" y="2742" font-size="9">its horizontal field of view (taken as at most 170°), and never more than 100 m. At night R is also no more than the camera&#39;s published infrared range,</text>
+<text x="40" y="2754" font-size="9">or 7.5 m where none is published. The detail levels (DORI, after EN 62676-4) are Detect 25 px/m (can tell someone is there), Observe 62 px/m (can follow</text>
+<text x="40" y="2766" font-size="9">what someone does and wears), Recognise 125 px/m (can recognise someone already known) and Identify 250 px/m (can identify a stranger, beyond doubt);</text>
+<text x="40" y="2778" font-size="9">Custom is a density the user sets.</text>
+<text x="40" y="2798" font-size="10" font-weight="bold">Areas, targets and verdicts</text>
+<text x="40" y="2813" font-size="9">Areas and their labels (own, neighbour, public, other) are outlines the user drew, as drawn: they are not property boundaries, and no property data is</text>
+<text x="40" y="2825" font-size="9">used. Each area figure is given as drawn, with the range it takes when every outline is moved 1 m in and 1 m out, and each outline&#39;s own area is printed</text>
+<text x="40" y="2837" font-size="9">beside it. The scene, area and target names are printed as the user typed them.</text>
+<text x="40" y="2852" font-size="9">A verdict on a target is one-sided. Not ruled out: some of the target is visible in the model. Ruled out: the model rules it out, for the reason given.</text>
+<text x="40" y="2864" font-size="9">What the model leaves out can only block more, so it never says that a camera sees a place.</text>
+<text x="40" y="2884" font-size="10" font-weight="bold">What the figures leave out (caveats version 1)</text>
+<text x="44" y="2899" font-size="9">•</text>
+<text x="54" y="2899" font-size="9">Not modelled: trees, hedges, fences and walls, vehicles, poles, street furniture, awnings, bridges and tunnels. Cameras see straight through them, so</text>
+<text x="54" y="2911" font-size="9">the figures can only overstate what is visible past them.</text>
+<text x="44" y="2926" font-size="9">•</text>
+<text x="54" y="2926" font-size="9">Buildings come from OpenStreetMap. One missing from the map lets cameras see through the gap; one demolished but still mapped blocks a view that is</text>
+<text x="54" y="2938" font-size="9">open.</text>
+<text x="44" y="2953" font-size="9">•</text>
+<text x="54" y="2953" font-size="9">Building heights are inferred where they are not tagged, and roofs are flat, so views over and onto buildings can be wrong in either direction.</text>
+<text x="44" y="2968" font-size="9">•</text>
+<text x="54" y="2968" font-size="9">Terrain is approximate: ground heights come from a public elevation model sampled every 5 m, so small banks, retaining walls and cuttings are</text>
+<text x="54" y="2980" font-size="9">smoothed out.</text>
+<text x="44" y="2995" font-size="9">•</text>
+<text x="54" y="2995" font-size="9">&#39;Street&#39; includes driveways and footpaths: every mapped road, service road and footpath counts, as a band of estimated width.</text>
+<text x="44" y="3010" font-size="9">•</text>
+<text x="54" y="3010" font-size="9">Detail levels are pixel-density targets from the published resolution, not a test of what a camera records. Range is capped at 100 m, and floodlights</text>
+<text x="54" y="3022" font-size="9">and street lights are ignored at night.</text>
+<text x="44" y="3037" font-size="9">•</text>
+<text x="54" y="3037" font-size="9">Only the loaded area is analysed, at one subject height: views beyond its edge are cut off.</text>
+<text x="40" y="3052" font-size="9">Leaving these out can only overstate what a camera sees, so read the figures as &quot;up to&quot;. Inferred heights and missing or out-of-date buildings err in</text>
+<text x="40" y="3064" font-size="9">both directions, though, so they are not a strict upper bound.</text>
+</svg>

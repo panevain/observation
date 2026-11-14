@@ -1,13 +1,14 @@
 //! The native build's side of [`crate::platform`]: no network, storage that
-//! lasts for the run, downloads written to the working directory, a dark
-//! colour scheme and no coverage worker.
+//! lasts for the run, downloads written to the working directory, no canvas
+//! or print dialog for the evidence sheet, a dark colour scheme and no
+//! coverage worker.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{
     Clock, ColorScheme, FileDialogs, Http, HttpRequest, KeyValueStore, PickedFile, Platform,
-    SaveFailure,
+    SaveFailure, SheetOutput,
 };
 use observation_client_model::platform::{JobChannel, Reply, StreamEvent, StreamStop};
 
@@ -17,6 +18,7 @@ pub fn platform() -> Platform {
         local: Arc::new(RunStore::default()),
         session: Arc::new(RunStore::default()),
         files: Arc::new(WorkingDirectory),
+        sheet: Arc::new(NoCanvas),
         clock: Arc::new(SystemClock),
         scheme: Arc::new(AlwaysDark),
     }
@@ -97,6 +99,26 @@ impl FileDialogs for WorkingDirectory {
         std::fs::write(name, text).map_err(|e| format!("could not write {name} ({e})"))
     }
     fn pick_text(&self, _: &str, _: Box<dyn FnOnce(Result<PickedFile, String>) + Send>) {}
+}
+
+/// There is no canvas or print dialog natively.
+struct NoCanvas;
+
+impl SheetOutput for NoCanvas {
+    fn download_png(
+        &self,
+        _: &str,
+        _: &observation_core::evidence::SheetSvg,
+        done: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) {
+        done(Err(
+            "PNG export is only available in the browser build".to_owned()
+        ));
+    }
+
+    fn print(&self, _: &observation_core::evidence::SheetSvg) -> Result<(), String> {
+        Err("printing is only available in the browser build".to_owned())
+    }
 }
 
 // The clock.

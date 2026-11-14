@@ -362,6 +362,58 @@ impl FileDialogs for FakeFiles {
     }
 }
 
+/// Records the sheets drawn as PNG and printed; a PNG is answered at once,
+/// with success or with the refusal set.
+#[derive(Debug, Default)]
+pub struct FakeSheetOutput {
+    /// The name and page count of every PNG asked for.
+    pngs: Mutex<Vec<(String, u32)>>,
+    /// The page count of every sheet printed.
+    prints: Mutex<Vec<u32>>,
+    /// Why every request fails, when set.
+    refuse: Mutex<Option<String>>,
+}
+
+impl FakeSheetOutput {
+    /// From now on every request fails with `why` (or succeeds again with
+    /// `None`); a refused request is not recorded.
+    pub fn refuse(&self, why: Option<&str>) {
+        *lock(&self.refuse) = why.map(str::to_owned);
+    }
+
+    pub fn pngs(&self) -> Vec<(String, u32)> {
+        lock(&self.pngs).clone()
+    }
+
+    pub fn prints(&self) -> Vec<u32> {
+        lock(&self.prints).clone()
+    }
+}
+
+impl crate::platform::SheetOutput for FakeSheetOutput {
+    fn download_png(
+        &self,
+        name: &str,
+        sheet: &observation_core::evidence::SheetSvg,
+        done: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) {
+        if let Some(why) = lock(&self.refuse).clone() {
+            done(Err(why));
+            return;
+        }
+        lock(&self.pngs).push((name.to_owned(), sheet.pages));
+        done(Ok(()));
+    }
+
+    fn print(&self, sheet: &observation_core::evidence::SheetSvg) -> Result<(), String> {
+        if let Some(why) = lock(&self.refuse).clone() {
+            return Err(why);
+        }
+        lock(&self.prints).push(sheet.pages);
+        Ok(())
+    }
+}
+
 /// A clock that only moves when the test says so.
 #[derive(Debug, Default)]
 pub struct FakeClock(Mutex<f64>);

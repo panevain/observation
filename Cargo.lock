@@ -4917,6 +4917,7 @@ dependencies = [
  "earcut",
  "glam",
  "observation-core",
+ "observation-tokens",
  "postcard",
  "proptest",
  "ron",

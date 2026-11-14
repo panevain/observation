@@ -52,6 +52,18 @@ impl DoriLevel {
             Self::Custom => "Custom",
         }
     }
+
+    /// What footage at this level lets a viewer tell, in plain words (after
+    /// EN 62676-4); `None` for [`Self::Custom`], whose density is the user's.
+    pub fn reading(self) -> Option<&'static str> {
+        match self {
+            Self::Detect => Some("can tell someone is there"),
+            Self::Observe => Some("can follow what someone does and wears"),
+            Self::Recognise => Some("can recognise someone already known"),
+            Self::Identify => Some("can identify a stranger, beyond doubt"),
+            Self::Custom => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]

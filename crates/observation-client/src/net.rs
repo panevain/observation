@@ -355,6 +355,7 @@ mod tests {
                 local: Arc::new(MemoryStore::default()),
                 session: session.clone(),
                 files: Arc::new(FakeFiles::default()),
+                sheet: Arc::new(observation_client_model::testing::FakeSheetOutput::default()),
                 clock: clock.clone(),
                 scheme: Arc::new(FakeColorScheme::new(false)),
             };

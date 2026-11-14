@@ -290,6 +290,7 @@ fn harness(stored: Option<&str>) -> Harness {
         local: store.clone(),
         session: Arc::new(MemoryStore::default()),
         files: files.clone(),
+        sheet: Arc::new(observation_client_model::testing::FakeSheetOutput::default()),
         clock: Arc::new(FakeClock::at(0.0)),
         scheme: Arc::new(FakeColorScheme::new(true)),
     };

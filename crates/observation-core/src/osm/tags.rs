@@ -80,32 +80,67 @@ pub(crate) fn names_addresses(highway: &str) -> bool {
         || (FOOT_WAYS.contains(&highway) && highway != "pedestrian"))
 }
 
-/// Estimated carriageway width from OSM `highway`, `lanes` and `width` tags.
-/// Returns `None` for highway types that are not part of the street surface.
+/// The `highway=*` value of service roads (driveways, alleys, car park
+/// aisles).
+pub const SERVICE_WAY: &str = "service";
+
+/// The width of the road surface for every `highway=*` type the street is
+/// made of, when its way has no usable `width` or `lanes` tag: each group of
+/// types with its width, metres. Types not listed are not part of the street.
+/// The evidence sheet's methodology is written from this table.
+pub const ROAD_WIDTHS: [(&[&str], f32); 9] = [
+    (&["motorway", "trunk"], 14.0),
+    (&["primary"], 10.0),
+    (&["secondary"], 8.0),
+    (&["tertiary"], 7.0),
+    (&["residential", "unclassified"], 6.0),
+    (&["living_street"], 5.0),
+    (&[SERVICE_WAY], 4.0),
+    (&FOOT_WAYS, 2.0),
+    (
+        &[
+            "motorway_link",
+            "trunk_link",
+            "primary_link",
+            "secondary_link",
+            "tertiary_link",
+        ],
+        6.0,
+    ),
+];
+
+/// A `width` tag is used as given when it lies in this range, metres.
+pub const WIDTH_TAG_M: std::ops::Range<f32> = 1.0..60.0;
+/// Failing that, a `lanes` tag in this range gives the width ...
+pub const LANES_TAG: std::ops::Range<f32> = 1.0..12.0;
+/// ... at this width a lane, metres.
+pub const LANE_WIDTH_M: f32 = 3.25;
+
+/// Whether a road of this `highway=*` type is carriageway: neither a service
+/// road nor a way people walk or cycle on.
+pub fn is_carriageway(highway: &str) -> bool {
+    highway != SERVICE_WAY && !FOOT_WAYS.contains(&highway)
+}
+
+/// Estimated carriageway width from OSM `highway`, `lanes` and `width` tags
+/// ([`ROAD_WIDTHS`], [`WIDTH_TAG_M`], [`LANES_TAG`]). Returns `None` for
+/// highway types that are not part of the street surface.
 pub fn road_width_m(highway: &str, lanes: Option<&str>, width: Option<&str>) -> Option<f32> {
-    let base = match highway {
-        "motorway" | "trunk" => 14.0,
-        "primary" => 10.0,
-        "secondary" => 8.0,
-        "tertiary" => 7.0,
-        "residential" | "unclassified" => 6.0,
-        "living_street" => 5.0,
-        "service" => 4.0,
-        h if FOOT_WAYS.contains(&h) => 2.0,
-        "motorway_link" | "trunk_link" | "primary_link" | "secondary_link" | "tertiary_link" => 6.0,
-        _ => return None,
-    };
+    let base = ROAD_WIDTHS
+        .iter()
+        .find(|(types, _)| types.contains(&highway))
+        .map(|(_, w)| *w)?;
     if let Some(w) = width
         .and_then(parse_length_m)
-        .filter(|w| (1.0..60.0).contains(w))
+        .filter(|w| WIDTH_TAG_M.contains(w))
     {
         return Some(w);
     }
     if let Some(l) = lanes
         .and_then(|l| l.trim().parse::<f32>().ok())
-        .filter(|l| (1.0..12.0).contains(l))
+        .filter(|l| LANES_TAG.contains(l))
     {
-        return Some(l * 3.25);
+        return Some(l * LANE_WIDTH_M);
     }
     Some(base)
 }
@@ -172,5 +207,14 @@ mod tests {
         assert_eq!(road_width_m("residential", Some("2"), None), Some(6.5));
         assert_eq!(road_width_m("primary", Some("4"), Some("12 m")), Some(12.0));
         assert_eq!(road_width_m("proposed", None, None), None);
+        for h in FOOT_WAYS {
+            assert_eq!(road_width_m(h, None, None), Some(2.0), "{h}");
+            assert!(!is_carriageway(h));
+        }
+        assert_eq!(road_width_m("service", None, None), Some(4.0));
+        assert!(!is_carriageway("service") && is_carriageway("residential"));
+        assert_eq!(road_width_m("trunk_link", None, None), Some(6.0));
+        assert_eq!(road_width_m("residential", Some("12"), None), Some(6.0));
+        assert_eq!(road_width_m("residential", None, Some("60")), Some(6.0));
     }
 }

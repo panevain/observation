@@ -17,7 +17,9 @@ use observation_core::footage::AreaLabel;
 
 use crate::platform::ColorScheme;
 
-use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors};
+use observation_tokens::{
+    AREA_COLORS_LIGHT, COVERAGE_RAMP, FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors,
+};
 pub use observation_tokens::{Layout, Radius, Space, TypeScale};
 
 /// Smallest supported viewport (CSS px). Below this the app shows a gate.
@@ -147,13 +149,6 @@ const KIND_COLORS_DARK: [Color32; 7] = [
     Color32::from_rgb(0x7D, 0x87, 0x96),
 ];
 
-const COVERAGE_RAMP: [Color32; 4] = [
-    Color32::from_rgba_unmultiplied_const(0xF5, 0xC5, 0x42, 140),
-    Color32::from_rgba_unmultiplied_const(0xF2, 0x8C, 0x28, 165),
-    Color32::from_rgba_unmultiplied_const(0xE0, 0x45, 0x3A, 185),
-    Color32::from_rgba_unmultiplied_const(0x9B, 0x2C, 0x8C, 205),
-];
-
 impl Tokens {
     pub fn light() -> Self {
         Self::scheme(
@@ -169,12 +164,7 @@ impl Tokens {
                 aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 halo: Color32::from_rgb(0x1B, 0x1F, 0x24),
                 region: Color32::from_rgb(0x1B, 0x1F, 0x24),
-                areas: [
-                    Color32::from_rgb(0x00, 0x9E, 0x73),
-                    Color32::from_rgb(0x00, 0x72, 0xB2),
-                    Color32::from_rgb(0x56, 0xB4, 0xE9),
-                    Color32::from_rgb(0x8B, 0x7C, 0xF6),
-                ],
+                areas: AREA_COLORS_LIGHT.map(color),
                 target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 outside_area: Color32::from_rgb(0xC9, 0x2A, 0x2A),
                 address: Color32::from_rgb(0x8F, 0xA3, 0xEE),
@@ -237,7 +227,7 @@ impl Tokens {
             scrim: color(ui.scrim),
             camera_palette,
             kind_colors,
-            coverage_ramp: COVERAGE_RAMP,
+            coverage_ramp: COVERAGE_RAMP.map(color),
             selection_box: color(ui.accent),
             world,
             space: SPACE,

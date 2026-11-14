@@ -36,6 +36,36 @@ impl AreaGeometry for AreaBundle {
     }
 }
 
+/// The ground cells of `grid` on the surface of `roads`: within half a road's
+/// width of its centre line, and not under a building (`building_mask`).
+/// [`StaticLayers::street_mask`] is this over every road; the evidence sheet
+/// runs it over some of them to split the street by kind.
+pub fn road_band_mask<'a>(
+    grid: &GroundGrid,
+    building_mask: &[bool],
+    roads: impl IntoIterator<Item = &'a Road>,
+) -> Vec<bool> {
+    let mut mask = vec![false; grid.len()];
+    for road in roads {
+        let half = road.width_m / 2.0;
+        for seg in road.points.windows(2) {
+            let (a, b) = (Vec2::from_array(seg[0]), Vec2::from_array(seg[1]));
+            let Some((x0, x1, z0, z1)) = grid.range(a.min(b) - half, a.max(b) + half) else {
+                continue;
+            };
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    let i = (z * grid.w + x) as usize;
+                    if !building_mask[i] && dist_to_segment(grid.center(i), a, b) <= half {
+                        mask[i] = true;
+                    }
+                }
+            }
+        }
+    }
+    mask
+}
+
 /// Pre-computed, camera-independent analysis layers for a loaded area.
 #[derive(Debug, Clone)]
 pub struct StaticLayers {
@@ -87,24 +117,7 @@ impl StaticLayers {
         let building_mask: Vec<bool> = (0..grid.len())
             .map(|i| occluders.inside_any(grid.center(i)))
             .collect();
-        let mut street_mask = vec![false; grid.len()];
-        for road in roads {
-            let half = road.width_m / 2.0;
-            for seg in road.points.windows(2) {
-                let (a, b) = (Vec2::from_array(seg[0]), Vec2::from_array(seg[1]));
-                let Some((x0, x1, z0, z1)) = grid.range(a.min(b) - half, a.max(b) + half) else {
-                    continue;
-                };
-                for z in z0..=z1 {
-                    for x in x0..=x1 {
-                        let i = (z * grid.w + x) as usize;
-                        if !building_mask[i] && dist_to_segment(grid.center(i), a, b) <= half {
-                            street_mask[i] = true;
-                        }
-                    }
-                }
-            }
-        }
+        let street_mask = road_band_mask(&grid, &building_mask, roads);
         let facades = facade_cells(footprints.iter().copied(), facade_cell_m, &terrain);
         Self {
             grid,

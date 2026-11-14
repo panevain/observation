@@ -16,7 +16,7 @@
 //! | 2 | [`building`], `road`, [`address`], [`terrain`], [`camera`] | the world model |
 //! | 3 | `osm`, [`bundle`] | OSM input, and the area bundle built from it |
 //! | 4 | [`frustum`], [`occlusion`], [`coverage`], [`footage`], [`example`] | analysis |
-//! | 5 | [`coverage_job`], [`regions`], [`provenance`], [`scene`] | messages and records exchanged with the outside |
+//! | 5 | [`coverage_job`], [`regions`], [`provenance`], [`scene`], [`evidence`] | messages and records exchanged with the outside |
 //!
 //! `testing` (fixture builders, only with the `testing` feature or in tests)
 //! may use anything. `tests/layering.rs` enforces the rule; the few upward
@@ -28,6 +28,7 @@ pub mod bundle;
 pub mod camera;
 pub mod coverage;
 pub mod coverage_job;
+pub mod evidence;
 pub mod example;
 pub mod footage;
 pub mod frustum;

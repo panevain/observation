@@ -4,7 +4,7 @@
 use crate::bundle::AreaBundle;
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
 use crate::occlusion::Occluders;
-use crate::osm::tags::FOOT_WAYS;
+use crate::osm::tags::{FOOT_WAYS, is_carriageway};
 use crate::terrain::Terrain;
 use crate::util::planar::closest_on_segment;
 use crate::util::planar::{clean_ring, signed_area2};
@@ -93,7 +93,7 @@ pub fn example_cameras_around(
             })
             .collect()
     };
-    let mut streets = segments(&|h| !FOOT_WAYS.contains(&h) && h != "service");
+    let mut streets = segments(&is_carriageway);
     if streets.is_empty() {
         streets = segments(&|h| !FOOT_WAYS.contains(&h));
     }

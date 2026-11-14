@@ -5,6 +5,7 @@
 
 use crate::document::Models;
 use observation_core::address::Address;
+use observation_core::evidence::Tier;
 
 /// Editing tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -314,6 +315,10 @@ pub struct Panels {
     /// The Scenes dialog (the scenes saved in this browser).
     pub scenes_open: bool,
     pub custom_model_open: bool,
+    /// The Evidence sheet dialog, and the tier chosen in it (Aggregate
+    /// unless the user picks Exact; not remembered across visits).
+    pub sheet_open: bool,
+    pub sheet_tier: Tier,
     pub inspector_tab: InspectorTab,
     /// The selection the inspector last saw, so it can open the Camera tab
     /// when the selection changes some other way than [`select`].
@@ -331,6 +336,8 @@ impl Default for Panels {
             regions_open: false,
             scenes_open: false,
             custom_model_open: false,
+            sheet_open: false,
+            sheet_tier: Tier::default(),
             inspector_tab: InspectorTab::Cameras,
             inspector_seen: None,
         }

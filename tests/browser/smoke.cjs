@@ -2,7 +2,8 @@
 //
 // Loads the app in Chromium (WebGL2 through SwiftShader, so no GPU is needed) and checks that
 // the WebAssembly client starts (it removes the #loader card), loads the demo street from
-// /api/demo, starts the coverage worker, and logs no errors or panics while doing so. Map
+// /api/demo, starts the coverage worker, and logs no errors or panics while doing so; it also
+// checks that the page's CSP lets the evidence sheet's SVG be drawn on a canvas for a PNG. Map
 // tiles are answered here with a blank PNG, so the test makes no requests to OpenStreetMap.
 //
 //   OBS_URL=http://127.0.0.1:8080 node smoke.cjs
@@ -93,6 +94,42 @@ async function main() {
 
     await page.waitForTimeout(SETTLE_MS);
     if (await page.locator("#gate").isVisible()) throw new Error("the small-screen gate is showing at 1280x800");
+
+    // The evidence sheet's PNG path, under the page's own CSP: an SVG as a blob: image, drawn
+    // on a canvas and read back (the client's SheetOutput port does the same). A CSP that
+    // refused blob: images, or a canvas the image tainted, fails here.
+    const png = await page.evaluate(async () => {
+      const violations = [];
+      document.addEventListener("securitypolicyviolation", (e) =>
+        violations.push(`${e.violatedDirective} ${e.blockedURI}`),
+      );
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">' +
+        '<rect width="40" height="20" fill="rgb(255,0,0)"/><text x="2" y="14" font-size="10">Sheet</text></svg>';
+      const src = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+      try {
+        const img = new Image();
+        await new Promise((ok, fail) => {
+          img.onload = ok;
+          img.onerror = () => fail(new Error("the SVG did not load as an image"));
+          img.src = src;
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = 80;
+        canvas.height = 40;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, 80, 40);
+        // Throws on a tainted canvas.
+        const pixel = Array.from(ctx.getImageData(1, 1, 1, 1).data);
+        const blob = await new Promise((ok) => canvas.toBlob(ok, "image/png"));
+        return { pixel, size: blob ? blob.size : 0, violations };
+      } finally {
+        URL.revokeObjectURL(src);
+      }
+    });
+    if (png.violations.length) throw new Error(`the sheet's PNG path broke the CSP: ${png.violations.join("; ")}`);
+    if (!png.size || png.pixel[0] < 200) throw new Error(`the sheet's PNG path drew nothing (${JSON.stringify(png)})`);
+    console.log(`evidence sheet PNG path works (${png.size} bytes)`);
     await page.screenshot({ path: path.join(outDir, "smoke.png") });
   } catch (err) {
     errors.push(err.message);

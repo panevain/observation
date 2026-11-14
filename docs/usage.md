@@ -8,7 +8,7 @@ On first run (no saved scene) the app loads the demo street with ten example cam
 
 | Region | What is in it |
 | --- | --- |
-| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right the **Scenes** button (with the open scene's name), **Import**, **Export**, **Connect agent** (when the server offers it; see [Connect an AI agent](#connect-an-ai-agent)), **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
+| Top bar | App name; the current area ("Demo street" or "OSM area · W × H m"); **Change area...**; **Demo street**; on the right the **Scenes** button (with the open scene's name), **Import**, **Export**, **Sheet…** (an evidence sheet; see [Export an evidence sheet](#export-an-evidence-sheet)), **Connect agent** (when the server offers it; see [Connect an AI agent](#connect-an-ai-agent)), **Settings** (the gear: the UI font, Inter or Iosevka, and whether an Address tool click jumps to the camera list, both remembered in this browser) and **?** |
 | Tool rail (left) | Seven tools, each an icon with its name and its shortcut key in the corner; the active one is filled with the accent colour: **Select**, **Place**, **Aim**, **Move**, **Areas**, **Target** and **Address**. Aim and Move are disabled until a camera is selected. Below them, two toggles, which show a sunken fill and an accent underline while on: **Cones** (view-volume outlines for every camera; the selected camera's outline is always shown) and **Walls** (coverage colours on building walls; the ground overlay is always on) |
 | 3D viewport | The street in 3D with the map draped on the ground. A small pill at the top left names the active tool, says what a click will do, and shows the selected camera (or, in Place, the model being placed, in Areas the corners so far and what closing the outline will do, in Target what a click marks, or in Address the selected address). The pointer changes with the tool too: an arrow for Select, a plus for Place, a crosshair for Aim, a move cursor for Move, a cell cursor for Areas and Target and a question-mark cursor for Address. While a camera is selected (in Select, Aim or Move), a small toolbar floats above it with **Aim**, **Move**, **Focus**, **Duplicate** and **Delete**. Messages appear as toasts at the bottom |
 | Inspector (right, resizable) | At the top, always in view: **Coverage** (the figures, a **Limit** menu, what the figures leave out, a line with the analysis settings that opens the Analysis tab, and the date of the map data; see [Read the coverage](#read-the-coverage)). Below it four tabs, each scrolling on its own: **Cameras** (the model for new cameras, **Place camera...**, the camera list and **Custom models**), **Camera** (the selected camera and where its footage lands), **Analysis** (the analysis settings and where every camera's footage lands) and **Places** (your areas and targets; see [Where footage lands](#where-footage-lands)). Selecting a camera anywhere opens the Camera tab; deselecting it there goes back to Cameras |
@@ -226,6 +226,32 @@ Scene files are plain JSON:
 | `provenance` | Optional, written once the area has loaded: `osm_data_as_of` (when the OSM data was current, such as `"2026-10-31T19:43:02Z"`, UTC; absent if unknown), `bundle_built_at` (when the server built the area, UTC), `osm_fingerprint` (16 hex digits identifying the area's map features), `app_version`, `catalog_version` (16 hex digits identifying the camera catalogue's models) and `caveats_version` (which statement of what the figures leave out they were shown with). Older files without it load as before, and older versions of the app ignore it |
 
 Imports are checked: at most 256 cameras and 64 custom models, finite positions and angles within 10,000, subject height 0-10 m, custom pixel density 1-2000 px/m, and valid custom models. A malformed `provenance` block, or a time in it that is not a UTC timestamp, is dropped rather than failing the import. A custom model whose `id` repeats an earlier one or does not start with `custom-` is given a new `custom-` id (cameras that used it follow it). A spec-sheet `source` link that is not a plain `https://` URL is removed from the model, and an area with more than 256 corners or corners beyond 10,000 m, or a target that is out of range or too large, is removed from the scene, rather than failing the import. Area and target names are trimmed and cut to 60 characters. A bad file shows an error toast and adds no scene.
+
+## Export an evidence sheet
+
+**Sheet…** in the top bar makes a dated sheet of the figures that someone without the app can read: in an article, an agenda packet or a conversation with a neighbour. It states its own settings, date and limits:
+
+- **Provenance and settings**: when it was made, the app version, the date of the OpenStreetMap data and when the area was built, the map data's fingerprint, the camera catalogue and caveats versions, the detail level and lighting shown, the subject height and the area the figures are limited to.
+- **Cameras**: each enabled camera by number, with its model and its range by day and at night at the level shown.
+- **Detail × lighting**: the street seen by at least one camera and by two or more, and the walls seen, at every detail level by day and at night, each figure with the area it is out of (*359 of 1,651 m², 22%*) and a plain reading of the level (from *can tell someone is there* to *can identify a stranger, beyond doubt*). There is no single headline number. Below it, the street at the level shown is split into carriageway and footpath and service ways.
+- **Where footage lands**: each camera's split as in the Analysis tab, as drawn, with ranges, and each area with its outline's area.
+- **Targets**: for each target, which cameras do not rule it out at the settings shown, how many do and why, and each camera's ladder by day and at night, in the same one-sided wording as the Places tab.
+- **Methodology**: what "street" and "seen" mean (the road types and their widths, the detail levels and the range formula, written from the values the app computes with), how areas, targets and verdicts are worded, and the full, versioned list of what the figures leave out, with why they read as "up to", and any changes an AI agent proposed and you accepted (see [Review a proposal](#review-a-proposal)), each with the time you accepted it.
+
+Every page says it is an estimate from a model, not recorded footage, and carries the scene name, the date, the app version, the data date and fingerprint, the map data's credit (© OpenStreetMap contributors, ODbL) and the elevation data's credit.
+
+Choose what the sheet shows:
+
+- **Aggregate** (the default) has the numbers only: no map, no coverage shapes, no camera positions or labels, no addresses, and no distance from a camera to a building or a target. This is the one to share. The shape of what a camera sees gives its position away (the edges of its view meet where it is), and a distance from a camera to a numbered building does too, so they are left out. Area, target and scene names are printed as you typed them, so keep addresses out of them if the sheet is to be shared.
+- **Exact** adds a map of the area with every camera's position and direction, the coverage at the level shown (by how many cameras see each spot), the areas and targets, a scale bar and a north arrow, plus camera labels and the walls each camera sees per building. It is watermarked *shows camera positions*, inside the map and across every page: keep it for your own records, or share it only with the agreement of everyone whose camera is on it.
+
+Then save it:
+
+- **Download SVG**: a vector image that opens in any browser.
+- **Download PNG**: a picture at twice the page size, drawn by your browser.
+- **Print or save as PDF…**: your browser's print dialog, one A4 page per page of the sheet; choose *Save as PDF* there for a PDF.
+
+The files are named after the scene, the date and the tier, for example `Front of house evidence 2026-11-14 (aggregate).svg`. The sheet uses the coverage already worked out, so the buttons wait until every camera's coverage is ready. Nothing is sent anywhere: the sheet is made in your browser.
 
 ## Connect an AI agent
 
