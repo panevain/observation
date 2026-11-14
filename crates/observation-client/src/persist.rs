@@ -154,13 +154,15 @@ fn autosave(
         return;
     };
     // A refusal is in the status bar; the next check tries again.
-    let _ = scenes::autosave(
+    if let Ok(Some(why)) = scenes::autosave(
         &*platform.local,
         &mut slots,
         &mut saver,
         file.to_json(),
         real.elapsed_secs_f64(),
-    );
+    ) {
+        bevy::log::warn!("could not list the open scene again: {}", why.reason());
+    }
 }
 
 fn handle_actions(
@@ -238,7 +240,9 @@ pub fn open_scenes(
             PersistAction::Export | PersistAction::Import => None,
         })
         .collect();
-    if scene_actions.is_empty() && d.p.pending.is_empty() {
+    // Imports wait while an area loads; touching the resources then would
+    // mark them changed every frame.
+    if scene_actions.is_empty() && (d.p.pending.is_empty() || d.loading.area().is_some()) {
         return;
     }
     let mut ctx = SceneCtx {

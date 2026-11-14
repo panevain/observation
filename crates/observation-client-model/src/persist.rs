@@ -95,11 +95,21 @@ impl Autosaver {
 
     /// Another scene was opened: `stored` is what its key holds (empty if
     /// nothing), so the autosave writes it only once it changes. Ends a
-    /// pause.
+    /// pause. The status is `Saved` only if something is stored.
     pub fn opened(&mut self, stored: String, now: f64) {
+        self.status = if stored.is_empty() {
+            SaveState::Pending
+        } else {
+            SaveState::Saved(now)
+        };
         self.last_saved = stored;
         self.paused = false;
-        self.status = SaveState::Saved(now);
+    }
+
+    /// The restored scene's key already holds `json`, so the first check
+    /// does not write it back (over what another tab may have stored since).
+    pub fn restored(&mut self, json: String) {
+        self.last_saved = json;
     }
 
     /// Stops writing until another scene is opened.
@@ -259,6 +269,10 @@ mod tests {
         assert_eq!(store.take_ops(), []);
         save(&mut saver, "b", 4.0, &store);
         assert_eq!(store.take_ops(), [set("b")]);
+
+        // A scene with nothing stored is not reported as saved.
+        saver.opened(String::new(), 5.0);
+        assert_eq!(saver.status(), SaveState::Pending);
     }
 
     #[test]

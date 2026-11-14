@@ -142,6 +142,8 @@ fn list(
     for i in 0..slots.index.slots.len() {
         let slot = slots.index.slots[i].clone();
         let open = slot.id == slots.index.active;
+        // Only deleting the open scene switches scenes, which waits for a load.
+        let can_delete = slots.newer.is_none() && !(busy && open);
         ui.horizontal(|ui| {
             if let Some((id, text)) = &mut slots.renaming
                 && *id == slot.id
@@ -192,7 +194,7 @@ fn list(
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if slots.confirm_delete == Some(slot.id) {
                     if ui
-                        .add_enabled(!busy, danger(t, "Delete for good"))
+                        .add_enabled(can_delete, danger(t, "Delete for good"))
                         .clicked()
                     {
                         slots.confirm_delete = None;
@@ -211,7 +213,7 @@ fn list(
                     "Delete this scene from this browser"
                 };
                 if ui
-                    .add_enabled(!busy && !only_one, secondary(t, icons::TRASH))
+                    .add_enabled(can_delete && !only_one, secondary(t, icons::TRASH))
                     .on_hover_text(tip)
                     .on_disabled_hover_text(tip)
                     .clicked()

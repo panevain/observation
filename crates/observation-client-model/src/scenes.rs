@@ -63,6 +63,9 @@ pub fn restore(
         RestoreOutcome::Saved(file) => {
             let area = file.area;
             doc.get_mut().load_file(*file, models.get_mut());
+            if let Some(file) = doc.get().to_file(models.get()) {
+                saver.restored(file.to_json());
+            }
             LoadArea {
                 area,
                 keep_cameras: true,
@@ -97,23 +100,23 @@ pub fn restore(
 
 /// Writes the open scene's `json` if it changed since it was last written,
 /// recording the outcome for the status bar, and lists the open scene again
-/// if another tab removed it from the list.
+/// if another tab removed it from the list. The scene itself is stored even
+/// when listing it again fails: that error is `Ok(Some(_))`, for the log, and
+/// the next write tries again.
 pub fn autosave(
     store: &dyn KeyValueStore,
     slots: &mut Slots,
     saver: &mut Autosaver,
     json: String,
     now: f64,
-) -> Result<(), SaveFailure> {
+) -> Result<Option<SlotError>, SaveFailure> {
     let active = slots.index.active;
     let len = stored_len(&json);
     if saver.save(store, &slot_key(active), json, now)? {
         slots.sizes.insert(active, len);
-        // Best effort: the scene itself is stored, and the next autosave
-        // tries again.
-        let _ = slots.ensure_listed(store);
+        return Ok(slots.ensure_listed(store).err());
     }
-    Ok(())
+    Ok(None)
 }
 
 /// What switching scenes may change.
@@ -162,6 +165,8 @@ impl SceneCtx<'_> {
                 None
             }
             SceneAction::Open(id) if id == self.slots.index.active => None,
+            // Deleting a scene that is not open switches nothing.
+            SceneAction::Delete(id) if id != self.slots.index.active => self.delete(id),
             _ if self.busy() => None,
             SceneAction::New => {
                 self.new_scene();
@@ -217,8 +222,8 @@ impl SceneCtx<'_> {
                 ));
                 load
             }
-            Err(SlotError::Storage(SaveFailure::Unavailable)) => {
-                // No storage at all, so no other scene to keep: the import
+            Err(SlotError::Storage(SaveFailure::Unavailable | SaveFailure::Blocked)) => {
+                // No storage the page can use, so no other scene to keep: the import
                 // replaces the document, which is not saved (the status bar
                 // says why), and can be undone.
                 let area = file.area;
@@ -249,7 +254,7 @@ impl SceneCtx<'_> {
         let Some(file) = self.doc.get().to_file(self.models.get()) else {
             return Ok(());
         };
-        autosave(self.store, self.slots, self.saver, file.to_json(), self.now)
+        autosave(self.store, self.slots, self.saver, file.to_json(), self.now).map(|_| ())
     }
 
     /// Whether an area is loading, which holds back switching scenes (a
@@ -572,7 +577,7 @@ mod tests {
             load
         }
 
-        fn autosave(&mut self) -> Result<(), SaveFailure> {
+        fn autosave(&mut self) -> Result<Option<SlotError>, SaveFailure> {
             let json = self
                 .doc
                 .value
@@ -667,6 +672,12 @@ mod tests {
         assert_eq!(f.names(), ["Scene 1"]);
         assert!(!f.panels.help_open);
         assert_eq!(f.toasts(), []);
+        // What is stored is not written back, over what another tab may
+        // have stored since.
+        let mut f = f;
+        f.store.take_ops();
+        assert_eq!(f.autosave(), Ok(None));
+        assert_eq!(f.store.ops(), []);
     }
 
     #[test]
@@ -836,7 +847,7 @@ mod tests {
             SceneAction::New,
             SceneAction::Duplicate,
             SceneAction::Open(0),
-            SceneAction::Delete(0),
+            SceneAction::Delete(1),
         ] {
             assert_eq!(f.apply(action.clone()), None, "{action:?}");
         }
@@ -852,6 +863,11 @@ mod tests {
         // A rename does not switch, so it goes ahead.
         f.apply(SceneAction::Rename(0, "Front".to_owned()));
         assert_eq!(f.names(), ["Front", "Scene 2"]);
+        // Nor does deleting a scene that is not open.
+        f.toasts = Toasts::default();
+        assert_eq!(f.apply(SceneAction::Delete(0)), None);
+        assert_eq!(f.names(), ["Scene 2"]);
+        assert_eq!(f.toasts(), [(ToastKind::Info, "Deleted “Front”")]);
     }
 
     #[test]
@@ -1010,8 +1026,14 @@ mod tests {
 
     #[test]
     fn without_storage_an_import_replaces_the_open_scene() {
+        for why in [SaveFailure::Unavailable, SaveFailure::Blocked] {
+            without_storage_an_import_replaces_the_open_scene_when(why);
+        }
+    }
+
+    fn without_storage_an_import_replaces_the_open_scene_when(why: SaveFailure) {
         let mut f = with_one_scene();
-        f.store.refuse_writes(Some(SaveFailure::Unavailable));
+        f.store.refuse_writes(Some(why));
         assert!(
             f.import("x.json", &scene_json(AreaRef::Demo, "Imported"))
                 .is_some()
