@@ -1,15 +1,15 @@
 //! The coverage summary above the tabs.
 
 use crate::icons;
-use crate::state::{InspectorTab, Tool, TrackScene};
+use crate::state::{InspectorTab, TrackScene};
 use crate::theme::{Tokens, strong_family};
 use crate::ui::UiData;
 use crate::ui::widgets::{bar, hint, section_title, stat};
 use bevy_egui::egui::{self, RichText};
-use observation_client_model::commands;
 use observation_client_model::vm::{CoverageSummaryVm, settings_line};
+use observation_client_model::{commands, places};
 
-/// Always in view above the tabs: the figures, the region they are limited
+/// Always in view above the tabs: the figures, the area they are limited
 /// to, what they leave out, the analysis settings they depend on and the
 /// date of the map data under them (and whether it changed since a restored
 /// or imported scene was saved).
@@ -100,43 +100,68 @@ fn ladder(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, vm: &CoverageSummaryVm)
     }
 }
 
-/// Draw, toggle, redraw or clear the region the figures are limited to.
-/// `active`: the figures are limited to the region.
+/// Which area the figures are limited to: draw one, pick one of the areas,
+/// turn the limit off and on, redraw the area or stop limiting.
+/// `active`: the figures are limited to an area.
 fn region_menu(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens, active: bool) {
-    let label = RichText::new(format!("{}  Region", icons::POLYGON))
+    let label = RichText::new(format!("{}  Limit", icons::POLYGON))
         .size(t.font.caption)
         .color(if active { t.accent } else { t.text_muted });
     ui.menu_button(label, |ui| {
-        let Some(r) = d.scene.region() else {
-            if ui
-                .button("Draw region…")
-                .on_hover_text("Limit the figures to an area you outline on the ground (R)")
-                .clicked()
-            {
-                d.editor.tool = Tool::Region;
+        let limit = d
+            .scene
+            .region()
+            .map(|r| (r.id, places::area_title(r), r.area_m2(), r.enabled));
+        let others: Vec<(u32, String)> = d
+            .scene
+            .areas
+            .iter()
+            .filter(|a| Some(a.id) != d.scene.limit_figures_to && a.problem().is_none())
+            .map(|a| (a.id, places::area_title(a)))
+            .collect();
+        match limit {
+            None => {
+                if ui
+                    .button("Draw area to limit to…")
+                    .on_hover_text("Limit the figures to an area you outline on the ground")
+                    .clicked()
+                {
+                    places::draw_limit_area(&mut d.editor);
+                }
             }
-            return;
-        };
-        let mut on = r.enabled;
-        let toggled = ui
-            .checkbox(
-                &mut on,
-                format!("Only inside region ({:.0} m²)", r.area_m2()),
-            )
-            .on_hover_text("Count only the street and walls inside the outlined area")
-            .changed();
-        if ui
-            .button("Redraw")
-            .on_hover_text("Outline a new region (R)")
-            .clicked()
-        {
-            d.editor.tool = Tool::Region;
-        } else if ui.button("Clear").clicked() {
-            commands::clear_region(&mut TrackScene(&mut d.scene));
-        } else if toggled {
-            commands::set_region_enabled(&mut TrackScene(&mut d.scene), on);
+            Some((_, title, area_m2, enabled)) => {
+                let mut on = enabled;
+                let toggled = ui
+                    .checkbox(&mut on, format!("Only inside {title} ({area_m2:.0} m²)"))
+                    .on_hover_text("Count only the street and walls inside the outlined area")
+                    .changed();
+                if ui
+                    .button("Redraw")
+                    .on_hover_text("Outline the area again")
+                    .clicked()
+                {
+                    places::draw_limit_area(&mut d.editor);
+                } else if ui
+                    .button("Stop limiting")
+                    .on_hover_text("Count everywhere again; the area stays under Places")
+                    .clicked()
+                {
+                    places::set_figures_limit(&mut TrackScene(&mut d.scene), None);
+                } else if toggled {
+                    commands::set_region_enabled(&mut TrackScene(&mut d.scene), on);
+                }
+            }
+        }
+        if !others.is_empty() {
+            ui.separator();
+            hint(ui, t, "Limit to one of your areas");
+            for (id, title) in others {
+                if ui.button(title).clicked() {
+                    places::set_figures_limit(&mut TrackScene(&mut d.scene), Some(id));
+                }
+            }
         }
     })
     .response
-    .on_hover_text("Limit the figures to part of the area");
+    .on_hover_text("Limit the figures to one of your areas");
 }

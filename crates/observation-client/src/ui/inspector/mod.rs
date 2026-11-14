@@ -1,9 +1,12 @@
 //! Right-hand inspector: a coverage summary that stays in view, then tabs
-//! for the camera list, the selected camera and the analysis settings.
+//! for the camera list, the selected camera, the analysis settings and the
+//! places (labelled areas and targets).
 
 mod camera_details;
 mod camera_list;
 mod custom_model;
+mod footage;
+mod places;
 mod summary;
 
 use camera_details::{camera_details, model_combo};
@@ -56,6 +59,7 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
             (InspectorTab::Cameras, "Cameras"),
             (InspectorTab::Camera, &camera),
             (InspectorTab::Analysis, "Analysis"),
+            (InspectorTab::Places, "Places"),
         ],
     );
     ui.separator();
@@ -75,6 +79,7 @@ pub fn inspector(ui: &mut egui::Ui, d: &mut UiData) {
                 InspectorTab::Cameras => cameras_tab(ui, d, &t),
                 InspectorTab::Camera => camera_tab(ui, d, &t),
                 InspectorTab::Analysis => analysis_tab(ui, d, &t),
+                InspectorTab::Places => places::places_tab(ui, d, &t),
             }
             ui.add_space(t.space.lg);
         });
@@ -184,9 +189,11 @@ fn camera_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
         });
     });
     camera_details(ui, d, t);
+    footage::camera_footage(ui, d, t, id);
 }
 
-/// What the figures count, and how the overlay colours the ground.
+/// What the figures count, how the overlay colours the ground, and where
+/// every camera's footage lands.
 fn analysis_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     let mut p = d.scene.params;
     subsection(ui, t, "Detail level (pixels per metre on a person)");
@@ -263,4 +270,5 @@ fn analysis_tab(ui: &mut egui::Ui, d: &mut UiData, t: &Tokens) {
     } else {
         hint(ui, t, "Each camera's coverage in its own colour.");
     }
+    footage::split_table(ui, d, t);
 }

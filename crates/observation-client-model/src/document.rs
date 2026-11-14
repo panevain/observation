@@ -87,13 +87,12 @@ pub struct Document {
     pub origin: LatLon,
     pub cameras: Vec<CameraPlacement>,
     pub params: CoverageParams,
-    /// The scene's areas, labelled or not. Only the one the figures are
-    /// limited to is edited yet (the Region tool, through [`Self::region`]
-    /// and [`Self::set_region`]); the others are kept as loaded.
+    /// The scene's areas, labelled or not, drawn with the Areas tool and
+    /// edited in the Places tab (see [`crate::places`]).
     pub areas: Vec<LabelledArea>,
     /// The id of the area the coverage figures are limited to.
     pub limit_figures_to: Option<u32>,
-    /// The scene's targets, kept as loaded.
+    /// The scene's targets, marked with the Target tool.
     pub targets: Vec<Target>,
     /// The cameras come from a scene saved before terrain and still stand on
     /// flat ground; they are lifted onto the terrain when the area loads.
@@ -162,8 +161,8 @@ impl Document {
         self.touch();
     }
 
-    /// The area the coverage figures can be limited to (the single region
-    /// the Region tool draws), if there is one.
+    /// The area the coverage figures are limited to (what the single region
+    /// was before areas had labels), if there is one.
     pub fn region(&self) -> Option<&LabelledArea> {
         area_by_id(&self.areas, self.limit_figures_to)
     }
@@ -391,7 +390,7 @@ mod tests {
         doc.load_file(f.clone(), &mut models);
         assert_eq!(doc.to_file(&models), Some(f.clone()));
         let before = doc.snapshot(&models);
-        // The Region tool redraws the limiting area: its label, its name and
+        // The Limit menu redraws the limiting area: its label, its name and
         // the other areas stay.
         doc.set_region(Some(Region {
             points: square(2.0),

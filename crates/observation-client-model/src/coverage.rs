@@ -8,7 +8,7 @@ use observation_core::camera::{CameraModel, CameraPlacement, DoriLevel};
 #[cfg(doc)]
 use observation_core::coverage::CoverageParams;
 use observation_core::coverage::{
-    CoverageCounts, CoverageStats, RegionMask, Sight, StaticLayers, Tally,
+    CoverageCounts, CoverageStats, RegionMask, Sight, StaticLayers, Tally, Visibility,
 };
 use observation_core::coverage_job::JobResult;
 use observation_core::frustum::ViewCone;
@@ -112,6 +112,22 @@ impl CoverageState {
         let (_, sight) = self.cams.get(&id)?;
         let range = *self.rungs.get(self.selected)?.counted.get(&id)?;
         Some((sight.ground_within(range), sight.facade_within(range)))
+    }
+
+    /// The cells a camera sees at the selected detail level, as one list.
+    pub fn visibility(&self, id: u32) -> Option<Visibility> {
+        let (_, sight) = self.cams.get(&id)?;
+        let range = *self.rungs.get(self.selected)?.counted.get(&id)?;
+        Some(sight.within(range))
+    }
+
+    /// What [`Self::visibility`] of a camera is worked out from: the cache
+    /// key of its sight lines, how far they reach and the range counted at
+    /// the selected level. When none of them changed, neither did the cells.
+    pub fn visibility_key(&self, id: u32) -> Option<(u64, f32, f32)> {
+        let (key, sight) = self.cams.get(&id)?;
+        let range = *self.rungs.get(self.selected)?.counted.get(&id)?;
+        Some((*key, sight.range, range))
     }
 
     /// The figures at each [`CoverageParams::ladder`] level under the current

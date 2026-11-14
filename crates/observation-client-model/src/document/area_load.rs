@@ -45,6 +45,9 @@ pub fn apply(
         scene.targets.clear();
         editor.region_draft.clear();
         editor.selected = None;
+        editor.selected_area = None;
+        editor.selected_target = None;
+        editor.area_draw = crate::editor::AreaDraw::New;
         if area == AreaRef::Demo {
             // A fresh demo street comes with example cameras to explore.
             let picks: Vec<&CameraModel> = EXAMPLE_MODELS

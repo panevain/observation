@@ -19,8 +19,10 @@ use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texe
 use bevy::prelude::*;
 use observation_client_model::coverage;
 use observation_client_model::coverage::backend::{self, WorkerNote};
+use observation_client_model::editor::AreaDraw;
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::CoverageParams;
+use observation_core::footage::{TargetPlace, WALL_TARGET_SIZE_M};
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
 
@@ -53,6 +55,18 @@ impl Plugin for CoveragePlugin {
                         ..default()
                     },
                     // Drawn over buildings so the whole outline stays visible.
+                    depth_bias: -1.0,
+                    ..default()
+                },
+            )
+            .insert_gizmo_config(
+                AreaGizmos,
+                GizmoConfig {
+                    line: GizmoLineConfig {
+                        width: 2.5,
+                        joints: GizmoLineJoint::Round(4),
+                        ..default()
+                    },
                     depth_bias: -1.0,
                     ..default()
                 },
@@ -216,23 +230,36 @@ fn paint_overlay(
     state.mark_painted(mode, colors);
 }
 
-/// Height of the region outline above the ground, metres.
+/// Height of area and target outlines above the ground, metres.
 const REGION_Y_M: f32 = 0.15;
 
-/// Gizmo group for the region outline: thicker than the view cones.
+/// Gizmo group for the selected area or target and the outline being drawn:
+/// thicker than the view cones.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 struct RegionGizmos;
 
-/// The region outline, and the region being drawn.
+/// Gizmo group for the other areas and targets: thinner, so the selected
+/// one stands out.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct AreaGizmos;
+
+/// Opacity of an area that is switched off or cannot count.
+const OFF_ALPHA: f32 = 0.35;
+
+/// Height of a ground target's pin, metres.
+const PIN_M: f32 = 2.0;
+
+/// The areas (coloured by label, the selected one thicker, one that is off
+/// faded), the targets, and the outline being drawn.
 fn draw_region(
-    mut gizmos: Gizmos<RegionGizmos>,
+    mut thick: Gizmos<RegionGizmos>,
+    mut thin: Gizmos<AreaGizmos>,
     scene: Res<Scene>,
     editor: Res<Editor>,
     tokens: Res<Tokens>,
     area: Option<Res<Area>>,
 ) {
     let terrain = terrain_of(area.as_deref());
-    let color = to_bevy(tokens.world.region);
     let at = |p: [f32; 2]| {
         let p = Vec2::from_array(p);
         Vec3::new(p.x, terrain.height_at(p) + REGION_Y_M, p.y)
@@ -246,33 +273,103 @@ fn draw_region(
         out.extend(points.last().map(|p| at(*p)));
         out
     };
-    if let Some(r) = scene.region()
-        && editor.region_draft.is_empty()
-    {
-        let c = if r.is_active() {
-            color
+    let ring = |points: &[[f32; 2]]| draped(points.iter().chain(points.first()).copied().collect());
+    let drafting = !editor.region_draft.is_empty();
+    // The area whose outline is being redrawn is shown as the draft only.
+    let redrawn = match (drafting, editor.tool, editor.area_draw) {
+        (true, Tool::Areas, AreaDraw::Redraw(id)) => Some(id),
+        (true, Tool::Areas, AreaDraw::Limit) => scene.limit_figures_to,
+        _ => None,
+    };
+    for a in &scene.areas {
+        if Some(a.id) == redrawn {
+            continue;
+        }
+        let mut c = to_bevy(tokens.area_color(a.label));
+        if !a.is_active() {
+            c = c.with_alpha(OFF_ALPHA);
+        }
+        if editor.selected_area == Some(a.id) {
+            thick.linestrip(ring(&a.points), c);
         } else {
-            color.with_alpha(0.35)
-        };
-        let ring = r.points.iter().chain(r.points.first()).copied().collect();
-        gizmos.linestrip(draped(ring), c);
+            thin.linestrip(ring(&a.points), c);
+        }
     }
-    if editor.tool != Tool::Region {
+    let colors = (to_bevy(tokens.world.target), to_bevy(tokens.world.halo));
+    for t in &scene.targets {
+        if editor.selected_target == Some(t.id) {
+            draw_target(&mut thick, &t.at, colors, &at, &ring);
+        } else {
+            draw_target(&mut thin, &t.at, colors, &at, &ring);
+        }
+    }
+    if !editor.draws_outline() {
         return;
     }
+    let color = match (editor.tool, editor.area_draw) {
+        (Tool::Target, _) => to_bevy(tokens.world.target),
+        (_, AreaDraw::Redraw(id)) => to_bevy(
+            tokens.area_color(
+                scene
+                    .areas
+                    .iter()
+                    .find(|a| a.id == id)
+                    .and_then(|a| a.label),
+            ),
+        ),
+        _ => to_bevy(tokens.world.region),
+    };
+    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     let draft = &editor.region_draft;
     let path = draft.iter().chain(&editor.region_hover).copied().collect();
-    gizmos.linestrip(draped(path), color);
-    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    thick.linestrip(draped(path), color);
     for (i, p) in draft.iter().enumerate() {
-        // Once clicking it would close the region, the first corner shows
+        // Once clicking it would close the outline, the first corner shows
         // the whole area a click closes it from.
         let radius = if i == 0 && draft.len() >= 3 {
             editor.region_snap_m
         } else {
-            0.4
+            0.4_f32.min(editor.region_snap_m)
         };
-        gizmos.circle(Isometry3d::new(at(*p), flat), radius, color);
+        thick.circle(Isometry3d::new(at(*p), flat), radius, color);
+    }
+}
+
+/// A target's marker: a ground target's outline with a pin over a dark
+/// casing, or a wall target's square on the wall, cased, with a short line
+/// out along the way the wall faces. `colors`: the mark and its casing.
+fn draw_target<C: GizmoConfigGroup>(
+    gizmos: &mut Gizmos<C>,
+    place: &TargetPlace,
+    (mark, halo): (Color, Color),
+    at: &dyn Fn([f32; 2]) -> Vec3,
+    ring: &dyn Fn(&[[f32; 2]]) -> Vec<Vec3>,
+) {
+    match place {
+        TargetPlace::Ground { points } => {
+            gizmos.linestrip(ring(points), mark);
+            let n = points.len().max(1) as f32;
+            let sum = points
+                .iter()
+                .fold([0.0, 0.0], |s, p| [s[0] + p[0], s[1] + p[1]]);
+            let top = at([sum[0] / n, sum[1] / n]) + Vec3::Y * PIN_M;
+            gizmos.line(top - Vec3::Y * PIN_M, top, halo);
+            gizmos.sphere(Isometry3d::from_translation(top), 0.3, halo);
+            gizmos.sphere(Isometry3d::from_translation(top), 0.24, mark);
+        }
+        TargetPlace::Wall { point, normal } => {
+            let n = Vec3::new(normal[0], 0.0, normal[1]).normalize_or(Vec3::X);
+            let c = Vec3::from_array(*point) + n * 0.06;
+            let facing = Quat::from_rotation_arc(Vec3::Z, n);
+            let side = WALL_TARGET_SIZE_M;
+            gizmos.rect(Isometry3d::new(c, facing), Vec2::splat(side + 0.12), halo);
+            gizmos.rect(
+                Isometry3d::new(c + n * 0.01, facing),
+                Vec2::splat(side),
+                mark,
+            );
+            gizmos.line(c, c + n * 0.8, mark);
+        }
     }
 }
 
@@ -288,8 +385,9 @@ const HATCH_ALPHA: f32 = 0.6;
 /// its own line spacing from its distance to the camera.
 const HATCH_PATCH_M: f32 = 64.0;
 
-/// While the Region tool is on, marks where corners can go: a solid edge
-/// around the loaded area, and the ground beyond it tinted and hatched.
+/// While an outline is being drawn (the Areas tool, or the Target tool's
+/// outline), marks where corners can go: a solid edge around the loaded
+/// area, and the ground beyond it tinted and hatched.
 fn draw_outside_area(
     mut edge: Gizmos<RegionGizmos>,
     mut hatching: Gizmos<HatchGizmos>,
@@ -299,7 +397,7 @@ fn draw_outside_area(
     editor: Res<Editor>,
     tokens: Res<Tokens>,
 ) {
-    let on = editor.tool == Tool::Region;
+    let on = editor.draws_outline();
     for (_, mut vis) in &mut outside {
         vis.set_if_neq(if on {
             Visibility::Inherited

@@ -309,6 +309,7 @@ impl SceneCtx<'_> {
             self.editor.tool = crate::editor::Tool::Select;
         }
         self.editor.region_draft.clear();
+        self.editor.forget_missing_places(self.doc.get());
         *self.notice = None;
         // The undo steps were the other scene's, and so was any area load to
         // retry.

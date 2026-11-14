@@ -90,6 +90,8 @@ pub struct UiData<'w> {
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
+    /// The splits and verdicts worked out for the panels.
+    pub footage: ResMut<'w, crate::state::Footage>,
     pub addresses: Res<'w, crate::addresses::CameraAddresses>,
     pub area: Option<Res<'w, Area>>,
     pub loading: ResMut<'w, Loading>,
@@ -123,6 +125,10 @@ fn draw_ui(
     });
     let ctx = contexts.ctx_mut()?.clone();
     let t = *d.tokens;
+    if d.area.as_ref().is_some_and(|a| a.is_changed()) {
+        // Cells and building indices of the old area mean nothing now.
+        d.footage.reset();
+    }
     // Fonts set by `apply_theme` take effect from the next pass; until then
     // the UI's font families do not exist and laying out text would panic.
     if !ctx.fonts(|f| f.definitions().families.contains_key(&strong_family())) {
@@ -224,7 +230,12 @@ fn draw_ui(
     let anchor = d
         .editor
         .selected
-        .filter(|_| !matches!(d.editor.tool, Tool::Place | Tool::Region | Tool::Address))
+        .filter(|_| {
+            !matches!(
+                d.editor.tool,
+                Tool::Place | Tool::Areas | Tool::Target | Tool::Address
+            )
+        })
         .and_then(|id| d.scene.camera(id))
         .zip(camera.single().ok())
         .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())

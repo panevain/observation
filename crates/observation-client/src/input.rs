@@ -14,6 +14,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
 use observation_client_model::commands::{self, EditCtx, Hit, HitTarget, Key};
+use observation_client_model::editor::AreaDraw;
+use observation_client_model::places;
 use observation_core::address::{Address, ON_OUTLINE_M};
 use observation_core::terrain::Terrain;
 
@@ -299,7 +301,8 @@ fn key_codes(key: Key) -> &'static [KeyCode] {
         Key::Tool(Tool::Place) => &[KeyCode::KeyP],
         Key::Tool(Tool::Aim) => &[KeyCode::KeyA],
         Key::Tool(Tool::Move) => &[KeyCode::KeyM],
-        Key::Tool(Tool::Region) => &[KeyCode::KeyR],
+        Key::Tool(Tool::Areas) => &[KeyCode::KeyR],
+        Key::Tool(Tool::Target) => &[KeyCode::KeyT],
         Key::Tool(Tool::Address) => &[KeyCode::KeyL],
         Key::Escape => &[KeyCode::Escape],
         Key::Finish => &[KeyCode::Enter, KeyCode::NumpadEnter],
@@ -514,10 +517,14 @@ fn pointer(
         orbit.distance = (orbit.distance * (1.0 - lines * 0.1)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
-    if editor.tool != Tool::Region {
-        if !editor.region_draft.is_empty() || editor.region_hover.is_some() {
+    if !editor.draws_outline() {
+        if !editor.region_draft.is_empty()
+            || editor.region_hover.is_some()
+            || editor.area_draw != AreaDraw::New
+        {
             editor.region_draft.clear();
             editor.region_hover = None;
+            editor.area_draw = AreaDraw::New;
         }
     } else {
         let hover = pos
@@ -527,7 +534,12 @@ fn pointer(
         if editor.region_hover != hover {
             editor.region_hover = hover;
         }
-        let snap = region_snap_m(orbit.distance);
+        let mut snap = region_snap_m(orbit.distance);
+        if editor.tool == Tool::Target {
+            // A target is a few metres across: a wide circle would close
+            // it before its last corners are in.
+            snap = snap.min(TARGET_SNAP_M);
+        }
         if editor.region_snap_m != snap {
             editor.region_snap_m = snap;
         }
@@ -636,9 +648,9 @@ fn pointer(
             ..
         } = st.gesture
         {
-            if editor.tool == Tool::Region {
+            if editor.draws_outline() {
                 if let Some(p) = ground_point(camera, cam_t, pos, terrain) {
-                    commands::region_click(
+                    places::outline_click(
                         &mut EditCtx {
                             doc: &mut **scene,
                             editor: &mut editor,
@@ -648,6 +660,25 @@ fn pointer(
                         clamp_to_area(p, area.as_deref()),
                     );
                 }
+            } else if editor.tool == Tool::Target {
+                // A wall marks a patch of it; the ground a square, kept
+                // within the loaded area. No reaching for a camera body.
+                let hit = cast(pos, false).map(|mut h| {
+                    if h.target == HitTarget::Ground {
+                        let [x, z] = clamp_to_area([h.point.x, h.point.z], area.as_deref());
+                        h.point = Vec3::new(x, terrain.height_at(Vec2::new(x, z)), z);
+                    }
+                    h
+                });
+                places::target_click(
+                    &mut EditCtx {
+                        doc: &mut TrackScene(&mut scene),
+                        editor: &mut editor,
+                        panels: &mut panels,
+                        toasts: &mut toasts,
+                    },
+                    hit,
+                );
             } else if editor.tool == Tool::Address {
                 // A click reuses the card's lookup for the same spot; a tap
                 // looks up afresh. A click away from any address clears
@@ -727,6 +758,9 @@ fn ground_hit(
 
 /// How close to the first corner a click closes the region, metres: it grows
 /// with the zoom so the corner stays easy to hit, and is drawn around it.
+/// The widest a target outline's closing circle gets, metres.
+const TARGET_SNAP_M: f32 = 0.5;
+
 pub fn region_snap_m(view_distance: f32) -> f32 {
     (view_distance * 0.02).clamp(1.0, 10.0)
 }
