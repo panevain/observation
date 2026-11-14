@@ -22,8 +22,19 @@ pub struct ServerConfig {
     /// Side limits of an area the server will load, metres (min < max).
     pub min_bbox_side_m: f64,
     pub max_bbox_side_m: f64,
+    /// The server's place search, if it has one turned on.
+    pub geocoder: Option<GeocoderInfo>,
     /// The server has answered (or failed to): tiles may be requested.
     answered: bool,
+}
+
+/// The server's place search (`/api/geocode`), as `/api/config` describes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeocoderInfo {
+    /// Credit to show with results until an answer brings its own.
+    pub attribution: String,
+    /// Longest query the server accepts, in characters.
+    pub max_query_chars: usize,
 }
 
 impl Default for ServerConfig {
@@ -33,6 +44,7 @@ impl Default for ServerConfig {
             tile_template: "/api/tiles/{z}/{x}/{y}.png".to_owned(),
             min_bbox_side_m: MIN_BBOX_SIDE_M,
             max_bbox_side_m: MAX_BBOX_SIDE_M,
+            geocoder: None,
             answered: false,
         }
     }
@@ -85,6 +97,24 @@ impl ServerConfig {
             self.min_bbox_side_m = min;
             self.max_bbox_side_m = max;
         }
+        // An object turns the search on; `null`, or an older server that
+        // leaves it out, keeps it off.
+        self.geocoder = v.get("geocoder").and_then(|g| {
+            let g = g.as_object()?;
+            Some(GeocoderInfo {
+                attribution: g
+                    .get("attribution")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                max_query_chars: g
+                    .get("max_query_chars")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| *n >= crate::place::MIN_QUERY_CHARS)
+                    .unwrap_or(crate::place::DEFAULT_MAX_QUERY_CHARS),
+            })
+        });
     }
 }
 
@@ -334,6 +364,28 @@ mod tests {
             assert_eq!(c.tile_template, d.tile_template, "{v}");
             assert_eq!(c.tile_attribution, d.tile_attribution, "{v}");
         }
+    }
+
+    #[test]
+    fn the_config_says_whether_the_server_searches_places() {
+        assert_eq!(applied(&json!({})).geocoder, None);
+        assert_eq!(applied(&json!({ "geocoder": null })).geocoder, None);
+        assert_eq!(applied(&json!({ "geocoder": true })).geocoder, None);
+        assert_eq!(
+            applied(&json!({ "geocoder": { "attribution": "Search: X", "max_query_chars": 120 } }))
+                .geocoder,
+            Some(GeocoderInfo {
+                attribution: "Search: X".into(),
+                max_query_chars: 120
+            })
+        );
+        assert_eq!(
+            applied(&json!({ "geocoder": { "max_query_chars": 0 } })).geocoder,
+            Some(GeocoderInfo {
+                attribution: String::new(),
+                max_query_chars: crate::place::DEFAULT_MAX_QUERY_CHARS
+            })
+        );
     }
 
     #[test]

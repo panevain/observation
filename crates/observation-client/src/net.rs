@@ -11,6 +11,7 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use observation_client_model::net::{self, TileQueue, TileState};
+use observation_client_model::place::PlaceFinder;
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
 use observation_core::regions::{ActionKind, RegionAction, SizesRequest};
 use observation_core::scene::AreaRef;
@@ -26,6 +27,8 @@ enum Request {
     RegionsCatalog,
     RegionAction(ActionKind, String),
     RegionsSizes(Vec<String>),
+    /// A place search, by its query.
+    Geocode(String),
 }
 
 /// Settings published by the server at `/api/config`, as a resource.
@@ -97,6 +100,10 @@ pub fn area_url(area: &AreaRef) -> String {
     }
 }
 
+/// The map dialog's place field and search, as a resource.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct PlaceSearch(PlaceFinder);
+
 /// Map tiles shared by the 3D ground and the 2D map picker, as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
 pub struct Tiles(TileQueue<Handle<Image>>);
@@ -109,6 +116,7 @@ impl Plugin for NetPlugin {
             .init_resource::<Tiles>()
             .init_resource::<Loading>()
             .init_resource::<ServerConfig>()
+            .init_resource::<PlaceSearch>()
             .add_systems(Startup, |net: Res<Net>| {
                 net.get("/api/config".to_owned(), Request::Config)
             })
@@ -124,6 +132,7 @@ impl Plugin for NetPlugin {
                     start_area_loads.after(crate::history::record),
                     pump_tiles,
                     send_region_requests,
+                    send_place_search,
                     drain_replies,
                 )
                     .chain(),
@@ -193,6 +202,13 @@ fn send_region_requests(net: Res<Net>, mut regions: ResMut<Regions>) {
     }
 }
 
+/// Sends the search the user just submitted, if any (never while typing).
+fn send_place_search(net: Res<Net>, mut search: ResMut<PlaceSearch>) {
+    if let Some(query) = search.take_request() {
+        net.get(PlaceFinder::url(&query), Request::Geocode(query));
+    }
+}
+
 fn send_region_action(net: &Net, token: &str, action: ActionKind, body: RegionAction) {
     let id = body.id.clone();
     net.send(
@@ -215,9 +231,11 @@ pub(crate) fn drain_replies(
     mut toasts: ResMut<Toasts>,
     mut config: ResMut<ServerConfig>,
     mut regions: ResMut<Regions>,
+    mut search: ResMut<PlaceSearch>,
 ) {
     for (req, res) in net.rx.try_iter() {
         match req {
+            Request::Geocode(query) => search.answer(&query, res),
             Request::Config => {
                 let has_regions = config.answer(res.ok().as_deref());
                 if has_regions && !regions.enabled {
@@ -610,5 +628,47 @@ mod tests {
             .emit("/api/regions/events", &Err("stream dropped".into()));
         h.app.update();
         assert!(!h.app.world().resource::<Regions>().live);
+    }
+
+    #[test]
+    fn a_submitted_place_search_is_sent_once_and_its_answer_kept() {
+        use observation_client_model::place::Submit;
+        let mut h = Harness::new();
+        assert!(h.http.respond(
+            "/api/config",
+            Ok(br#"{"geocoder": {"attribution": "Search: X", "max_query_chars": 200}}"#.to_vec())
+        ));
+        h.app.update();
+        let max = h
+            .app
+            .world()
+            .resource::<ServerConfig>()
+            .geocoder
+            .as_ref()
+            .map(|g| g.max_query_chars);
+        assert_eq!(max, Some(200));
+
+        // Typing sends nothing; submitting sends the search once.
+        let mut search = h.app.world_mut().resource_mut::<PlaceSearch>();
+        search.text = "High Street, Zürich".into();
+        h.app.update();
+        h.app.update();
+        assert!(h.http.pending_urls().is_empty());
+        let mut search = h.app.world_mut().resource_mut::<PlaceSearch>();
+        assert_eq!(search.submit(max), Submit::Searching);
+        h.app.update();
+        h.app.update();
+        let url = "/api/geocode?q=High%20Street%2C%20Z%C3%BCrich";
+        assert_eq!(h.http.pending_urls(), [url]);
+
+        let body =
+            br#"{"results": [{"label": "High Street", "lat": 47.37, "lon": 8.54, "bbox": null}],
+                        "attribution": "Search: X"}"#;
+        assert!(h.http.respond(url, Ok(body.to_vec())));
+        h.app.update();
+        let search = h.app.world().resource::<PlaceSearch>();
+        assert!(!search.searching());
+        assert_eq!(search.results().len(), 1);
+        assert_eq!(search.attribution(), Some("Search: X"));
     }
 }

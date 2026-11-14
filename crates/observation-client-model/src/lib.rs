@@ -11,6 +11,7 @@ pub mod editor;
 pub mod history;
 pub mod net;
 pub mod persist;
+pub mod place;
 pub mod platform;
 pub mod scenes;
 pub mod slots;
