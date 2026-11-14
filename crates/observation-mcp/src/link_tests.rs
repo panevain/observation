@@ -399,3 +399,165 @@ async fn a_failed_area_fetch_is_reported_to_the_tool() {
         .expect_err("an error");
     assert!(e.contains("could not send the area"), "{e}");
 }
+
+impl Browser {
+    /// Posts the user's decision on proposal `id`.
+    async fn decide(&self, id: u64, decision: &str, reason: Option<&str>) {
+        let body = json!({"v": 1, "id": id, "decision": decision, "reason": reason}).to_string();
+        let req = HttpRequest::post(format!("{}{}", self.base, paths::DECISION), 1 << 16)
+            .bearer(&self.token)
+            .unwrap()
+            .json(body.into_bytes());
+        assert_eq!(self.http.send(req).await.unwrap().status, 204);
+    }
+}
+
+async fn propose(
+    mcp: &ObservationMcp,
+    scene: &Value,
+    summary: &str,
+) -> Result<crate::propose::Proposed, String> {
+    mcp.propose_changes(Parameters(crate::propose::ProposeArgs {
+        scene: scene.clone(),
+        summary: summary.to_owned(),
+    }))
+    .await
+    .map(|Json(out)| out)
+}
+
+async fn proposal(mcp: &ObservationMcp, id: u64) -> crate::propose::ProposalStatusOut {
+    mcp.get_proposal(Parameters(crate::propose::ProposalIdArgs { id }))
+        .await
+        .map(|Json(out)| out)
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_proposes_and_hears_the_users_decision() {
+    let app = bridge_app(FakeHttp::new());
+    let base = serve(&app).await;
+    let browser = Browser::open(&base).await;
+    let mcp = ObservationMcp::new();
+
+    // Without a connection there is nobody to propose to.
+    let e = propose(&mcp, &demo_scene(), "x")
+        .await
+        .map(drop)
+        .unwrap_err();
+    assert!(e.contains("connect_app"), "{e}");
+
+    connect(&mcp, &base, &browser.code).await.unwrap();
+    let Json(placed) = mcp
+        .add_example_cameras(Parameters(ExampleArgs {
+            scene: demo_scene(),
+            count: 2,
+            model_ids: Vec::new(),
+        }))
+        .unwrap();
+    let shared = placed.scene;
+    let mut changes = mcp.link().subscribe();
+    browser
+        .share(json!({"scene": shared, "area": {"kind": "demo"}}))
+        .await;
+    next_change(&mut changes).await;
+
+    // The app's own scene changes nothing.
+    let e = propose(&mcp, &shared, "Nothing")
+        .await
+        .map(drop)
+        .unwrap_err();
+    assert!(e.contains("nothing to propose"), "{e}");
+    // Another area cannot be proposed.
+    let elsewhere = osm_scene(BBox::new(47.0, -122.0, 47.001, -121.999).unwrap());
+    let e = propose(&mcp, &elsewhere, "Move")
+        .await
+        .map(drop)
+        .unwrap_err();
+    assert!(e.contains("another area"), "{e}");
+
+    // Turn the first camera and remove the second.
+    let ids = placed.camera_ids.unwrap();
+    let Json(aimed) = mcp
+        .aim_camera(Parameters(AimArgs {
+            scene: shared.clone(),
+            id: ids[0],
+            yaw_deg: Some(90.0),
+            pitch_deg: None,
+            roll_deg: None,
+        }))
+        .unwrap();
+    let Json(edited) = mcp
+        .remove_camera(Parameters(CameraArgs {
+            scene: aimed.scene,
+            id: ids[1],
+        }))
+        .unwrap();
+    let out = propose(&mcp, &edited.scene, "  Face the first camera east\n")
+        .await
+        .unwrap();
+    assert_eq!((out.id, out.status.as_str()), (1, "pending"));
+    assert_eq!(out.summary, "Face the first camera east");
+    assert_eq!(out.changes.len(), 2, "{:?}", out.changes);
+    assert!(out.changes[0].contains("aim at 90°"), "{:?}", out.changes);
+    assert!(
+        out.changes[1].starts_with("Remove Camera"),
+        "{:?}",
+        out.changes
+    );
+    assert!(out.note.contains("Nothing has changed yet"));
+    assert_eq!(proposal(&mcp, 1).await.status, "pending");
+    let Json(state) = mcp.get_app_state().await.unwrap();
+    assert_eq!(state.proposals.len(), 1);
+    // The server holds it for the browser, with the base values.
+    let pending = app.state.agent().unwrap().len();
+    assert_eq!(pending, 1);
+
+    // The user rejects it; the follower hears without being asked.
+    let mut changes = mcp.link().subscribe();
+    browser.decide(1, "rejected", Some("keep the second")).await;
+    next_change(&mut changes).await;
+    let rejected = proposal(&mcp, 1).await;
+    assert_eq!(rejected.status, "rejected");
+    assert_eq!(rejected.reason.as_deref(), Some("keep the second"));
+    assert!(rejected.meaning.contains("nothing changed"));
+
+    // A newer proposal supersedes a pending one; a pending one can be withdrawn.
+    assert_eq!(propose(&mcp, &edited.scene, "Again").await.unwrap().id, 2);
+    assert_eq!(
+        propose(&mcp, &edited.scene, "Once more").await.unwrap().id,
+        3
+    );
+    assert_eq!(proposal(&mcp, 2).await.status, "superseded");
+    let Json(withdrawn) = mcp
+        .withdraw_proposal(Parameters(crate::propose::ProposalIdArgs { id: 3 }))
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.status, "withdrawn");
+    // Withdrawing a decided one is refused with its status.
+    let e = mcp
+        .withdraw_proposal(Parameters(crate::propose::ProposalIdArgs { id: 1 }))
+        .await
+        .map(drop)
+        .unwrap_err();
+    assert!(e.contains("rejected"), "{e}");
+    let e = mcp
+        .get_proposal(Parameters(crate::propose::ProposalIdArgs { id: 9 }))
+        .await
+        .map(drop)
+        .unwrap_err();
+    assert!(e.contains("no proposal 9"), "{e}");
+
+    // Accepted, as the app reports it.
+    assert_eq!(propose(&mcp, &edited.scene, "Last").await.unwrap().id, 4);
+    browser.decide(4, "accepted", None).await;
+    let mut accepted = proposal(&mcp, 4).await;
+    for _ in 0..50 {
+        if accepted.status == "accepted" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        accepted = proposal(&mcp, 4).await;
+    }
+    assert_eq!(accepted.status, "accepted");
+    assert!(accepted.meaning.contains("one undo step"));
+}

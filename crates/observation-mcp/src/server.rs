@@ -48,7 +48,12 @@ for the code in its Connect agent dialog and call connect_app with the app's add
 http://127.0.0.1:8080). Then get_app_state returns their open scene (pass it to the scene \
 tools), its area, the selected cameras and a point they shared, the resource \
 observation://app/state follows it, and coverage and addresses work on their real area. Edits \
-made here do not change the app; give the user the scene to import. \
+made here do not change the app by themselves. To suggest a change to the open scene, edit a \
+copy of get_app_state's scene with the scene tools and call propose_changes with the result and \
+a one-sentence summary: the user reviews it in the app and accepts or rejects it as a whole. It \
+is only a proposal until get_proposal (or observation://app/state) says accepted, so never say \
+it has been applied before then; if it comes back stale, read the state again and propose \
+afresh. Without a connection, give the user the scene to import. \
 Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
 the caveats that compute_coverage returns.";
 
@@ -86,9 +91,9 @@ impl ObservationMcp {
         area::scope_areas(self.link.areas(), tool).await
     }
 
-    /// Every tool: the scene tools and the app tools.
+    /// Every tool: the scene tools, the app tools and the proposal tools.
     pub fn all_tools() -> ToolRouter<Self> {
-        Self::tool_router() + Self::app_tool_router()
+        Self::tool_router() + Self::app_tool_router() + Self::proposal_tool_router()
     }
 }
 
@@ -1112,6 +1117,9 @@ mod tests {
             "connect_app",
             "disconnect_app",
             "get_app_state",
+            "propose_changes",
+            "get_proposal",
+            "withdraw_proposal",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }

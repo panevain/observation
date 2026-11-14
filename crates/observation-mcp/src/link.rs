@@ -17,11 +17,13 @@
 use crate::ToolError;
 use crate::area::AreaCache;
 use observation_agent_api::{
-    ClaimRequest, Claimed, EndReason, ErrorBody, LONG_POLL_SECS, MAX_STATE_BYTES, PROTOCOL_VERSION,
-    StateView, paths, version_ok,
+    ClaimRequest, Claimed, EndReason, ErrorBody, LONG_POLL_SECS, MAX_PROPOSAL_BYTES,
+    MAX_STATE_BYTES, PROTOCOL_VERSION, ProposalPost, ProposalSubmitted, StateView, paths,
+    version_ok,
 };
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
 use observation_core::scene::AreaRef;
+use observation_core::scene::changes::ChangeSet;
 use observation_upstream::{
     GuardedHttp, HttpClient, HttpRequest, HttpResponse, Redirects, TransportError, Url,
 };
@@ -389,6 +391,74 @@ impl AppLink {
         self.areas.clear();
         self.changed();
         true
+    }
+
+    /// The open connection's base URL and token.
+    fn credentials(&self) -> Result<(String, String), ToolError> {
+        lock(&self.conn)
+            .as_ref()
+            .map(|c| (c.base.clone(), c.token.clone()))
+            .ok_or(ToolError::NotConnected)
+    }
+
+    /// Sends a proposal for the user to decide on in the app; returns its id.
+    /// `summary` is what it does, `base_revision` the state revision whose
+    /// scene `changes` was made against.
+    pub async fn propose(
+        &self,
+        summary: &str,
+        base_revision: u64,
+        changes: ChangeSet,
+    ) -> Result<u64, ToolError> {
+        let (base, token) = self.credentials()?;
+        let body = serde_json::to_vec(&ProposalPost {
+            v: PROTOCOL_VERSION,
+            summary: summary.to_owned(),
+            base_revision,
+            changes,
+        })
+        .map_err(|e| ToolError::Link(e.to_string()))?;
+        if body.len() > MAX_PROPOSAL_BYTES {
+            return Err(ToolError::invalid(format!(
+                "the proposal is {} KiB, over the bridge's limit of {} KiB: propose fewer changes at once",
+                body.len() / 1024,
+                MAX_PROPOSAL_BYTES / 1024
+            )));
+        }
+        let req = HttpRequest::post(format!("{base}{}", paths::PROPOSAL), 64 * 1024)
+            .bearer(&token)
+            .map_err(|_| ToolError::Link("the pairing token is malformed".into()))?
+            .json(body)
+            .timeout(REQUEST_TIMEOUT);
+        let submitted: ProposalSubmitted = match self.send(&base, req).await? {
+            Ok(b) => Self::json(&b)?,
+            Err(r) => return Err(ToolError::Link(r.message)),
+        };
+        // The bridge raised the state's revision: read it, so the
+        // proposal's status is there at once.
+        let _ = self.refresh().await;
+        Ok(submitted.id)
+    }
+
+    /// Withdraws proposal `id` while it is pending (a withdrawn one again
+    /// is no error).
+    pub async fn withdraw(&self, id: u64) -> Result<(), ToolError> {
+        let (base, token) = self.credentials()?;
+        let req = HttpRequest::new(
+            http::Method::DELETE,
+            format!("{base}{}?id={id}", paths::PROPOSAL),
+            64 * 1024,
+        )
+        .bearer(&token)
+        .map_err(|_| ToolError::Link("the pairing token is malformed".into()))?
+        .timeout(REQUEST_TIMEOUT);
+        match self.send(&base, req).await? {
+            Ok(_) => {
+                let _ = self.refresh().await;
+                Ok(())
+            }
+            Err(r) => Err(ToolError::Link(r.message)),
+        }
     }
 
     /// Reads the app's state now.

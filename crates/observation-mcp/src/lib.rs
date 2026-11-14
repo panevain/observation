@@ -19,6 +19,7 @@
 //! | [`area`] | the demo street, built once on first use, and the connection's real areas |
 //! | [`link`] | the connection to the user's open app, through the server's agent bridge |
 //! | [`app`] | the tools that connect to the app and read its state |
+//! | [`propose`] | the tools that propose a change to the app's scene and follow the user's decision |
 //! | [`edit`] | the scene edits, as plain functions on a [`SceneFile`](observation_core::scene::SceneFile) |
 //! | [`figures`] | coverage figures for a whole scene |
 //! | [`server`] | the MCP tools, resources and prompts |
@@ -30,6 +31,7 @@ pub mod edit;
 pub mod error;
 pub mod figures;
 pub mod link;
+pub mod propose;
 pub mod server;
 
 pub use error::ToolError;
