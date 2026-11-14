@@ -3,7 +3,8 @@
 ## Supported versions
 
 Only the `main` branch (and the container images published from its releases,
-`ghcr.io/panevain/observation:latest` and `ghcr.io/panevain/observation-regions:latest`)
+`ghcr.io/panevain/observation:latest`, `ghcr.io/panevain/observation-regions:latest` and
+`ghcr.io/panevain/observation-mcp:latest`)
 receives security fixes. Tagged releases (`v*`) are snapshots of `main`; please
 upgrade to the latest one. When a dependency of the latest release gets a security
 fix (a crate advisory with a compatible fix, or a Debian fix in an image), a patch
@@ -51,6 +52,8 @@ In scope:
   caching and static file serving.
 - The optional `observation-regions` agent and its image, including region
   imports, the admin token on region management and the agent token.
+- The `observation-mcp` server and its image: its handling of the messages and
+  scene files an MCP client sends.
 - The WebAssembly client served by that server.
 - The container image and the build and release pipeline in this repository.
 
@@ -130,8 +133,8 @@ Every change is checked automatically (see `.github/workflows/`):
   develop's installs is not checked again (the release jobs use no cache). The
   publisher's attestations or signatures, where they exist, are verified when
   that lock entry is written (`mise run lock`).
-- **Release provenance**: both images pushed to GHCR (`observation` and
-  `observation-regions`) carry SLSA build provenance and an SBOM, are signed
+- **Release provenance**: every image pushed to GHCR (`observation`,
+  `observation-regions` and `observation-mcp`) carries SLSA build provenance and an SBOM, are signed
   keylessly with cosign, and are attested with GitHub artifact attestations. A
   release is published only from a tag on `main` that passes the advisory check,
   a smoke test and the Trivy gate; its GitHub release is immutable. Images are
@@ -144,8 +147,9 @@ Every change is checked automatically (see `.github/workflows/`):
   the workflow pushed on a branch. Only admins and the release bot can create
   `v*` tags, and nobody can move them. From a checkout,
   `mise run verify ghcr.io/panevain/observation:<version>` runs both checks and
-  prints the image pinned by digest (`mise run up` does this for both images and
-  runs them by that digest). By hand (likewise for `observation-regions`):
+  prints the image pinned by digest (`mise run up` does this for the app and
+  region agent images and runs them by that digest). By hand (likewise for
+  `observation-regions` and `observation-mcp`):
 
   ```sh
   cosign verify ghcr.io/panevain/observation:<version> \

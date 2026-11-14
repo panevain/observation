@@ -987,18 +987,21 @@ mod tests {
         RUN cargo chef cook --release --target wasm32-unknown-unknown \\\n      -p app-web --recipe-path r.json\n\
         # docker build --target regions -p nothing\n\
         FROM debian AS regions\n\
+        FROM scratch AS mcp\n\
         FROM scratch AS runtime-base\n\
         FROM runtime-base AS runtime\n";
     const RELEASE_YML: &str = "jobs:\n  image:\n    strategy:\n      matrix:\n        include:\n\
         \x20         - image: observation\n            target: runtime\n            cache: image\n\
         \x20           save-cache: true\n\
         \x20         - image: observation-regions\n            target: regions\n            cache: image-regions\n\
+        \x20         - image: observation-mcp\n            target: mcp\n            cache: image-mcp\n\
         \x20   env:\n      IMAGE_NAME: ghcr.io/panevain/${{ matrix.image }}\n\
-        \x20 notes:\n    steps:\n      - run: |\n          for name in observation observation-regions; do\n            echo ghcr.io/panevain/${name}\n          done\n";
-    const PRUNE_YML: &str = "jobs:\n  prune:\n    strategy:\n      matrix:\n        package: [observation, observation-regions]\n";
+        \x20 notes:\n    steps:\n      - run: |\n          for name in observation observation-regions observation-mcp; do\n            echo ghcr.io/panevain/${name}\n          done\n";
+    const PRUNE_YML: &str = "jobs:\n  prune:\n    strategy:\n      matrix:\n        package: [observation, observation-regions, observation-mcp]\n";
     const SCRIPT: &str = "IMAGES = {\n    # name: (path, stage, rebuild fixes all)\n\
         \x20   \"observation\": (\"ghcr.io/panevain/observation\", \"runtime-base\", False),\n\
-        \x20   \"observation-regions\": (\"ghcr.io/panevain/observation-regions\", \"regions\", True),\n}\n";
+        \x20   \"observation-regions\": (\"ghcr.io/panevain/observation-regions\", \"regions\", True),\n\
+        \x20   \"observation-mcp\": (\"ghcr.io/panevain/observation-mcp\", \"mcp\", False),\n}\n";
     const DEPENDABOT_YML: &str = "updates:\n  - package-ecosystem: cargo\n    directories: [\"/\", \"/fuzz\"]\n\
         \x20   cooldown:\n      default-days: 7\n\
         \x20 - package-ecosystem: github-actions\n    directory: /\n    cooldown:\n      default-days: 7\n\
@@ -1051,6 +1054,9 @@ mod tests {
                      jobs:\n  test:\n    steps:\n      - run: cargo nextest run --exclude app-web\n\
                      \x20 docker:\n    steps:\n      - uses: $/.github/actions/build-image\n\
                      \x20       with:\n          target: regions\n          cache-scope: image-regions\n\
+                     \x20         cache-save: true\n\
+                     \x20     - uses: $/.github/actions/build-image\n\
+                     \x20       with:\n          target: mcp\n          cache-scope: image-mcp\n\
                      \x20         cache-save: true\n"
                         .into(),
                 ),
@@ -1215,8 +1221,8 @@ mod tests {
     fn image_lists_agree() {
         rows(
             r#"
-            prune | , observation-regions] | ] | package matrix has 'observation', expected 'observation observation-regions
-            release | for name in observation observation-regions | for name in observation-x observation-regions | image loop has 'observation-regions observation-x'
+            prune | , observation-mcp] | ] | package matrix has 'observation observation-regions', expected 'observation observation-mcp observation-regions
+            release | for name in observation observation-regions | for name in observation-x observation-regions | image loop has 'observation-mcp observation-regions observation-x'
             release | target: regions | target: region | image observation-regions targets region, not a Dockerfile stage && service regions builds target regions, but its image ghcr.io/panevain/observation-regions is released from target region
             release | target: regions | target: regions\n            target: runtime | release.yml: not YAML
             release | IMAGE_NAME | NAME | job image's env has no IMAGE_NAME
@@ -1224,8 +1230,8 @@ mod tests {
             release | notes: | again:\n    strategy:\n      matrix:\n        include:\n          - image: observation\n            target: runtime\n  notes: | release.yml has 2 jobs with an image matrix
             release | - image: observation-regions | - image: "observation-regions" # the agent | 
             release | echo ghcr | echo target: ${{matrix.target}} ghcr | 
-            prune | [observation, observation-regions] | ["observation", "observation-regions"] # both | 
-            prune | [observation, observation-regions] | \n          - observation\n          - observation-regions | 
+            prune | [observation, observation-regions, observation-mcp] | ["observation", "observation-regions", "observation-mcp"] # all | 
+            prune | [observation, observation-regions, observation-mcp] | \n          - observation\n          - observation-regions\n          - observation-mcp | 
             release | ghcr.io/panevain/${name} | ghcr.io/other/${name} | release.yml: ghcr.io/other/$ is not an image
             compose | ghcr.io/panevain/observation-regions | ghcr.io/panevain/observation-agent | compose.yaml: ghcr.io/panevain/observation-agent is not an image && service regions builds target regions but names no image
             compose | target: regions | target: regionz | service regions builds target regionz, not a Dockerfile stage && but its image ghcr.io/panevain/observation-regions is released from target regions
@@ -1239,7 +1245,7 @@ mod tests {
             security-patch | "ghcr.io/panevain/observation" | "ghcr.io/other/observation" | path of observation has 'ghcr.io/other/observation' && security_patch::IMAGES differs
             security-patch | "regions", True | "regions", False | security_patch::IMAGES differs
             security-patch | "runtime-base" | "runtime-bas" | reads stage runtime-bas, not a Dockerfile stage && security_patch::IMAGES differs
-            security-patch | "observation-regions": ( | "regions": ( | IMAGES has 'observation regions' && security_patch::IMAGES differs
+            security-patch | "observation-regions": ( | "regions": ( | IMAGES has 'observation observation-mcp regions' && security_patch::IMAGES differs
             security-patch | True),\n | True),\n    "x": 1,\n | IMAGES has a line sync cannot read
             security-patch | IMAGES = { | IMAGES = dict( | no `IMAGES = {` line
             security-patch | IMAGES = { | IMAGES = {\n}\nOTHER = { | IMAGES has '<nothing>' && security_patch::IMAGES differs

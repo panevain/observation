@@ -23,6 +23,12 @@ docker build -t observation . && docker run --rm -p 8080:8080 -e OBS_CONTACT=you
 
 Released images are signed: from a checkout, `mise run verify ghcr.io/panevain/observation:<version>` checks one and prints it pinned by digest, which you can then `docker run` (see [SECURITY.md](SECURITY.md)).
 
+The MCP server for AI agents is an image too. It speaks MCP over stdio and works offline on the demo street, so an MCP client runs it with stdin attached, no TTY and no network:
+
+```sh
+docker run --rm -i --network none ghcr.io/panevain/observation-mcp   # or `docker build --target mcp`
+```
+
 Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to OpenStreetMap services so they can reach you; set it to something real.
 
 ### Docker Compose, with local map data
@@ -32,7 +38,7 @@ Public Overpass servers are often slow or busy. `compose.yaml` runs the app with
 ```sh
 cp mise.local.toml.example mise.local.toml   # set OBS_CONTACT
 # set OBS_REGIONS_TOKEN and OBS_ADMIN_TOKEN in fnox.local.toml (see fnox.toml)
-mise run up                                  # the released images, signature-checked; `mise run up --build` builds them here
+mise run up                                  # the released images, signature-checked; `mise run up --build` builds them here, the MCP server's too
 ```
 
 The tokens are read by [fnox](https://fnox.jdx.dev), which mise installs for that task; the port, log format and region limits default in [`compose.yaml`](compose.yaml) (override one from the environment, e.g. `OBS_PORT=9090 mise run up`). Open <http://localhost:8080>, click the database button in the top bar, enter the admin token, and import a region; progress shows live in the browser. Areas elsewhere still use public Overpass. See [Local regions](docs/design.md#local-regions).
@@ -80,7 +86,7 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, region management relay, static files |
 | `crates/observation-regions` | Optional region agent (`regions` image target): imports Geofabrik extracts into local Overpass databases and answers queries for them |
 | `crates/observation-tokens` | Design token values (scales, minimum viewport, UI colour roles) shared by the client theme and `web/index.html`'s CSS, which trunk writes with its `token-css` binary |
-| `crates/observation-mcp` | MCP server for AI agents (stdio): the camera catalogue, scene editing and coverage figures on the demo street, offline |
+| `crates/observation-mcp` | MCP server for AI agents (stdio, `mcp` image target): the camera catalogue, scene editing and coverage figures on the demo street, offline |
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate (`tokens.css` is generated) |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |

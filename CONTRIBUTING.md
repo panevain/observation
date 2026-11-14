@@ -22,13 +22,13 @@ Releases are automatic: the **Prepare release** workflow runs every Tuesday and 
    - **By hand** (Actions → Prepare release → Run workflow): leave the inputs empty for the same result now, give a **version** (`0.2.0`, or `1.0.0` for a breaking release) to choose it, or pick **prerelease: dev** for a test build `X.Y.Z-dev.N` (N counts up from 1; made even when nothing changed). A pre-release does not go through `main`: the bot commits the version bump on top of `develop` and pushes only the `vX.Y.Z-dev.N` tag (no branch, PR or back-merge), and Release publishes it. So `main` always holds the latest stable release, and a hotfix can start at any time. A pre-release leaves `[Unreleased]` in place, and its GitHub release uses those entries as notes; it ships `develop`'s treemap.
    - **Without the workflow**: `git switch -c release/0.2.0 origin/develop`, make the same edits (`scripts/set-version.sh 0.2.0`, `scripts/release-plan.py changelog --version 0.2.0`), and open the PR.
 2. The PR `release/0.2.0` → `main` merges itself (merge commit) when its checks pass. To hold a release, disable auto-merge on it; stabilising fixes go on the branch.
-3. The rest is automatic. **Release tag** tags the merge commit `v0.2.0`; **Release** publishes `ghcr.io/panevain/observation` and `ghcr.io/panevain/observation-regions` as `0.2.0` and `latest` (pre-releases get only their version tag), each with a cosign signature, provenance and an SBOM, and a GitHub release with the changelog section (marked pre-release for `X.Y.Z-dev.N`); and Release tag opens `backmerge/v0.2.0` → `develop`, which merges itself once its checks pass and brings the version, changelog and treemap back. If the back-merge conflicts (usually `CHANGELOG.md` or `Cargo.lock`), merge `develop` into `backmerge/v0.2.0`, resolve, and push.
+3. The rest is automatic. **Release tag** tags the merge commit `v0.2.0`; **Release** publishes `ghcr.io/panevain/observation`, `ghcr.io/panevain/observation-regions` and `ghcr.io/panevain/observation-mcp` as `0.2.0` and `latest` (pre-releases get only their version tag), each with a cosign signature, provenance and an SBOM, and a GitHub release with the changelog section (marked pre-release for `X.Y.Z-dev.N`); and Release tag opens `backmerge/v0.2.0` → `develop`, which merges itself once its checks pass and brings the version, changelog and treemap back. If the back-merge conflicts (usually `CHANGELOG.md` or `Cargo.lock`), merge `develop` into `backmerge/v0.2.0`, resolve, and push.
 
 Hotfixes work the same way, starting from `main` with `hotfix/<x.y.z>`; Release tag waits for an approval before tagging them (below).
 
 ### Security patch releases
 
-**Release watch** checks the latest release every day: cargo-audit on its `Cargo.lock` (then `cargo update` to see which advisories have a semver-compatible fix) and Trivy on its two images. If a patch release would fix something (a crate advisory, or a fixable critical or high OS vulnerability that a rebuild on the current base images clears), it starts **Hotfix**, which opens `hotfix/<x.y.z+1>` → `main` with those updates, re-pinned base images, the version bump and a `### Security` changelog entry. The PR merges itself when its checks pass. Release tag then waits for **one approval**: open its run (Actions → Release tag), choose **Review deployments**, tick `release` and approve; the tag, images, GitHub release and back-merge follow as above.
+**Release watch** checks the latest release every day: cargo-audit on its `Cargo.lock` (then `cargo update` to see which advisories have a semver-compatible fix) and Trivy on its images. If a patch release would fix something (a crate advisory, or a fixable critical or high OS vulnerability that a rebuild on the current base images clears), it starts **Hotfix**, which opens `hotfix/<x.y.z+1>` → `main` with those updates, re-pinned base images, the version bump and a `### Security` changelog entry. The PR merges itself when its checks pass. Release tag then waits for **one approval**: open its run (Actions → Release tag), choose **Review deployments**, tick `release` and approve; the tag, images, GitHub release and back-merge follow as above.
 
 Everything Release watch finds, fixable or not, is kept in an issue titled `Security: v<x.y.z>`, which it closes when there is nothing left. Advisories with no compatible fix (a semver-incompatible bump, or no fix yet) need a person: a code change on a hotfix branch, or an ignore with a reason in `deny.toml`, `.cargo/audit.toml` and `osv-scanner.toml` if the code is unreachable. Run Hotfix by hand with `force` to publish a patch release on fresh base images when nothing is flagged.
 
@@ -48,7 +48,7 @@ The environments: `bot` holds the key and may only be used from `develop`, `main
 
 ### Images
 
-| Push to | Image tags (both images) |
+| Push to | Image tags (every image) |
 | --- | --- |
 | `develop` | `devel` |
 | tag `vX.Y.Z` | `X.Y.Z`, `latest` |

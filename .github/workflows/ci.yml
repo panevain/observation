@@ -309,7 +309,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Writes both caches from develop; everything else reads them.
+      # Writes all three caches from develop; everything else reads them.
       - name: Build image (stub dist/)
         uses: $/.github/actions/build-image
         with:
@@ -329,6 +329,16 @@ jobs:
           setup-buildx: false
       - name: Smoke test region agent
         run: scripts/smoke-test-regions.sh observation-regions:ci
+      - name: Build MCP server image
+        uses: $/.github/actions/build-image
+        with:
+          tag: observation-mcp:ci
+          target: mcp
+          cache-scope: image-mcp
+          cache-save: true
+          setup-buildx: false
+      - name: Smoke test MCP server
+        run: scripts/smoke-test-mcp.sh observation-mcp:ci
 
   # The real client in a headless browser: the wasm job's dist/ in the app image, loaded in
   # Chrome with WebGL2 on SwiftShader (tests/browser/smoke.cjs). Fails if the client does not
