@@ -97,13 +97,16 @@ rustup toolchain list
 '''
 
 [tasks.audit]
-description = "cargo-audit on every lockfile (the workspace's, fuzz/'s and xtask/'s); yanked crates fail too. Ignores: .cargo/audit.toml"
+description = "cargo-audit on every lockfile (the workspace's, fuzz/'s and xtask/'s); unsound, unmaintained and yanked crates fail too. Ignores: .cargo/audit.toml"
 # cargo-deny (mise run deny) checks the same three lockfiles against RustSec too; this is a
-# second tool over the same advisory database.
+# second tool over the same advisory database. cargo-audit only warns on unsound and
+# unmaintained advisories unless told to deny them; these flags match deny.toml's
+# `unsound = "all"` and `unmaintained = "all"`. Unlike cargo-deny, cargo-audit reads every
+# lockfile entry, whatever the target platform.
 run = [
-  "cargo-audit audit --deny yanked --file Cargo.lock",
-  "cargo-audit audit --deny yanked --file fuzz/Cargo.lock",
-  "cargo-audit audit --deny yanked --file xtask/Cargo.lock",
+  "cargo-audit audit --deny unsound --deny unmaintained --deny yanked --file Cargo.lock",
+  "cargo-audit audit --deny unsound --deny unmaintained --deny yanked --file fuzz/Cargo.lock",
+  "cargo-audit audit --deny unsound --deny unmaintained --deny yanked --file xtask/Cargo.lock",
 ]
 
 # The check of this tree's xtask, for local use. security.yml's cargo-cooldown job runs the

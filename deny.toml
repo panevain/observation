@@ -11,8 +11,13 @@ targets = [
 all-features = false
 
 [advisories]
-# Vulnerabilities, unsound and unmaintained advisories (workspace-reachable
-# ones) are always errors in the current schema. Yanked crates are errors too.
+# Vulnerability advisories are always errors in the current schema, for any crate in the graph.
+# Unsound and unmaintained advisories are errors only for direct dependencies of a workspace
+# crate by default ("workspace"); "all" makes them errors for indirect ones too, which is how
+# RUSTSEC-2026-0486 (unsound, in rustix under Bevy) passed unnoticed. One that cannot be fixed
+# yet goes in `ignore` below, with a reason. Yanked crates are errors too.
+unsound = "all"
+unmaintained = "all"
 yanked = "deny"
 # Keep empty. If an advisory truly cannot be fixed yet, add an entry WITH a reason and an
 # expiry date in osv-scanner.toml (cargo-deny 0.20 has no expiry of its own), e.g.

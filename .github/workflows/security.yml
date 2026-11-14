@@ -72,7 +72,8 @@ jobs:
           category: zizmor
 
   # Every lockfile, including the fuzz and xtask workspaces', as cargo-deny's job does. Ignores
-  # come from .cargo/audit.toml. Yanked crates fail the job, as they do in cargo-deny.
+  # come from .cargo/audit.toml. Unsound, unmaintained and yanked crates fail the job, as they
+  # do in cargo-deny.
   cargo-audit:
     name: cargo-audit
     runs-on: ubuntu-24.04
