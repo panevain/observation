@@ -2,7 +2,8 @@
 //!
 //! Serves pre-processed OSM area bundles (`/api/area`, `/api/demo`), a caching
 //! tile proxy (`/api/tiles/...`), local region management (`/api/regions...`,
-//! when a region agent is configured) and the static client, with security
+//! when a region agent is configured), an optional place search
+//! (`/api/geocode`, when a geocoder is configured) and the static client, with security
 //! headers, compression and request timeouts. [`app`] builds the whole
 //! [`Router`] so tests can drive it without a socket.
 
@@ -14,6 +15,7 @@ pub mod demo;
 pub mod domain;
 pub mod elevation;
 pub mod error;
+pub mod geocoder;
 pub mod metrics;
 pub mod overpass;
 pub mod ports;
@@ -46,6 +48,7 @@ use crate::bundles::BundleService;
 use crate::clock::{Clock, unix_secs};
 use crate::config::Config;
 use crate::elevation::Elevation;
+use crate::geocoder::Geocoder;
 use crate::overpass::OverpassClient;
 use crate::ports::{BundleStore, TileStore};
 use crate::ratelimit::RateLimiter;
@@ -77,6 +80,8 @@ struct Inner {
     demo: Option<Bytes>,
     /// `None` without `OBS_REGIONS_URL`.
     regions: Option<Arc<Regions>>,
+    /// The place search; `None` without `OBS_GEOCODER_URL`.
+    geocoder: Option<Geocoder>,
     /// Flipped to `true` when the server starts shutting down, to end event streams.
     shutdown: tokio::sync::watch::Sender<bool>,
     /// Bounds the open region event streams.
@@ -99,6 +104,8 @@ pub struct Ports {
     pub bundle_store: Arc<dyn BundleStore>,
     pub tile_store: Arc<dyn TileStore>,
     pub clock: Arc<dyn Clock>,
+    /// The place search's geocoder; `None` when it is off.
+    pub geocoder_http: Option<Arc<dyn HttpClient>>,
 }
 
 impl AppState {
@@ -125,7 +132,9 @@ impl AppState {
             bundle_store,
             tile_store,
             clock,
+            geocoder_http,
         } = ports;
+        let geocoder = geocoder_http.and_then(|http| Geocoder::new(http, &config.geocoder));
         let overpass = Arc::new(OverpassClient::new(overpass_http, &config));
         let regions =
             agent.map(|agent| Arc::new(Regions::new(agent, config.admin_token.is_some())));
@@ -161,6 +170,7 @@ impl AppState {
             tiles,
             demo,
             regions,
+            geocoder,
             shutdown: tokio::sync::watch::Sender::new(false),
             streams: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_STREAMS)),
         }))
@@ -169,6 +179,11 @@ impl AppState {
     /// The region agent client, if `OBS_REGIONS_URL` is set.
     pub fn regions(&self) -> Option<&Arc<Regions>> {
         self.0.regions.as_ref()
+    }
+
+    /// The place search, if `OBS_GEOCODER_URL` is set.
+    pub fn geocoder(&self) -> Option<&Geocoder> {
+        self.0.geocoder.as_ref()
     }
 
     /// Ends open event streams so a graceful shutdown does not wait on them.

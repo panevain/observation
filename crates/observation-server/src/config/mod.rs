@@ -10,7 +10,12 @@ use thiserror::Error;
 use self::upstreams::{check_template, check_upstream};
 use crate::ratelimit::{Cidr, Rate};
 
+mod geocoder;
 mod upstreams;
+
+pub use self::geocoder::{
+    DEFAULT_GEOCODER_ATTRIBUTION, DEFAULT_GEOCODER_RATE, GEOCODER_OFF, GeocoderConfig,
+};
 
 /// Default tile URL template (OpenStreetMap standard tiles).
 pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -80,6 +85,13 @@ pub enum ConfigError {
     RegionsUrl(String),
     #[error("OBS_TRUSTED_PROXIES entry `{0}` is not an IP address or a block like 10.0.0.0/8")]
     TrustedProxy(String),
+    #[error("OBS_GEOCODER_URL `{0}` is not an http(s) URL or `off`")]
+    GeocoderUrl(String),
+    #[error(
+        "OBS_GEOCODER_CONTACT must be printable ASCII without parentheses, at most {} characters",
+        geocoder::MAX_CONTACT_CHARS
+    )]
+    GeocoderContact,
     #[error("{var} `{value}` is not a whole number from {min} to {MAX_RATE}")]
     Rate {
         var: &'static str,
@@ -167,6 +179,8 @@ pub struct Config {
     /// Per-client limit on tiles that go upstream
     /// (`OBS_TILE_RATE_PER_MIN`, `OBS_TILE_BURST`).
     pub tile_rate: Rate,
+    /// The optional place-name search (`OBS_GEOCODER_*`); off by default.
+    pub geocoder: GeocoderConfig,
 }
 
 /// Whether two listen addresses would collide: same port and the same IP, or either
@@ -288,7 +302,9 @@ impl Config {
             per_minute: number("OBS_TILE_RATE_PER_MIN", DEFAULT_TILE_RATE.per_minute, 0)?,
             burst: number("OBS_TILE_BURST", DEFAULT_TILE_RATE.burst, 1)?,
         };
+        let geocoder = GeocoderConfig::from_lookup(get)?;
         let config = Self {
+            geocoder,
             trusted_proxies,
             area_rate,
             tile_rate,
@@ -347,12 +363,12 @@ impl Config {
             ConfigError::TileUrl,
             || ConfigError::TileUrlHost(redact(&self.tile_url)),
         )?;
-        match &self.dem_url {
-            Some(dem) => check_template("OBS_DEM_URL", dem, allow, ConfigError::DemUrl, || {
+        if let Some(dem) = &self.dem_url {
+            check_template("OBS_DEM_URL", dem, allow, ConfigError::DemUrl, || {
                 ConfigError::DemUrlHost(redact(dem))
-            }),
-            None => Ok(()),
+            })?;
         }
+        self.geocoder.validate(allow)
     }
 
     /// Fixed (non-environment) settings shared by production and tests.
@@ -387,6 +403,7 @@ impl Config {
             trusted_proxies: Vec::new(),
             area_rate: DEFAULT_AREA_RATE,
             tile_rate: DEFAULT_TILE_RATE,
+            geocoder: GeocoderConfig::default(),
         }
     }
 

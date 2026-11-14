@@ -9,6 +9,7 @@ mod basics;
 mod common;
 mod elevation;
 mod formats;
+mod geocode;
 mod harness;
 mod limits;
 mod overpass;

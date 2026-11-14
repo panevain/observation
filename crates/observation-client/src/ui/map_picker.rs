@@ -10,6 +10,8 @@ use bevy::prelude::Resource;
 use bevy_egui::egui::{
     self, Align2, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, vec2,
 };
+use observation_client_model::net::GeocoderInfo;
+use observation_client_model::place::{PlaceFinder, STREET_ZOOM, Submit};
 use observation_core::geo::{BBox, BBoxError, LatLon};
 use observation_core::tiles::{TileId, lat_to_y, lon_to_x, x_to_lon, y_to_lat};
 
@@ -124,6 +126,15 @@ impl MapPicker {
         self.draw_start = None;
     }
 
+    /// Recentres on `at` at `zoom`, dropping the box drawn so far (it is
+    /// somewhere else). Unlike [`Self::open_at`], `0, 0` is a place too.
+    pub fn go_to(&mut self, at: LatLon, zoom: f64) {
+        self.center = LatLon::new(at.lat.clamp(-85.0, 85.0), at.lon.clamp(-180.0, 180.0));
+        self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        self.selection = None;
+        self.draw_start = None;
+    }
+
     fn zoom_about(&mut self, view: &View, anchor: Pos2, delta: f64) {
         let before = view.latlon_of(anchor);
         self.zoom = (self.zoom + delta).clamp(MIN_ZOOM, MAX_ZOOM);
@@ -221,12 +232,101 @@ pub fn register_tiles(
     out
 }
 
+/// The "Go to" row: coordinates (always) or a place name (when the server
+/// has a geocoder), read only when the user presses Enter or the button, and
+/// the search results with their credit.
+fn find_place(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    p: &mut MapPicker,
+    f: &mut PlaceFinder,
+    geocoder: Option<&GeocoderInfo>,
+) {
+    let search = geocoder.map(|g| g.max_query_chars);
+    let mut submit = false;
+    ui.horizontal(|ui| {
+        ui.label("Go to");
+        let placeholder = if search.is_some() {
+            "Place, or lat, lon such as 51.5007, -0.1246"
+        } else {
+            "lat, lon such as 51.5007, -0.1246"
+        };
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut f.text)
+                .hint_text(placeholder)
+                .desired_width(320.0),
+        );
+        if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            submit = true;
+        }
+        let label = match (f.searching(), search) {
+            (true, _) => "Searching…",
+            (false, Some(_)) => "Search",
+            (false, None) => "Go",
+        };
+        let tip = if search.is_some() {
+            "Find a place by name (sent to the server's place search) or go to a latitude and longitude"
+        } else {
+            "Go to a latitude and longitude, as copied from a map app"
+        };
+        if ui
+            .add_enabled(!f.searching(), secondary(t, label))
+            .on_hover_text(tip)
+            .clicked()
+        {
+            submit = true;
+        }
+        if let Some(msg) = f.message() {
+            ui.label(RichText::new(msg).color(t.danger));
+        }
+    });
+    if submit && let Submit::GoTo(at) = f.submit(search) {
+        p.go_to(at, STREET_ZOOM);
+    }
+    if f.results().is_empty() {
+        return;
+    }
+    let mut chosen = None;
+    let mut clear = false;
+    egui::ScrollArea::vertical()
+        .id_salt("place-results")
+        .max_height(t.layout.hit_target * 4.0)
+        .show(ui, |ui| {
+            for (i, place) in f.results().iter().enumerate() {
+                if ui.selectable_label(false, &place.label).clicked() {
+                    chosen = Some(i);
+                }
+            }
+        });
+    ui.horizontal(|ui| {
+        // Nominatim's policy: its OpenStreetMap data is credited with the results.
+        let credit = f
+            .attribution()
+            .or(geocoder.map(|g| g.attribution.as_str()))
+            .filter(|a| !a.is_empty());
+        if let Some(credit) = credit {
+            hint(ui, t, credit);
+        }
+        if ui.add(secondary(t, "Clear")).clicked() {
+            clear = true;
+        }
+    });
+    if let Some(place) = chosen.and_then(|i| f.results().get(i)) {
+        p.go_to(place.at, place.zoom());
+    }
+    if clear {
+        f.clear();
+    }
+}
+
 /// Shows the dialog, outlining the server's ready `local` regions. Returns
 /// the chosen box when the user confirms.
+#[allow(clippy::too_many_arguments)]
 pub fn window(
     ctx: &egui::Context,
     t: &Tokens,
     p: &mut MapPicker,
+    finder: &mut PlaceFinder,
     tile_draws: &[TileDraw],
     local: &[(String, BBox)],
     config: &ServerConfig,
@@ -277,6 +377,8 @@ pub fn window(
                     "Drag to pan, scroll to zoom. Turn on Draw area (or hold Shift) and drag to draw a box up to {max} m × {max} m."
                 ),
             );
+            ui.add_space(t.space.xs);
+            find_place(ui, t, p, finder, config.geocoder.as_ref());
             ui.add_space(t.space.xs);
 
             let footer_h = t.layout.hit_target + t.space.lg;

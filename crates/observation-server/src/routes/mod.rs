@@ -1,6 +1,7 @@
 //! HTTP routes: JSON/binary API plus the static client with SPA fallback.
 
 mod area;
+mod geocode;
 mod health;
 mod regions;
 mod static_files;
@@ -21,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/area", get(area::area))
         .route("/api/demo", get(area::demo))
         .route("/api/tiles/{z}/{x}/{y}", get(tiles::tile))
+        .route("/api/geocode", get(geocode::geocode))
         .route("/api/regions", get(regions::status))
         .route("/api/regions/catalog", get(regions::catalog))
         .route("/api/regions/catalog/sizes", post(regions::catalog_sizes))
