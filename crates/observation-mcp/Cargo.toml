@@ -1,0 +1,30 @@
+[package]
+name = "observation-mcp"
+description = "MCP server for Observation: camera catalogue, scene editing and coverage figures for AI agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+observation-core.workspace = true
+# Only for `demo::build_demo`, the offline demo street (it needs the server's Overpass parser and
+# elevation decoder). No server state, routes or outbound HTTP are used.
+observation-server.workspace = true
+# The server side of MCP over stdio, for spec 2026-07-28. Never enable `auth` or any `reqwest*`
+# feature: they pull reqwest, which deny.toml allows only in observation-upstream.
+rmcp = { version = "3.9", default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = "1"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

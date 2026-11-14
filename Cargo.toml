@@ -11,6 +11,7 @@ default-members = [
     "crates/observation-upstream",
     "crates/observation-tokens",
     "crates/observation-client-model",
+    "crates/observation-mcp",
 ]
 # Separate workspaces, each with its own Cargo.lock: the fuzz targets (nightly only; see
 # fuzz/README.md) and the repository's tooling (`cargo xtask`, see xtask/Cargo.toml), whose
@@ -30,6 +31,7 @@ observation-upstream = { path = "crates/observation-upstream" }
 observation-tokens = { path = "crates/observation-tokens" }
 observation-client-model = { path = "crates/observation-client-model" }
 observation-regions-api = { path = "crates/observation-regions-api" }
+observation-server = { path = "crates/observation-server" }
 
 # shared
 glam = { version = "0.33", features = ["serde"] }

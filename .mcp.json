@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "observation": {
+      "type": "stdio",
+      "command": "cargo",
+      "args": ["run", "--quiet", "--locked", "-p", "observation-mcp"],
+      "env": {
+        "RUST_LOG": "warn"
+      }
+    }
+  }
+}
