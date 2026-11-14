@@ -58,7 +58,8 @@ pub fn top_bar_button(ui: &mut egui::Ui, t: &Tokens, link: &mut AgentLinkRes) {
 
 /// The Connect agent dialog.
 pub fn window(ctx: &egui::Context, t: &Tokens, link: &mut AgentLinkRes, http: &dyn Http) {
-    let mut open = link.dialog_open;
+    // Esc closes it, as it closes the other dialogs (the help card says so).
+    let mut open = link.dialog_open && !ctx.input(|i| i.key_pressed(egui::Key::Escape));
     egui::Window::new("Connect agent")
         .collapsible(false)
         .resizable(false)
@@ -173,7 +174,9 @@ pub fn proposal_card(
         return;
     };
     let vm = ProposalCardVm::new(p, d.agent.agent_name());
-    let figures = d.coverage.counted().then(|| {
+    // Before and after only matter while there is a decision to make: once
+    // it is accepted, the figures above the card already show the result.
+    let figures = (d.coverage.counted() && p.standing.is_open()).then(|| {
         let params = &d.scene.params;
         FiguresVm::new(
             ((params.dori, params.lighting), &d.coverage.stats),

@@ -108,9 +108,27 @@ pub fn segmented<T: PartialEq + Copy>(
     changed
 }
 
-/// Tabs that share the row's width equally, styled like [`segmented`];
-/// labels too long for their tab are cut short. True when another tab was
-/// picked.
+/// Shares `room` among tabs whose labels want `natural` widths: short labels
+/// get their whole width and the long ones split what is left equally (and
+/// are cut short); room to spare is shared equally.
+fn share_widths(natural: &[f32], room: f32) -> Vec<f32> {
+    let mut order: Vec<usize> = (0..natural.len()).collect();
+    order.sort_by(|&a, &b| natural[a].total_cmp(&natural[b]));
+    let mut widths = vec![0.0; natural.len()];
+    let mut left = room;
+    for (k, &i) in order.iter().enumerate() {
+        let share = left / (natural.len() - k) as f32;
+        widths[i] = natural[i].min(share);
+        left -= widths[i];
+    }
+    let spare = left.max(0.0) / natural.len().max(1) as f32;
+    widths.iter().map(|w| w + spare).collect()
+}
+
+/// Tabs that fill the row, styled like [`segmented`]. Each tab is as wide as
+/// its label, with room to spare shared equally; when the labels do not all
+/// fit, the short ones stay whole and the long ones are cut short. True when
+/// another tab was picked.
 pub fn tabs<T: PartialEq + Copy>(
     ui: &mut Ui,
     t: &Tokens,
@@ -119,11 +137,28 @@ pub fn tabs<T: PartialEq + Copy>(
 ) -> bool {
     let gap = t.space.xs;
     let n = options.len().max(1) as f32;
-    let w = ((ui.available_width() - gap * (n - 1.0)) / n).max(0.0);
+    let room = (ui.available_width() - gap * (n - 1.0)).max(0.0);
+    // Tighter than other buttons, so four tabs fit the inspector's default
+    // width; a pixel to spare each for rounding.
+    let pad_x = t.space.sm;
+    let pad = 2.0 * pad_x + 1.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let natural: Vec<f32> = options
+        .iter()
+        .map(|(_, label)| {
+            pad + ui.fonts_mut(|f| {
+                f.layout_no_wrap((*label).to_owned(), font.clone(), t.text)
+                    .size()
+                    .x
+            })
+        })
+        .collect();
+    let widths = share_widths(&natural, room);
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
-        for (v, label) in options {
+        ui.spacing_mut().button_padding.x = pad_x;
+        for ((v, label), w) in options.iter().zip(widths) {
             let on = *value == *v;
             let btn = option_button(t, label, on).truncate();
             if ui.add_sized(vec2(w, t.layout.hit_target), btn).clicked() && !on {
@@ -388,4 +423,23 @@ pub fn compass_dial(
     );
     painter.circle_filled(c, 2.5, t.text);
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::share_widths;
+
+    #[test]
+    fn tabs_keep_short_labels_whole_and_share_what_is_left() {
+        // Room to spare: every label whole, the rest shared equally.
+        assert_eq!(share_widths(&[60.0, 40.0], 120.0), vec![70.0, 50.0]);
+        // Too little room: the short label stays whole, the long one is cut.
+        assert_eq!(
+            share_widths(&[40.0, 60.0, 200.0], 200.0),
+            vec![40.0, 60.0, 100.0]
+        );
+        // Far too little: an equal share each.
+        assert_eq!(share_widths(&[80.0, 90.0], 100.0), vec![50.0, 50.0]);
+        assert!(share_widths(&[], 100.0).is_empty());
+    }
 }
