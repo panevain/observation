@@ -18,12 +18,14 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use futures_util::stream::{self, Stream};
 use observation_agent_api::{
-    BrowserEvent, BrowserEventKind, ClaimRequest, CreatePairing, DecisionPost, LONG_POLL_SECS,
-    MAX_PROPOSAL_BYTES, MAX_REASON_CHARS, MAX_STATE_BYTES, MAX_SUMMARY_CHARS, PROTOCOL_VERSION,
-    PairingPhase, ProposalPost, ProposalStatus, ProposalSubmitted, StateAccepted, StatePost,
-    normalise_code, paths, tidy_line, version_ok,
+    BrowserEvent, BrowserEventKind, ClaimRequest, CommandPost, CommandSent, CreatePairing,
+    DecisionPost, LONG_POLL_SECS, MAX_COMMAND_BYTES, MAX_PROPOSAL_BYTES, MAX_REASON_CHARS,
+    MAX_STATE_BYTES, MAX_SUMMARY_CHARS, PROTOCOL_VERSION, PairingPhase, ProposalPost,
+    ProposalStatus, ProposalSubmitted, StateAccepted, StatePost, normalise_code, paths, tidy_line,
+    version_ok,
 };
 use serde::Deserialize;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedSemaphorePermit, watch};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -49,6 +51,12 @@ pub fn router(state: AppState) -> Router {
         .route(paths::PAIRING, delete(end))
         .route(paths::PROPOSAL, post(propose).delete(withdraw))
         .route(paths::DECISION, post(decide))
+        .merge(
+            // A command is small: its own, much lower limit.
+            Router::new()
+                .route(paths::COMMAND, post(command))
+                .layer(RequestBodyLimitLayer::new(MAX_COMMAND_BYTES)),
+        )
         .layer(RequestBodyLimitLayer::new(
             MAX_STATE_BYTES.max(MAX_PROPOSAL_BYTES) + 4096,
         ))
@@ -155,6 +163,11 @@ fn refused(e: BridgeError) -> ApiError {
         BridgeError::NoSuchProposal => {
             ApiError::NotFound("this connection has no proposal with that id")
         }
+        BridgeError::NotListening => ApiError::Conflict(
+            "the app is not listening right now (its page may be reconnecting): try again in a \
+             few seconds"
+                .into(),
+        ),
         BridgeError::Decided(status) => ApiError::Conflict(format!(
             "that proposal is no longer pending: it is {}",
             status_word(status)
@@ -392,6 +405,35 @@ async fn decide(
     Ok(no_store(StatusCode::NO_CONTENT.into_response()))
 }
 
+/// `POST /api/agent/command` (agent): a view command, passed to the app's
+/// open event streams once it is checked, and answered `202` with its id.
+async fn command(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let bridge = bridge(&state)?;
+    let token = token(&headers)?;
+    let post = parse::<CommandPost>(
+        &headers,
+        &body,
+        |b| b.v,
+        r#"{"v": 1, "command": {"kind": "focus_view", "at": [0, 0]}}"#,
+    )?;
+    let command = post.command.checked().map_err(ApiError::BadRequest)?;
+    let id = bridge.command(token, command).map_err(refused)?;
+    Ok(no_store(
+        (
+            StatusCode::ACCEPTED,
+            Json(CommandSent {
+                v: PROTOCOL_VERSION,
+                id,
+            }),
+        )
+            .into_response(),
+    ))
+}
+
 /// `DELETE /api/agent/pairing` (either side).
 async fn end(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
     let bridge = bridge(&state)?;
@@ -406,8 +448,8 @@ struct EventsQuery {
 
 /// `GET /api/agent/events?token=<browser token>` (browser): the pairing's
 /// [`BrowserEvent`]s. The first says where it stands, then the pending
-/// proposal follows if there is one; after an `ended` event the stream
-/// closes. Not subject to the request timeout; counts against the
+/// proposal follows if there is one, and the agent's view commands as they
+/// arrive; after an `ended` event the stream closes. Not subject to the request timeout; counts against the
 /// event-stream cap shared with `/api/regions/events`.
 async fn events(
     State(state): State<AppState>,
@@ -450,6 +492,8 @@ struct Follow {
     sent: Option<(PairingPhase, Option<String>)>,
     /// The id of the pending proposal last sent.
     sent_proposal: Option<u64>,
+    /// The pairing's command channel has closed (it ended).
+    commands_closed: bool,
     done: bool,
 }
 
@@ -466,6 +510,7 @@ fn event_stream(
         _permit: permit,
         sent: None,
         sent_proposal: None,
+        commands_closed: false,
         done: false,
     };
     stream::unfold(follow, |mut f| async move {
@@ -519,6 +564,16 @@ fn event_stream(
                         return None;
                     }
                 }
+                received = f.stream.commands.recv(), if !f.commands_closed => match received {
+                    Ok(sent) => {
+                        let (id, command) = (*sent).clone();
+                        return Some((Ok(event(BrowserEventKind::Command { id, command })), f));
+                    }
+                    // Too far behind: the oldest commands are skipped.
+                    Err(RecvError::Lagged(_)) => {}
+                    // The pairing ended; the signal says so.
+                    Err(RecvError::Closed) => f.commands_closed = true,
+                },
                 _ = f.shutdown.changed() => return None,
                 () = tokio::time::sleep(SWEEP_EVERY) => f.bridge.sweep(),
             }

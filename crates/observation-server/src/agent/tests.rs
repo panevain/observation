@@ -2,8 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use observation_agent_api::{
-    BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, EndReason, IDLE_TIMEOUT_SECS,
-    MAX_FAILED_CLAIMS, MAX_PAIRINGS, PairingPhase, SharedState, TOKEN_HEX_LEN,
+    AgentCommand, BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, COMMAND_BURST,
+    COMMANDS_PER_SECOND, EndReason, IDLE_TIMEOUT_SECS, MAX_FAILED_CLAIMS, MAX_PAIRINGS,
+    PairingPhase, SharedState, TOKEN_HEX_LEN,
 };
 use observation_core::scene::changes::Change;
 use serde_json::json;
@@ -171,7 +172,7 @@ async fn a_claimed_pairing_ends_when_idle_and_use_keeps_it() {
 #[tokio::test(start_paused = true)]
 async fn a_pairing_ends_a_minute_after_its_browser_goes() {
     let (bridge, browser, _agent, stream) = claimed();
-    let BrowserStream { signal, guard } = stream;
+    let BrowserStream { signal, guard, .. } = stream;
     drop(guard);
     advance(BROWSER_GONE_SECS - 1).await;
     // A reconnect within the minute keeps it.
@@ -499,4 +500,98 @@ async fn proposals_count_against_the_post_limit_and_outcomes_are_capped() {
         (last.id, last.status),
         (MAX_POSTS_PER_WINDOW as u64, ProposalStatus::Pending)
     );
+}
+
+fn focus(x: f32) -> AgentCommand {
+    AgentCommand::FocusView {
+        at: [x, 0.0],
+        distance_m: None,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_command_reaches_the_open_streams_once_and_is_not_kept() {
+    let (bridge, browser, agent, mut stream) = claimed();
+    assert_eq!(bridge.command(&agent, focus(1.0)), Ok(1));
+    assert_eq!(bridge.command(&agent, focus(2.0)), Ok(2));
+    let first = stream.commands.try_recv().unwrap();
+    assert_eq!(*first, (1, focus(1.0)));
+    assert_eq!(stream.commands.try_recv().unwrap().0, 2);
+    assert!(stream.commands.try_recv().is_err(), "each is sent once");
+    // A stream opened later does not get the commands sent before.
+    let mut late = bridge.open_stream(&browser).unwrap();
+    assert!(late.commands.try_recv().is_err());
+    bridge.command(&agent, focus(3.0)).unwrap();
+    assert_eq!(late.commands.try_recv().unwrap().0, 3);
+    assert_eq!(stream.commands.try_recv().unwrap().0, 3);
+    // Commands are not state: the revision stays where it was.
+    let view = bridge
+        .read_state(&agent, None, Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(view.revision, 0);
+    // Only the agent sends them.
+    assert_eq!(
+        bridge.command(&browser, focus(0.0)),
+        Err(BridgeError::Unauthorized)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_command_with_no_stream_to_hear_it_is_refused() {
+    let (bridge, browser, agent, stream) = claimed();
+    drop(stream);
+    // Refusals cost nothing: more than a burst of them leaves the burst whole.
+    for _ in 0..2 * COMMAND_BURST {
+        assert_eq!(
+            bridge.command(&agent, focus(1.0)),
+            Err(BridgeError::NotListening)
+        );
+    }
+    let _back = bridge.open_stream(&browser).unwrap();
+    for _ in 0..COMMAND_BURST {
+        bridge.command(&agent, focus(1.0)).unwrap();
+    }
+    assert_eq!(
+        bridge.command(&agent, focus(1.0)),
+        Err(BridgeError::TooMany(1))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn commands_have_their_own_rate_limit() {
+    let (bridge, browser, agent, _stream) = claimed();
+    for _ in 0..COMMAND_BURST {
+        bridge.command(&agent, focus(0.0)).unwrap();
+    }
+    assert_eq!(
+        bridge.command(&agent, focus(0.0)),
+        Err(BridgeError::TooMany(1))
+    );
+    // They do not use up the browser's posts.
+    assert!(bridge.post_state(&browser, state(1)).is_ok());
+    // The budget refills at COMMANDS_PER_SECOND.
+    advance(1).await;
+    for _ in 0..COMMANDS_PER_SECOND {
+        bridge.command(&agent, focus(0.0)).unwrap();
+    }
+    assert!(bridge.command(&agent, focus(0.0)).is_err());
+    // And never past a burst.
+    advance(60).await;
+    for _ in 0..COMMAND_BURST {
+        bridge.command(&agent, focus(0.0)).unwrap();
+    }
+    assert!(bridge.command(&agent, focus(0.0)).is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stream_hears_its_pairing_end_after_its_commands() {
+    let (bridge, _browser, agent, mut stream) = claimed();
+    bridge.command(&agent, focus(1.0)).unwrap();
+    bridge.end(&agent).unwrap();
+    assert_eq!(stream.commands.try_recv().unwrap().0, 1);
+    assert!(matches!(
+        stream.commands.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Closed)
+    ));
 }

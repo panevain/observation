@@ -16,19 +16,26 @@
 //! The pending proposal is part of what its followers watch, so the event
 //! streams send it to the browser without a queue: a stream sends the one
 //! pending now whenever it differs from the one it sent last.
+//!
+//! The agent's view commands are not state: they go out once, through a
+//! broadcast channel each open stream subscribes to, and are never stored
+//! or sent again to a stream opened later. They have their own rate limit
+//! ([`COMMANDS_PER_SECOND`], bursts of [`COMMAND_BURST`]), so a busy agent
+//! cannot use up the posts the browser's state needs.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use observation_agent_api::{
-    BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, Claimed, Decision, EndReason,
-    IDLE_TIMEOUT_SECS, LONG_POLL_SECS, MAX_AGENT_NAME_CHARS, MAX_FAILED_CLAIMS, MAX_OUTCOMES,
-    MAX_PAIRINGS, PROTOCOL_VERSION, PairingCreated, PairingPhase, Proposal, ProposalOutcome,
-    ProposalStatus, SharedState, StateView, tidy_text,
+    AgentCommand, BROWSER_GONE_SECS, CODE_ALPHABET, CODE_LEN, CODE_TTL_SECS, COMMAND_BURST,
+    COMMANDS_PER_SECOND, Claimed, Decision, EndReason, IDLE_TIMEOUT_SECS, LONG_POLL_SECS,
+    MAX_AGENT_NAME_CHARS, MAX_FAILED_CLAIMS, MAX_OUTCOMES, MAX_PAIRINGS, PROTOCOL_VERSION,
+    PairingCreated, PairingPhase, Proposal, ProposalOutcome, ProposalStatus, SharedState,
+    StateView, tidy_text,
 };
 use observation_core::scene::changes::ChangeSet;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
 use crate::metrics::AGENT_PAIRINGS;
@@ -50,6 +57,12 @@ pub const POST_WINDOW: Duration = Duration::from_secs(10);
 pub const ENDED_MEMORY: Duration = Duration::from_secs(60);
 /// At most this many ended pairings are remembered for [`ENDED_MEMORY`].
 pub const MAX_ENDED_REMEMBERED: usize = 32;
+/// Commands a stream may fall behind by before it skips the oldest: more
+/// than a whole burst.
+const COMMAND_BACKLOG: usize = 2 * COMMAND_BURST as usize;
+
+/// A view command on its way to the browser's streams, with its id.
+pub type SentCommand = Arc<(u64, AgentCommand)>;
 
 /// What a pairing's followers (its event streams and long polls) watch.
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +94,8 @@ pub enum BridgeError {
     NoRandomness,
     /// The pairing has no proposal with this id.
     NoSuchProposal,
+    /// The browser has no event stream open, so a command would be lost.
+    NotListening,
     /// The user has decided the proposal already (or, for a withdrawal,
     /// it is no longer pending): its status.
     Decided(ProposalStatus),
@@ -112,6 +127,15 @@ struct Pairing {
     /// Where the latest proposals stand, oldest first.
     outcomes: VecDeque<ProposalOutcome>,
     withdrawn: Option<u64>,
+    /// The agent's view commands, to every open stream.
+    commands: broadcast::Sender<SentCommand>,
+    /// How many commands the agent has sent: the last one's id.
+    commands_sent: u64,
+    /// Commands the agent may send now (a token bucket of
+    /// [`COMMAND_BURST`], refilled at [`COMMANDS_PER_SECOND`]), as of
+    /// `budget_at`.
+    command_budget: f64,
+    budget_at: Instant,
 }
 
 impl Pairing {
@@ -151,6 +175,20 @@ impl Pairing {
             return Err(BridgeError::TooMany(wait.as_secs().max(1)));
         }
         self.posts.push_back(now);
+        Ok(())
+    }
+
+    /// Counts a command against the pairing's command budget, or says how
+    /// long to wait.
+    fn take_command(&mut self, now: Instant) -> Result<(), BridgeError> {
+        let rate = f64::from(COMMANDS_PER_SECOND);
+        let elapsed = now.saturating_duration_since(self.budget_at).as_secs_f64();
+        self.command_budget = (self.command_budget + elapsed * rate).min(f64::from(COMMAND_BURST));
+        self.budget_at = now;
+        if self.command_budget < 1.0 {
+            return Err(BridgeError::TooMany(1));
+        }
+        self.command_budget -= 1.0;
         Ok(())
     }
 
@@ -274,6 +312,8 @@ fn count(event: &'static str) {
 #[derive(Debug)]
 pub struct BrowserStream {
     pub signal: watch::Receiver<Signal>,
+    /// The agent's view commands sent while the stream is open.
+    pub commands: broadcast::Receiver<SentCommand>,
     pub guard: StreamGuard,
 }
 
@@ -414,6 +454,10 @@ impl AgentBridge {
             proposals_made: 0,
             outcomes: VecDeque::new(),
             withdrawn: None,
+            commands: broadcast::Sender::new(COMMAND_BACKLOG),
+            commands_sent: 0,
+            command_budget: f64::from(COMMAND_BURST),
+            budget_at: now,
         });
         count("created");
         tracing::info!(pairing = id, "agent pairing created");
@@ -685,6 +729,33 @@ impl AgentBridge {
         Ok(())
     }
 
+    /// Passes the agent's view command (already checked) to the browser's
+    /// open event streams; returns its id. Refused when no stream is open,
+    /// since nothing would hear it: commands are not kept for later.
+    pub fn command(&self, agent_token: &str, command: AgentCommand) -> Result<u64, BridgeError> {
+        let now = Instant::now();
+        let mut reg = self.lock();
+        Self::sweep_locked(&mut reg, now);
+        let i = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref())
+            .ok_or(BridgeError::Unauthorized)?;
+        let p = &mut reg.pairings[i];
+        p.last_used = now;
+        // Only a command something hears is charged for: while the app is
+        // reconnecting, the agent's tries do not use up its burst.
+        if p.commands.receiver_count() == 0 {
+            return Err(BridgeError::NotListening);
+        }
+        p.take_command(now)?;
+        p.commands_sent += 1;
+        let id = p.commands_sent;
+        p.commands
+            .send(Arc::new((id, command)))
+            .map_err(|_| BridgeError::NotListening)?;
+        count("command");
+        tracing::debug!(pairing = p.id, command = id, "agent command passed on");
+        Ok(id)
+    }
+
     /// Ends the pairing that `token` belongs to, as the browser or the
     /// agent, whichever it is.
     pub fn end(&self, token: &str) -> Result<EndReason, BridgeError> {
@@ -720,6 +791,7 @@ impl AgentBridge {
         p.browser_seen = now;
         Ok(BrowserStream {
             signal: p.signal.subscribe(),
+            commands: p.commands.subscribe(),
             guard: StreamGuard {
                 bridge: Arc::clone(self),
                 id: p.id,

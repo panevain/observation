@@ -33,6 +33,16 @@
 //!   POST /api/agent/decision ───────▶  revision n+1, {proposals: [{id, accepted}]} ▶
 //! ```
 //!
+//! And it can send **view commands** (see [`command`]): move the user's
+//! view, select cameras, mark something, change the view settings, or ask
+//! the user to load an area. They are passed straight to the browser's
+//! event streams and never change the scene.
+//!
+//! ```text
+//!   ◀── event: agent {command}         ◀───────────────── POST /api/agent/command (bearer)
+//!                                      202 {id} ────────────────────────▶
+//! ```
+//!
 //! Every body is JSON and carries `v`, the protocol version
 //! ([`PROTOCOL_VERSION`]). New fields are added with defaults, so a reader
 //! ignores what it does not know; `v` changes only when a field changes its
@@ -47,8 +57,14 @@
 use observation_core::scene::AreaRef;
 use serde::{Deserialize, Serialize};
 
+pub mod command;
 pub mod proposal;
 
+pub use command::{
+    AgentCommand, COMMAND_BURST, COMMANDS_PER_SECOND, CommandPost, CommandSent, Highlight, ItemRef,
+    MAX_COMMAND_BYTES, MAX_COORD_M, MAX_FOCUS_DISTANCE_M, MAX_LOAD_REASON_CHARS, MAX_NOTE_CHARS,
+    MIN_FOCUS_DISTANCE_M, OverlayColours, ViewOptions, find_item, item_words,
+};
 pub use proposal::{
     Decision, DecisionPost, MAX_OUTCOMES, MAX_PROPOSAL_BYTES, MAX_REASON_CHARS, MAX_SUMMARY_CHARS,
     Proposal, ProposalOutcome, ProposalPost, ProposalStatus, ProposalSubmitted, tidy_line,
@@ -89,6 +105,11 @@ pub mod paths {
     /// `POST` [`DecisionPost`](super::DecisionPost) (browser, bearer browser
     /// token): the user's decision on a proposal (204).
     pub const DECISION: &str = "/api/agent/decision";
+    /// `POST` [`CommandPost`](super::CommandPost) (agent, bearer agent
+    /// token): a view command for the app, answered `202` with
+    /// [`CommandSent`](super::CommandSent); `409` when the app has no event
+    /// stream open to hear it.
+    pub const COMMAND: &str = "/api/agent/command";
     /// The `event` name of every server-sent event on [`EVENTS`].
     pub const EVENT: &str = "agent";
     /// The query parameter that carries the browser token on [`EVENTS`].
@@ -398,6 +419,9 @@ pub enum BrowserEventKind {
     Proposal { proposal: Proposal },
     /// The agent withdrew the pending proposal with this id.
     ProposalWithdrawn { id: u64 },
+    /// A view command from the agent, with its id within the pairing (sent
+    /// once, to the streams open when it arrives).
+    Command { id: u64, command: AgentCommand },
     /// A kind this build does not know.
     #[serde(other)]
     Unknown,
@@ -425,7 +449,8 @@ mod tests {
                 paths::CLAIM,
                 paths::PAIRING,
                 paths::PROPOSAL,
-                paths::DECISION
+                paths::DECISION,
+                paths::COMMAND
             ],
             [
                 "/api/agent/pairings",
@@ -434,7 +459,8 @@ mod tests {
                 "/api/agent/claim",
                 "/api/agent/pairing",
                 "/api/agent/proposal",
-                "/api/agent/decision"
+                "/api/agent/decision",
+                "/api/agent/command"
             ]
         );
         assert_eq!(paths::EVENT, "agent");

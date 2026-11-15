@@ -11,6 +11,11 @@ publish.workspace = true
 observation-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The MCP server's tool schemas for the command types (the `schema` feature).
+schemars = { version = "1", optional = true }
+
+[features]
+schema = ["dep:schemars"]
 
 [lints]
 workspace = true

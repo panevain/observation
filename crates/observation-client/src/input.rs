@@ -272,10 +272,24 @@ pub(crate) fn keyboard(
         && let Some(c) = editor.selected.and_then(|id| scene.camera(id))
         && let Ok(mut o) = orbit.single_mut()
     {
-        // `focus_on_ground` puts it on the ground under the camera.
-        o.focus = Vec3::from_array(c.position).with_y(0.0);
-        o.distance = o.distance.min(60.0);
+        look_at(&mut o, Vec2::new(c.position[0], c.position[2]), None);
     }
+}
+
+/// Farthest the view stays from what it frames when no distance is given,
+/// metres: close enough to see a camera and the ground it looks at.
+pub const FRAME_DISTANCE_M: f32 = 60.0;
+
+/// Points the view at world `[x, z]`, as framing a camera does: from
+/// `distance` metres away (kept within the view's limits), or else from as
+/// far as it is now, at most [`FRAME_DISTANCE_M`]. `focus_on_ground` then
+/// puts the focus on the ground there.
+pub fn look_at(o: &mut OrbitCamera, at: Vec2, distance: Option<f32>) {
+    o.focus = Vec3::new(at.x, 0.0, at.y);
+    o.distance = distance.map_or_else(
+        || o.distance.min(FRAME_DISTANCE_M),
+        |d| d.clamp(MIN_DISTANCE, MAX_DISTANCE),
+    );
 }
 
 /// Whether Ctrl, Cmd (Super) or Alt is held, or let go this very frame (a

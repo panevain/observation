@@ -255,7 +255,7 @@ The files are named after the scene, the date and the tier, for example `Front o
 
 ## Connect an AI agent
 
-An AI agent running on your computer, through the Observation MCP server (see the [README](../README.md#ai-agents)), can read what you have open: the scene, its area, the selected camera and a point you share. It cannot change your scene by itself: it can propose a change, which you accept or reject (see [Review a proposal](#review-a-proposal)). Coverage and address questions then work on your real area, not only the demo street.
+An AI agent running on your computer, through the Observation MCP server (see the [README](../README.md#ai-agents)), can read what you have open: the scene, its area, the selected camera and a point you share. It cannot change your scene by itself: it can propose a change, which you accept or reject (see [Review a proposal](#review-a-proposal)), and it can move your view, select and mark things, and ask you to load an area (see [Let the agent show you things](#let-the-agent-show-you-things)). Coverage and address questions then work on your real area, not only the demo street.
 
 The server offers this only when it runs with `OBS_AGENT_BRIDGE=on` and you open the app on the same computer (at `http://localhost:...` or `http://127.0.0.1:...`); otherwise there is no **Connect agent** button.
 
@@ -283,6 +283,19 @@ When the agent proposes a change, a message says so and a **proposal card** open
 If you change a camera, area, target or setting that the proposal touches before you decide, the card says it is **stale** and Accept is disabled: the proposal no longer fits your scene, and it is never adjusted to fit. The agent is told, and can propose again from your current scene. A newer proposal from the agent replaces the one on the card, and one the agent withdraws, or that is left when the connection ends, can no longer be accepted. Closing the card keeps an undecided proposal waiting: **Proposal waiting** in the top bar opens it again.
 
 Everything on the card comes from the agent: read the change lines and look at the ghost, not only the summary.
+
+### Let the agent show you things
+
+While connected, the agent can point you at what it is talking about. It never changes your scene this way, and a message at the bottom of the view says each time what it did ("Agent moved the view", "Agent selected camera 3 ‘Porch’"):
+
+- **move the view** to look at a spot or a camera (`focus_view`);
+- **select a camera** (`select_cameras`; the app selects one camera at a time);
+- **mark** a camera, a target, an area or a spot, with a short note beside the mark (`highlight`). A new mark replaces the last; the **×** on the note removes it;
+- **change how coverage is shown** (`set_view_options`): the overlay colours, and the **Cones** and **Walls** toggles. Day or night and the detail level are part of your scene, so the agent cannot switch them this way: it proposes them, as any other change to the scene.
+
+Untick **Let the agent move the view and selection** in the Connect agent dialog to stop all of these; the app then tells you once that the agent tried. The choice is remembered in this browser.
+
+The mark, and a request to load an area you have not answered, go when you open another scene or load another area. The agent can also **ask you to load an area**, for example after searching for your street (`search_places`, which works only when the server's operator has turned on place search). A card says "The agent asks to load an area … because …", with **Load** and **Dismiss**. Nothing loads unless you click **Load**, and loading it replaces the area open now, as choosing it on the map does. The card appears even with the box above unticked.
 
 ## Keyboard, mouse and touch
 

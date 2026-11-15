@@ -17,9 +17,9 @@
 use crate::ToolError;
 use crate::area::AreaCache;
 use observation_agent_api::{
-    ClaimRequest, Claimed, EndReason, ErrorBody, LONG_POLL_SECS, MAX_PROPOSAL_BYTES,
-    MAX_STATE_BYTES, PROTOCOL_VERSION, ProposalPost, ProposalSubmitted, StateView, paths,
-    version_ok,
+    AgentCommand, ClaimRequest, Claimed, CommandPost, CommandSent, EndReason, ErrorBody,
+    LONG_POLL_SECS, MAX_PROPOSAL_BYTES, MAX_STATE_BYTES, PROTOCOL_VERSION, ProposalPost,
+    ProposalSubmitted, StateView, paths, version_ok,
 };
 use observation_core::bundle::{AreaBundle, BUNDLE_VERSION};
 use observation_core::scene::AreaRef;
@@ -27,6 +27,7 @@ use observation_core::scene::changes::ChangeSet;
 use observation_upstream::{
     GuardedHttp, HttpClient, HttpRequest, HttpResponse, Redirects, TransportError, Url,
 };
+use serde::Deserialize;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
@@ -44,6 +45,8 @@ const MAX_BUNDLE_BYTES: usize = 64 << 20;
 pub(crate) const BUNDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// Longest any other request may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest place search answer accepted (five places).
+const MAX_PLACES_BYTES: usize = 64 * 1024;
 /// Failed long polls in a row after which the connection counts as lost.
 const MAX_POLL_FAILURES: u32 = 5;
 
@@ -88,6 +91,28 @@ pub fn bridge_base(url: &str) -> Result<String, ToolError> {
     };
     let port = parsed.port_or_known_default().unwrap_or(80);
     Ok(format!("http://{host}:{port}"))
+}
+
+/// A place the server's place search found.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FoundPlace {
+    /// The geocoder's full name of the place.
+    pub label: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// `[south, west, north, east]`, when the geocoder gave one.
+    #[serde(default)]
+    pub bbox: Option<[f64; 4]>,
+}
+
+/// The server's answer to a place search.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PlaceAnswer {
+    #[serde(default)]
+    pub results: Vec<FoundPlace>,
+    /// The credit to show with the results.
+    #[serde(default)]
+    pub attribution: String,
 }
 
 /// The app's state as the tools report it.
@@ -491,6 +516,52 @@ impl AppLink {
                 Ok(())
             }
             Err(r) => Err(ToolError::Link(r.message)),
+        }
+    }
+
+    /// Sends a view command to the app (checked first, so a mistake is
+    /// reported without a round trip); returns its id.
+    pub async fn command(&self, command: AgentCommand) -> Result<u64, ToolError> {
+        let (base, token) = self.credentials()?;
+        let command = command.checked().map_err(ToolError::Invalid)?;
+        let body = serde_json::to_vec(&CommandPost {
+            v: PROTOCOL_VERSION,
+            command,
+        })
+        .map_err(|e| ToolError::Link(e.to_string()))?;
+        let req = HttpRequest::post(format!("{base}{}", paths::COMMAND), 64 * 1024)
+            .bearer(&token)
+            .map_err(|_| ToolError::Link("the pairing token is malformed".into()))?
+            .json(body)
+            .timeout(REQUEST_TIMEOUT);
+        match self.send(&base, req).await? {
+            Ok(b) => Self::json::<CommandSent>(&b).map(|s| s.id),
+            Err(r) => Err(ToolError::Link(r.message)),
+        }
+    }
+
+    /// Searches for a place with the connected app's server's place search
+    /// (`/api/geocode`), which is off unless its operator turned it on.
+    pub async fn search_places(&self, query: &str) -> Result<PlaceAnswer, ToolError> {
+        let base = lock(&self.conn)
+            .as_ref()
+            .map(|c| c.base.clone())
+            .ok_or(ToolError::NotConnected)?;
+        let mut url = Url::parse(&format!("{base}/api/geocode"))
+            .map_err(|e| ToolError::Link(format!("the app's address is not usable: {e}")))?;
+        url.query_pairs_mut().append_pair("q", query);
+        let req = HttpRequest::get(url.to_string(), MAX_PLACES_BYTES).timeout(REQUEST_TIMEOUT);
+        match self.send(&base, req).await? {
+            Ok(b) => Self::json(&b),
+            Err(r) if r.status == 404 => Err(ToolError::Link(
+                "place search is not turned on on the app's server: ask the user to find the \
+                 place on the app's map (Choose area), or give the area's bbox yourself"
+                    .into(),
+            )),
+            Err(r) => Err(ToolError::Link(format!(
+                "the place search failed: {}",
+                r.message
+            ))),
         }
     }
 
