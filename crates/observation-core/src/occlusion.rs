@@ -15,6 +15,8 @@ struct Prism {
     rings: Vec<Vec<Vec2>>, // [0] = outer, rest = holes
     min_y: f32,
     max_y: f32,
+    /// The footprint's position among those [`Occluders::new`] was given.
+    source: u32,
 }
 
 impl Prism {
@@ -30,6 +32,12 @@ impl Prism {
 
     /// Whether segment `a → b` passes through the solid.
     fn blocks(&self, a: Vec3, b: Vec3) -> bool {
+        self.first_hit(a, b).is_some()
+    }
+
+    /// The parameter `t ∈ [0,1]` along `a → b` where the segment first
+    /// enters the solid, if it does.
+    fn first_hit(&self, a: Vec3, b: Vec3) -> Option<f32> {
         let (a2, b2) = (Vec2::new(a.x, a.z), Vec2::new(b.x, b.z));
         let d = b2 - a2;
         // Parameter values where the 2D segment crosses a ring edge.
@@ -52,11 +60,25 @@ impl Prism {
             if self.contains_xz(mid) {
                 let (y0, y1) = (a.y + (b.y - a.y) * t0, a.y + (b.y - a.y) * t1);
                 if y0.max(y1) >= self.min_y && y0.min(y1) <= self.max_y {
-                    return true;
+                    // Where the height first lies between the bottom and the
+                    // roof, within this stretch.
+                    let enter = if y0 > self.max_y {
+                        self.max_y
+                    } else if y0 < self.min_y {
+                        self.min_y
+                    } else {
+                        return Some(t0);
+                    };
+                    let f = ((enter - y0) / (y1 - y0)).clamp(0.0, 1.0);
+                    return Some(if f.is_finite() {
+                        t0 + (t1 - t0) * f
+                    } else {
+                        t0
+                    });
                 }
             }
         }
-        false
+        None
     }
 }
 
@@ -88,9 +110,10 @@ impl Occluders {
     pub fn new<'a>(footprints: impl IntoIterator<Item = &'a Footprint>) -> Self {
         let prisms: Vec<Prism> = footprints
             .into_iter()
-            .filter(|f| f.outer.len() >= 3)
+            .enumerate()
+            .filter(|(_, f)| f.outer.len() >= 3)
             // Non-finite input can't form a solid; skip it rather than poison the grid.
-            .filter(|f| {
+            .filter(|(_, f)| {
                 f.outer
                     .iter()
                     .chain(f.holes.iter().flatten())
@@ -99,13 +122,14 @@ impl Occluders {
                     && f.bottom_y().is_finite()
                     && f.roof_y().is_finite()
             })
-            .map(|f| Prism {
+            .map(|(i, f)| Prism {
                 rings: std::iter::once(&f.outer)
                     .chain(f.holes.iter())
                     .map(|r| r.iter().map(|p| Vec2::new(p[0], p[1])).collect())
                     .collect(),
                 min_y: f.bottom_y(),
                 max_y: f.roof_y(),
+                source: u32::try_from(i).unwrap_or(u32::MAX),
             })
             .collect();
         let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
@@ -181,6 +205,26 @@ impl Occluders {
             true
         });
         hit
+    }
+
+    /// The building that blocks the straight line from `a` to `b` nearest
+    /// `a`, if any: its position among the footprints [`Self::new`] was
+    /// given (for an area's layers, its index in the bundle), and the
+    /// fraction of the way from `a` to `b` where the line enters it.
+    pub fn first_blocker(&self, a: Vec3, b: Vec3) -> Option<(usize, f32)> {
+        let mut best: Option<(u32, f32)> = None;
+        self.walk_cells(Vec2::new(a.x, a.z), Vec2::new(b.x, b.z), |cell| {
+            for &i in &self.cells[cell] {
+                let prism = &self.prisms[i as usize];
+                if let Some(t) = prism.first_hit(a, b)
+                    && best.is_none_or(|(s, bt)| t < bt || (t == bt && prism.source < s))
+                {
+                    best = Some((prism.source, t));
+                }
+            }
+            true
+        });
+        best.map(|(s, t)| (s as usize, t))
     }
 
     /// Amanatides–Woo traversal of grid cells touched by segment `a → b`.
@@ -336,6 +380,37 @@ mod tests {
         let _ = occ.inside_any(Vec2::new(f32::NAN, 0.0));
         let _ = occ.inside_any(Vec2::new(1.0e38, -1.0e38));
         assert!(occ.segment_blocked(Vec3::new(0.0, 2.0, 0.0), Vec3::new(30.0, 1.0, 0.0)));
+    }
+
+    #[test]
+    fn the_first_blocker_is_the_nearest_and_keeps_its_input_index() {
+        let nan = Footprint {
+            outer: vec![[0.0, 0.0], [f32::NAN, 1.0], [1.0, 1.0]],
+            ..boxfp(0.0, 0.0, 1.0, 1.0, 5.0)
+        };
+        let far = boxfp(30.0, -5.0, 40.0, 5.0, 6.0);
+        let near = boxfp(10.0, -5.0, 20.0, 5.0, 6.0);
+        let occ = Occluders::new(&[nan, far, near]);
+        let eye = Vec3::new(0.0, 2.0, 0.0);
+        let (i, t) = occ.first_blocker(eye, Vec3::new(50.0, 2.0, 0.0)).unwrap();
+        assert_eq!(
+            i, 2,
+            "indexed among the footprints given, skipped ones included"
+        );
+        assert!((t * 50.0 - 10.0).abs() < 1e-3, "{t}");
+        let (i, _) = occ.first_blocker(eye, Vec3::new(35.0, 2.0, 0.0)).unwrap();
+        assert_eq!(i, 2);
+        assert!(occ.first_blocker(eye, Vec3::new(50.0, 2.0, 50.0)).is_none());
+        // Coming down onto the roof: it enters where it drops below 6 m.
+        let (i, t) = occ
+            .first_blocker(Vec3::new(0.0, 10.0, 0.0), Vec3::new(20.0, 0.0, 0.0))
+            .unwrap();
+        assert_eq!(i, 2);
+        assert!((t * 20.0 - 10.0).abs() < 1e-3, "{t}");
+        let (_, t) = occ
+            .first_blocker(Vec3::new(0.0, 14.0, 0.0), Vec3::new(20.0, 4.0, 0.0))
+            .unwrap();
+        assert!((t * 20.0 - 16.0).abs() < 1e-3, "{t}");
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Example cameras for a freshly loaded area: a handful of plausible
-//! installations on house fronts, each facing the nearest street.
+//! installations on house fronts, each facing the nearest street. The walls
+//! they go on ([`wall_mounts`], [`WallMount`]) are public for other callers
+//! that suggest where a camera could go.
 
 use crate::bundle::AreaBundle;
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
@@ -39,17 +41,145 @@ pub const EXAMPLE_MODELS: [&str; 10] = [
 /// A camera must sit at least this far below the roof of its building, metres.
 const BELOW_ROOF_M: f32 = 0.5;
 
-/// A wall facing a street.
-#[derive(Debug, Clone, Copy)]
-struct Candidate {
-    /// Wall midpoint, `[x, z]`.
-    at: Vec2,
-    /// Outward wall normal, `[x, z]`.
-    normal: Vec2,
-    /// Closest point on a street, `[x, z]`.
-    street: Vec2,
+/// A wall of a ground-level building that a camera could be mounted on (see
+/// [`wall_mounts`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WallMount {
+    /// The building's index in the bundle.
+    pub building: usize,
+    /// The wall's midpoint, world `[x, z]`.
+    pub at: Vec2,
+    /// The wall's outward normal, `[x, z]`, of unit length.
+    pub normal: Vec2,
+    /// The wall's length, metres.
+    pub length_m: f32,
+    /// The point of a street nearest the midpoint, world `[x, z]`, with
+    /// streets chosen as the example cameras choose them (carriageways, or
+    /// failing those any way but a footpath); `None` in an area without
+    /// streets.
+    pub street: Option<Vec2>,
     /// World `y` of the building's roof.
-    roof_y: f32,
+    pub roof_y: f32,
+}
+
+impl WallMount {
+    /// The distance from the midpoint to [`Self::street`], metres (infinite
+    /// without a street).
+    pub fn street_distance_m(&self) -> f32 {
+        self.street.map_or(f32::INFINITY, |s| s.distance(self.at))
+    }
+
+    /// Whether the wall faces its street: 2 to 30 m from it, with the street
+    /// within about 45° of straight out from the wall. The example cameras
+    /// go on such walls only.
+    pub fn faces_street(&self) -> bool {
+        let Some(street) = self.street else {
+            return false;
+        };
+        let to_street = street - self.at;
+        let dist = to_street.length();
+        (STREET_DISTANCE_M.0..=STREET_DISTANCE_M.1).contains(&dist)
+            && to_street.dot(self.normal) >= 0.7 * dist
+    }
+
+    /// Where a camera mounted `height_m` above the ground in front of the
+    /// wall's midpoint sits, world `[x, y, z]`.
+    pub fn eye(&self, terrain: &Terrain, height_m: f32) -> Vec3 {
+        mount_point(terrain, self.at, self.normal, height_m)
+    }
+
+    /// Whether a camera at `eye` sits far enough below the roof.
+    pub fn fits_under_roof(&self, eye: Vec3) -> bool {
+        self.roof_y >= eye.y + BELOW_ROOF_M
+    }
+
+    /// Whether a camera at `eye` has a clear line, past `occluders` and over
+    /// the terrain (whose [`Terrain::top`] is `terrain_top`), to a point 1 m
+    /// above [`Self::street`]. False without a street.
+    pub fn sees_street(
+        &self,
+        eye: Vec3,
+        occluders: &Occluders,
+        terrain: &Terrain,
+        terrain_top: f32,
+    ) -> bool {
+        let Some(s) = self.street else {
+            return false;
+        };
+        let street = Vec3::new(s.x, terrain.height_at(s) + 1.0, s.y);
+        !occluders.segment_blocked(eye, street)
+            && !terrain.segment_blocked(eye, street, terrain_top)
+    }
+
+    /// The compass bearing from the wall towards its street, degrees
+    /// clockwise from north in `[0, 360)`; straight out from the wall
+    /// without a street.
+    pub fn street_yaw_deg(&self) -> f32 {
+        let facing = self
+            .street
+            .map_or(self.normal, |s| (s - self.at).normalize_or(self.normal));
+        yaw_pitch_from_forward(Vec3::new(facing.x, 0.0, facing.y)).map_or(0.0, |(y, _)| y)
+    }
+}
+
+/// Every wall at least 3 m long of the buildings that stand on the ground
+/// (a raised part has no wall to mount on at head height), in bundle order
+/// and around each footprint, with the street nearest each.
+pub fn wall_mounts(bundle: &AreaBundle) -> Vec<WallMount> {
+    // Houses face proper streets; fall back to driveways and service roads
+    // only where there are none.
+    let segments = |keep: &dyn Fn(&str) -> bool| -> Vec<(Vec2, Vec2)> {
+        bundle
+            .roads
+            .iter()
+            .filter(|r| keep(r.highway.as_str()))
+            .flat_map(|r| {
+                r.points
+                    .windows(2)
+                    .map(|w| (Vec2::from_array(w[0]), Vec2::from_array(w[1])))
+            })
+            .collect()
+    };
+    let mut streets = segments(&is_carriageway);
+    if streets.is_empty() {
+        streets = segments(&|h| !FOOT_WAYS.contains(&h));
+    }
+    let mut walls = Vec::new();
+    for (building, fp) in bundle.footprints().enumerate() {
+        if fp.min_height_m > 0.5 {
+            continue;
+        }
+        let ring = clean_ring(&fp.outer);
+        if ring.len() < 3 {
+            continue;
+        }
+        let sign = signed_area2(&ring).signum();
+        for i in 0..ring.len() {
+            let (a, b) = (
+                Vec2::from_array(ring[i]),
+                Vec2::from_array(ring[(i + 1) % ring.len()]),
+            );
+            let d = b - a;
+            let len = d.length();
+            if !len.is_finite() || len < MIN_WALL_M {
+                continue;
+            }
+            let at = (a + b) * 0.5;
+            let street = streets
+                .iter()
+                .map(|&(p, q)| closest_on_segment(at, p, q))
+                .min_by(|p, q| p.distance_squared(at).total_cmp(&q.distance_squared(at)));
+            walls.push(WallMount {
+                building,
+                at,
+                normal: Vec2::new(d.y, -d.x) * (sign / len),
+                length_m: len,
+                street,
+                roof_y: fp.roof_y(),
+            });
+        }
+    }
+    walls
 }
 
 /// Up to `count` example placements on house fronts that face a street,
@@ -75,79 +205,14 @@ pub fn example_cameras_around(
     if models.is_empty() || count == 0 {
         return Vec::new();
     }
-    let footprints: Vec<_> = bundle.footprints().collect();
-    let occluders = Occluders::new(footprints.iter().copied());
+    let occluders = Occluders::new(bundle.footprints());
     let terrain = &bundle.terrain;
     let top = terrain.top();
-    // Houses face proper streets; fall back to driveways and service roads
-    // only where there are none.
-    let segments = |keep: &dyn Fn(&str) -> bool| -> Vec<(Vec2, Vec2)> {
-        bundle
-            .roads
-            .iter()
-            .filter(|r| keep(r.highway.as_str()))
-            .flat_map(|r| {
-                r.points
-                    .windows(2)
-                    .map(|w| (Vec2::from_array(w[0]), Vec2::from_array(w[1])))
-            })
-            .collect()
-    };
-    let mut streets = segments(&is_carriageway);
-    if streets.is_empty() {
-        streets = segments(&|h| !FOOT_WAYS.contains(&h));
-    }
-    if streets.is_empty() {
-        return Vec::new();
-    }
-
-    let mut candidates: Vec<(f32, Candidate)> = Vec::new();
-    for fp in &footprints {
-        // Only ground-level buildings: a raised part has no front door.
-        if fp.min_height_m > 0.5 {
-            continue;
-        }
-        let ring = clean_ring(&fp.outer);
-        if ring.len() < 3 {
-            continue;
-        }
-        let sign = signed_area2(&ring).signum();
-        for i in 0..ring.len() {
-            let (a, b) = (
-                Vec2::from_array(ring[i]),
-                Vec2::from_array(ring[(i + 1) % ring.len()]),
-            );
-            let d = b - a;
-            let len = d.length();
-            if !len.is_finite() || len < MIN_WALL_M {
-                continue;
-            }
-            let normal = Vec2::new(d.y, -d.x) * (sign / len);
-            let at = (a + b) * 0.5;
-            let street = streets
-                .iter()
-                .map(|&(p, q)| closest_on_segment(at, p, q))
-                .min_by(|p, q| p.distance_squared(at).total_cmp(&q.distance_squared(at)))
-                .unwrap_or(at);
-            let to_street = street - at;
-            let dist = to_street.length();
-            if dist < STREET_DISTANCE_M.0
-                || dist > STREET_DISTANCE_M.1
-                || to_street.dot(normal) < 0.7 * dist
-            {
-                continue;
-            }
-            candidates.push((
-                dist,
-                Candidate {
-                    at,
-                    normal,
-                    street,
-                    roof_y: fp.roof_y(),
-                },
-            ));
-        }
-    }
+    let mut candidates: Vec<(f32, WallMount)> = wall_mounts(bundle)
+        .into_iter()
+        .filter(WallMount::faces_street)
+        .map(|w| (w.street_distance_m(), w))
+        .collect();
     // Closest to the street first; ties broken by position so the result is
     // deterministic for a given bundle.
     candidates.sort_by(|(da, a), (db, b)| {
@@ -159,14 +224,11 @@ pub fn example_cameras_around(
     // Each slot cycles through `models`; a wall suits the slot's model if the
     // camera fits under the roof and sees the street point it faces from its
     // own mount height.
-    let suits = |c: &Candidate, model: &CameraModel| {
-        let eye = mount_point(terrain, c.at, c.normal, model.kind.default_mount_height_m());
-        let street = Vec3::new(c.street.x, terrain.height_at(c.street) + 1.0, c.street.y);
-        c.roof_y >= eye.y + BELOW_ROOF_M
-            && !occluders.segment_blocked(eye, street)
-            && !terrain.segment_blocked(eye, street, top)
+    let suits = |c: &WallMount, model: &CameraModel| {
+        let eye = c.eye(terrain, model.kind.default_mount_height_m());
+        c.fits_under_roof(eye) && c.sees_street(eye, &occluders, terrain, top)
     };
-    let mut picked: Vec<(Candidate, &CameraModel)> = Vec::new();
+    let mut picked: Vec<(WallMount, &CameraModel)> = Vec::new();
     for spacing in [SPACING_M, SPACING_M / 2.0, 0.0] {
         for (_, c) in &candidates {
             if picked.len() == count {
@@ -189,10 +251,8 @@ pub fn example_cameras_around(
         .iter()
         .map(|(c, model)| {
             let kind = model.kind;
-            let eye = mount_point(terrain, c.at, c.normal, kind.default_mount_height_m());
-            let facing = (c.street - c.at).normalize_or(c.normal);
-            let yaw =
-                yaw_pitch_from_forward(Vec3::new(facing.x, 0.0, facing.y)).map_or(0.0, |(y, _)| y);
+            let eye = c.eye(terrain, kind.default_mount_height_m());
+            let yaw = c.street_yaw_deg();
             CameraPlacement {
                 id: 0,
                 label: String::new(),
@@ -372,11 +432,50 @@ mod tests {
     }
 
     #[test]
+    fn wall_mounts_know_their_building_and_street() {
+        let b = street();
+        let walls = wall_mounts(&b);
+        // Four walls of 12 m per house, all on the ground.
+        assert_eq!(walls.len(), b.buildings.len() * 4);
+        let fronts: Vec<&WallMount> = walls.iter().filter(|w| w.faces_street()).collect();
+        assert_eq!(fronts.len(), b.buildings.len(), "one front per house");
+        for w in &fronts {
+            // The front is the wall nearest the street, 12 m from it, facing it.
+            assert!((w.street_distance_m() - 12.0).abs() < 0.1, "{w:?}");
+            assert!(w.normal.y * w.at.y < 0.0, "faces the street: {w:?}");
+            let fp = &b.buildings[w.building].footprint;
+            assert!(crate::address::distance_to_footprint(w.at.to_array(), fp) < 1e-3);
+            let yaw = w.street_yaw_deg();
+            let expected = if w.at.y > 0.0 { 0.0 } else { 180.0 };
+            let off = (yaw - expected + 180.0).rem_euclid(360.0) - 180.0;
+            assert!(off.abs() < 1e-3, "{yaw} for {w:?}");
+            let eye = w.eye(&b.terrain, 2.6);
+            assert!(w.fits_under_roof(eye));
+            assert!(!w.fits_under_roof(w.eye(&b.terrain, 6.2)));
+            let occ = Occluders::new(b.footprints());
+            assert!(w.sees_street(eye, &occ, &b.terrain, b.terrain.top()));
+        }
+        // A back wall faces away from the street.
+        assert!(
+            walls
+                .iter()
+                .any(|w| !w.faces_street() && w.normal.y * w.at.y > 0.0)
+        );
+    }
+
+    #[test]
     fn nothing_without_streets_or_models() {
         let mut b = street();
         assert!(example_cameras(&b, &[], 10).is_empty());
         b.roads.clear();
         let door = model("door", CameraKind::Doorbell);
         assert!(example_cameras(&b, &[&door], 10).is_empty());
+        let walls = wall_mounts(&b);
+        assert!(!walls.is_empty());
+        assert!(
+            walls
+                .iter()
+                .all(|w| w.street.is_none() && !w.faces_street())
+        );
     }
 }
