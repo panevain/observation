@@ -25,10 +25,11 @@
 //!   tool added later with a `scene` argument gets them without a change here.
 //! - **The app's scene.** connect_app opens the connected app's scene as a
 //!   working scene, as open_scene with from "app" does, and the store
-//!   remembers the latest scene opened that way ([`SceneStore::app`]). A
-//!   scene tool called with neither `scene_id` nor `scene` works on it, so a
-//!   small model that forgets the id still edits the user's scene. It is a
-//!   copy: the app changes only when the user accepts a proposal.
+//!   remembers the latest scene opened that way ([`SceneStore::app`]) until
+//!   the next connect_app. While connected, a tool that needs a scene,
+//!   called with neither `scene_id` nor `scene`, works on it, so a small
+//!   model that forgets the id still edits the user's scene. It is a copy:
+//!   the app changes only when the user accepts a proposal.
 //! - **The tools** here open, list, export, close and undo working scenes,
 //!   compare two scenes or versions in plain words, and run several edits as
 //!   one version, all or nothing.
@@ -539,6 +540,13 @@ impl SceneStore {
         inner.app.filter(|id| inner.scenes.contains_key(id))
     }
 
+    /// Forgets the scene opened from the app, as a new connection does;
+    /// returns it if it is still open.
+    pub fn take_app(&self) -> Option<SceneId> {
+        let mut inner = lock(&self.inner);
+        inner.app.take().filter(|id| inner.scenes.contains_key(id))
+    }
+
     /// The open ids, most recently used first.
     pub fn ids(&self) -> Vec<SceneId> {
         lock(&self.inner).ids()
@@ -680,8 +688,7 @@ pub struct SceneCall {
 /// Puts the stored scene in place of a `scene_id` among the arguments of a
 /// call to `tool`, if it takes a scene; returns what to do with its result.
 /// A call that needs a scene and gives none gets the app's scene
-/// ([`SceneStore::app`]), if one is open; `connected` says whether an app is
-/// connected, for the error if none is.
+/// ([`app_scene`]); `connected` says whether an app is connected.
 pub fn prepare(
     store: &SceneStore,
     tool: Option<&Tool>,
@@ -721,13 +728,18 @@ pub fn prepare(
         args.insert(SCENE_ID.to_owned(), Value::String(id.to_string()));
         args.remove("scene");
     }
+    // An empty id, as a small model may send, is no id.
+    if args
+        .get(SCENE_ID)
+        .and_then(Value::as_str)
+        .is_some_and(|t| t.trim().is_empty())
+    {
+        args.remove(SCENE_ID);
+    }
     let no_scene = args.get("scene").is_none_or(Value::is_null);
     let id = match args.remove(SCENE_ID) {
         None | Some(Value::Null) if no_scene && ObservationMcp::scene_required(&tool.name) => {
-            match store.app() {
-                Some(id) => id,
-                None => return Err(needs_scene(&tool.name, connected)),
-            }
+            app_scene(store, &tool.name, connected)?
         }
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(text)) => SceneId::parse(&text).ok_or_else(|| {
@@ -754,20 +766,27 @@ pub fn prepare(
     }))
 }
 
-/// Why `tool` cannot run without a scene, and how to get one: from the app
-/// if one is `connected`.
-fn needs_scene(tool: &str, connected: bool) -> ToolError {
-    ToolError::invalid(if connected {
-        format!(
+/// The scene a call to `tool` that gives none works on: the scene opened
+/// from the app ([`SceneStore::app`]) while an app is `connected`. Otherwise
+/// why there is none, and how to get one.
+fn app_scene(store: &SceneStore, tool: &str, connected: bool) -> Result<SceneId, ToolError> {
+    let why = match (store.app(), connected) {
+        (Some(id), true) => return Ok(id),
+        (Some(id), false) => format!(
+            "{tool} needs a scene: the connection to the app has ended, so pass a scene_id, \
+             such as {id} for the copy of the app's scene, or ask the user for a new code \
+             from the app's Connect agent dialog and call connect_app"
+        ),
+        (None, true) => format!(
             "{tool} needs a scene: call open_scene with from \"app\" to open the app's scene, \
              then pass the scene_id it gives, such as \"s1\""
-        )
-    } else {
-        format!(
+        ),
+        (None, false) => format!(
             "{tool} needs a scene: call open_scene first, then pass the scene_id it gives, \
              such as \"s1\""
-        )
-    })
+        ),
+    };
+    Err(ToolError::invalid(why))
 }
 
 /// Arguments that name only the area of `scene`, for
@@ -1112,8 +1131,8 @@ pub struct EditStep {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyArgs {
-    /// The id from open_scene, such as "s1". Default: the app's scene, once
-    /// connect_app or open_scene has opened it.
+    /// The id from open_scene, such as "s1". Default while connected: the
+    /// app's scene, once connect_app or open_scene has opened it.
     pub scene_id: Option<String>,
     /// The edits, run in order (at most 50). If one fails, none is kept.
     pub edits: Vec<EditStep>,
@@ -1503,10 +1522,7 @@ impl ObservationMcp {
     ) -> Result<Applied, ToolError> {
         let id = match a.scene_id.as_deref().map(str::trim) {
             Some(text) if !text.is_empty() => id_of(text)?,
-            _ => self
-                .scenes
-                .app()
-                .ok_or_else(|| needs_scene("apply_edits", self.link.is_connected()))?,
+            _ => app_scene(&self.scenes, "apply_edits", self.link.is_connected())?,
         };
         if a.edits.is_empty() {
             return Err(ToolError::invalid("give at least one edit"));

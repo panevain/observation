@@ -102,7 +102,7 @@ async fn connect(mcp: &ObservationMcp, url: &str, code: &str) -> Result<AppState
         code: code.to_owned(),
     }))
     .await
-    .map(|Json(out)| out)
+    .map(|Json(out)| out.state)
 }
 
 /// Waits for the link to report a change.
@@ -913,9 +913,32 @@ async fn connecting_opens_the_apps_scene_for_tools_without_an_id() {
     assert_eq!(again["scene_id"], "s3");
     let removed = ok(&call(&mcp, "remove_camera", json!({"id": ids[0]})).await);
     assert_eq!(removed["scene_id"], "s3");
+    // An empty id, as a small model may send, is no id, here as in apply_edits.
+    let removed = ok(&call(&mcp, "remove_camera", json!({"scene_id": "", "id": ids[1]})).await);
+    assert_eq!(
+        (&removed["scene_id"], &removed["version"]),
+        (&json!("s3"), &json!(3))
+    );
 
-    // With the app's scene closed, the error names the way to open it again.
-    ok(&call(&mcp, "close_scene", json!({"scene_id": "s3"})).await);
+    // Once the connection has ended, the copy is used only by its id.
+    ok(&call(&mcp, "disconnect_app", json!({})).await);
+    let e = failed(&call(&mcp, "scene_summary", json!({})).await);
+    assert!(e.contains("connection to the app has ended"), "{e}");
+    assert!(e.contains("such as s3"), "{e}");
+    ok(&call(&mcp, "scene_summary", json!({"scene_id": "s3"})).await);
+
+    // A new connection forgets the earlier copy, even before its app has
+    // shared a scene, and says that the copy keeps its edits.
+    let later = Browser::open(&base).await;
+    let connected = ok(&call(
+        &mcp,
+        "connect_app",
+        json!({"url": base, "code": later.code}),
+    )
+    .await);
+    assert!(connected.get("scene_id").is_none(), "{connected}");
+    let note = connected["note"].as_str().unwrap();
+    assert!(note.starts_with("s3, the earlier copy"), "{note}");
     let e = failed(&call(&mcp, "scene_summary", json!({})).await);
     assert!(e.contains("open_scene with from \"app\""), "{e}");
     let e = failed(&call(&mcp, "apply_edits", json!({"edits": []})).await);
