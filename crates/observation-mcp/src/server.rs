@@ -63,7 +63,7 @@ to load an area, which loads only if they click Load. \
 Places have names the user and you share: label_area marks ground the user drew as their own, \
 a neighbour's, public or other (as drawn, never property records), and add_target marks a \
 named target such as a front door. camera_split says where each camera's footage lands, \
-target_verdicts and who_sees_point say whether the model rules out that a camera sees a place \
+target_verdicts and check_point say whether the model rules out that a camera sees a place \
 and why, and find_gaps lists the largest stretches of street no camera sees. Verdicts are \
 one-sided: say \"not ruled out\" or \"ruled out: <reason>\", never that a camera sees \
 something. Name buildings by index and distance, never by a neighbour's address. \
@@ -1231,7 +1231,7 @@ mod tests {
             "remove_target",
             "target_verdicts",
             "camera_split",
-            "who_sees_point",
+            "check_point",
             "find_gaps",
             "propose_changes",
             "get_proposal",

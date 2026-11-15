@@ -759,7 +759,7 @@ pub struct GapOut {
     /// the street bends.
     pub centroid: [f32; 2],
     /// A point inside the gap near its centroid, `[x, z]`: point a camera
-    /// here (point_camera_at) or ask who_sees_point about it.
+    /// here (point_camera_at) or ask check_point about it.
     pub inside: [f32; 2],
     /// The smallest `[x, z]` of the gap.
     pub min: [f32; 2],
@@ -975,7 +975,7 @@ pub struct CameraSplitArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct WhoSeesArgs {
+pub struct CheckPointArgs {
     #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// Metres east of the origin.
@@ -1033,9 +1033,9 @@ impl ObservationMcp {
         description = "Which enabled cameras do not rule out a point [x, z] at the scene's settings, and why each other one rules it out, with the verdicts at every detail level by day and at night.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
-    pub(crate) async fn who_sees_point(
+    pub(crate) async fn check_point(
         &self,
-        Parameters(a): Parameters<WhoSeesArgs>,
+        Parameters(a): Parameters<CheckPointArgs>,
     ) -> Result<Json<PointOut>, String> {
         off_runtime(move || verdicts_on_point(&a.scene, a.x, a.z, a.height_m))
             .await

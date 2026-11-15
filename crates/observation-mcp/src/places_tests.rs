@@ -5,7 +5,7 @@ use crate::area::demo;
 use crate::catalog::catalog;
 use crate::edit::{Light, Place};
 use crate::queries::{
-    CameraSplitArgs, FindGapsArgs, GapsOut, SplitOut, TargetVerdictsArgs, WhoSeesArgs,
+    CameraSplitArgs, CheckPointArgs, FindGapsArgs, GapsOut, SplitOut, TargetVerdictsArgs,
 };
 use observation_core::footage::{AreaLabel, MAX_AREAS};
 
@@ -481,7 +481,7 @@ async fn target_verdicts_give_reasons_and_one_sided_wording() {
 async fn who_sees_a_point() {
     let server = mcp();
     let ask = |x: f32, z: f32, height_m: Option<f32>| {
-        server.who_sees_point(Parameters(WhoSeesArgs {
+        server.check_point(Parameters(CheckPointArgs {
             scene: with_camera(),
             x,
             z,

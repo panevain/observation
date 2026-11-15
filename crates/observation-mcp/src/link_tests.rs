@@ -458,7 +458,7 @@ async fn a_failed_area_fetch_is_reported_to_the_tool() {
 #[tokio::test(flavor = "multi_thread")]
 async fn places_and_queries_work_on_the_users_real_area() {
     use crate::places::{AddTargetArgs, AreaEdit, LabelAreaArgs, LabelArg, PlaceArg};
-    use crate::queries::{CameraSplitArgs, FindGapsArgs, TargetVerdictsArgs, WhoSeesArgs};
+    use crate::queries::{CameraSplitArgs, CheckPointArgs, FindGapsArgs, TargetVerdictsArgs};
 
     let bbox = BBox::parse(observation_mapdata::demo::BBOX_TXT.trim()).unwrap();
     let scene = osm_scene(bbox);
@@ -563,7 +563,7 @@ async fn places_and_queries_work_on_the_users_real_area() {
     let Json(point) = mcp
         .in_tool_scope(
             args(&scene).as_ref(),
-            mcp.who_sees_point(Parameters(WhoSeesArgs {
+            mcp.check_point(Parameters(CheckPointArgs {
                 scene: scene.clone(),
                 x: 0.0,
                 z: 10.0,
