@@ -565,6 +565,74 @@ async fn apply_edits_is_all_or_nothing() {
     assert_eq!(undone["undone"].as_array().unwrap().len(), 4, "{undone}");
 }
 
+/// An edit can use what an earlier edit in the batch returned, such as the
+/// id of the camera it placed.
+#[tokio::test]
+async fn apply_edits_refers_to_earlier_edits() {
+    let app = http_app();
+    ok(&call(&app, "open_scene", json!({})).await);
+    ok(&call(
+        &app,
+        "add_example_cameras",
+        json!({"scene_id": "s1", "count": 1}),
+    )
+    .await);
+    let applied = ok(&call(
+        &app,
+        "apply_edits",
+        json!({"scene_id": "s1", "edits": [
+            {"tool": "place_camera", "args": {"model_id": model_id(), "x": 0.0, "z": 15.0}},
+            {"tool": "aim_camera", "args": {"id": "$1.camera_id", "yaw_deg": 90.0}},
+            {"tool": "add_example_cameras", "args": {"count": 2}},
+            {"tool": "update_camera", "args": {"id": "$3.camera_ids.1", "label": "Side"}},
+        ]}),
+    )
+    .await);
+    let steps = applied["steps"].as_array().unwrap();
+    let placed = steps[0]["result"]["camera_id"].as_u64().unwrap();
+    assert_eq!(placed, 2, "{applied}");
+    assert_eq!(steps[1]["result"]["camera_id"], placed);
+    let second = steps[2]["result"]["camera_ids"][1].clone();
+    assert_eq!(steps[3]["result"]["camera_id"], second);
+    let scene = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await)["scene"].clone();
+    let cams = scene["cameras"].as_array().unwrap();
+    let aimed = cams.iter().find(|c| c["id"] == placed).unwrap();
+    assert_eq!(aimed["yaw_deg"], 90.0);
+    assert!(
+        cams.iter()
+            .any(|c| c["id"] == second && c["label"] == "Side")
+    );
+
+    // A reference to this edit or a later one, or to a field the edit did not
+    // return, fails the batch and says what a reference is.
+    for (args, why) in [
+        (
+            json!({"id": "$2.camera_id", "yaw_deg": 0}),
+            "only edits 1 to 1 come before it",
+        ),
+        (
+            json!({"id": "$1.model_id", "yaw_deg": 0}),
+            "names nothing edit 1 (place_camera) returned",
+        ),
+        (json!({"id": "$1", "yaw_deg": 0}), "names no field"),
+    ] {
+        let e = failed(
+            &call(
+                &app,
+                "apply_edits",
+                json!({"scene_id": "s1", "edits": [
+                    {"tool": "place_camera", "args": {"x": 0.0, "z": 15.0}},
+                    {"tool": "aim_camera", "args": args},
+                ]}),
+            )
+            .await,
+        );
+        assert!(e.contains(why) && e.contains("\"$1.camera_id\""), "{e}");
+    }
+    let now = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await);
+    assert_eq!(now["version"], 3, "the failed batches kept nothing");
+}
+
 #[test]
 fn a_whole_tool_result_reads_as_its_scene() {
     let result = json!({"summary": "created", "scene_id": "s1", "scene": empty()});

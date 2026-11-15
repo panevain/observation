@@ -1036,7 +1036,8 @@ pub struct DiffArgs {
 pub struct EditStep {
     /// A scene-editing tool, such as place_camera, aim_camera or add_target.
     pub tool: String,
-    /// Its arguments, without scene or scene_id.
+    /// Its arguments, without scene or scene_id. "$1.camera_id" stands for
+    /// the camera_id edit 1 returned (any field of an earlier edit's result).
     #[serde(default)]
     #[schemars(with = "Option<JsonObject>")]
     pub args: Option<Value>,
@@ -1187,6 +1188,80 @@ fn step_args(n: usize, name: &str, args: Option<Value>) -> Result<Map<String, Va
             "edit {n} ({name}): args is an object of the tool's arguments"
         ))),
     }
+}
+
+/// Replaces each string in `value` that is a reference to an earlier
+/// edit's result, such as `"$1.camera_id"` (edit 1's `camera_id`) or
+/// `"$2.camera_ids.0"` (the first of edit 2's), with that value; `n` is the
+/// edit whose arguments these are.
+fn resolve_refs(value: &mut Value, n: usize, steps: &[StepOut]) -> Result<(), ToolError> {
+    match value {
+        Value::String(text) => {
+            if let Some(found) = step_ref(text, n, steps)? {
+                *value = found;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                resolve_refs(item, n, steps)?;
+            }
+        }
+        Value::Object(map) => {
+            for v in map.values_mut() {
+                resolve_refs(v, n, steps)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// The value `text` refers to, if it is a reference (`$<edit>.<field>`).
+fn step_ref(text: &str, n: usize, steps: &[StepOut]) -> Result<Option<Value>, ToolError> {
+    let Some(rest) = text.trim().strip_prefix('$') else {
+        return Ok(None);
+    };
+    let (edit, path) = rest.split_once('.').unwrap_or((rest, ""));
+    let Ok(k) = edit.parse::<usize>() else {
+        return Ok(None);
+    };
+    let bad = |why: String| {
+        ToolError::invalid(format!(
+            "edit {n}: `{text}` {why}; a reference is \"$<edit>.<field>\", such as \
+             \"$1.camera_id\" for the camera_id edit 1 returned"
+        ))
+    };
+    if k == 0 || k >= n {
+        return Err(bad(format!(
+            "refers to edit {k}, but only edits 1 to {} come before it",
+            n - 1
+        )));
+    }
+    if path.is_empty() {
+        return Err(bad("names no field".to_owned()));
+    }
+    let mut at = &steps[k - 1].result;
+    for part in path.split('.') {
+        let next = match at {
+            Value::Object(m) => m.get(part),
+            Value::Array(items) => part.parse::<usize>().ok().and_then(|i| items.get(i)),
+            _ => None,
+        };
+        at = match next {
+            Some(v) => v,
+            None => {
+                let fields = match &steps[k - 1].result {
+                    Value::Object(m) => m.keys().cloned().collect::<Vec<_>>().join(", "),
+                    _ => String::new(),
+                };
+                return Err(bad(format!(
+                    "names nothing edit {k} ({}) returned; it returned {fields}",
+                    steps[k - 1].tool
+                )));
+            }
+        };
+    }
+    Ok(Some(at.clone()))
 }
 
 impl ObservationMcp {
@@ -1412,6 +1487,9 @@ impl ObservationMcp {
             for key in ["scene", SCENE_ID, RETURN_SCENE] {
                 args.remove(key);
             }
+            for v in args.values_mut() {
+                resolve_refs(v, n, &steps)?;
+            }
             args.insert("scene".to_owned(), scene);
             let request = CallToolRequestParams::new(name.clone()).with_arguments(args);
             let tcc = ToolCallContext::new(self, request, context.clone());
@@ -1571,7 +1649,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Run several scene edits on a working scene in order, as one version, all or nothing. Each edit is {tool, args}: a scene-editing tool and its arguments without scene_id.",
+        description = "Run several scene edits on a working scene in order, as one version, all or nothing. Each edit is {tool, args}: a scene-editing tool and its arguments without scene_id. \"$1.camera_id\" in args stands for the camera_id edit 1 returned.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
