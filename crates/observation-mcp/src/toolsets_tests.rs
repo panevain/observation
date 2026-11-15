@@ -101,7 +101,9 @@ fn each_profile_stays_within_its_token_budget() {
     for (profile, budget) in [
         (Profile::Small, 4_000),
         (Profile::SmallApp, 5_500),
-        (Profile::Full, 40_000),
+        // Not meant for small models: the budget only catches the list
+        // growing unnoticed. The view tools brought it to about 42,000.
+        (Profile::Full, 45_000),
     ] {
         let (tools, text) = listed(ToolSelection::profile(profile));
         let n = tokens(&text);
