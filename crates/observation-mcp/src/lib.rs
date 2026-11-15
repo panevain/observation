@@ -3,8 +3,9 @@
 //!
 //! It gives an AI agent the camera catalogue, editing of scene files, and
 //! coverage figures, all computed in process with `observation-core` and
-//! no network. Scenes are not stored: every scene tool takes a scene file
-//! (the JSON the app saves and imports) and returns the edited one, which
+//! no network. Every scene tool takes a scene file (the JSON the app saves
+//! and imports), or the id of a working scene the server holds in memory
+//! ([`store`]), and returns the edited one, which
 //! [`SceneFile::from_json`](observation_core::scene::SceneFile::from_json)
 //! has checked, so the app can always import the result.
 //!
@@ -27,6 +28,7 @@
 //! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
 //! | [`schema`] | the schema of tool fields held as untyped JSON objects |
 //! | [`server`] | the MCP tools, resources and prompts |
+//! | [`store`] | working scenes held by id (`s1`), `scene_id` on every scene tool, and the tools that open, export, undo, compare and batch-edit them |
 //! | [`http`] | the Streamable HTTP transport and its bearer-token authentication |
 //!
 //! The binary serves over stdio, or over HTTP when `OBS_MCP_LISTEN` or
@@ -45,6 +47,7 @@ pub mod propose;
 pub mod queries;
 pub mod schema;
 pub mod server;
+pub mod store;
 
 pub use error::ToolError;
 pub use server::ObservationMcp;

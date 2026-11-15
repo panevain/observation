@@ -506,3 +506,17 @@ async fn legacy_subscribe_is_refused_over_http() {
         "{body}"
     );
 }
+
+/// Each token has its own working scenes, as it has its own app connection.
+#[tokio::test]
+async fn each_token_has_its_own_working_scenes() {
+    let app = app();
+    let opened = call(&app, LAPTOP, "open_scene", json!({})).await;
+    assert_eq!(opened["structuredContent"]["scene_id"], "s1", "{opened}");
+    let laptop = call(&app, LAPTOP, "export_scene", json!({"scene_id": "s1"})).await;
+    assert_ne!(laptop["isError"], true, "{laptop}");
+    let ci = call(&app, CI, "export_scene", json!({"scene_id": "s1"})).await;
+    assert_eq!(ci["isError"], true, "{ci}");
+    let listed = call(&app, CI, "list_scenes", json!({})).await;
+    assert_eq!(listed["structuredContent"]["scenes"], json!([]), "{listed}");
+}

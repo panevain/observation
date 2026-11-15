@@ -145,7 +145,8 @@ pub struct PlaceEdited {
     /// Where a wall target went.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wall: Option<WallOut>,
-    /// The edited scene: pass it to the next scene tool.
+    /// The edited scene file: pass this field's value as `scene` to the next
+    /// scene tool.
     #[schemars(with = "JsonObject")]
     pub scene: Value,
 }

@@ -20,10 +20,36 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
+/// A whole tool result passed where the value of its `scene` field belongs
+/// (an object, or a string holding one, with a `scene` but no `format`):
+/// that value. Small models are often unsure which of the two to pass.
+pub fn unwrap_result(scene: &Value) -> Option<Value> {
+    let parsed;
+    let outer = match scene {
+        Value::String(text) if text.trim_start().starts_with('{') => {
+            parsed = serde_json::from_str::<Value>(text).ok()?;
+            &parsed
+        }
+        other => other,
+    };
+    let fields = outer.as_object()?;
+    if fields.contains_key("format") {
+        return None;
+    }
+    fields
+        .get("scene")
+        .filter(|s| s.is_object() || s.is_string())
+        .cloned()
+}
+
 /// Reads a scene passed to a tool: a scene file as a JSON object, or as a
-/// string holding one. A demo scene saved before terrain (version 1) is
-/// raised onto the demo street's ground, as the app does when it loads one.
+/// string holding one, or a whole tool result holding one in its `scene`
+/// field ([`unwrap_result`]). A demo scene saved before terrain (version 1)
+/// is raised onto the demo street's ground, as the app does when it loads
+/// one.
 pub fn parse(scene: &Value) -> Result<SceneFile, ToolError> {
+    let inner = unwrap_result(scene);
+    let scene = inner.as_ref().unwrap_or(scene);
     let mut file = match scene {
         Value::String(s) => SceneFile::from_json(s)?,
         other => SceneFile::from_json(&other.to_string())?,
