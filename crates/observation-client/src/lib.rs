@@ -9,6 +9,7 @@
 //! binary runs them.
 
 mod addresses;
+mod agent;
 mod cameras;
 mod coverage;
 mod history;
@@ -87,6 +88,8 @@ impl PluginGroup for ClientPlugins {
             .add(input::InputPlugin)
             .add(persist::PersistPlugin)
             .add(history::HistoryPlugin)
+            .add(agent::AgentPlugin)
+            .add(agent::ProposalGhostPlugin)
             .add(ui::UiPlugin)
             .add(LoaderPlugin)
     }
@@ -121,6 +124,7 @@ impl Plugin for ResourcesPlugin {
             .init_resource::<state::Panels>()
             .init_resource::<state::Hover>()
             .init_resource::<state::Toasts>()
+            .init_resource::<state::Footage>()
             .init_resource::<state::UiLayout>();
     }
 }
@@ -163,6 +167,7 @@ mod tests {
             local,
             session: Arc::new(MemoryStore::default()),
             files: Arc::new(FakeFiles::default()),
+            sheet: Arc::new(observation_client_model::testing::FakeSheetOutput::default()),
             clock: Arc::new(FakeClock::at(0.0)),
             scheme: Arc::new(FakeColorScheme::new(false)),
         };

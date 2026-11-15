@@ -19,14 +19,32 @@ use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texe
 use bevy::prelude::*;
 use observation_client_model::coverage;
 use observation_client_model::coverage::backend::{self, WorkerNote};
+use observation_client_model::coverage::preview::{PREVIEW_ID_BIT, Preview, Proposed};
+use observation_client_model::editor::AreaDraw;
+use observation_client_model::proposal::Settings;
 use observation_core::camera::{CameraModel, CameraPlacement};
 use observation_core::coverage::CoverageParams;
+use observation_core::coverage::CoverageStats;
+use observation_core::footage::{TargetPlace, WALL_TARGET_SIZE_M};
 use observation_core::frustum::ViewCone;
 use std::hash::{Hash, Hasher};
 
 /// The coverage counts, as a resource.
 #[derive(Default, Resource, Deref, DerefMut)]
 pub struct CoverageState(coverage::CoverageState);
+
+/// The coverage of the scene the agent's proposal would leave, for the
+/// proposal card's after figures (see
+/// [`observation_client_model::coverage::preview`]).
+#[derive(Default, Resource)]
+pub struct ProposalCoverage {
+    preview: Preview,
+    /// The proposed scene's figures at its selected level and lighting,
+    /// once every camera's sight lines are in.
+    pub after: Option<(Settings, CoverageStats)>,
+    /// The proposed scene cannot be previewed, so `after` never comes.
+    pub unavailable: bool,
+}
 
 /// Where coverage jobs run, as a non-send resource: in the browser it owns
 /// the worker, which is tied to the main thread.
@@ -43,6 +61,7 @@ impl Plugin for CoveragePlugin {
         let backend =
             backend::CoverageBackend::new(platform::coverage_worker(), platform.clock.clone());
         app.init_resource::<CoverageState>()
+            .init_resource::<ProposalCoverage>()
             .insert_non_send(CoverageBackend(backend))
             .insert_gizmo_config(
                 RegionGizmos,
@@ -53,6 +72,18 @@ impl Plugin for CoveragePlugin {
                         ..default()
                     },
                     // Drawn over buildings so the whole outline stays visible.
+                    depth_bias: -1.0,
+                    ..default()
+                },
+            )
+            .insert_gizmo_config(
+                AreaGizmos,
+                GizmoConfig {
+                    line: GizmoLineConfig {
+                        width: 2.5,
+                        joints: GizmoLineJoint::Round(4),
+                        ..default()
+                    },
                     depth_bias: -1.0,
                     ..default()
                 },
@@ -98,12 +129,15 @@ fn update_coverage(
     area: Option<Res<Area>>,
     mut state: ResMut<CoverageState>,
     mut backend: NonSendMut<CoverageBackend>,
+    link: Res<crate::agent::AgentLinkRes>,
+    mut proposal: ResMut<ProposalCoverage>,
 ) {
     let Some(area) = area else { return };
     if area.is_changed() {
         // `Area` is only ever inserted, so this is a new area (on_area_loaded
         // has reset the state).
         backend.load_area(&area.bundle, GROUND_CELL_M, FACADE_CELL_M);
+        proposal.preview.clear();
     }
     let layers = &area.layers;
     let (results, notes) = backend.drain(layers);
@@ -113,10 +147,47 @@ fn update_coverage(
             WorkerNote::Failed(_) => warn!("{note}"),
         }
     }
-    if results.is_empty() && !scene.is_changed() && !models.is_changed() && state.counted() {
-        return;
+    // The scene the agent's proposal would leave, while it can be accepted.
+    let proposed = link.proposal().and_then(|p| {
+        p.proposed().map(|(revision, scene)| Proposed {
+            id: p.id,
+            revision,
+            scene,
+        })
+    });
+    // The preview's cameras carry `PREVIEW_ID_BIT`; each state takes its
+    // own cameras' results (the preview's are dropped when there is none).
+    let (preview_results, results): (Vec<_>, Vec<_>) = results
+        .into_iter()
+        .partition(|r| r.camera_id & PREVIEW_ID_BIT != 0);
+    if !results.is_empty() || scene.is_changed() || models.is_changed() || !state.counted() {
+        coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
     }
-    coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
+    match proposed {
+        Some(p) => {
+            let proposal = &mut *proposal;
+            proposal
+                .preview
+                .update(p, &state, &models, layers, preview_results, &mut backend);
+            let after = proposal
+                .preview
+                .settings()
+                .zip(proposal.preview.stats(&backend));
+            if proposal.after != after {
+                proposal.after = after;
+            }
+            let unavailable = proposal.preview.unavailable();
+            if proposal.unavailable != unavailable {
+                proposal.unavailable = unavailable;
+            }
+        }
+        None if proposal.preview.is_active() || proposal.after.is_some() => {
+            proposal.preview.clear();
+            proposal.after = None;
+            proposal.unavailable = false;
+        }
+        None => {}
+    }
 }
 
 fn paint_overlay(
@@ -216,23 +287,36 @@ fn paint_overlay(
     state.mark_painted(mode, colors);
 }
 
-/// Height of the region outline above the ground, metres.
+/// Height of area and target outlines above the ground, metres.
 const REGION_Y_M: f32 = 0.15;
 
-/// Gizmo group for the region outline: thicker than the view cones.
+/// Gizmo group for the selected area or target and the outline being drawn:
+/// thicker than the view cones.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 struct RegionGizmos;
 
-/// The region outline, and the region being drawn.
+/// Gizmo group for the other areas and targets: thinner, so the selected
+/// one stands out.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct AreaGizmos;
+
+/// Opacity of an area that is switched off or cannot count.
+const OFF_ALPHA: f32 = 0.35;
+
+/// Height of a ground target's pin, metres.
+const PIN_M: f32 = 2.0;
+
+/// The areas (coloured by label, the selected one thicker, one that is off
+/// faded), the targets, and the outline being drawn.
 fn draw_region(
-    mut gizmos: Gizmos<RegionGizmos>,
+    mut thick: Gizmos<RegionGizmos>,
+    mut thin: Gizmos<AreaGizmos>,
     scene: Res<Scene>,
     editor: Res<Editor>,
     tokens: Res<Tokens>,
     area: Option<Res<Area>>,
 ) {
     let terrain = terrain_of(area.as_deref());
-    let color = to_bevy(tokens.world.region);
     let at = |p: [f32; 2]| {
         let p = Vec2::from_array(p);
         Vec3::new(p.x, terrain.height_at(p) + REGION_Y_M, p.y)
@@ -246,33 +330,103 @@ fn draw_region(
         out.extend(points.last().map(|p| at(*p)));
         out
     };
-    if let Some(r) = &scene.region
-        && editor.region_draft.is_empty()
-    {
-        let c = if r.is_active() {
-            color
+    let ring = |points: &[[f32; 2]]| draped(points.iter().chain(points.first()).copied().collect());
+    let drafting = !editor.region_draft.is_empty();
+    // The area whose outline is being redrawn is shown as the draft only.
+    let redrawn = match (drafting, editor.tool, editor.area_draw) {
+        (true, Tool::Areas, AreaDraw::Redraw(id)) => Some(id),
+        (true, Tool::Areas, AreaDraw::Limit) => scene.limit_figures_to,
+        _ => None,
+    };
+    for a in &scene.areas {
+        if Some(a.id) == redrawn {
+            continue;
+        }
+        let mut c = to_bevy(tokens.area_color(a.label));
+        if !a.is_active() {
+            c = c.with_alpha(OFF_ALPHA);
+        }
+        if editor.selected_area == Some(a.id) {
+            thick.linestrip(ring(&a.points), c);
         } else {
-            color.with_alpha(0.35)
-        };
-        let ring = r.points.iter().chain(r.points.first()).copied().collect();
-        gizmos.linestrip(draped(ring), c);
+            thin.linestrip(ring(&a.points), c);
+        }
     }
-    if editor.tool != Tool::Region {
+    let colors = (to_bevy(tokens.world.target), to_bevy(tokens.world.halo));
+    for t in &scene.targets {
+        if editor.selected_target == Some(t.id) {
+            draw_target(&mut thick, &t.at, colors, &at, &ring);
+        } else {
+            draw_target(&mut thin, &t.at, colors, &at, &ring);
+        }
+    }
+    if !editor.draws_outline() {
         return;
     }
+    let color = match (editor.tool, editor.area_draw) {
+        (Tool::Target, _) => to_bevy(tokens.world.target),
+        (_, AreaDraw::Redraw(id)) => to_bevy(
+            tokens.area_color(
+                scene
+                    .areas
+                    .iter()
+                    .find(|a| a.id == id)
+                    .and_then(|a| a.label),
+            ),
+        ),
+        _ => to_bevy(tokens.world.region),
+    };
+    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     let draft = &editor.region_draft;
     let path = draft.iter().chain(&editor.region_hover).copied().collect();
-    gizmos.linestrip(draped(path), color);
-    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    thick.linestrip(draped(path), color);
     for (i, p) in draft.iter().enumerate() {
-        // Once clicking it would close the region, the first corner shows
+        // Once clicking it would close the outline, the first corner shows
         // the whole area a click closes it from.
         let radius = if i == 0 && draft.len() >= 3 {
             editor.region_snap_m
         } else {
-            0.4
+            0.4_f32.min(editor.region_snap_m)
         };
-        gizmos.circle(Isometry3d::new(at(*p), flat), radius, color);
+        thick.circle(Isometry3d::new(at(*p), flat), radius, color);
+    }
+}
+
+/// A target's marker: a ground target's outline with a pin over a dark
+/// casing, or a wall target's square on the wall, cased, with a short line
+/// out along the way the wall faces. `colors`: the mark and its casing.
+fn draw_target<C: GizmoConfigGroup>(
+    gizmos: &mut Gizmos<C>,
+    place: &TargetPlace,
+    (mark, halo): (Color, Color),
+    at: &dyn Fn([f32; 2]) -> Vec3,
+    ring: &dyn Fn(&[[f32; 2]]) -> Vec<Vec3>,
+) {
+    match place {
+        TargetPlace::Ground { points } => {
+            gizmos.linestrip(ring(points), mark);
+            let n = points.len().max(1) as f32;
+            let sum = points
+                .iter()
+                .fold([0.0, 0.0], |s, p| [s[0] + p[0], s[1] + p[1]]);
+            let top = at([sum[0] / n, sum[1] / n]) + Vec3::Y * PIN_M;
+            gizmos.line(top - Vec3::Y * PIN_M, top, halo);
+            gizmos.sphere(Isometry3d::from_translation(top), 0.3, halo);
+            gizmos.sphere(Isometry3d::from_translation(top), 0.24, mark);
+        }
+        TargetPlace::Wall { point, normal } => {
+            let n = Vec3::new(normal[0], 0.0, normal[1]).normalize_or(Vec3::X);
+            let c = Vec3::from_array(*point) + n * 0.06;
+            let facing = Quat::from_rotation_arc(Vec3::Z, n);
+            let side = WALL_TARGET_SIZE_M;
+            gizmos.rect(Isometry3d::new(c, facing), Vec2::splat(side + 0.12), halo);
+            gizmos.rect(
+                Isometry3d::new(c + n * 0.01, facing),
+                Vec2::splat(side),
+                mark,
+            );
+            gizmos.line(c, c + n * 0.8, mark);
+        }
     }
 }
 
@@ -288,8 +442,9 @@ const HATCH_ALPHA: f32 = 0.6;
 /// its own line spacing from its distance to the camera.
 const HATCH_PATCH_M: f32 = 64.0;
 
-/// While the Region tool is on, marks where corners can go: a solid edge
-/// around the loaded area, and the ground beyond it tinted and hatched.
+/// While an outline is being drawn (the Areas tool, or the Target tool's
+/// outline), marks where corners can go: a solid edge around the loaded
+/// area, and the ground beyond it tinted and hatched.
 fn draw_outside_area(
     mut edge: Gizmos<RegionGizmos>,
     mut hatching: Gizmos<HatchGizmos>,
@@ -299,7 +454,7 @@ fn draw_outside_area(
     editor: Res<Editor>,
     tokens: Res<Tokens>,
 ) {
-    let on = editor.tool == Tool::Region;
+    let on = editor.draws_outline();
     for (_, mut vis) in &mut outside {
         vis.set_if_neq(if on {
             Visibility::Inherited
@@ -460,6 +615,8 @@ mod tests {
                 layers,
             })
             .init_resource::<CoverageState>()
+            .init_resource::<ProposalCoverage>()
+            .init_resource::<crate::agent::AgentLinkRes>()
             .insert_non_send(CoverageBackend(backend))
             .add_systems(Update, update_coverage);
         app.update();
@@ -487,10 +644,9 @@ mod tests {
             ));
         }
         let mask = scene
-            .region
-            .as_ref()
+            .region()
             .filter(|r| r.is_active())
-            .map(|r| RegionMask::new(layers, r));
+            .map(|r| RegionMask::new(layers, &r.points));
         CoverageStats::compute_in(layers, &counts, mask.as_ref())
     }
 
@@ -566,10 +722,12 @@ mod tests {
         // Limiting the figures to a region, or lifting the limit, recounts
         // every level without recomputing.
         let whole = stats(&app);
-        app.world_mut().resource_mut::<Scene>().region = Some(Region {
-            points: vec![[-80.0, -50.0], [0.0, -50.0], [0.0, 50.0], [-80.0, 50.0]],
-            enabled: true,
-        });
+        app.world_mut()
+            .resource_mut::<Scene>()
+            .set_region(Some(Region {
+                points: vec![[-80.0, -50.0], [0.0, -50.0], [0.0, 50.0], [-80.0, 50.0]],
+                enabled: true,
+            }));
         app.update();
         let west = stats(&app);
         assert_eq!(west, direct(&app));
@@ -578,8 +736,7 @@ mod tests {
         assert_eq!(stats(&app), direct(&app));
         app.world_mut()
             .resource_mut::<Scene>()
-            .region
-            .as_mut()
+            .region_mut()
             .unwrap()
             .enabled = false;
         set(&mut app, |p| p.dori = DoriLevel::Custom);
@@ -636,6 +793,87 @@ mod tests {
         let mut out = Vec::new();
         hatch(inner, outer, spacing, |a, b| out.push((a, b)));
         out
+    }
+
+    /// A proposal on the agent link's card, turning camera 2 away from the
+    /// street, made against the app's scene.
+    fn propose_turning_camera_2(app: &mut App) {
+        use observation_agent_api::{BrowserEvent, BrowserEventKind, Proposal, paths};
+        use observation_client_model::agent::AgentLink;
+        use observation_client_model::platform::StreamEvent;
+        use observation_client_model::proposal::current_scene;
+        use observation_client_model::testing::FakeHttp;
+        use observation_core::scene::changes::ChangeSet;
+
+        edit(app, |doc| doc.area = Some(AreaRef::Demo));
+        let http = FakeHttp::default();
+        let mut link = AgentLink::default();
+        link.available = true;
+        link.connect(&http);
+        assert!(http.respond_to(
+            "POST",
+            paths::PAIRINGS,
+            Ok(br#"{"v":1,"code":"ABCDEFGH","browser_token":"t","code_expires_in_s":600,"idle_timeout_s":1800}"#.to_vec()),
+        ));
+        link.update(&http, 0.0, Default::default(), |_| None);
+        let w = app.world();
+        let (scene, models) = (w.resource::<Scene>(), w.resource::<Models>());
+        let base = current_scene(scene, models).unwrap();
+        let mut proposed = base.clone();
+        proposed.cameras[1].yaw_deg = 90.0;
+        proposed.cameras[1].pitch_deg = 80.0;
+        let event = BrowserEvent::new(BrowserEventKind::Proposal {
+            proposal: Proposal {
+                id: 1,
+                summary: "Point camera 2 at the sky".into(),
+                base_revision: 0,
+                changes: ChangeSet::between(&base, &proposed).unwrap(),
+            },
+        });
+        http.emit_follow(
+            &format!("{}?token=t", paths::EVENTS),
+            &StreamEvent::Data(serde_json::to_vec(&event).unwrap()),
+        );
+        link.update(&http, 0.0, Default::default(), |_| None);
+        link.follow_proposal(&http, scene, models);
+        assert!(link.proposal().and_then(|p| p.proposed()).is_some());
+        **app.world_mut().resource_mut::<crate::agent::AgentLinkRes>() = link;
+    }
+
+    #[test]
+    fn a_proposals_figures_come_from_the_same_backend() {
+        let mut app = app();
+        app.update();
+        let before = app.world().resource::<CoverageState>().stats;
+        assert!(app.world().resource::<ProposalCoverage>().after.is_none());
+        propose_turning_camera_2(&mut app);
+        app.update();
+        let jobs = submitted(&app);
+        let (settings, after) = app
+            .world()
+            .resource::<ProposalCoverage>()
+            .after
+            .expect("computed inline");
+        assert_eq!(settings, (DoriLevel::Detect, Lighting::Day));
+        assert!(
+            after.street_seen_m2 < before.street_seen_m2,
+            "{after:?} {before:?}"
+        );
+        assert_eq!(
+            app.world().resource::<CoverageState>().stats,
+            before,
+            "the document's figures are untouched"
+        );
+        // Camera 1 is unchanged and kept its sight lines: one job, for camera 2.
+        app.update();
+        assert_eq!(submitted(&app), jobs);
+        // Without a proposal the preview goes.
+        let mut link = app.world_mut().resource_mut::<crate::agent::AgentLinkRes>();
+        let http = observation_client_model::testing::FakeHttp::default();
+        link.disconnect(&http);
+        link.close_card();
+        app.update();
+        assert!(app.world().resource::<ProposalCoverage>().after.is_none());
     }
 
     #[test]

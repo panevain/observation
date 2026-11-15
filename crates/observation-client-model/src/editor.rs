@@ -1,9 +1,11 @@
 //! What the user is editing with (the active tool, the selection, the model
-//! the Place tool places, the region being drawn and the address picked),
-//! which panels are open, and what the pointer is over.
+//! the Place tool places, the outline being drawn, the area or target picked
+//! and the address picked), which panels are open, and what the pointer is
+//! over.
 
 use crate::document::Models;
 use observation_core::address::Address;
+use observation_core::evidence::Tier;
 
 /// Editing tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -13,19 +15,22 @@ pub enum Tool {
     Place,
     Aim,
     Move,
-    /// Draw the coverage region.
-    Region,
+    /// Draw labelled areas (and the one the figures are limited to).
+    Areas,
+    /// Mark a named target: a patch of wall or of ground.
+    Target,
     /// Show the street address under the pointer; click to select it.
     Address,
 }
 
 impl Tool {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Select,
         Self::Place,
         Self::Aim,
         Self::Move,
-        Self::Region,
+        Self::Areas,
+        Self::Target,
         Self::Address,
     ];
 
@@ -35,7 +40,8 @@ impl Tool {
             Self::Place => "Place",
             Self::Aim => "Aim",
             Self::Move => "Move",
-            Self::Region => "Region",
+            Self::Areas => "Areas",
+            Self::Target => "Target",
             Self::Address => "Address",
         }
     }
@@ -46,7 +52,8 @@ impl Tool {
             Self::Place => "P",
             Self::Aim => "A",
             Self::Move => "M",
-            Self::Region => "R",
+            Self::Areas => "R",
+            Self::Target => "T",
             Self::Address => "L",
         }
     }
@@ -61,8 +68,11 @@ impl Tool {
             }
             Self::Aim => "Click or drag on the scene to point the selected camera",
             Self::Move => "Click or drag on a wall or the ground to move the selected camera",
-            Self::Region => {
-                "Click to add corners · click the first corner or press Enter to finish · Backspace undoes a corner"
+            Self::Areas => {
+                "Outline your land, a neighbour's or public ground: click to add corners · click the first corner or press Enter to finish · Backspace undoes a corner"
+            }
+            Self::Target => {
+                "Mark a door, a gate or a path: click a wall or the ground, or outline it (choose under Places)"
             }
             Self::Address => {
                 "Point at a building to see its address · click to select it and the buildings at it"
@@ -77,7 +87,8 @@ impl Tool {
             Self::Place => "Click a wall or the ground to place a camera",
             Self::Aim => "Click where the selected camera should look",
             Self::Move => "Click a wall or the ground to move the selected camera",
-            Self::Region => "Click corners of the area to measure, then the first corner",
+            Self::Areas => "Click corners of the area, then the first corner",
+            Self::Target => "Click a wall or the ground to mark a target",
             Self::Address => "Point at a building to see its address",
         }
     }
@@ -108,11 +119,17 @@ impl Tool {
                 ("Right-drag", "pan"),
                 ("Esc", "done"),
             ],
-            Self::Region => &[
+            Self::Areas => &[
                 ("Click", "add corner"),
                 ("Enter", "finish"),
                 ("Backspace", "remove corner"),
                 ("Esc", "cancel"),
+            ],
+            Self::Target => &[
+                ("Click wall", "wall target"),
+                ("Click ground", "ground target"),
+                ("Enter", "finish outline"),
+                ("Esc", "done"),
             ],
             Self::Address => &[
                 ("Click", "select address"),
@@ -129,6 +146,31 @@ impl Tool {
     }
 }
 
+/// What finishing the outline drawn with the Areas tool does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AreaDraw {
+    /// Adds a new unlabelled area.
+    #[default]
+    New,
+    /// Gives the area with this id the new outline, keeping its label, name
+    /// and switch.
+    Redraw(u32),
+    /// Gives the area the figures are limited to the new outline, or adds
+    /// one to limit them to (the Coverage card's menu, as the single region
+    /// did before areas had labels).
+    Limit,
+}
+
+/// How the Target tool marks a target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TargetShape {
+    /// A click on a wall marks a patch of it; on the ground, a small square.
+    #[default]
+    Point,
+    /// Corners clicked on the ground, closed like an area.
+    Outline,
+}
+
 /// The editing state: which tool is active and what it works on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Editor {
@@ -136,12 +178,21 @@ pub struct Editor {
     pub selected: Option<u32>,
     /// Model used by the Place tool.
     pub place_model: String,
-    /// Corners placed so far with the Region tool, world `[x, z]`.
+    /// Corners placed so far of the outline being drawn (with the Areas
+    /// tool, or the Target tool's outline), world `[x, z]`.
     pub region_draft: Vec<[f32; 2]>,
-    /// Ground point under the pointer while drawing a region.
+    /// Ground point under the pointer while drawing an outline.
     pub region_hover: Option<[f32; 2]>,
-    /// How close to the first corner a click closes the region, metres.
+    /// How close to the first corner a click closes the outline, metres.
     pub region_snap_m: f32,
+    /// What finishing an outline with the Areas tool does.
+    pub area_draw: AreaDraw,
+    /// How the Target tool marks a target.
+    pub target_shape: TargetShape,
+    /// The area picked in the Places tab, highlighted in the 3D view.
+    pub selected_area: Option<u32>,
+    /// The target picked in the Places tab, highlighted in the 3D view.
+    pub selected_target: Option<u32>,
     /// The address picked with the Address tool; its buildings are
     /// highlighted.
     pub selected_address: Option<Address>,
@@ -162,6 +213,10 @@ impl Default for Editor {
             region_draft: Vec::new(),
             region_hover: None,
             region_snap_m: 1.0,
+            area_draw: AreaDraw::New,
+            target_shape: TargetShape::Point,
+            selected_area: None,
+            selected_target: None,
             selected_address: None,
             focus_request: false,
             jump_to_address: false,
@@ -170,6 +225,48 @@ impl Default for Editor {
 }
 
 impl Editor {
+    /// Switches to `tool`. Leaving a tool drops the outline it was drawing
+    /// (and what finishing it would have done).
+    pub fn set_tool(&mut self, tool: Tool) {
+        if self.tool != tool {
+            self.region_draft.clear();
+            self.region_hover = None;
+            self.area_draw = AreaDraw::New;
+        }
+        self.tool = tool;
+    }
+
+    /// Whether the active tool draws an outline on the ground corner by
+    /// corner (Enter closes it, Backspace removes a corner).
+    pub fn draws_outline(&self) -> bool {
+        match self.tool {
+            Tool::Areas => true,
+            Tool::Target => self.target_shape == TargetShape::Outline,
+            _ => false,
+        }
+    }
+
+    /// Drops the picked area and target if the document no longer has them
+    /// (deleted, undone, or another scene or area loaded), and a redraw of an
+    /// area that is gone.
+    pub fn forget_missing_places(&mut self, doc: &crate::document::Document) {
+        let has_area = |id: Option<u32>| id.is_some_and(|id| doc.areas.iter().any(|a| a.id == id));
+        if self.selected_area.is_some() && !has_area(self.selected_area) {
+            self.selected_area = None;
+        }
+        if let AreaDraw::Redraw(id) = self.area_draw
+            && !has_area(Some(id))
+        {
+            self.area_draw = AreaDraw::New;
+        }
+        if self
+            .selected_target
+            .is_some_and(|id| !doc.targets.iter().any(|t| t.id == id))
+        {
+            self.selected_target = None;
+        }
+    }
+
     /// Goes back to the default model for the Place tool if its model is
     /// gone (deleted, undone, or left out of a restored or imported scene).
     pub fn forget_missing_place_model(&mut self, models: &Models) {
@@ -198,8 +295,11 @@ pub enum InspectorTab {
     /// The selected camera's settings.
     Camera,
     /// What the coverage figures count (detail level, lighting, subject
-    /// height) and how the overlay colours the ground.
+    /// height), how the overlay colours the ground, and where every camera's
+    /// footage lands.
     Analysis,
+    /// The labelled areas and the targets, with each target's verdicts.
+    Places,
 }
 
 /// The panels and dialogs that are open, and how the scene is shown.
@@ -215,6 +315,10 @@ pub struct Panels {
     /// The Scenes dialog (the scenes saved in this browser).
     pub scenes_open: bool,
     pub custom_model_open: bool,
+    /// The Evidence sheet dialog, and the tier chosen in it (Aggregate
+    /// unless the user picks Exact; not remembered across visits).
+    pub sheet_open: bool,
+    pub sheet_tier: Tier,
     pub inspector_tab: InspectorTab,
     /// The selection the inspector last saw, so it can open the Camera tab
     /// when the selection changes some other way than [`select`].
@@ -232,6 +336,8 @@ impl Default for Panels {
             regions_open: false,
             scenes_open: false,
             custom_model_open: false,
+            sheet_open: false,
+            sheet_tier: Tier::default(),
             inspector_tab: InspectorTab::Cameras,
             inspector_seen: None,
         }
@@ -280,6 +386,10 @@ mod tests {
                 region_draft: vec![],
                 region_hover: None,
                 region_snap_m: 1.0,
+                area_draw: AreaDraw::New,
+                target_shape: TargetShape::Point,
+                selected_area: None,
+                selected_target: None,
                 selected_address: None,
                 focus_request: false,
                 jump_to_address: false,
@@ -321,13 +431,83 @@ mod tests {
             Tool::Place,
             Tool::Aim,
             Tool::Move,
-            Tool::Region,
+            Tool::Areas,
+            Tool::Target,
             Tool::Address,
         ]
         .into_iter()
         .filter(|t| t.needs_selection())
         .collect();
         assert_eq!(needs, [Tool::Aim, Tool::Move]);
+    }
+
+    #[test]
+    fn the_outline_tools_and_leaving_them() {
+        let mut editor = Editor::default();
+        assert!(!editor.draws_outline());
+        editor.set_tool(Tool::Areas);
+        assert!(editor.draws_outline());
+        editor.set_tool(Tool::Target);
+        assert!(!editor.draws_outline(), "a click marks a point");
+        editor.target_shape = TargetShape::Outline;
+        assert!(editor.draws_outline());
+        // Leaving a tool drops its outline and what finishing it would do;
+        // picking the same tool again keeps them.
+        editor.set_tool(Tool::Areas);
+        editor.region_draft = vec![[0.0, 0.0]];
+        editor.area_draw = AreaDraw::Redraw(3);
+        editor.set_tool(Tool::Areas);
+        assert_eq!(editor.region_draft.len(), 1);
+        editor.set_tool(Tool::Select);
+        assert!(editor.region_draft.is_empty());
+        assert_eq!(editor.area_draw, AreaDraw::New);
+    }
+
+    #[test]
+    fn a_picked_area_or_target_that_is_gone_is_forgotten() {
+        use observation_core::footage::{LabelledArea, Target, TargetPlace};
+        let mut doc = crate::document::Document::default();
+        doc.areas.push(LabelledArea {
+            id: 2,
+            label: None,
+            name: None,
+            points: Vec::new(),
+            enabled: true,
+        });
+        doc.targets.push(Target {
+            id: 5,
+            name: String::new(),
+            at: TargetPlace::Wall {
+                point: [0.0; 3],
+                normal: [1.0, 0.0],
+            },
+        });
+        let mut editor = Editor {
+            selected_area: Some(2),
+            selected_target: Some(5),
+            area_draw: AreaDraw::Redraw(2),
+            ..Editor::default()
+        };
+        editor.forget_missing_places(&doc);
+        assert_eq!(
+            (
+                editor.selected_area,
+                editor.selected_target,
+                editor.area_draw
+            ),
+            (Some(2), Some(5), AreaDraw::Redraw(2))
+        );
+        doc.areas.clear();
+        doc.targets.clear();
+        editor.forget_missing_places(&doc);
+        assert_eq!(
+            (
+                editor.selected_area,
+                editor.selected_target,
+                editor.area_draw
+            ),
+            (None, None, AreaDraw::New)
+        );
     }
 
     #[test]

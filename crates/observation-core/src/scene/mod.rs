@@ -1,12 +1,18 @@
 //! Saved scenes: the user's area, cameras, custom models and settings, as JSON.
 
+pub mod agent_log;
+pub mod changes;
 mod file;
 mod sanitise;
 
 pub use file::{
-    AreaRef, FLAT_GROUND_VERSION, MAX_CAMERAS, MAX_CUSTOM_MODELS, SCENE_FORMAT, SCENE_VERSION,
-    SceneError, SceneFile, lift_onto_terrain,
+    AreaRef, FLAT_GROUND_VERSION, MAX_AREAS, MAX_CAMERAS, MAX_CUSTOM_MODELS, MAX_TARGETS,
+    SCENE_FORMAT, SCENE_VERSION, SceneError, SceneFile, lift_onto_terrain,
 };
+
+/// Defined beside [`crate::footage::fresh_id`], which hands out ids within it
+/// (the analysis layer may not use this one).
+pub use crate::footage::MAX_ITEM_ID;
 
 #[cfg(test)]
 mod tests {

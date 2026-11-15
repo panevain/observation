@@ -117,6 +117,31 @@
     "subject_height_m": 1.0,
     "custom_ppm": 80.0
   },
+  "areas": [
+    {
+      "id": 1,
+      "points": [
+        [
+          -20.0,
+          -20.0
+        ],
+        [
+          20.0,
+          -20.0
+        ],
+        [
+          20.0,
+          25.0
+        ],
+        [
+          -20.0,
+          25.0
+        ]
+      ],
+      "enabled": false
+    }
+  ],
+  "limit_figures_to": 1,
   "region": {
     "points": [
       [

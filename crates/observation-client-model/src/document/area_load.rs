@@ -38,11 +38,16 @@ pub fn apply(
     if !keep {
         scene.on_flat_ground = false;
         scene.cameras.clear();
-        // A region belongs to the area it was drawn on, as does one being
-        // drawn.
-        scene.region = None;
+        // Areas and targets belong to the area they were drawn on, as does
+        // a region being drawn.
+        scene.areas.clear();
+        scene.limit_figures_to = None;
+        scene.targets.clear();
         editor.region_draft.clear();
         editor.selected = None;
+        editor.selected_area = None;
+        editor.selected_target = None;
+        editor.area_draw = crate::editor::AreaDraw::New;
         if area == AreaRef::Demo {
             // A fresh demo street comes with example cameras to explore.
             let picks: Vec<&CameraModel> = EXAMPLE_MODELS
@@ -79,6 +84,7 @@ mod tests {
     use observation_core::bundle::{OsmBuilding, OsmRoad, build_bundle};
     use observation_core::camera::{CameraKind, CameraPlacement, Catalog};
     use observation_core::coverage::Region;
+    use observation_core::footage::{Target, TargetPlace};
     use observation_core::geo::{BBox, LatLon};
     use observation_core::terrain::Terrain;
 
@@ -186,13 +192,21 @@ mod tests {
     fn before(area: AreaRef) -> (Document, Editor, Hover) {
         let mut doc = Document {
             area: Some(area),
-            region: Some(Region {
-                points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
-                enabled: true,
-            }),
             on_flat_ground: true,
             ..Document::default()
         };
+        doc.set_region(Some(Region {
+            points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            enabled: true,
+        }));
+        doc.targets.push(Target {
+            id: 1,
+            name: "Gate".into(),
+            at: TargetPlace::Wall {
+                point: [1.0, 1.0, 1.0],
+                normal: [1.0, 0.0],
+            },
+        });
         let id = doc.add_camera(camera(3.0));
         let editor = Editor {
             selected: Some(id),
@@ -252,7 +266,8 @@ mod tests {
         let ids: Vec<_> = a.doc.cameras.iter().map(|c| c.model_id.as_str()).collect();
         assert_eq!(ids, EXAMPLE_MODELS[..8], "one per house, models in turn");
         assert_eq!(a.doc.cameras[0].label, "Camera 2", "numbered on");
-        assert_eq!(a.doc.region, None);
+        assert_eq!(a.doc.region(), None);
+        assert!(a.doc.areas.is_empty() && a.doc.targets.is_empty());
         assert!(!a.doc.on_flat_ground);
         assert_eq!(a.doc.area, Some(AreaRef::Demo));
         assert_eq!(a.doc.origin, bundle.origin);
@@ -279,7 +294,7 @@ mod tests {
             a.doc.revision > revision,
             "a new revision for undo and the addresses"
         );
-        assert_eq!(a.doc.region, None);
+        assert_eq!(a.doc.region(), None);
         assert_eq!(a.doc.area, Some(osm()));
         assert_eq!(a.toasts, [LOADED]);
     }
@@ -288,7 +303,7 @@ mod tests {
     fn a_restored_scene_keeps_its_cameras_on_its_own_area_and_lifts_flat_ones() {
         let bundle = street_on(raised());
         let old = before(osm());
-        let (cameras, region) = (old.0.cameras.clone(), old.0.region.clone());
+        let (cameras, region) = (old.0.cameras.clone(), old.0.region().cloned());
         let revision = old.0.revision;
         let a = load(old, osm(), true, &bundle);
         assert!(a.doc.revision > revision);
@@ -297,7 +312,8 @@ mod tests {
         assert_ne!(lifted, cameras, "the ground is raised");
         assert_eq!(a.doc.cameras, lifted);
         assert!(!a.doc.on_flat_ground, "lifted once");
-        assert_eq!(a.doc.region, region);
+        assert_eq!(a.doc.region().cloned(), region);
+        assert_eq!(a.doc.targets.len(), 1, "kept with the region");
         assert_eq!(a.editor.region_draft, [[1.0, 1.0]], "kept with the region");
         assert!(a.editor.selected.is_some());
         assert_eq!(a.editor.selected_address, None, "addresses always go");
@@ -319,11 +335,11 @@ mod tests {
     fn a_restored_demo_scene_keeps_its_cameras_and_gets_no_examples() {
         let mut old = before(AreaRef::Demo);
         old.0.on_flat_ground = false;
-        let (cameras, region) = (old.0.cameras.clone(), old.0.region.clone());
+        let (cameras, region) = (old.0.cameras.clone(), old.0.region().cloned());
         let revision = old.0.revision;
         let a = load(old, AreaRef::Demo, true, &street());
         assert_eq!(a.doc.cameras, cameras, "no example cameras added");
-        assert_eq!(a.doc.region, region);
+        assert_eq!(a.doc.region().cloned(), region);
         assert_eq!(a.editor.region_draft, [[1.0, 1.0]]);
         assert!(a.editor.selected.is_some());
         assert!(a.doc.revision > revision);
@@ -334,7 +350,7 @@ mod tests {
     fn keeping_cameras_needs_the_same_area() {
         let a = load(before(AreaRef::Demo), osm(), true, &street_on(raised()));
         assert!(a.doc.cameras.is_empty());
-        assert_eq!(a.doc.region, None);
+        assert_eq!(a.doc.region(), None);
         assert!(!a.doc.on_flat_ground);
     }
 

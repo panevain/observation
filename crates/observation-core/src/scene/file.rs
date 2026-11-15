@@ -1,9 +1,11 @@
 //! The scene file's shape, and its version history.
 
-use crate::camera::{CameraModel, CameraPlacement};
+use crate::camera::{CameraModel, CameraPlacement, Catalog};
 use crate::coverage::{CoverageParams, Region};
+use crate::footage::{FootageCamera, LabelledArea, Target, area_by_id, set_figures_area};
 use crate::geo::{BBox, LatLon};
 use crate::provenance::{Provenance, lenient_provenance};
+use crate::scene::agent_log::{AgentLogEntry, lenient_log};
 use crate::terrain::Terrain;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -26,32 +28,130 @@ pub enum AreaRef {
     Osm { bbox: BBox },
 }
 
+/// A saved scene. Its JSON also carries, for older apps, a copy of the area
+/// the figures are limited to as the single `region` they read; a file from
+/// such an app has that `region` and no `areas`, and it loads as one
+/// unlabelled area that limits the figures.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "SceneWire", into = "SceneWire")]
 pub struct SceneFile {
     pub format: String,
     pub version: u32,
     pub area: AreaRef,
     /// World-frame origin the camera positions are relative to.
     pub origin: LatLon,
-    #[serde(default)]
     pub cameras: Vec<CameraPlacement>,
-    #[serde(default)]
     pub custom_models: Vec<CameraModel>,
-    #[serde(default)]
     pub params: CoverageParams,
-    /// Area the coverage figures are limited to, if one was drawn.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub region: Option<Region>,
+    /// Areas the user drew, labelled or not, in drawing order.
+    pub areas: Vec<LabelledArea>,
+    /// The id of the area the coverage figures are limited to (while that
+    /// area is enabled and its outline usable), if any. A scene's old
+    /// single `region` loads as an unlabelled area named here.
+    pub limit_figures_to: Option<u32>,
+    /// Named places to get verdicts on.
+    pub targets: Vec<Target>,
     /// Where the figures came from: the OSM data date and fingerprint, the
     /// bundle build time, and the app, catalogue and caveats versions.
     /// Optional and additive: files without it load, and a malformed block
     /// is dropped rather than failing the file.
+    pub provenance: Option<Provenance>,
+    /// The agent proposals the user accepted, oldest first (see
+    /// [`super::agent_log`]). Optional and additive like `provenance`.
+    pub agent_log: Vec<AgentLogEntry>,
+}
+
+/// The scene file's JSON, field for field. Scenes from before labelled areas
+/// have a single `region` instead of `areas` and `limit_figures_to`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SceneWire {
+    format: String,
+    version: u32,
+    area: AreaRef,
+    origin: LatLon,
+    #[serde(default)]
+    cameras: Vec<CameraPlacement>,
+    #[serde(default)]
+    custom_models: Vec<CameraModel>,
+    #[serde(default)]
+    params: CoverageParams,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    areas: Vec<LabelledArea>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit_figures_to: Option<u32>,
+    /// The area the figures are limited to, as apps before labelled areas
+    /// read it. Written as a copy of that area so that an older app still
+    /// limits its figures the same way (it ignores the fields it does not
+    /// know); read only from a file without `areas`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<Region>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    targets: Vec<Target>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "lenient_provenance"
     )]
-    pub provenance: Option<Provenance>,
+    provenance: Option<Provenance>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_log"
+    )]
+    agent_log: Vec<AgentLogEntry>,
+}
+
+/// The id an old file's single `region` gets as an area.
+const MIGRATED_REGION_ID: u32 = 1;
+
+impl From<SceneWire> for SceneFile {
+    fn from(w: SceneWire) -> Self {
+        let (areas, limit_figures_to) = match w.region {
+            // Written by an app before labelled areas (or by hand): the
+            // region becomes the area the figures are limited to.
+            Some(r) if w.areas.is_empty() => (
+                vec![LabelledArea::from_region(MIGRATED_REGION_ID, r)],
+                Some(MIGRATED_REGION_ID),
+            ),
+            // Otherwise `region` is only the copy written for older apps.
+            _ => (w.areas, w.limit_figures_to),
+        };
+        Self {
+            format: w.format,
+            version: w.version,
+            area: w.area,
+            origin: w.origin,
+            cameras: w.cameras,
+            custom_models: w.custom_models,
+            params: w.params,
+            areas,
+            limit_figures_to,
+            targets: w.targets,
+            provenance: w.provenance,
+            agent_log: w.agent_log,
+        }
+    }
+}
+
+impl From<SceneFile> for SceneWire {
+    fn from(s: SceneFile) -> Self {
+        let region = s.figures_area().map(LabelledArea::to_region);
+        Self {
+            format: s.format,
+            version: s.version,
+            area: s.area,
+            origin: s.origin,
+            cameras: s.cameras,
+            custom_models: s.custom_models,
+            params: s.params,
+            areas: s.areas,
+            limit_figures_to: s.limit_figures_to,
+            region,
+            targets: s.targets,
+            provenance: s.provenance,
+            agent_log: s.agent_log,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -73,6 +173,7 @@ pub enum SceneError {
 /// Limits that keep a hostile or corrupt file from exhausting memory/CPU.
 pub const MAX_CAMERAS: usize = 256;
 pub const MAX_CUSTOM_MODELS: usize = 64;
+pub use crate::footage::{MAX_AREAS, MAX_TARGETS};
 
 impl SceneFile {
     pub fn new(area: AreaRef, origin: LatLon) -> Self {
@@ -84,8 +185,11 @@ impl SceneFile {
             cameras: Vec::new(),
             custom_models: Vec::new(),
             params: CoverageParams::default(),
-            region: None,
+            areas: Vec::new(),
+            limit_figures_to: None,
+            targets: Vec::new(),
             provenance: None,
+            agent_log: Vec::new(),
         }
     }
 
@@ -100,6 +204,38 @@ impl SceneFile {
     /// and so need [`lift_onto_terrain`] once the area's terrain is known.
     pub fn on_flat_ground(&self) -> bool {
         self.version <= FLAT_GROUND_VERSION
+    }
+
+    /// The area the coverage figures are limited to, if one is named (it
+    /// limits them only while [`LabelledArea::is_active`]).
+    pub fn figures_area(&self) -> Option<&LabelledArea> {
+        area_by_id(&self.areas, self.limit_figures_to)
+    }
+
+    /// Replaces the outline and switch of the area the figures are limited
+    /// to, adds one, or with `None` removes it: see [`set_figures_area`].
+    pub fn set_figures_area(&mut self, region: Option<Region>) {
+        set_figures_area(&mut self.areas, &mut self.limit_figures_to, region);
+    }
+
+    /// The enabled cameras whose model is known, with their models (the
+    /// scene's custom models first, then `catalog`), for the footage figures.
+    pub fn footage_cameras<'a>(&'a self, catalog: &'a Catalog) -> Vec<FootageCamera<'a>> {
+        self.cameras
+            .iter()
+            .filter(|c| c.enabled)
+            .filter_map(|c| {
+                let model = self
+                    .custom_models
+                    .iter()
+                    .find(|m| m.id == c.model_id)
+                    .or_else(|| catalog.get(&c.model_id))?;
+                Some(FootageCamera {
+                    placement: c,
+                    model,
+                })
+            })
+            .collect()
     }
 }
 

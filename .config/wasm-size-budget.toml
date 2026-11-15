@@ -15,8 +15,12 @@
 # most the two can differ on this module: for the same release build, flate2 gave 8,091,379
 # and zlib 7.69 MiB, which is 8,058,307 to 8,068,792 B (the old check printed MiB to two
 # decimals). The difference is 22,587 to 33,072 B, so the limit rose by 33,072, rounded up.
-raw = 27_500_000
-gzip = 8_334_000
+# Pull request #261 (where footage lands #89, the evidence sheet #91, find my street #92 and
+# Agent Link #259: four tools and panels, the sheet's SVG builder and the agent link) grew it
+# to 27,474,851 raw and 8,338,165 gzip (flate2), so both limits were raised to about 3% above
+# those sizes.
+raw = 28_300_000
+gzip = 8_590_000
 
 [coverage-worker]
 # 48,722 raw and 22,190 gzip (zlib) on develop at 5a18361. The gzip limit was 32,000 against

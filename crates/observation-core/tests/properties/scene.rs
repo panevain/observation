@@ -6,10 +6,13 @@ use crate::config;
 use crate::formats::{opt_text, text};
 use crate::strategies::lon;
 use observation_core::camera::{CameraKind, CameraModel, CameraPlacement, DoriLevel, Lighting};
-use observation_core::coverage::{CoverageParams, Region};
+use observation_core::coverage::{CoverageParams, outline_problem};
+use observation_core::footage::{AreaLabel, LabelledArea, Target, TargetPlace};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::Provenance;
-use observation_core::scene::{AreaRef, SceneError, SceneFile};
+use observation_core::scene::{
+    AreaRef, MAX_AREAS, MAX_ITEM_ID, MAX_TARGETS, SceneError, SceneFile,
+};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
@@ -216,10 +219,89 @@ fn plain_model(n: usize) -> CameraModel {
     }
 }
 
+/// Ids as a file might hold them: small ones that repeat, now and then one
+/// above `MAX_ITEM_ID`.
+fn junk_id() -> impl Strategy<Value = u32> {
+    prop_oneof![9 => 0..4u32, 1 => MAX_ITEM_ID - 1..=u32::MAX]
+}
+
+/// Labelled areas as a file might hold them: repeated ids or ids out of
+/// range, untidy names, now and then too many corners or a corner out of
+/// range.
+fn junk_areas() -> impl Strategy<Value = Vec<LabelledArea>> {
+    let points = prop_oneof![
+        9 => prop::collection::vec([scene_num(), scene_num()], 0..6),
+        1 => prop::collection::vec([scene_num(), scene_num()], 257..=260),
+    ];
+    let name = prop::option::of(prop_oneof![
+        text(8),
+        Just("   ".to_owned()),
+        Just(format!("  {}  ", "n".repeat(100))),
+    ]);
+    let label = prop::option::of(prop::sample::select(AreaLabel::ALL.to_vec()));
+    prop::collection::vec(
+        (junk_id(), label, name, points, any::<bool>()).prop_map(
+            |(id, label, name, points, enabled)| LabelledArea {
+                id,
+                label,
+                name,
+                points,
+                enabled,
+            },
+        ),
+        0..4,
+    )
+}
+
+/// Targets as a file might hold them: repeated ids or ids out of range,
+/// untidy names, outlines
+/// that are too large or enclose nothing, walls without a direction.
+fn junk_targets() -> impl Strategy<Value = Vec<Target>> {
+    let ground = prop::collection::vec([scene_num(), scene_num()], 0..6)
+        .prop_map(|points| TargetPlace::Ground { points });
+    let wall = (
+        [scene_num(), scene_num(), scene_num()],
+        prop_oneof![3 => [-1.0..=1.0f32, -1.0..=1.0f32], 1 => Just([0.0f32, 0.0])],
+    )
+        .prop_map(|(point, normal)| TargetPlace::Wall { point, normal });
+    prop::collection::vec(
+        (junk_id(), text(8), prop_oneof![ground, wall]).prop_map(|(id, name, at)| Target {
+            id,
+            name,
+            at,
+        }),
+        0..3,
+    )
+}
+
+/// An area that breaks no rule.
+fn plain_area(id: u32) -> LabelledArea {
+    LabelledArea {
+        id: 100 + id,
+        label: None,
+        name: None,
+        points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+        enabled: true,
+    }
+}
+
+/// A target that breaks no rule.
+fn plain_target(id: u32) -> Target {
+    Target {
+        id: 100 + id,
+        name: String::new(),
+        at: TargetPlace::Wall {
+            point: [0.0, 1.0, 0.0],
+            normal: [1.0, 0.0],
+        },
+    }
+}
+
 /// Any file a user might import: mostly loadable, with each repair
-/// exercised (including a region over 256 points, which is dropped), and now
+/// exercised (including an area over 256 points, which is dropped), and now
 /// and then each refusal: out-of-range values, an invalid custom model, a
-/// wrong format, a version newer than 2, 257 cameras or 65 custom models.
+/// wrong format, a version newer than 2, 257 cameras, 65 custom models, 65
+/// areas or 65 targets.
 fn junk_scene() -> impl Strategy<Value = SceneFile> {
     let params = (
         prop::sample::select(DoriLevel::ALL.to_vec()),
@@ -235,13 +317,7 @@ fn junk_scene() -> impl Strategy<Value = SceneFile> {
                 custom_ppm,
             },
         );
-    let points = prop_oneof![
-        9 => prop::collection::vec([scene_num(), scene_num()], 0..6),
-        1 => prop::collection::vec([scene_num(), scene_num()], 257..=260),
-    ];
-    let region = prop::option::of(
-        (points, any::<bool>()).prop_map(|(points, enabled)| Region { points, enabled }),
-    );
+    let places = (junk_areas(), prop::option::of(0..5u32), junk_targets());
     (
         (
             area(any_lat()),
@@ -252,10 +328,18 @@ fn junk_scene() -> impl Strategy<Value = SceneFile> {
         prop::collection::vec(junk_placement(), 0..4),
         prop::collection::vec(junk_model(), 0..4),
         params,
-        region,
+        places,
         (
             prop::option::of(junk_provenance()),
-            prop_oneof![46 => Just(0u8), 1 => Just(1u8), 1 => Just(2u8), 1 => Just(3u8), 1 => Just(4u8)],
+            prop_oneof![
+                60 => Just(0u8),
+                1 => Just(1u8),
+                1 => Just(2u8),
+                1 => Just(3u8),
+                1 => Just(4u8),
+                1 => Just(5u8),
+                1 => Just(6u8),
+            ],
         ),
     )
         .prop_map(
@@ -264,21 +348,27 @@ fn junk_scene() -> impl Strategy<Value = SceneFile> {
                 cameras,
                 custom_models,
                 params,
-                region,
+                (areas, limit_figures_to, targets),
                 (provenance, refusal),
             )| {
                 let mut s = SceneFile::new(area, LatLon::new(lat, lon));
                 s.version = version;
-                s.cameras = cameras;
+                // Unique ids within range, as a clean file has.
+                let mut seen = std::collections::HashSet::new();
+                s.cameras = cameras.into_iter().filter(|c| seen.insert(c.id)).collect();
                 s.custom_models = custom_models;
                 s.params = params;
-                s.region = region;
+                s.areas = areas;
+                s.limit_figures_to = limit_figures_to;
+                s.targets = targets;
                 s.provenance = provenance;
                 match refusal {
                     1 => s.format = "observation-scenes".to_owned(),
                     2 => s.version = 3,
                     3 => s.cameras.extend((0..257).map(plain_camera)),
                     4 => s.custom_models.extend((0..65).map(plain_model)),
+                    5 => s.areas.extend((0..65).map(plain_area)),
+                    6 => s.targets.extend((0..65).map(plain_target)),
                     _ => {}
                 }
                 s
@@ -338,7 +428,7 @@ fn clean_scene() -> impl Strategy<Value = SceneFile> {
     });
     let camera = (
         (
-            any::<u32>(),
+            0..=MAX_ITEM_ID,
             text(10),
             prop::sample::select(vec![
                 "custom-model-1",
@@ -415,23 +505,53 @@ fn clean_scene() -> impl Strategy<Value = SceneFile> {
                 custom_ppm,
             },
         );
-    let region = prop::option::of(
+    // Unique ids, tidy names, corners within range (an outline that encloses
+    // nothing is kept as it is), and a limit that names one of them.
+    let areas = prop::collection::vec(
         (
+            prop::option::of(prop::sample::select(AreaLabel::ALL.to_vec())),
+            prop::option::of(prop::sample::select(vec!["Garden", "No. 12", "Verge"])),
             prop::collection::vec([small(), small()], 0..8),
             any::<bool>(),
-        )
-            .prop_map(|(points, enabled)| Region { points, enabled }),
+        ),
+        0..4,
+    )
+    .prop_map(|areas| {
+        areas
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, name, points, enabled))| LabelledArea {
+                id: 3 * i as u32 + 1,
+                label,
+                name: name.map(str::to_owned),
+                points,
+                enabled,
+            })
+            .collect::<Vec<_>>()
+    });
+    let places = (
+        areas,
+        any::<prop::sample::Index>(),
+        any::<bool>(),
+        clean_targets(),
     );
     (
         (area(-90.0..=90.0f64), any_lat(), lon(), 1..=2u32),
         prop::collection::vec(camera, 0..4),
         models,
         params,
-        region,
+        places,
         prop::option::of(provenance),
     )
         .prop_map(
-            |((area, lat, lon, version), cameras, custom_models, params, region, provenance)| {
+            |(
+                (area, lat, lon, version),
+                cameras,
+                custom_models,
+                params,
+                (areas, pick, limited, targets),
+                provenance,
+            )| {
                 let area = match area {
                     AreaRef::Osm { bbox } => AreaRef::Osm {
                         bbox: BBox {
@@ -446,21 +566,72 @@ fn clean_scene() -> impl Strategy<Value = SceneFile> {
                 let origin = LatLon::new(after_one_trip(lat), after_one_trip(lon));
                 let mut s = SceneFile::new(area, origin);
                 s.version = version;
-                s.cameras = cameras;
+                // Unique ids within range, as a clean file has.
+                let mut seen = std::collections::HashSet::new();
+                s.cameras = cameras.into_iter().filter(|c| seen.insert(c.id)).collect();
                 s.custom_models = custom_models;
                 s.params = params;
-                s.region = region;
+                s.limit_figures_to =
+                    (limited && !areas.is_empty()).then(|| areas[pick.index(areas.len())].id);
+                s.areas = areas;
+                s.targets = targets;
                 s.provenance = provenance;
                 s
             },
         )
 }
 
+/// Targets that need no repair: unique ids, tidy names, small rectangles on
+/// the ground and walls with a direction.
+fn clean_targets() -> impl Strategy<Value = Vec<Target>> {
+    let ground = (
+        -500.0..=500.0f32,
+        -500.0..=500.0f32,
+        0.5..=30.0f32,
+        0.5..=30.0f32,
+    )
+        .prop_map(|(x, z, w, d)| TargetPlace::Ground {
+            points: vec![[x, z], [x + w, z], [x + w, z + d], [x, z + d]],
+        });
+    let wall = (
+        [-500.0..=500.0f32, -500.0..=500.0f32, -500.0..=500.0f32],
+        0.0..=360.0f32,
+    )
+        .prop_map(|(point, deg)| {
+            let (s, c) = deg.to_radians().sin_cos();
+            TargetPlace::Wall {
+                point,
+                normal: [c, s],
+            }
+        });
+    prop::collection::vec(
+        (
+            prop::sample::select(vec!["", "Front door", "Side gate"]),
+            prop_oneof![ground, wall],
+        ),
+        0..3,
+    )
+    .prop_map(|targets| {
+        targets
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, at))| Target {
+                id: 2 * i as u32 + 1,
+                name: name.to_owned(),
+                at,
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
 /// Every rule `from_json` enforces, stated as a property of what it returns.
 fn is_clean(input: &SceneFile, loaded: &SceneFile) -> Result<(), TestCaseError> {
     let within = |v: f32| v.is_finite() && v.abs() < 10_000.0;
     prop_assert!(loaded.cameras.len() <= 256 && loaded.custom_models.len() <= 64);
+    let mut camera_ids = std::collections::HashSet::new();
     for c in &loaded.cameras {
+        prop_assert!(camera_ids.insert(c.id), "repeated camera id {}", c.id);
+        prop_assert!(c.id <= MAX_ITEM_ID, "camera id {} out of range", c.id);
         prop_assert!(c.position.iter().all(|&v| within(v)));
         prop_assert!(
             [c.yaw_deg, c.pitch_deg, c.roll_deg]
@@ -504,8 +675,35 @@ fn is_clean(input: &SceneFile, loaded: &SceneFile) -> Result<(), TestCaseError> 
             );
         }
     }
-    if let Some(r) = &loaded.region {
-        prop_assert!(r.points.len() <= 256 && r.points.iter().flatten().all(|&v| within(v)));
+    prop_assert!(loaded.areas.len() <= MAX_AREAS && loaded.targets.len() <= MAX_TARGETS);
+    let tidy = |n: &str| n.trim() == n && n.chars().count() <= 60;
+    let mut area_ids = std::collections::HashSet::new();
+    for a in &loaded.areas {
+        prop_assert!(a.points.len() <= 256 && a.points.iter().flatten().all(|&v| within(v)));
+        prop_assert!(area_ids.insert(a.id), "repeated area id {}", a.id);
+        prop_assert!(a.id <= MAX_ITEM_ID, "area id {} out of range", a.id);
+        if let Some(n) = &a.name {
+            prop_assert!(!n.is_empty() && tidy(n), "{:?}", n);
+        }
+    }
+    if let Some(id) = loaded.limit_figures_to {
+        prop_assert!(area_ids.contains(&id), "the limit names no area");
+    }
+    let mut target_ids = std::collections::HashSet::new();
+    for t in &loaded.targets {
+        prop_assert!(target_ids.insert(t.id), "repeated target id {}", t.id);
+        prop_assert!(t.id <= MAX_ITEM_ID, "target id {} out of range", t.id);
+        prop_assert!(tidy(&t.name), "{:?}", t.name);
+        prop_assert!(t.at.problem().is_none());
+        match &t.at {
+            TargetPlace::Ground { points } => {
+                prop_assert!(outline_problem(points).is_none());
+                prop_assert!(points.iter().flatten().all(|&v| within(v)));
+            }
+            TargetPlace::Wall { point, normal } => {
+                prop_assert!(point.iter().chain(normal).all(|&v| within(v)));
+            }
+        }
     }
     if let Some(p) = &loaded.provenance {
         prop_assert!(
@@ -613,7 +811,7 @@ fn prop_most_junk_scenes_load() {
 
 /// Whether a file breaks a hard limit of docs/design.md's scene-file row, so
 /// that it must be refused: its format or version (newer than 2), more than
-/// 256 cameras or 64 custom models, a position or angle that is not finite or
+/// 256 cameras, 64 custom models, 64 areas or 64 targets, a position or angle that is not finite or
 /// not below 10,000, a subject height outside 0-10 m, a custom density
 /// outside 1-2000 px/m, or an invalid custom model (an id that is not
 /// lowercase letters, digits and dashes, a field of view outside 1-360°, a
@@ -637,6 +835,8 @@ fn breaks_a_limit(s: &SceneFile) -> bool {
         || s.version > 2
         || s.cameras.len() > 256
         || s.custom_models.len() > 64
+        || s.areas.len() > 64
+        || s.targets.len() > 64
         || s.cameras.iter().any(|c| {
             !c.position
                 .iter()
@@ -655,6 +855,8 @@ enum Breach {
     Version(u32),
     Cameras(usize),
     Models(usize),
+    Areas(usize),
+    Targets(usize),
     /// A camera's position (axis 0-2) or angle (3-5: yaw, pitch, roll).
     Placement(usize, f32),
     Subject(f32),
@@ -683,6 +885,8 @@ fn breach() -> impl Strategy<Value = Breach> {
         prop_oneof![Just(3u32), 3..=u32::MAX].prop_map(Breach::Version),
         (257..=300usize).prop_map(Breach::Cameras),
         (65..=80usize).prop_map(Breach::Models),
+        (65..=80usize).prop_map(Breach::Areas),
+        (65..=80usize).prop_map(Breach::Targets),
         (0..6usize, beyond()).prop_map(|(k, v)| Breach::Placement(k, v)),
         prop_oneof![-1.0e3..=-1.0e-3f32, 10.001..=1.0e3f32].prop_map(Breach::Subject),
         prop_oneof![0.0..=0.999f32, 2000.01..=1.0e5f32].prop_map(Breach::Density),
@@ -713,6 +917,11 @@ proptest! {
             Breach::Version(v) => s.version = *v,
             Breach::Cameras(n) => s.cameras = (0..*n as u32).map(plain_camera).collect(),
             Breach::Models(n) => s.custom_models = (0..*n).map(plain_model).collect(),
+            Breach::Areas(n) => {
+                s.areas = (0..*n as u32).map(plain_area).collect();
+                s.limit_figures_to = None;
+            }
+            Breach::Targets(n) => s.targets = (0..*n as u32).map(plain_target).collect(),
             Breach::Placement(k, v) => {
                 let c = &mut s.cameras[0];
                 match k {
@@ -743,6 +952,8 @@ proptest! {
             (
                 Breach::Cameras(_)
                 | Breach::Models(_)
+                | Breach::Areas(_)
+                | Breach::Targets(_)
                 | Breach::Placement(..)
                 | Breach::Subject(_)
                 | Breach::Density(_),

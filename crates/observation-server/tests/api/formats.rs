@@ -25,7 +25,8 @@ async fn the_config_body_is_these_bytes() {
     let want = format!(
         concat!(
             r#"{{"tile_url":"/api/tiles/{{z}}/{{x}}/{{y}}.png","attribution":"© OpenStreetMap contributors","#,
-            r#""min_bbox_side_m":20.0,"max_bbox_side_m":500.0,"demo_available":true,"regions":false,"#,
+            r#""min_bbox_side_m":20.0,"max_bbox_side_m":500.0,"demo_available":true,"regions":false,"geocoder":null,"#,
+            r#""agent_bridge":false,"#,
             r#""version":"{}"}}"#
         ),
         env!("CARGO_PKG_VERSION")

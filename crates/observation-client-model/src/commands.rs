@@ -1,6 +1,7 @@
 //! What the tools, keys and buttons do to the document and the editing
-//! state: a click or a drag with each tool, drawing a region, the keyboard
-//! shortcuts, the camera commands and the custom models.
+//! state: a click or a drag with each tool, the keyboard shortcuts, the
+//! camera commands and the custom models. Drawing areas and marking targets
+//! are in [`crate::places`].
 //!
 //! The client finds what the pointer is over, which keys went down and
 //! which button was clicked, and calls these with an [`EditCtx`] built from
@@ -12,9 +13,9 @@ use crate::toasts::Toasts;
 use observation_core::camera::{
     CameraModel, CameraPlacement, CatalogError, yaw_pitch_from_forward,
 };
-use observation_core::coverage::{CoverageParams, MAX_REGION_POINTS, Region};
-use observation_core::glam::{Vec2, Vec3};
-use observation_core::scene::MAX_CUSTOM_MODELS;
+use observation_core::coverage::CoverageParams;
+use observation_core::glam::Vec3;
+use observation_core::scene::{MAX_CAMERAS, MAX_CUSTOM_MODELS};
 use observation_core::terrain::Terrain;
 
 /// Cameras are mounted this far in front of the surface they are placed on.
@@ -95,10 +96,10 @@ pub enum Key {
     Tool(Tool),
     /// Back to the Select tool, closing the dialogs (Esc).
     Escape,
-    /// Close the region being drawn (Enter).
+    /// Close the outline being drawn (Enter).
     Finish,
-    /// Undo a region corner, clear the picked address or delete the
-    /// selected camera (Backspace, Delete).
+    /// Undo a corner of the outline being drawn, clear the picked address or
+    /// delete the selected camera (Backspace, Delete).
     Erase,
     /// Show or hide the help (`/`, F1).
     Help,
@@ -130,23 +131,24 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: boo
     let pressed = |key: Key| !(modifier_held && key.yields_to_modifiers()) && pressed(key);
     for tool in Tool::ALL {
         if pressed(Key::Tool(tool)) {
-            ctx.editor.tool = tool;
+            ctx.editor.set_tool(tool);
         }
     }
     if pressed(Key::Escape) {
         if ctx.editor.tool == Tool::Select {
             ctx.editor.selected = None;
         }
-        ctx.editor.tool = Tool::Select;
+        ctx.editor.set_tool(Tool::Select);
         ctx.panels.map_open = false;
         ctx.panels.help_open = false;
         ctx.panels.regions_open = false;
         ctx.panels.scenes_open = false;
+        ctx.panels.sheet_open = false;
     }
-    if ctx.editor.tool == Tool::Region {
-        // Drawing a region: Enter closes it, Backspace undoes a corner.
+    if ctx.editor.draws_outline() {
+        // Drawing an outline: Enter closes it, Backspace undoes a corner.
         if pressed(Key::Finish) {
-            finish_region(ctx);
+            crate::places::finish_outline(ctx);
         }
         if pressed(Key::Erase) {
             ctx.editor.region_draft.pop();
@@ -156,6 +158,9 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: boo
         if pressed(Key::Erase) {
             ctx.editor.selected_address = None;
         }
+    } else if ctx.editor.tool == Tool::Target {
+        // Not the camera selected before the tool: targets are deleted in
+        // the Places tab.
     } else if pressed(Key::Erase)
         && let Some(id) = ctx.editor.selected.take()
     {
@@ -177,51 +182,16 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: boo
     pressed(Key::Focus)
 }
 
-/// Adds a region corner, or closes the region when the first corner is clicked.
-pub fn region_click(ctx: &mut EditCtx, p: [f32; 2]) {
-    let editor = &mut *ctx.editor;
-    let closes = editor.region_draft.len() >= 3
-        && editor.region_draft.first().is_some_and(|f| {
-            Vec2::from_array(*f).distance(Vec2::from_array(p)) <= editor.region_snap_m
-        });
-    if closes {
-        finish_region(ctx);
-    } else if editor.region_draft.len() < MAX_REGION_POINTS {
-        editor.region_draft.push(p);
-    } else {
-        ctx.toasts.error(format!(
-            "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
+/// Whether `doc` has room for one more camera; if not, says so. A scene
+/// with more than [`MAX_CAMERAS`] could not be restored or imported.
+fn room_for_a_camera(doc: &Document, toasts: &mut Toasts) -> bool {
+    let room = doc.cameras.len() < MAX_CAMERAS;
+    if !room {
+        toasts.error(format!(
+            "A scene holds at most {MAX_CAMERAS} cameras; delete one you no longer need first"
         ));
     }
-}
-
-/// Turns the draft into the scene's region (nothing to do without corners).
-/// Takes write access to the document even then, as it always has.
-pub fn finish_region(ctx: &mut EditCtx) {
-    let doc = ctx.doc.get_mut();
-    let editor = &mut *ctx.editor;
-    if editor.region_draft.is_empty() {
-        return;
-    }
-    let region = Region {
-        points: std::mem::take(&mut editor.region_draft),
-        enabled: true,
-    };
-    match region.problem() {
-        None => {
-            ctx.toasts.info(format!(
-                "Coverage now counts only the {:.0} m² region",
-                region.area_m2()
-            ));
-            doc.region = Some(region);
-            doc.touch();
-            editor.tool = Tool::Select;
-        }
-        Some(problem) => {
-            editor.region_draft = region.points;
-            ctx.toasts.error(problem.message());
-        }
-    }
+    room
 }
 
 /// A click/tap (press + release without dragging).
@@ -240,6 +210,9 @@ pub fn click(ctx: &mut EditCtx, models: &Models, hit: Option<Hit>) {
             let Some(hit) = hit else { return };
             if let HitTarget::Camera(id) = hit.target {
                 select(editor, panels, id);
+                return;
+            }
+            if !room_for_a_camera(ctx.doc.get(), ctx.toasts) {
                 return;
             }
             let kind = models.kind_of(&editor.place_model);
@@ -263,8 +236,9 @@ pub fn click(ctx: &mut EditCtx, models: &Models, hit: Option<Hit>) {
                 ctx.toasts.info("Click where the new camera should point");
             }
         }
-        // Handled by the client (by `region_click` for Region).
-        Tool::Region | Tool::Address => {}
+        // Handled by the client (with `places::outline_click` and
+        // `places::target_click`).
+        Tool::Areas | Tool::Target | Tool::Address => {}
         Tool::Aim | Tool::Move => {
             if editor.selected.is_none()
                 && let Some(Hit {
@@ -380,6 +354,9 @@ pub fn camera_action(ctx: &mut EditCtx, terrain: &Terrain, id: u32, action: Came
             editor.tool = Tool::Move;
         }
         CameraAction::Duplicate => {
+            if !room_for_a_camera(ctx.doc.get(), ctx.toasts) {
+                return false;
+            }
             let mut copy = c;
             copy.label = String::new();
             // A metre east, at the same height above the ground.
@@ -491,9 +468,9 @@ pub fn set_params(doc: &mut dyn Tracked<Document>, params: CoverageParams) {
 
 /// Removes the region the figures are limited to, if there is one.
 pub fn clear_region(doc: &mut dyn Tracked<Document>) {
-    if doc.get().region.is_some() {
+    if doc.get().region().is_some() {
         let doc = doc.get_mut();
-        doc.region = None;
+        doc.set_region(None);
         doc.touch();
     }
 }
@@ -501,9 +478,9 @@ pub fn clear_region(doc: &mut dyn Tracked<Document>) {
 /// Limits the figures to the region, or stops doing so, if there is one.
 /// The Coverage card calls it only when its checkbox changed.
 pub fn set_region_enabled(doc: &mut dyn Tracked<Document>, enabled: bool) {
-    if doc.get().region.is_some() {
+    if doc.get().region().is_some() {
         let doc = doc.get_mut();
-        if let Some(r) = &mut doc.region {
+        if let Some(r) = doc.region_mut() {
             r.enabled = enabled;
         }
         doc.touch();
@@ -532,10 +509,12 @@ fn invalid_reason(e: CatalogError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::InspectorTab;
+    use crate::editor::{AreaDraw, InspectorTab, TargetShape};
+    use crate::places::{finish_outline, outline_click};
     use crate::testing::Counting;
     use crate::toasts::ToastKind;
     use observation_core::camera::{CUSTOM_ID_PREFIX, CameraKind, Catalog, DoriLevel};
+    use observation_core::coverage::{MAX_REGION_POINTS, Region};
     use observation_core::terrain::FLAT;
 
     #[derive(Default)]
@@ -659,6 +638,26 @@ mod tests {
     }
 
     #[test]
+    fn a_full_scene_takes_no_more_cameras() {
+        let mut f = Fixture::default().with_camera();
+        let first = f.doc.cameras[0].clone();
+        for _ in 1..MAX_CAMERAS {
+            f.doc.add_camera(first.clone());
+        }
+        let full = format!(
+            "A scene holds at most {MAX_CAMERAS} cameras; delete one you no longer need first"
+        );
+        f.editor.tool = Tool::Place;
+        click(&mut f.ctx(), &models(), Some(wall()));
+        assert_eq!(f.doc.cameras.len(), MAX_CAMERAS);
+        assert_eq!(f.toasts(), [(ToastKind::Error, full.as_str())]);
+        f.toasts = Toasts::default();
+        assert_eq!(act(&mut f, 1, CameraAction::Duplicate), (false, 0));
+        assert_eq!(f.doc.cameras.len(), MAX_CAMERAS);
+        assert_eq!(f.toasts(), [(ToastKind::Error, full.as_str())]);
+    }
+
+    #[test]
     fn placing_on_a_camera_selects_it_and_on_nothing_does_nothing() {
         let mut f = Fixture::default().with_camera();
         f.editor.selected = None;
@@ -739,41 +738,42 @@ mod tests {
     #[test]
     fn a_click_near_the_first_corner_closes_a_region_of_three() {
         let mut f = Fixture::default();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
+        f.editor.area_draw = AreaDraw::Limit;
         for p in [[0.0, 0.0], [10.0, 0.0]] {
-            region_click(&mut f.ctx(), p);
+            outline_click(&mut f.ctx(), p);
         }
         // Two corners: near the first one adds a corner rather than closing.
-        region_click(&mut f.ctx(), [0.5, 0.0]);
+        outline_click(&mut f.ctx(), [0.5, 0.0]);
         assert_eq!(f.editor.region_draft.len(), 3);
         f.editor.region_draft[2] = [10.0, 10.0];
-        region_click(&mut f.ctx(), [0.5, 0.5]);
+        outline_click(&mut f.ctx(), [0.5, 0.5]);
         assert_eq!(f.editor.region_draft, Vec::<[f32; 2]>::new());
-        let region = f.doc.region.as_ref().expect("closed");
+        let region = f.doc.region().expect("closed");
         assert_eq!(region.points, [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
         assert!(region.enabled);
         assert_eq!(f.editor.tool, Tool::Select);
         assert_eq!(
             f.toasts(),
-            [(ToastKind::Info, "Coverage now counts only the 50 m² region")]
+            [(ToastKind::Info, "Coverage now counts only the 50 m² area")]
         );
     }
 
     #[test]
-    fn a_region_stops_at_its_most_corners() {
+    fn an_area_stops_at_its_most_corners() {
         let mut f = Fixture::default();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
         f.editor.region_draft = (0..MAX_REGION_POINTS)
             .map(|i| [i as f32 * 100.0, (i % 2) as f32 * 100.0])
             .collect();
-        region_click(&mut f.ctx(), [-50.0, -50.0]);
+        outline_click(&mut f.ctx(), [-50.0, -50.0]);
         assert_eq!(f.editor.region_draft.len(), MAX_REGION_POINTS);
         assert_eq!(
             f.toasts(),
             [(
                 ToastKind::Error,
                 format!(
-                    "A region has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
+                    "An area has at most {MAX_REGION_POINTS} corners; click the first corner to close it"
                 )
                 .as_str()
             )]
@@ -781,15 +781,15 @@ mod tests {
     }
 
     #[test]
-    fn finishing_a_bad_region_keeps_the_draft() {
+    fn finishing_a_bad_outline_keeps_the_draft() {
         let mut f = Fixture::default();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0]];
         let revision = f.doc.revision;
-        finish_region(&mut f.ctx());
+        finish_outline(&mut f.ctx());
         assert_eq!(f.editor.region_draft, [[0.0, 0.0], [10.0, 0.0]]);
-        assert_eq!((f.doc.region.is_none(), f.doc.revision), (true, revision));
-        assert_eq!(f.editor.tool, Tool::Region);
+        assert_eq!((f.doc.areas.is_empty(), f.doc.revision), (true, revision));
+        assert_eq!(f.editor.tool, Tool::Areas);
         assert_eq!(
             f.toasts(),
             [(
@@ -806,6 +806,7 @@ mod tests {
         f.panels.map_open = true;
         f.panels.regions_open = true;
         f.panels.scenes_open = true;
+        f.panels.sheet_open = true;
         assert!(!f.press(&[Key::Tool(Tool::Aim)]));
         assert_eq!(f.editor.tool, Tool::Aim);
         // From another tool, Esc keeps the selection and closes the dialogs.
@@ -815,7 +816,8 @@ mod tests {
             !(f.panels.help_open
                 || f.panels.map_open
                 || f.panels.regions_open
-                || f.panels.scenes_open)
+                || f.panels.scenes_open
+                || f.panels.sheet_open)
         );
         // In Select, it clears the selection.
         f.press(&[Key::Escape]);
@@ -825,7 +827,7 @@ mod tests {
     #[test]
     fn erase_undoes_a_corner_clears_an_address_or_deletes_the_camera() {
         let mut f = Fixture::default().with_camera();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
         f.editor.region_draft = vec![[0.0, 0.0], [1.0, 0.0]];
         f.press(&[Key::Erase]);
         assert_eq!(f.editor.region_draft, [[0.0, 0.0]]);
@@ -869,12 +871,18 @@ mod tests {
     }
 
     #[test]
-    fn enter_finishes_a_region_and_the_toggles_flip() {
+    fn enter_finishes_an_outline_and_the_toggles_flip() {
         let mut f = Fixture::default();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
         f.press(&[Key::Finish]);
-        assert!(f.doc.region.is_some());
+        assert_eq!(f.doc.areas.len(), 1);
+        // The Target tool's outline closes the same way.
+        f.editor.tool = Tool::Target;
+        f.editor.target_shape = TargetShape::Outline;
+        f.editor.region_draft = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]];
+        f.press(&[Key::Finish]);
+        assert_eq!(f.doc.targets.len(), 1);
         f.press(&[Key::Help, Key::Overlay]);
         assert!(f.panels.help_open);
         assert_eq!(f.panels.overlay, OverlayMode::PerCamera);
@@ -898,14 +906,22 @@ mod tests {
         };
         press(&mut f, &mut doc, &[]);
         press(&mut f, &mut doc, &[Key::Focus, Key::Help, Key::Overlay]);
-        press(&mut f, &mut doc, &[Key::Tool(Tool::Region), Key::Erase]);
+        press(&mut f, &mut doc, &[Key::Tool(Tool::Areas), Key::Erase]);
+        // Enter with no corners to finish has nothing to write.
+        press(&mut f, &mut doc, &[Key::Finish]);
         assert_eq!(doc.writes, 0);
-        // Enter takes it even with no corners to finish, as it always has.
+        f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
         press(&mut f, &mut doc, &[Key::Finish]);
         assert_eq!(doc.writes, 1);
         press(&mut f, &mut doc, &[Key::Escape]);
         press(&mut f, &mut doc, &[Key::Erase]);
         assert_eq!((doc.writes, doc.value.cameras.len()), (2, 0));
+        // The Target tool's Delete leaves the camera selected before it.
+        let mut f = Fixture::default().with_camera();
+        let mut doc = Counting::new(std::mem::take(&mut f.doc));
+        f.editor.tool = Tool::Target;
+        press(&mut f, &mut doc, &[Key::Erase, Key::Finish]);
+        assert_eq!((doc.writes, f.editor.selected), (0, Some(1)));
     }
 
     /// Runs a camera action on a counted copy of the fixture's document.
@@ -985,9 +1001,9 @@ mod tests {
         assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Select));
         // Tools that need no selection stay on.
         let mut f = Fixture::default().with_camera();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
         act(&mut f, 1, CameraAction::Delete);
-        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Region));
+        assert_eq!((f.editor.selected, f.editor.tool), (None, Tool::Areas));
     }
 
     fn draft() -> CameraModel {
@@ -1182,7 +1198,7 @@ mod tests {
     }
 
     #[test]
-    fn keys_write_nothing_without_a_selection_or_outside_the_region_tool() {
+    fn keys_write_nothing_without_a_selection_or_outside_the_outline_tools() {
         let mut f = Fixture::default().with_camera();
         f.editor.selected = None;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
@@ -1200,20 +1216,20 @@ mod tests {
         assert_eq!(doc.writes, 0);
         assert_eq!(doc.value.cameras.len(), 1);
         assert_eq!(f.editor.region_draft.len(), 3);
-        assert!(doc.value.region.is_none() && f.toasts.is_empty());
+        assert!(doc.value.areas.is_empty() && f.toasts.is_empty());
     }
 
     #[test]
-    fn a_click_exactly_the_snap_distance_away_closes_the_region() {
+    fn a_click_exactly_the_snap_distance_away_closes_the_outline() {
         let mut f = Fixture::default();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
         f.editor.region_snap_m = 1.0;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
-        region_click(&mut f.ctx(), [0.0, 1.01]);
+        outline_click(&mut f.ctx(), [0.0, 1.01]);
         assert_eq!(f.editor.region_draft.len(), 4);
         f.editor.region_draft.pop();
-        region_click(&mut f.ctx(), [0.0, 1.0]);
-        assert!(f.doc.region.is_some());
+        outline_click(&mut f.ctx(), [0.0, 1.0]);
+        assert_eq!(f.doc.areas.len(), 1);
         assert!(f.editor.region_draft.is_empty());
     }
 
@@ -1222,14 +1238,14 @@ mod tests {
         let mut f = Fixture::default();
         f.press(&[Key::Tool(Tool::Address), Key::Tool(Tool::Select)]);
         assert_eq!(f.editor.tool, Tool::Address);
-        f.press(&[Key::Tool(Tool::Region), Key::Tool(Tool::Place)]);
-        assert_eq!(f.editor.tool, Tool::Region);
+        f.press(&[Key::Tool(Tool::Areas), Key::Tool(Tool::Place)]);
+        assert_eq!(f.editor.tool, Tool::Areas);
     }
 
     #[test]
     fn tool_and_panel_keys_do_nothing_while_a_modifier_is_held() {
         let mut f = Fixture::default().with_camera();
-        let all = [Key::Tool(Tool::Region), Key::Help, Key::Overlay, Key::Focus];
+        let all = [Key::Tool(Tool::Areas), Key::Help, Key::Overlay, Key::Focus];
         let focus = super::keys(&mut f.ctx(), &|k| all.contains(&k), true);
         assert!(!focus);
         assert_eq!(f.editor.tool, Tool::Select);
@@ -1241,16 +1257,17 @@ mod tests {
         }
         // Without the modifier they work as before.
         assert!(super::keys(&mut f.ctx(), &|k| all.contains(&k), false));
-        assert_eq!(f.editor.tool, Tool::Region);
+        assert_eq!(f.editor.tool, Tool::Areas);
     }
 
     #[test]
     fn esc_enter_and_delete_work_with_a_modifier_held() {
         let mut f = Fixture::default().with_camera();
-        f.editor.tool = Tool::Region;
+        f.editor.tool = Tool::Areas;
+        f.editor.area_draw = AreaDraw::Limit;
         f.editor.region_draft = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
         super::keys(&mut f.ctx(), &|k| k == Key::Finish, true);
-        assert!(f.doc.region.is_some());
+        assert!(f.doc.region().is_some());
         super::keys(&mut f.ctx(), &|k| k == Key::Erase, true);
         assert!(f.doc.cameras.is_empty());
         f.panels.help_open = true;
@@ -1282,10 +1299,10 @@ mod tests {
     /// region, at revision `r` once set up.
     fn counted() -> (Counting<Document>, u64) {
         let mut f = Fixture::default().with_camera();
-        f.doc.region = Some(Region {
+        f.doc.set_region(Some(Region {
             points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
             enabled: true,
-        });
+        }));
         let r = f.doc.revision;
         (Counting::new(f.doc), r)
     }
@@ -1313,7 +1330,7 @@ mod tests {
     fn clear_region_removes_it_once() {
         let (mut doc, r) = counted();
         clear_region(&mut doc);
-        assert_eq!(doc.value.region, None);
+        assert_eq!(doc.value.region(), None);
         assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
 
         clear_region(&mut doc);
@@ -1324,15 +1341,15 @@ mod tests {
     fn set_region_enabled_turns_the_limit_off_and_on() {
         let (mut doc, r) = counted();
         set_region_enabled(&mut doc, false);
-        assert_eq!(doc.value.region.as_ref().map(|g| g.enabled), Some(false));
+        assert_eq!(doc.value.region().map(|g| g.enabled), Some(false));
         assert_eq!((doc.writes, doc.value.revision), (1, r + 1));
         set_region_enabled(&mut doc, true);
-        assert_eq!(doc.value.region.as_ref().map(|g| g.enabled), Some(true));
+        assert_eq!(doc.value.region().map(|g| g.enabled), Some(true));
         assert_eq!((doc.writes, doc.value.revision), (2, r + 2));
 
-        doc.value.region = None;
+        doc.value.set_region(None);
         set_region_enabled(&mut doc, true);
-        assert_eq!(doc.value.region, None, "no region to enable");
+        assert_eq!(doc.value.region(), None, "no region to enable");
         assert_eq!((doc.writes, doc.value.revision), (2, r + 2));
     }
 

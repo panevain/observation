@@ -88,6 +88,13 @@ impl GuardedHttpBuilder {
         Self(self.0.connect_timeout(timeout))
     }
 
+    /// Ignores the proxy environment variables even when private addresses
+    /// are allowed (which otherwise honours them): for a client that only
+    /// talks to this computer, where a proxy would reach the wrong host.
+    pub fn no_proxy(self) -> Self {
+        Self(self.0.no_proxy())
+    }
+
     pub fn build(self) -> Result<GuardedHttp, BuildError> {
         Ok(GuardedHttp {
             client: self.0.build()?,

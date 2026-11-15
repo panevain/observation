@@ -5,10 +5,9 @@
 //! keeps the counts.
 
 use observation_core::camera::{CameraModel, CameraPlacement, DoriLevel};
-#[cfg(doc)]
-use observation_core::coverage::CoverageParams;
 use observation_core::coverage::{
-    CoverageCounts, CoverageStats, RegionMask, Sight, StaticLayers, Tally,
+    CoverageCounts, CoverageParams, CoverageStats, RegionMask, Sight, StaticLayers, Tally,
+    Visibility,
 };
 use observation_core::coverage_job::JobResult;
 use observation_core::frustum::ViewCone;
@@ -20,6 +19,7 @@ use crate::editor::OverlayMode;
 use backend::CoverageBackend;
 
 pub mod backend;
+pub mod preview;
 
 #[derive(Debug, Default)]
 pub struct CoverageState {
@@ -114,6 +114,45 @@ impl CoverageState {
         Some((sight.ground_within(range), sight.facade_within(range)))
     }
 
+    /// The cells a camera sees at the selected detail level, as one list.
+    pub fn visibility(&self, id: u32) -> Option<Visibility> {
+        let (_, sight) = self.cams.get(&id)?;
+        let range = *self.rungs.get(self.selected)?.counted.get(&id)?;
+        Some(sight.within(range))
+    }
+
+    /// A camera's cached sight lines, which may still fall short of the
+    /// range now needed while they are being recomputed (see
+    /// [`Sight::covers`]).
+    pub fn sight(&self, id: u32) -> Option<&Sight> {
+        self.cams.get(&id).map(|(_, s)| s)
+    }
+
+    /// Camera `c`'s sight lines if they are current: worked out for its
+    /// pose and `m`'s fields of view at `params`' subject height, and
+    /// reaching as far as `params` need for `m`. `None` while they are being
+    /// worked out (again), when [`Self::sight`] may still hold those of an
+    /// earlier pose or model.
+    pub fn current_sight(
+        &self,
+        c: &CameraPlacement,
+        m: &CameraModel,
+        params: &CoverageParams,
+    ) -> Option<&Sight> {
+        let (k, sight) = self.cams.get(&c.id)?;
+        (*k == key(c, m, params.subject_height_m) && sight.covers(params.sight_range_m(m)))
+            .then_some(sight)
+    }
+
+    /// What [`Self::visibility`] of a camera is worked out from: the cache
+    /// key of its sight lines, how far they reach and the range counted at
+    /// the selected level. When none of them changed, neither did the cells.
+    pub fn visibility_key(&self, id: u32) -> Option<(u64, f32, f32)> {
+        let (key, sight) = self.cams.get(&id)?;
+        let range = *self.rungs.get(self.selected)?.counted.get(&id)?;
+        Some((*key, sight.range, range))
+    }
+
     /// The figures at each [`CoverageParams::ladder`] level under the current
     /// lighting, in ladder order.
     pub fn ladder(&self) -> impl Iterator<Item = (DoriLevel, &CoverageStats)> {
@@ -201,10 +240,10 @@ pub fn update(
     let params = scene.params;
 
     // The region first: every count is limited to it.
-    let usable = scene.region.as_ref().filter(|r| r.problem().is_none());
+    let usable = scene.region().filter(|r| r.problem().is_none());
     let mut region_changed = false;
     if state.region.as_ref().map(|(p, _)| p) != usable.map(|r| &r.points) {
-        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, r)));
+        state.region = usable.map(|r| (r.points.clone(), RegionMask::new(layers, &r.points)));
         region_changed = true;
     }
     let on = usable.is_some_and(|r| r.enabled);

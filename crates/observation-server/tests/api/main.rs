@@ -3,12 +3,14 @@
 //! The production adapters' socket tests are in `tests/adapters.rs`.
 #![allow(clippy::unwrap_used)] // integration-test helpers live outside `#[test]` fns
 
+mod agent;
 mod area;
 mod basics;
 #[path = "../common/mod.rs"]
 mod common;
 mod elevation;
 mod formats;
+mod geocode;
 mod harness;
 mod limits;
 mod overpass;

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::platform::{
-    Clock, ColorScheme, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore, PickedFile,
-    Reply, SaveFailure,
+    Clock, ColorScheme, Failure, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore,
+    PickedFile, Reply, SaveFailure, StatusReply, StreamEvent, StreamStop,
 };
 use observation_core::coverage::StaticLayers;
 use observation_core::coverage_job::{JobRequest, JobResponse};
@@ -21,8 +21,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-type Done = Box<dyn FnOnce(Reply) + Send>;
+type Done = Box<dyn FnOnce(StatusReply) + Send>;
 type Listener = Box<dyn Fn(Reply) + Send>;
+type Follower = Box<dyn Fn(StreamEvent) + Send>;
 
 /// Holds requests until the test answers them, in any order, or answers
 /// each one at once (see [`FakeHttp::answering`]).
@@ -35,6 +36,8 @@ pub struct FakeHttp {
     sent: Mutex<Vec<HttpRequest>>,
     /// Subscriptions: url, event name, listener.
     streams: Mutex<Vec<(String, String, Listener)>>,
+    /// Followed streams: url, event name, stop flag, listener.
+    followed: Mutex<Vec<(String, String, StreamStop, Follower)>>,
 }
 
 impl std::fmt::Debug for FakeHttp {
@@ -89,17 +92,43 @@ impl FakeHttp {
 
     /// Answers the oldest pending request for `url`; false if there is none.
     pub fn respond(&self, url: &str, reply: Reply) -> bool {
-        self.respond_where(|r| r.url == url, reply)
+        self.respond_where(|r| r.url == url, without_status(reply))
     }
 
     /// Answers the oldest pending `method` request for `url`; false if there is none.
     pub fn respond_to(&self, method: &str, url: &str, reply: Reply) -> bool {
-        self.respond_where(|r| r.method == method && r.url == url, reply)
+        self.respond_where(
+            |r| r.method == method && r.url == url,
+            without_status(reply),
+        )
+    }
+
+    /// Answers the oldest pending `method` request for `url` with a failed
+    /// reply of HTTP `status`, with `Retry-After` if given; false if there
+    /// is none. (A [`Self::respond_to`] error is a failure with no status.)
+    pub fn fail_to(
+        &self,
+        method: &str,
+        url: &str,
+        status: u16,
+        retry_after_s: Option<u64>,
+        message: &str,
+    ) -> bool {
+        let failure = Failure {
+            status: Some(status),
+            retry_after_s,
+            message: message.to_owned(),
+        };
+        self.respond_where(|r| r.method == method && r.url == url, Err(failure))
     }
 
     /// Answers the pending request at `index` (oldest first, as in
     /// [`Self::pending`]); false if there is none.
     pub fn respond_at(&self, index: usize, reply: Reply) -> bool {
+        self.respond_status_at(index, without_status(reply))
+    }
+
+    fn respond_status_at(&self, index: usize, reply: StatusReply) -> bool {
         let done = {
             let mut pending = lock(&self.pending);
             if index >= pending.len() {
@@ -112,9 +141,9 @@ impl FakeHttp {
         true
     }
 
-    fn respond_where(&self, matches: impl Fn(&HttpRequest) -> bool, reply: Reply) -> bool {
+    fn respond_where(&self, matches: impl Fn(&HttpRequest) -> bool, reply: StatusReply) -> bool {
         let index = lock(&self.pending).iter().position(|(r, _)| matches(r));
-        index.is_some_and(|i| self.respond_at(i, reply))
+        index.is_some_and(|i| self.respond_status_at(i, reply))
     }
 
     /// Delivers `reply` to every subscriber of `url`; returns how many there
@@ -130,6 +159,32 @@ impl FakeHttp {
         n
     }
 
+    /// Delivers `event` to every follower of `url` that has not been
+    /// stopped; returns how many there were. A [`StreamEvent::Closed`] ends
+    /// the stream, as the browser's does.
+    pub fn emit_follow(&self, url: &str, event: &StreamEvent) -> usize {
+        let mut n = 0;
+        call_unlocked(&self.followed, |(u, _, stop, on)| {
+            if u == url && !stop.is_stopped() {
+                on(event.clone());
+                n += 1;
+            }
+        });
+        if matches!(event, StreamEvent::Closed(_)) {
+            lock(&self.followed).retain(|(u, ..)| u != url);
+        }
+        n
+    }
+
+    /// The url and event name of every followed stream not stopped yet, in order.
+    pub fn followed(&self) -> Vec<(String, String)> {
+        lock(&self.followed)
+            .iter()
+            .filter(|(_, _, stop, _)| !stop.is_stopped())
+            .map(|(u, e, _, _)| (u.clone(), e.clone()))
+            .collect()
+    }
+
     /// The url and event name of every subscription, in order.
     pub fn subscriptions(&self) -> Vec<(String, String)> {
         lock(&self.streams)
@@ -139,17 +194,38 @@ impl FakeHttp {
     }
 }
 
+fn without_status(reply: Reply) -> StatusReply {
+    reply.map_err(Failure::without_status)
+}
+
 impl Http for FakeHttp {
     fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>) {
+        self.fetch_status(
+            req,
+            Box::new(move |reply| done(reply.map_err(|f| f.message))),
+        );
+    }
+
+    fn fetch_status(&self, req: HttpRequest, done: Box<dyn FnOnce(StatusReply) + Send>) {
         lock(&self.sent).push(req.clone());
         match &self.immediate {
-            Some(reply) => done(reply.clone()),
+            Some(reply) => done(without_status(reply.clone())),
             None => lock(&self.pending).push((req, done)),
         }
     }
 
     fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>) {
         lock(&self.streams).push((url.to_owned(), event.to_owned(), on));
+    }
+
+    fn follow(
+        &self,
+        url: &str,
+        event: &str,
+        stop: StreamStop,
+        on: Box<dyn Fn(StreamEvent) + Send>,
+    ) {
+        lock(&self.followed).push((url.to_owned(), event.to_owned(), stop, on));
     }
 }
 
@@ -320,6 +396,58 @@ impl FileDialogs for FakeFiles {
 
     fn pick_text(&self, accept: &str, done: Picked) {
         lock(&self.pickers).push((accept.to_owned(), done));
+    }
+}
+
+/// Records the sheets drawn as PNG and printed; a PNG is answered at once,
+/// with success or with the refusal set.
+#[derive(Debug, Default)]
+pub struct FakeSheetOutput {
+    /// The name and page count of every PNG asked for.
+    pngs: Mutex<Vec<(String, u32)>>,
+    /// The page count of every sheet printed.
+    prints: Mutex<Vec<u32>>,
+    /// Why every request fails, when set.
+    refuse: Mutex<Option<String>>,
+}
+
+impl FakeSheetOutput {
+    /// From now on every request fails with `why` (or succeeds again with
+    /// `None`); a refused request is not recorded.
+    pub fn refuse(&self, why: Option<&str>) {
+        *lock(&self.refuse) = why.map(str::to_owned);
+    }
+
+    pub fn pngs(&self) -> Vec<(String, u32)> {
+        lock(&self.pngs).clone()
+    }
+
+    pub fn prints(&self) -> Vec<u32> {
+        lock(&self.prints).clone()
+    }
+}
+
+impl crate::platform::SheetOutput for FakeSheetOutput {
+    fn download_png(
+        &self,
+        name: &str,
+        sheet: &observation_core::evidence::SheetSvg,
+        done: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) {
+        if let Some(why) = lock(&self.refuse).clone() {
+            done(Err(why));
+            return;
+        }
+        lock(&self.pngs).push((name.to_owned(), sheet.pages));
+        done(Ok(()));
+    }
+
+    fn print(&self, sheet: &observation_core::evidence::SheetSvg) -> Result<(), String> {
+        if let Some(why) = lock(&self.refuse).clone() {
+            return Err(why);
+        }
+        lock(&self.prints).push(sheet.pages);
+        Ok(())
     }
 }
 

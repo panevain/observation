@@ -29,6 +29,16 @@ The MCP server for AI agents is an image too. It speaks MCP over stdio and works
 docker run --rm -i --network none ghcr.io/panevain/observation-mcp   # or `docker build --target mcp`
 ```
 
+#### AI agents
+
+The MCP server (`observation-mcp`) gives an agent the camera catalogue, scene editing and coverage figures, and the places you and the agent both name: areas labelled as your own, a neighbour's or public, and targets such as a front door. It reports where each camera's footage lands, whether the model rules out that a camera sees a target or a point and why, and the largest stretches of street no camera sees. To let it see what you have open in the app, and work on your real area instead of the demo street, start the server with the agent bridge on and open the app on the same computer:
+
+```sh
+OBS_AGENT_BRIDGE=on OBS_BIND=127.0.0.1:8080 cargo run -p observation-server   # or the image with --network host
+```
+
+Then click **Connect agent** in the app and give the agent the code it shows (see [Connect an AI agent](docs/usage.md#connect-an-ai-agent)). The agent can then propose changes to your scene (`propose_changes`), which you review on a card in the app, with a ghost preview and before and after figures, and accept or reject as a whole; nothing changes until you accept (see [Review a proposal](docs/usage.md#review-a-proposal)). The bridge answers only requests from this computer, and the server refuses to start with it on behind a reverse proxy (`OBS_TRUSTED_PROXIES`). The MCP server must reach the app's server on 127.0.0.1: run its binary on the host (`cargo run -p observation-mcp`, as `.mcp.json` does), or the image with `--network host` instead of `--network none` (on Linux; the image then needs the app's server on the host's loopback). Under Docker's port publishing the app's server sees every request as coming from the Docker network, not loopback, so the bridge refuses it: run the app's server on the host or with `--network host` too. See [Agent bridge](docs/design.md#agent-bridge).
+
 Open <http://localhost:8080>. `OBS_CONTACT` goes into the `User-Agent` sent to OpenStreetMap services so they can reach you; set it to something real.
 
 ### Docker Compose, with local map data
@@ -86,7 +96,8 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, region management relay, static files |
 | `crates/observation-regions` | Optional region agent (`regions` image target): imports Geofabrik extracts into local Overpass databases and answers queries for them |
 | `crates/observation-tokens` | Design token values (scales, minimum viewport, UI colour roles) shared by the client theme and `web/index.html`'s CSS, which trunk writes with its `token-css` binary |
-| `crates/observation-mcp` | MCP server for AI agents (stdio, `mcp` image target): the camera catalogue, scene editing and coverage figures on the demo street, offline |
+| `crates/observation-mcp` | MCP server for AI agents (stdio, `mcp` image target): the camera catalogue, scene editing and coverage figures on the demo street, offline, or on the user's real area when connected to the open app |
+| `crates/observation-agent-api` | The agent bridge's contract between the browser, the server and the MCP server: routes, limits, versioned bodies, and the agent's proposals and the user's decisions |
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate (`tokens.css` is generated) |
 | `docs/` | [usage](docs/usage.md), [design](docs/design.md), [camera catalogue](docs/camera-catalog.md) |

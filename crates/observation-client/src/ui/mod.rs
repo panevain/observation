@@ -1,12 +1,14 @@
 //! egui front-end: docked panels around the 3D viewport, plus overlays.
 
 mod actions;
+mod agent;
 mod inspector;
 pub mod map_picker;
 mod overlays;
 mod provenance;
 mod regions;
 mod scenes;
+mod sheet;
 mod toolbar;
 mod widgets;
 
@@ -35,6 +37,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         let changes = SchemeChanges::watch(&*Platform::of(app.world()).scheme);
         app.init_resource::<MapPicker>()
+            .init_resource::<sheet::SheetResults>()
             .insert_resource(changes)
             // Before every `Tokens` reader, so the panels and the scene switch
             // in the same frame.
@@ -89,6 +92,8 @@ pub struct UiData<'w> {
     pub scene: ResMut<'w, Scene>,
     pub models: ResMut<'w, Models>,
     pub coverage: Res<'w, CoverageState>,
+    /// The splits and verdicts worked out for the panels.
+    pub footage: ResMut<'w, crate::state::Footage>,
     pub addresses: Res<'w, crate::addresses::CameraAddresses>,
     pub area: Option<Res<'w, Area>>,
     pub loading: ResMut<'w, Loading>,
@@ -96,11 +101,16 @@ pub struct UiData<'w> {
     pub history_commands: MessageWriter<'w, HistoryCommand>,
     pub tiles: ResMut<'w, Tiles>,
     pub picker: ResMut<'w, MapPicker>,
+    pub place_search: ResMut<'w, crate::net::PlaceSearch>,
     pub config: Res<'w, crate::net::ServerConfig>,
     pub layout: ResMut<'w, crate::state::UiLayout>,
     pub font: ResMut<'w, UiFont>,
     pub address_jump: ResMut<'w, crate::state::AddressJump>,
     pub regions: ResMut<'w, crate::regions::Regions>,
+    /// The link to a local agent (Connect agent), and the proposed scene's
+    /// figures for the proposal card.
+    pub agent: ResMut<'w, crate::agent::AgentLinkRes>,
+    pub proposal_coverage: Res<'w, crate::coverage::ProposalCoverage>,
 }
 
 fn draw_ui(
@@ -111,6 +121,7 @@ fn draw_ui(
     mut load: MessageWriter<LoadArea>,
     mut persist: MessageWriter<PersistAction>,
     platform: Res<Platform>,
+    sheet_results: Res<sheet::SheetResults>,
 ) -> Result {
     let clock = &*platform.clock;
     // Register tile textures with egui before borrowing the context.
@@ -119,6 +130,10 @@ fn draw_ui(
     });
     let ctx = contexts.ctx_mut()?.clone();
     let t = *d.tokens;
+    if d.area.as_ref().is_some_and(|a| a.is_changed()) {
+        // Cells and building indices of the old area mean nothing now.
+        d.footage.reset();
+    }
     // Fonts set by `apply_theme` take effect from the next pass; until then
     // the UI's font families do not exist and laying out text would panic.
     if !ctx.fonts(|f| f.definitions().families.contains_key(&strong_family())) {
@@ -220,7 +235,12 @@ fn draw_ui(
     let anchor = d
         .editor
         .selected
-        .filter(|_| !matches!(d.editor.tool, Tool::Place | Tool::Region | Tool::Address))
+        .filter(|_| {
+            !matches!(
+                d.editor.tool,
+                Tool::Place | Tool::Areas | Tool::Target | Tool::Address
+            )
+        })
         .and_then(|id| d.scene.camera(id))
         .zip(camera.single().ok())
         .and_then(|(c, (cam, gt))| cam.world_to_viewport(gt, Vec3::from_array(c.position)).ok())
@@ -261,6 +281,16 @@ fn draw_ui(
     if d.panels.help_open {
         overlays::help(&ctx, &t, &mut d.panels);
     }
+    sheet::drain(&sheet_results, &mut d);
+    if d.panels.sheet_open {
+        sheet::window(&ctx, &t, &mut d, &platform, &sheet_results);
+    }
+    if d.agent.dialog_open {
+        agent::window(&ctx, &t, &mut d.agent, &*platform.http);
+    }
+    if d.agent.card_open {
+        agent::proposal_card(&ctx, &t, &mut d, viewport_rect, &*platform.http, clock);
+    }
     if d.panels.regions_open {
         regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);
     }
@@ -289,6 +319,7 @@ fn draw_ui(
             &ctx,
             &t,
             &mut d.picker,
+            &mut d.place_search,
             &tile_draws,
             &local,
             &d.config,

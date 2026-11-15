@@ -13,6 +13,7 @@ use observation_client_model::commands::Tracked;
 use observation_client_model::document::{self, Document};
 use observation_client_model::editor;
 pub use observation_client_model::editor::{InspectorTab, OverlayMode, Tool, select};
+use observation_client_model::footage;
 use observation_client_model::net::AreaRequests;
 use observation_client_model::toasts;
 pub use observation_client_model::toasts::{ToastAction, ToastKind};
@@ -108,6 +109,11 @@ impl Tracked<document::Models> for TrackModels<'_, '_> {
     }
 }
 
+/// Where each camera's footage lands and its verdicts on the targets, as
+/// far as worked out: only the UI uses it, and only while a panel shows it.
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct Footage(footage::FootageState);
+
 /// The currently loaded area and its analysis layers.
 #[derive(Resource)]
 pub struct Area {
@@ -132,8 +138,8 @@ impl Area {
 }
 
 /// The ground a coverage grid spans, world `[x, z]`. Coverage is computed
-/// only here, so region corners are kept inside it, and the Region tool marks
-/// its edge.
+/// only here, so area and target corners are kept inside it, and the
+/// outline tools mark its edge.
 pub fn grid_bounds(grid: &GroundGrid) -> Rect {
     Rect::from_corners(grid.min, grid.max())
 }

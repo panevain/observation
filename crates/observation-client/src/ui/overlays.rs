@@ -161,7 +161,7 @@ pub fn tool_cursor(ctx: &egui::Context, vp: egui::Rect, tool: Tool) {
         Tool::Place => egui::CursorIcon::Copy,
         Tool::Aim => egui::CursorIcon::Crosshair,
         Tool::Move => egui::CursorIcon::Move,
-        Tool::Region => egui::CursorIcon::Cell,
+        Tool::Areas | Tool::Target => egui::CursorIcon::Cell,
         Tool::Address => egui::CursorIcon::Help,
     });
 }
@@ -208,6 +208,22 @@ pub fn address_card(
         });
 }
 
+/// What finishing the outline being drawn will do.
+fn draft_purpose(d: &UiData) -> String {
+    use observation_client_model::editor::AreaDraw;
+    if d.editor.tool == Tool::Target {
+        return "new target".to_owned();
+    }
+    match d.editor.area_draw {
+        AreaDraw::New => "new area".to_owned(),
+        AreaDraw::Limit => "area to limit the figures to".to_owned(),
+        AreaDraw::Redraw(id) => d.scene.areas.iter().find(|a| a.id == id).map_or_else(
+            || "new area".to_owned(),
+            |a| format!("redraw {}", observation_client_model::places::area_title(a)),
+        ),
+    }
+}
+
 /// What the pill says about the selection (or, for Place, the model).
 fn selection_chip(
     ui: &mut egui::Ui,
@@ -227,7 +243,7 @@ fn selection_chip(
                         .get(&d.editor.place_model)
                         .map_or_else(|| d.editor.place_model.clone(), |m| m.display_name());
                     ui.label(RichText::new(format!("New: {model}")).strong());
-                } else if d.editor.tool == Tool::Region {
+                } else if d.editor.draws_outline() {
                     let n = d.editor.region_draft.len();
                     let text = match n {
                         0 => "No corners yet".to_owned(),
@@ -235,6 +251,11 @@ fn selection_chip(
                         n => format!("{n} corners"),
                     };
                     ui.label(RichText::new(text).strong());
+                    ui.label(RichText::new(draft_purpose(d)).color(t.text_muted));
+                } else if d.editor.tool == Tool::Target {
+                    ui.label(
+                        RichText::new("Wall: 1 m patch · ground: 1 m square").color(t.text_muted),
+                    );
                 } else if d.editor.tool == Tool::Address {
                     match d.editor.selected_address.as_ref().map(address_label) {
                         Some(a) => {
@@ -419,7 +440,8 @@ pub fn help(ctx: &egui::Context, t: &Tokens, panels: &mut Panels) {
             egui::Grid::new("keys").num_columns(2).spacing([t.space.lg, t.space.xs]).show(ui, |ui| {
                 for (k, v) in [
                     ("V / P / A / M", "Select / Place / Aim / Move tool"),
-                    ("R", "Draw a region to limit the coverage figures to"),
+                    ("R", "Areas tool: outline and label your land, a neighbour's or public ground"),
+                    ("T", "Target tool: mark a door, a gate or a path"),
                     ("L", "Address tool: point at a building to see its address"),
                     ("Drag", "Orbit (or aim/move with those tools)"),
                     ("Right-drag · Shift-drag", "Pan"),
@@ -427,6 +449,7 @@ pub fn help(ctx: &egui::Context, t: &Tokens, panels: &mut Panels) {
                     ("Two-finger drag", "Pan (touch)"),
                     ("F", "Focus selected camera"),
                     ("N", "Toggle overlap / per-camera colours"),
+                    ("S", "Share the point under the pointer with a connected agent"),
                     ("Delete", "Remove selected camera"),
                     ("Esc", "Back to Select / close dialogs"),
                     ("?", "This help"),

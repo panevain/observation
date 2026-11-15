@@ -15,6 +15,7 @@ A Cargo workspace under `crates/` ([Workspace in docs/design.md](docs/design.md#
 - `observation-server`: the axum server binary (Overpass pipeline, bundle cache, tile proxy, elevation, demo street, region relay, static files).
 - `observation-regions`: the optional region agent binary (Geofabrik import into local Overpass, queries).
 - `observation-regions-api`: the HTTP contract between the server and the region agent.
+- `observation-agent-api`: the HTTP contract of the agent bridge between the browser, the server and the MCP server.
 - `observation-upstream`: every outbound HTTP request of the server and the agent, behind SSRF guards.
 - `observation-tokens`: design token values, and the `token-css` binary that trunk runs to write `web/tokens.css`.
 - `observation-mcp`: an MCP server over stdio (spec 2026-07-28, `rmcp`) exposing the camera catalogue, scene editing and coverage on the demo street, also published as an image (Dockerfile target `mcp`). `.mcp.json` registers it as the `observation` server for Claude Code.

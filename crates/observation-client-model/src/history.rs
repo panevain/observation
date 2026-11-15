@@ -1,5 +1,5 @@
 //! Undo and redo for the whole document: cameras, analysis settings, the
-//! region, custom models and the loaded area.
+//! areas and targets, custom models and the loaded area.
 //!
 //! Edits are recorded as snapshots once they settle: the client says when an
 //! edit is in progress (a drag, a held key, a focused text field, an area in
@@ -11,6 +11,7 @@ use crate::editor::{Editor, Tool};
 use crate::toasts::{ToastAction, Toasts};
 use observation_core::camera::CameraModel;
 use observation_core::scene::AreaRef;
+use observation_core::scene::agent_log::{AgentLogEntry, MAX_AGENT_LOG};
 
 /// Steps kept in each direction.
 pub const MAX_STEPS: usize = 100;
@@ -155,14 +156,20 @@ impl History {
         if editor.selected.is_none() && editor.tool.needs_selection() {
             editor.tool = Tool::Select;
         }
+        editor.forget_missing_places(doc);
         self.last = Some(target);
         self.last_revision = doc.revision;
         Some(StepOutcome { reload })
     }
 }
 
-/// A step that removes work worth offering an Undo for, described.
+/// A step that removes work, or applies an agent's proposal, worth offering
+/// an Undo for, described.
 fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
+    // An accepted proposal can change much at once: always offer its Undo.
+    if let Some(entry) = accepted_proposal(before, after) {
+        return Some(format!("Applied the agent's proposal: {}", entry.summary));
+    }
     let lost = before
         .cameras
         .iter()
@@ -172,7 +179,9 @@ fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
         return Some(format!("New area loaded; {lost} camera(s) removed"));
     }
     match lost {
-        0 => deleted_model(before, after).map(|m| format!("Deleted model {}", m.display_name())),
+        0 => deleted_model(before, after)
+            .map(|m| format!("Deleted model {}", m.display_name()))
+            .or_else(|| deleted_place(before, after)),
         1 => before
             .cameras
             .iter()
@@ -191,15 +200,23 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         origin,
         cameras,
         params,
-        region,
+        areas,
+        limit_figures_to,
+        targets,
         custom_models: b,
+        agent_log,
+        accepted_proposals,
     } = before;
     let a = &after.custom_models;
     let rest_equal = *area == after.area
         && *origin == after.origin
         && *cameras == after.cameras
         && *params == after.params
-        && *region == after.region;
+        && *areas == after.areas
+        && *limit_figures_to == after.limit_figures_to
+        && *targets == after.targets
+        && *agent_log == after.agent_log
+        && *accepted_proposals == after.accepted_proposals;
     if !rest_equal || b.len() != a.len() + 1 {
         return None;
     }
@@ -208,10 +225,55 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
     b.get(i).filter(|_| b.get(i + 1..) == a.get(i..))
 }
 
+/// The area or target a step deleted, described, when that is all it did
+/// to them (as the Places tab does; loading another area clears them along
+/// with the cameras, which the caller reports).
+fn deleted_place(before: &Snapshot, after: &Snapshot) -> Option<String> {
+    if before.area != after.area {
+        return None;
+    }
+    let gone_areas: Vec<_> = before
+        .areas
+        .iter()
+        .filter(|a| !after.areas.iter().any(|b| b.id == a.id))
+        .collect();
+    let gone_targets: Vec<_> = before
+        .targets
+        .iter()
+        .filter(|t| !after.targets.iter().any(|b| b.id == t.id))
+        .collect();
+    match (gone_areas.as_slice(), gone_targets.as_slice()) {
+        ([], []) => None,
+        ([a], []) => Some(format!("Deleted {}", crate::places::area_title(a))),
+        ([], [t]) => Some(format!("Deleted {}", crate::places::target_title(t))),
+        (a, t) => Some(format!("{} areas and {} targets removed", a.len(), t.len())),
+    }
+}
+
+/// The proposal whose acceptance made the step from `before` to `after`:
+/// one taken in ([`Snapshot::accepted_proposals`] moved), on the same area,
+/// with one entry appended to an otherwise unchanged change log (and, with
+/// the log full, its oldest entry dropped). An import that brings a log one
+/// entry longer is not one.
+fn accepted_proposal<'a>(before: &Snapshot, after: &'a Snapshot) -> Option<&'a AgentLogEntry> {
+    if before.accepted_proposals == after.accepted_proposals || before.area != after.area {
+        return None;
+    }
+    let (b, a) = (before.agent_log.as_slice(), after.agent_log.as_slice());
+    let (last, kept) = a.split_last()?;
+    let appended = b == kept;
+    let appended_to_full = a.len() == MAX_AGENT_LOG && b.len() == MAX_AGENT_LOG && b[1..] == *kept;
+    (appended || appended_to_full).then_some(last)
+}
+
 /// A short name for the change from `before` to `after`.
 fn describe(before: &Snapshot, after: &Snapshot) -> String {
     if before.area != after.area {
         return "area change".to_owned();
+    }
+    // An accepted proposal is one step, named after its summary.
+    if let Some(entry) = accepted_proposal(before, after) {
+        return format!("Agent: {}", entry.summary);
     }
     let added: Vec<_> = after
         .cameras
@@ -236,7 +298,10 @@ fn describe(before: &Snapshot, after: &Snapshot) -> String {
         .collect();
     match changed.as_slice() {
         [c] => format!("edit {}", c.label),
-        [] if before.region != after.region => "region change".to_owned(),
+        [] if before.areas != after.areas || before.limit_figures_to != after.limit_figures_to => {
+            "drawn areas".to_owned()
+        }
+        [] if before.targets != after.targets => "target change".to_owned(),
         [] if before.params != after.params => "analysis settings".to_owned(),
         [] if before.custom_models != after.custom_models => "custom model".to_owned(),
         [] => "change".to_owned(),
@@ -411,6 +476,55 @@ mod tests {
     }
 
     #[test]
+    fn deleting_an_area_or_a_target_offers_undo_and_redo_drops_its_selection() {
+        use observation_core::footage::{LabelledArea, Target, TargetPlace};
+        let mut f = Fixture::new();
+        f.doc.areas.push(LabelledArea {
+            id: 1,
+            label: None,
+            name: Some("Garden".into()),
+            points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            enabled: true,
+        });
+        f.doc.targets.push(Target {
+            id: 1,
+            name: "Gate".into(),
+            at: TargetPlace::Wall {
+                point: [0.0, 1.0, 0.0],
+                normal: [1.0, 0.0],
+            },
+        });
+        f.doc.touch();
+        f.observe(false);
+        f.doc.areas.clear();
+        f.doc.touch();
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((ToastKind::Info, "Deleted Garden", Some(&ToastAction::Undo)))
+        );
+        f.doc.targets.clear();
+        f.doc.touch();
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((ToastKind::Info, "Deleted Gate", Some(&ToastAction::Undo)))
+        );
+        f.step(HistoryOp::Undo);
+        f.step(HistoryOp::Undo);
+        assert_eq!((f.doc.areas.len(), f.doc.targets.len()), (1, 1));
+        f.editor.selected_area = Some(1);
+        f.editor.selected_target = Some(1);
+        f.step(HistoryOp::Redo);
+        assert_eq!(
+            (f.editor.selected_area, f.editor.selected_target),
+            (None, Some(1))
+        );
+        f.step(HistoryOp::Redo);
+        assert_eq!(f.editor.selected_target, None);
+    }
+
+    #[test]
     fn undo_and_redo_restore_announce_and_fix_the_selection() {
         let mut f = Fixture::new();
         let id = f.add("Porch");
@@ -500,6 +614,117 @@ mod tests {
         assert_eq!(f.doc.cameras.len(), 1);
     }
 
+    fn entry(summary: &str) -> AgentLogEntry {
+        AgentLogEntry::new(summary, 1_793_475_782).expect("a summary")
+    }
+
+    impl Fixture {
+        /// Imports the document's own scene with change log `log`.
+        fn import(&mut self, log: Vec<AgentLogEntry>) {
+            let mut file = self.doc.to_file(&self.models).expect("an area");
+            file.agent_log = log;
+            self.doc.load_file(file, &mut self.models);
+            self.observe(false);
+        }
+
+        /// Takes in the document's own scene with change log `log`, as
+        /// accepting a proposal does.
+        fn take(&mut self, log: Vec<AgentLogEntry>) {
+            let mut file = self.doc.to_file(&self.models).expect("an area");
+            file.agent_log = log;
+            self.doc.take_items(file, &mut self.models);
+            self.observe(false);
+        }
+
+        fn agent_step(&self) -> bool {
+            self.history
+                .undo_label()
+                .is_some_and(|l| l.starts_with("Agent:"))
+        }
+    }
+
+    #[test]
+    fn only_one_entry_appended_to_the_same_log_is_an_accepted_proposal() {
+        // An import of a one-entry log over an empty log, then over another
+        // one-entry log, is not the agent's.
+        let mut f = Fixture::new();
+        for summary in ["Imported", "Imported again"] {
+            f.import(vec![entry(summary)]);
+            assert!(f.history.can_undo());
+            assert!(!f.agent_step(), "{:?}", f.history.undo_label());
+            assert_eq!(f.last_toast(), None, "no Undo offered");
+        }
+
+        // A genuine acceptance is.
+        let mut log = f.doc.agent_log.clone();
+        log.push(entry("Add a camera by the gate"));
+        f.take(log);
+        assert_eq!(
+            f.history.undo_label().as_deref(),
+            Some("Agent: Add a camera by the gate")
+        );
+        assert_eq!(
+            f.last_toast(),
+            Some((
+                ToastKind::Info,
+                "Applied the agent's proposal: Add a camera by the gate",
+                Some(&ToastAction::Undo)
+            ))
+        );
+        // Undo and redo keep its name.
+        f.step(HistoryOp::Undo).expect("a step");
+        assert_eq!(
+            f.history.redo_label().as_deref(),
+            Some("Agent: Add a camera by the gate")
+        );
+        f.step(HistoryOp::Redo).expect("a step");
+        assert!(f.agent_step());
+
+        // So is one with the log full, which drops its oldest entry; but not
+        // an import of a full log, nor a log taken in that is not one entry
+        // longer.
+        f.import(
+            (0..MAX_AGENT_LOG)
+                .map(|i| entry(&format!("P{i}")))
+                .collect(),
+        );
+        assert!(!f.agent_step());
+        let mut log = f.doc.agent_log.clone();
+        log.remove(0);
+        log.push(entry("The newest"));
+        f.take(log);
+        assert_eq!(f.history.undo_label().as_deref(), Some("Agent: The newest"));
+        let mut log = f.doc.agent_log.clone();
+        log.remove(1);
+        log.push(entry("Not appended"));
+        f.take(log);
+        assert!(!f.agent_step());
+        f.take(vec![entry("Only one")]);
+        assert!(!f.agent_step());
+    }
+
+    #[test]
+    fn a_new_area_with_one_more_log_entry_still_reports_the_cameras_removed() {
+        let mut f = Fixture::new();
+        f.add("Porch");
+        f.doc.area = Some(AreaRef::Osm {
+            bbox: BBox::new(51.0, -0.1, 51.001, -0.099).expect("valid box"),
+        });
+        f.doc.cameras.clear();
+        f.doc.agent_log.push(entry("From the imported file"));
+        f.doc.touch();
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((
+                ToastKind::Info,
+                "New area loaded; 1 camera(s) removed",
+                Some(&ToastAction::Undo)
+            ))
+        );
+        assert_eq!(f.history.undo_label().as_deref(), Some("area change"));
+    }
+
     #[test]
     fn labels_name_what_changed() {
         let mut f = Fixture::new();
@@ -507,13 +732,13 @@ mod tests {
         f.doc.camera_mut(id).expect("camera").yaw_deg = 90.0;
         f.observe(false);
         assert_eq!(f.history.undo_label().as_deref(), Some("edit Porch"));
-        f.doc.region = Some(Region {
+        f.doc.set_region(Some(Region {
             points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
             enabled: true,
-        });
+        }));
         f.doc.touch();
         f.observe(false);
-        assert_eq!(f.history.undo_label().as_deref(), Some("region change"));
+        assert_eq!(f.history.undo_label().as_deref(), Some("drawn areas"));
         f.doc.params.subject_height_m += 0.5;
         f.doc.touch();
         f.observe(false);

@@ -57,12 +57,17 @@ impl ViewCone {
 
     /// Whether `p` lies inside the field of view and within range.
     pub fn contains(&self, p: Vec3) -> bool {
+        (p - self.eye).length_squared() <= self.range * self.range && self.in_view(p)
+    }
+
+    /// Whether `p` lies inside the field of view, at any distance: in front
+    /// of the eye and within both half angles. [`Self::contains`] is this and
+    /// the range test.
+    pub fn in_view(&self, p: Vec3) -> bool {
         let d = p - self.eye;
         let z = d.dot(self.forward);
-        if z <= 1e-4 || d.length_squared() > self.range * self.range {
-            return false;
-        }
-        d.dot(self.right).abs() <= z * self.tan_half_h
+        z > 1e-4
+            && d.dot(self.right).abs() <= z * self.tan_half_h
             && d.dot(self.up).abs() <= z * self.tan_half_v
     }
 
@@ -119,6 +124,11 @@ mod tests {
         assert!(c.contains(Vec3::new(0.0, 2.0, -10.0)));
         assert!(!c.contains(Vec3::new(0.0, 2.0, 10.0)), "behind");
         assert!(!c.contains(Vec3::new(0.0, 2.0, -25.0)), "out of range");
+        assert!(
+            c.in_view(Vec3::new(0.0, 2.0, -25.0)),
+            "in view at any range"
+        );
+        assert!(!c.in_view(Vec3::new(0.0, 2.0, 25.0)), "behind at any range");
         assert!(
             c.contains(Vec3::new(9.0, 2.0, -10.0)),
             "inside 45° half-angle"

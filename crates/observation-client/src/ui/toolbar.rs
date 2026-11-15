@@ -99,6 +99,26 @@ pub fn top_bar(
                 d.panels.help_open = !d.panels.help_open;
             }
             settings_menu(ui, d);
+            if d.agent.available {
+                let was_open = d.agent.dialog_open;
+                super::agent::top_bar_button(ui, &t, &mut d.agent);
+                // The two dialogs share the middle of the view: one at a time.
+                if d.agent.dialog_open && !was_open {
+                    d.panels.sheet_open = false;
+                }
+            }
+            if ui
+                .add(secondary(&t, "Sheet…"))
+                .on_hover_text(
+                    "Evidence sheet: the figures with their settings, data date and limits, as SVG, PNG or print (Aggregate by default: no camera positions)",
+                )
+                .clicked()
+            {
+                d.panels.sheet_open = !d.panels.sheet_open;
+                if d.panels.sheet_open {
+                    d.agent.dialog_open = false;
+                }
+            }
             if ui
                 .add(secondary(&t, "Export"))
                 .on_hover_text("Download the scene as JSON")
@@ -175,7 +195,7 @@ pub fn tool_rail(ui: &mut egui::Ui, d: &mut UiData) {
             )
             .on_hover_text(tip);
             if resp.clicked() {
-                d.editor.tool = tool;
+                d.editor.set_tool(tool);
             }
         }
         ui.add_space(t.space.md);

@@ -9,21 +9,33 @@
 //!
 //! Only the demo street is available offline, so the tools that need an
 //! area's buildings and terrain (placing a camera at a height above the
-//! ground, coverage, addresses, example cameras) work on demo scenes only.
+//! ground, coverage, addresses, example cameras) work on demo scenes only,
+//! unless the user connects their open app ([`link`]): then the app's
+//! server sends the real areas their scenes are on.
 //!
 //! | Module | Holds |
 //! | --- | --- |
 //! | [`catalog`] | the embedded camera catalogue and model lookup |
-//! | [`area`] | the demo street, built once on first use |
+//! | [`area`] | the demo street, built once on first use, and the connection's real areas |
+//! | [`link`] | the connection to the user's open app, through the server's agent bridge |
+//! | [`app`] | the tools that connect to the app and read its state |
+//! | [`propose`] | the tools that propose a change to the app's scene and follow the user's decision |
 //! | [`edit`] | the scene edits, as plain functions on a [`SceneFile`](observation_core::scene::SceneFile) |
 //! | [`figures`] | coverage figures for a whole scene |
+//! | [`places`] | labelled areas and targets, and the tools that edit them |
+//! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
 //! | [`server`] | the MCP tools, resources and prompts |
 
+pub mod app;
 pub mod area;
 pub mod catalog;
 pub mod edit;
 pub mod error;
 pub mod figures;
+pub mod link;
+pub mod places;
+pub mod propose;
+pub mod queries;
 pub mod server;
 
 pub use error::ToolError;

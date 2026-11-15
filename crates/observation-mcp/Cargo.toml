@@ -14,6 +14,11 @@ doctest = false
 observation-core.workspace = true
 # The offline demo street (`demo::demo_bundle`), without the server's HTTP stack.
 observation-mapdata.workspace = true
+# The agent bridge's contract, and its only HTTP client: observation-upstream's guarded one
+# (deny.toml allows reqwest nowhere else).
+observation-agent-api.workspace = true
+observation-upstream.workspace = true
+http = "1"
 # The server side of MCP over stdio, for spec 2026-07-28. Never enable `auth` or any `reqwest*`
 # feature: they pull reqwest, which deny.toml allows only in observation-upstream.
 rmcp = { version = "3.9", default-features = false, features = ["server", "macros", "transport-io"] }
@@ -24,6 +29,13 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+# The connection tests run against the real server's agent bridge, on loopback.
+observation-server = { path = "../observation-server", features = ["testing"] }
+observation-upstream = { workspace = true, features = ["testing"] }
+axum.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

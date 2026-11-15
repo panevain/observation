@@ -1,11 +1,15 @@
 //! Reading a scene file: the single validation point for untrusted files.
 
-use super::{MAX_CAMERAS, MAX_CUSTOM_MODELS, SCENE_FORMAT, SCENE_VERSION, SceneError, SceneFile};
+use super::{
+    MAX_AREAS, MAX_CAMERAS, MAX_CUSTOM_MODELS, MAX_ITEM_ID, MAX_TARGETS, SCENE_FORMAT,
+    SCENE_VERSION, SceneError, SceneFile,
+};
 use crate::camera::{
     CUSTOM_ID_PREFIX, MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, fresh_custom_id,
     is_https_url,
 };
 use crate::coverage::MAX_REGION_POINTS;
+use crate::footage::{MAX_NAME_CHARS, TargetPlace, fresh_id};
 use std::collections::{HashMap, HashSet};
 
 impl SceneFile {
@@ -15,12 +19,15 @@ impl SceneFile {
         let mut scene: Self = serde_json::from_str(s)?;
         scene.check_header()?;
         scene.check_counts()?;
+        scene.tidy_camera_ids();
         scene.tidy_groups();
         scene.check_camera_poses()?;
-        scene.drop_unusable_region();
+        scene.tidy_areas();
+        scene.tidy_targets();
         if let Some(p) = &mut scene.provenance {
             p.sanitise();
         }
+        super::agent_log::sanitise(&mut scene.agent_log);
         scene.check_params()?;
         scene.check_custom_models()?;
         scene.make_custom_ids_unique();
@@ -40,7 +47,8 @@ impl SceneFile {
         Ok(())
     }
 
-    /// At most [`MAX_CAMERAS`] cameras and [`MAX_CUSTOM_MODELS`] custom models.
+    /// At most [`MAX_CAMERAS`] cameras, [`MAX_CUSTOM_MODELS`] custom models,
+    /// [`MAX_AREAS`] areas and [`MAX_TARGETS`] targets.
     fn check_counts(&self) -> Result<(), SceneError> {
         if self.cameras.len() > MAX_CAMERAS {
             return Err(SceneError::Invalid(format!(
@@ -54,7 +62,26 @@ impl SceneFile {
                 self.custom_models.len()
             )));
         }
+        if self.areas.len() > MAX_AREAS {
+            return Err(SceneError::Invalid(format!(
+                "{} areas, but at most {MAX_AREAS} are supported",
+                self.areas.len()
+            )));
+        }
+        if self.targets.len() > MAX_TARGETS {
+            return Err(SceneError::Invalid(format!(
+                "{} targets, but at most {MAX_TARGETS} are supported",
+                self.targets.len()
+            )));
+        }
         Ok(())
+    }
+
+    /// A repeated camera id, or one above [`MAX_ITEM_ID`], is replaced by a
+    /// fresh one; the first camera with an id in range keeps it. Nothing in
+    /// the scene refers to a camera by id, so nothing else follows.
+    fn tidy_camera_ids(&mut self) {
+        make_ids_unique(self.cameras.iter_mut().map(|c| &mut c.id).collect());
     }
 
     /// A blank group means "by address"; an overlong one is cut short, and
@@ -65,12 +92,8 @@ impl SceneFile {
             c.group = c
                 .group
                 .as_deref()
-                .map(str::trim)
-                .filter(|g| !g.is_empty())
-                .map(|g| {
-                    let cut: String = g.chars().take(MAX_GROUP_CHARS).collect();
-                    cut.trim_end().to_owned()
-                });
+                .map(|g| tidy_text(g, MAX_GROUP_CHARS))
+                .filter(|g| !g.is_empty());
         }
     }
 
@@ -93,14 +116,57 @@ impl SceneFile {
         Ok(())
     }
 
-    /// Drops an unusable region rather than the whole scene: losing the
-    /// outline is a small price, losing every camera with it is not.
-    fn drop_unusable_region(&mut self) {
-        if self.region.as_ref().is_some_and(|r| {
-            r.points.len() > MAX_REGION_POINTS || !r.points.iter().all(|p| finite(p))
-        }) {
-            self.region = None;
+    /// Drops each unusable area rather than the whole scene, as with the
+    /// single region before: one with more than [`MAX_REGION_POINTS`] corners
+    /// or a corner that is not a number within 10 000 m. Names are trimmed
+    /// and cut to [`MAX_NAME_CHARS`] (blank means none), a repeated id or
+    /// one above [`MAX_ITEM_ID`] is replaced by a fresh one (the first area
+    /// with an id in range keeps it, and `limit_figures_to` follows an area
+    /// whose id was out of range), and `limit_figures_to` is cleared if it
+    /// names no area. An outline that
+    /// encloses no area is kept, as the region's was: it just does not count.
+    fn tidy_areas(&mut self) {
+        self.areas
+            .retain(|a| a.points.len() <= MAX_REGION_POINTS && a.points.iter().all(|p| finite(p)));
+        for a in &mut self.areas {
+            a.name = a
+                .name
+                .as_deref()
+                .map(|n| tidy_text(n, MAX_NAME_CHARS))
+                .filter(|n| !n.is_empty());
         }
+        let moved = make_ids_unique(self.areas.iter_mut().map(|a| &mut a.id).collect());
+        if let Some(id) = self.limit_figures_to
+            && let Some(&new) = moved.get(&id)
+        {
+            self.limit_figures_to = Some(new);
+        }
+        if let Some(id) = self.limit_figures_to
+            && !self.areas.iter().any(|a| a.id == id)
+        {
+            self.limit_figures_to = None;
+        }
+    }
+
+    /// Drops each target that is unusable: a coordinate that is not a number
+    /// within 10 000 m, or a [`TargetPlace::problem`] (too many corners, more
+    /// than 30 m across, an outline that encloses no area, or a wall without
+    /// a direction). Names are trimmed and cut to [`MAX_NAME_CHARS`], and a
+    /// repeated id or one above [`MAX_ITEM_ID`] is replaced by a fresh one.
+    fn tidy_targets(&mut self) {
+        self.targets.retain(|t| {
+            let in_range = match &t.at {
+                TargetPlace::Ground { points } => {
+                    points.len() <= MAX_REGION_POINTS && points.iter().all(|p| finite(p))
+                }
+                TargetPlace::Wall { point, normal } => finite(point) && finite(normal),
+            };
+            in_range && t.at.problem().is_none()
+        });
+        for t in &mut self.targets {
+            t.name = tidy_text(&t.name, MAX_NAME_CHARS);
+        }
+        make_ids_unique(self.targets.iter_mut().map(|t| &mut t.id).collect());
     }
 
     /// The subject height and the custom pixel density are in range.
@@ -174,6 +240,38 @@ impl SceneFile {
     }
 }
 
+/// Gives each id that repeats an earlier one, or lies above [`MAX_ITEM_ID`],
+/// a fresh one ([`fresh_id`]): the first id within range keeps its value.
+/// Returns, for each out-of-range id, the id its first holder now has, so
+/// that what referred to it can follow.
+fn make_ids_unique(mut ids: Vec<&mut u32>) -> HashMap<u32, u32> {
+    let mut taken = HashSet::new();
+    let keep: Vec<bool> = ids
+        .iter()
+        .map(|id| **id <= MAX_ITEM_ID && taken.insert(**id))
+        .collect();
+    let mut moved = HashMap::new();
+    for (id, keep) in ids.iter_mut().zip(keep) {
+        if keep {
+            continue;
+        }
+        let new = fresh_id(taken.iter().copied());
+        taken.insert(new);
+        if **id > MAX_ITEM_ID {
+            moved.entry(**id).or_insert(new);
+        }
+        **id = new;
+    }
+    moved
+}
+
+/// `s` trimmed and cut to `max` characters, then trimmed again, so that it
+/// loads the same the next time.
+fn tidy_text(s: &str, max: usize) -> String {
+    let cut: String = s.trim().chars().take(max).collect();
+    cut.trim_end().to_owned()
+}
+
 /// Whether every value is a number within 10 000 of zero.
 fn finite(v: &[f32]) -> bool {
     v.iter().all(|x| x.is_finite() && x.abs() < 10_000.0)
@@ -183,8 +281,9 @@ fn finite(v: &[f32]) -> bool {
 mod tests {
     use super::super::tests::scene;
     use super::*;
-    use crate::camera::{CameraKind, CameraModel, DoriLevel};
-    use crate::coverage::{CoverageParams, Region};
+    use crate::camera::{CameraKind, CameraModel, CameraPlacement, DoriLevel};
+    use crate::coverage::CoverageParams;
+    use crate::footage::{AreaLabel, LabelledArea, Target};
     use crate::provenance::Provenance;
 
     fn invalid(r: Result<(), SceneError>) -> String {
@@ -267,14 +366,22 @@ mod tests {
         );
     }
 
+    fn area(id: u32, points: Vec<[f32; 2]>) -> LabelledArea {
+        LabelledArea {
+            id,
+            label: None,
+            name: None,
+            points,
+            enabled: true,
+        }
+    }
+
+    fn square(x: f32, size: f32) -> Vec<[f32; 2]> {
+        vec![[x, 0.0], [x + size, 0.0], [x + size, size], [x, size]]
+    }
+
     #[test]
-    fn step_drop_unusable_region() {
-        let region = |points: Vec<[f32; 2]>| {
-            Some(Region {
-                points,
-                enabled: true,
-            })
-        };
+    fn step_tidy_areas() {
         let mut s = scene();
         for (points, kept) in [
             (vec![[0.0, 0.0]; MAX_REGION_POINTS], true),
@@ -282,14 +389,125 @@ mod tests {
             (vec![[9_999.0, -9_999.0]], true),
             (vec![[0.0, 10_000.0]], false),
             (vec![[f32::INFINITY, 0.0]], false),
+            (vec![[f32::NAN, 0.0]], false),
         ] {
-            s.region = region(points.clone());
-            s.drop_unusable_region();
-            assert_eq!(s.region.is_some(), kept, "{}", points.len());
+            s.areas = vec![area(1, points.clone())];
+            s.limit_figures_to = Some(1);
+            s.tidy_areas();
+            assert_eq!(s.areas.len(), usize::from(kept), "{}", points.len());
+            assert_eq!(s.limit_figures_to.is_some(), kept, "the limit follows");
         }
-        s.region = None;
-        s.drop_unusable_region();
-        assert_eq!(s.region, None);
+        // Names are tidied, repeated ids replaced, and the limit names the
+        // first area with its id.
+        s.areas = vec![
+            area(4, square(0.0, 1.0)),
+            area(4, square(2.0, 1.0)),
+            area(2, square(4.0, 1.0)),
+            area(4, square(6.0, 1.0)),
+        ];
+        s.areas[0].name = Some("  Our garden  ".into());
+        s.areas[1].name = Some(" \t ".into());
+        s.areas[2].name = Some(format!("{} b", "a".repeat(MAX_NAME_CHARS - 1)));
+        s.limit_figures_to = Some(4);
+        s.tidy_areas();
+        let ids: Vec<u32> = s.areas.iter().map(|a| a.id).collect();
+        assert_eq!(ids, [4, 5, 2, 6]);
+        let names: Vec<Option<&str>> = s.areas.iter().map(|a| a.name.as_deref()).collect();
+        let long = "a".repeat(MAX_NAME_CHARS - 1);
+        assert_eq!(names, [Some("Our garden"), None, Some(long.as_str()), None]);
+        assert_eq!(s.figures_area().map(|a| a.points[0]), Some([0.0, 0.0]));
+        let before = s.clone();
+        s.tidy_areas();
+        assert_eq!(s, before, "a second pass changes nothing");
+        // A limit naming no area is cleared.
+        s.limit_figures_to = Some(99);
+        s.tidy_areas();
+        assert_eq!(s.limit_figures_to, None);
+    }
+
+    #[test]
+    fn step_tidy_targets() {
+        let ground = |id, points| Target {
+            id,
+            name: String::new(),
+            at: TargetPlace::Ground { points },
+        };
+        let wall = |id, point, normal| Target {
+            id,
+            name: String::new(),
+            at: TargetPlace::Wall { point, normal },
+        };
+        let mut s = scene();
+        for (t, kept) in [
+            (ground(1, square(0.0, 2.0)), true),
+            (ground(1, square(9_000.0, 30.0)), true),
+            (ground(1, square(0.0, 31.0)), false),
+            (ground(1, vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]), false),
+            (ground(1, square(9_999.0, 2.0)), false),
+            (
+                ground(1, vec![[f32::NAN, 0.0], [1.0, 0.0], [1.0, 1.0]]),
+                false,
+            ),
+            (wall(1, [1.0, 2.0, 3.0], [0.0, 1.0]), true),
+            (wall(1, [1.0, 2.0, 3.0], [0.0, 0.0]), false),
+            (wall(1, [1.0, f32::INFINITY, 3.0], [0.0, 1.0]), false),
+            (wall(1, [1.0, 2.0, 3.0], [1e5, 1.0]), false),
+        ] {
+            s.targets = vec![t.clone()];
+            s.tidy_targets();
+            assert_eq!(s.targets.len(), usize::from(kept), "{t:?}");
+        }
+        s.targets = vec![
+            ground(3, square(0.0, 1.0)),
+            ground(3, square(0.0, 1.0)),
+            wall(3, [0.0; 3], [1.0, 0.0]),
+        ];
+        s.targets[0].name = "  Front door ".into();
+        s.targets[1].name = "x".repeat(500);
+        s.tidy_targets();
+        let ids: Vec<u32> = s.targets.iter().map(|t| t.id).collect();
+        assert_eq!(ids, [3, 4, 5]);
+        assert_eq!(s.targets[0].name, "Front door");
+        assert_eq!(s.targets[1].name.chars().count(), MAX_NAME_CHARS);
+        let before = s.clone();
+        s.tidy_targets();
+        assert_eq!(s, before, "a second pass changes nothing");
+    }
+
+    #[test]
+    fn ids_above_the_largest_are_replaced_like_repeated_ones() {
+        let mut s = scene();
+        let cam = s.cameras[0].clone();
+        s.cameras = [u32::MAX, 7, MAX_ITEM_ID + 1, 7, MAX_ITEM_ID]
+            .into_iter()
+            .map(|id| CameraPlacement { id, ..cam.clone() })
+            .collect();
+        s.areas = vec![
+            area(u32::MAX, square(0.0, 1.0)),
+            area(u32::MAX, square(2.0, 1.0)),
+            area(3, square(4.0, 1.0)),
+        ];
+        s.limit_figures_to = Some(u32::MAX);
+        s.targets = vec![Target {
+            id: u32::MAX,
+            name: "Gate".into(),
+            at: TargetPlace::Ground {
+                points: square(0.0, 1.0),
+            },
+        }];
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        let cameras: Vec<u32> = loaded.cameras.iter().map(|c| c.id).collect();
+        // Past `MAX_ITEM_ID`, fresh ids are the lowest free ones.
+        assert_eq!(cameras, [1, 7, 2, 3, MAX_ITEM_ID]);
+        let areas: Vec<u32> = loaded.areas.iter().map(|a| a.id).collect();
+        assert_eq!(areas, [4, 5, 3]);
+        assert_eq!(
+            loaded.figures_area().map(|a| a.points[0]),
+            Some([0.0, 0.0]),
+            "the limit follows the first area that had the id"
+        );
+        assert_eq!(loaded.targets[0].id, 1);
+        assert_eq!(SceneFile::from_json(&loaded.to_json()).unwrap(), loaded);
     }
 
     #[test]
@@ -524,27 +742,154 @@ mod tests {
         assert_eq!(s.cameras[0].color, None);
     }
 
-    #[test]
-    fn region_round_trips_and_is_checked() {
-        let mut s = scene();
-        s.region = Some(Region {
-            points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
-            enabled: false,
-        });
-        assert_eq!(SceneFile::from_json(&s.to_json()).unwrap(), s);
-        assert!(!scene().to_json().contains("region"), "omitted when absent");
+    /// The JSON an app before labelled areas wrote: a `region`, no `areas`.
+    fn with_old_region(region: &str) -> String {
+        scene().to_json().replacen(
+            "\"cameras\"",
+            &format!("\"region\": {region},\n  \"cameras\""),
+            1,
+        )
+    }
 
-        // A bad region is dropped; the cameras survive.
-        let mut bad = s.clone();
-        bad.region = Some(Region {
-            points: vec![[0.0, 0.0]; MAX_REGION_POINTS + 1],
-            enabled: true,
-        });
-        let loaded = SceneFile::from_json(&bad.to_json()).unwrap();
-        assert_eq!((loaded.region, loaded.cameras.len()), (None, 1));
-        let far = s.to_json().replace("10.0", "1e9");
+    #[test]
+    fn an_old_region_loads_as_the_area_that_limits_the_figures() {
+        let json = with_old_region(r#"{"points": [[0, 0], [10, 0], [10, 10]], "enabled": false}"#);
+        let s = SceneFile::from_json(&json).unwrap();
+        assert_eq!(
+            s.areas,
+            [LabelledArea {
+                id: 1,
+                label: None,
+                name: None,
+                points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+                enabled: false,
+            }]
+        );
+        assert_eq!(s.limit_figures_to, Some(1));
+        // `enabled` defaults to on, as before the field existed.
+        let json = with_old_region(r#"{"points": [[0, 0], [10, 0], [10, 10]]}"#);
+        assert!(SceneFile::from_json(&json).unwrap().areas[0].enabled);
+        // Written back with areas, and with the region copied for older apps.
+        let out = s.to_json();
+        assert!(
+            out.contains("\"areas\"") && out.contains("\"limit_figures_to\": 1"),
+            "{out}"
+        );
+        let wire: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            wire["region"],
+            serde_json::json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], "enabled": false})
+        );
+        assert_eq!(SceneFile::from_json(&out).unwrap(), s);
+        // Nothing of the kind when there is no area.
+        let plain = scene().to_json();
+        for field in ["region", "areas", "limit_figures_to", "targets"] {
+            assert!(!plain.contains(field), "{field} omitted when absent");
+        }
+    }
+
+    #[test]
+    fn region_is_only_a_copy_when_areas_are_present() {
+        let mut s = scene();
+        s.areas = vec![area(3, square(0.0, 5.0)), area(8, square(10.0, 5.0))];
+        // No limit: no region is written, and older apps count everything.
+        assert!(!s.to_json().contains("region"));
+        s.limit_figures_to = Some(8);
+        let json = s.to_json();
+        assert!(json.contains("\"region\""));
+        assert_eq!(SceneFile::from_json(&json).unwrap(), s);
+        // An edited copy is ignored: the areas win.
+        let mut wire: serde_json::Value = serde_json::from_str(&json).unwrap();
+        wire["region"] = serde_json::json!({"points": [[0, 0], [99, 0], [99, 99]]});
+        let loaded = SceneFile::from_json(&wire.to_string()).unwrap();
+        assert_eq!(loaded, s);
+        // A bad old region is dropped, and the limit with it; the cameras
+        // survive.
+        let far = with_old_region(r#"{"points": [[0, 0], [1e9, 0], [10, 10]]}"#);
         let loaded = SceneFile::from_json(&far).unwrap();
-        assert_eq!((loaded.region, loaded.cameras.len()), (None, 1));
+        assert_eq!(
+            (
+                loaded.areas.len(),
+                loaded.limit_figures_to,
+                loaded.cameras.len()
+            ),
+            (0, None, 1)
+        );
+        let many = format!(
+            "{{\"points\": {:?}}}",
+            vec![[0.0f32, 0.0]; MAX_REGION_POINTS + 1]
+        );
+        let loaded = SceneFile::from_json(&with_old_region(&many)).unwrap();
+        assert_eq!((loaded.areas.len(), loaded.limit_figures_to), (0, None));
+    }
+
+    #[test]
+    fn areas_and_targets_round_trip() {
+        let mut s = scene();
+        s.areas = vec![LabelledArea {
+            id: 2,
+            label: Some(AreaLabel::Neighbour),
+            name: Some("No. 12's garden".into()),
+            points: square(0.0, 5.0),
+            enabled: false,
+        }];
+        s.targets = vec![
+            Target {
+                id: 1,
+                name: "Side gate".into(),
+                at: TargetPlace::Ground {
+                    points: square(1.0, 1.0),
+                },
+            },
+            Target {
+                id: 2,
+                name: String::new(),
+                at: TargetPlace::Wall {
+                    point: [1.0, 1.5, -2.0],
+                    normal: [0.0, -1.0],
+                },
+            },
+        ];
+        let json = s.to_json();
+        assert!(json.contains("\"label\": \"neighbour\""), "{json}");
+        assert!(json.contains("\"kind\": \"wall\""), "{json}");
+        assert_eq!(SceneFile::from_json(&json).unwrap(), s);
+        // An unknown label refuses the file, as any malformed JSON does.
+        let bad = json.replace("\"neighbour\"", "\"enemy\"");
+        assert!(matches!(
+            SceneFile::from_json(&bad),
+            Err(SceneError::Json(_))
+        ));
+    }
+
+    #[test]
+    fn too_many_areas_or_targets_refuse_the_file() {
+        let mut s = scene();
+        s.areas = (0..MAX_AREAS as u32)
+            .map(|i| area(i, square(0.0, 1.0)))
+            .collect();
+        s.targets = (0..MAX_TARGETS as u32)
+            .map(|id| Target {
+                id,
+                name: String::new(),
+                at: TargetPlace::Wall {
+                    point: [0.0; 3],
+                    normal: [1.0, 0.0],
+                },
+            })
+            .collect();
+        assert!(s.check_counts().is_ok());
+        s.areas.push(area(99, square(0.0, 1.0)));
+        assert_eq!(
+            invalid(s.check_counts()),
+            "65 areas, but at most 64 are supported"
+        );
+        s.areas.pop();
+        s.targets.push(s.targets[0].clone());
+        assert_eq!(
+            invalid(s.check_counts()),
+            "65 targets, but at most 64 are supported"
+        );
     }
 
     #[test]
@@ -592,6 +937,64 @@ mod tests {
         let long = json.replace("\"0.1.0\"", &format!("\"{}\"", "9".repeat(500)));
         let loaded = SceneFile::from_json(&long).unwrap();
         assert_eq!(loaded.provenance.unwrap().app_version.len(), 64);
+    }
+
+    #[test]
+    fn the_agent_log_is_optional_lenient_and_tidied() {
+        use crate::scene::agent_log::{AgentLogEntry, MAX_AGENT_LOG, MAX_LOG_SUMMARY_CHARS};
+        let mut s = scene();
+        assert!(!s.to_json().contains("agent_log"), "omitted when empty");
+        s.agent_log
+            .push(AgentLogEntry::new("Add a camera by the gate", 1_793_475_782).unwrap());
+        let json = s.to_json();
+        assert!(
+            json.contains("\"accepted_at\": \"2026-10-31T19:43:02Z\""),
+            "{json}"
+        );
+        assert_eq!(SceneFile::from_json(&json).unwrap(), s);
+        let with_log = |log: &str| {
+            scene().to_json().replacen(
+                "\"cameras\"",
+                &format!("\"agent_log\": {log},\n  \"cameras\""),
+                1,
+            )
+        };
+        // A malformed block reads as empty; a malformed entry is dropped.
+        for bad in ["5", "\"x\"", "{}", "null"] {
+            let loaded = SceneFile::from_json(&with_log(bad)).unwrap();
+            assert_eq!(
+                (loaded.agent_log.len(), loaded.cameras.len()),
+                (0, 1),
+                "{bad}"
+            );
+        }
+        let loaded = SceneFile::from_json(&with_log(
+            r#"[{"summary": "kept", "accepted_at": "2026-10-31T19:43:02Z"},
+                {"summary": "bad time", "accepted_at": "yesterday"},
+                {"summary": "   ", "accepted_at": "2026-10-31T19:43:02Z"},
+                {"summary": 3}]"#,
+        ))
+        .unwrap();
+        assert_eq!(loaded.agent_log.len(), 1);
+        assert_eq!(loaded.agent_log[0].summary, "kept");
+        // Summaries are cut and only the newest entries kept.
+        let entries: Vec<String> = (0..MAX_AGENT_LOG + 3)
+            .map(|i| {
+                format!(
+                    r#"{{"summary": "{i} {}", "accepted_at": "2026-10-31T19:43:02Z"}}"#,
+                    "y".repeat(300)
+                )
+            })
+            .collect();
+        let loaded = SceneFile::from_json(&with_log(&format!("[{}]", entries.join(",")))).unwrap();
+        assert_eq!(loaded.agent_log.len(), MAX_AGENT_LOG);
+        assert!(loaded.agent_log[0].summary.starts_with("3 "));
+        assert!(
+            loaded
+                .agent_log
+                .iter()
+                .all(|e| e.summary.chars().count() == MAX_LOG_SUMMARY_CHARS)
+        );
     }
 
     #[test]

@@ -9,9 +9,13 @@ use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, fresh_custom_id,
 };
 use observation_core::coverage::{CoverageParams, Region};
+use observation_core::footage::{
+    LabelledArea, Target, area_by_id, area_by_id_mut, set_figures_area,
+};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::{DataChange, Provenance};
-use observation_core::scene::{AreaRef, SceneFile};
+use observation_core::scene::agent_log::AgentLogEntry;
+use observation_core::scene::{AreaRef, MAX_ITEM_ID, SceneFile};
 
 pub mod area_load;
 
@@ -84,8 +88,13 @@ pub struct Document {
     pub origin: LatLon,
     pub cameras: Vec<CameraPlacement>,
     pub params: CoverageParams,
-    /// Area the coverage figures can be limited to.
-    pub region: Option<Region>,
+    /// The scene's areas, labelled or not, drawn with the Areas tool and
+    /// edited in the Places tab (see [`crate::places`]).
+    pub areas: Vec<LabelledArea>,
+    /// The id of the area the coverage figures are limited to.
+    pub limit_figures_to: Option<u32>,
+    /// The scene's targets, marked with the Target tool.
+    pub targets: Vec<Target>,
     /// The cameras come from a scene saved before terrain and still stand on
     /// flat ground; they are lifted onto the terrain when the area loads.
     pub on_flat_ground: bool,
@@ -98,6 +107,15 @@ pub struct Document {
     /// against its area once that loads (see
     /// [`Provenance::data_change`]).
     pub saved_provenance: Option<Provenance>,
+    /// The agent proposals accepted into this scene, oldest first (saved
+    /// with it; see [`observation_core::scene::agent_log`]).
+    pub agent_log: Vec<AgentLogEntry>,
+    /// Counts the proposals taken in with [`Self::take_items`] (undo puts
+    /// back the count of the step it returns to), so the history tells an
+    /// accepted proposal from an import that brings a longer change log.
+    pub accepted_proposals: u64,
+    /// The id the next camera gets if no camera has it (see
+    /// [`Self::fresh_camera_id`]); only ever a hint.
     next_id: u32,
     /// Bumped on every change; drives sync, coverage and autosave.
     pub revision: u64,
@@ -110,10 +128,14 @@ impl Default for Document {
             origin: LatLon::new(0.0, 0.0),
             cameras: Vec::new(),
             params: CoverageParams::default(),
-            region: None,
+            areas: Vec::new(),
+            limit_figures_to: None,
+            targets: Vec::new(),
             on_flat_ground: false,
             provenance: None,
             saved_provenance: None,
+            agent_log: Vec::new(),
+            accepted_proposals: 0,
             next_id: 1,
             revision: 0,
         }
@@ -135,8 +157,9 @@ impl Document {
     }
 
     pub fn add_camera(&mut self, mut c: CameraPlacement) -> u32 {
-        c.id = self.next_id;
-        self.next_id += 1;
+        c.id = self.fresh_camera_id();
+        // At most `MAX_ITEM_ID`, so this cannot overflow.
+        self.next_id = c.id + 1;
         if c.label.is_empty() {
             c.label = format!("Camera {}", c.id);
         }
@@ -146,9 +169,43 @@ impl Document {
         id
     }
 
+    /// An id for a new camera that no camera has, at most [`MAX_ITEM_ID`]:
+    /// the counter's next one, so ids are not reused while counting up; else
+    /// one above the highest; else (a file or a proposal brought an id at
+    /// the top of the range) the lowest unused one, which exists because a
+    /// scene holds far fewer cameras than ids.
+    fn fresh_camera_id(&self) -> u32 {
+        let taken = |id: u32| self.cameras.iter().any(|c| c.id == id);
+        if (1..=MAX_ITEM_ID).contains(&self.next_id) && !taken(self.next_id) {
+            return self.next_id;
+        }
+        let highest = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
+        if highest < MAX_ITEM_ID {
+            return highest + 1;
+        }
+        (1..=MAX_ITEM_ID).find(|&id| !taken(id)).unwrap_or(1)
+    }
+
     pub fn remove_camera(&mut self, id: u32) {
         self.cameras.retain(|c| c.id != id);
         self.touch();
+    }
+
+    /// The area the coverage figures are limited to (what the single region
+    /// was before areas had labels), if there is one.
+    pub fn region(&self) -> Option<&LabelledArea> {
+        area_by_id(&self.areas, self.limit_figures_to)
+    }
+
+    /// The same, to change (without a new revision).
+    pub fn region_mut(&mut self) -> Option<&mut LabelledArea> {
+        area_by_id_mut(&mut self.areas, self.limit_figures_to)
+    }
+
+    /// Replaces the region's outline and switch (keeping its id, label and
+    /// name), adds one, or with `None` removes it; without a new revision.
+    pub fn set_region(&mut self, region: Option<Region>) {
+        set_figures_area(&mut self.areas, &mut self.limit_figures_to, region);
     }
 
     /// How many placed cameras use model `model_id`.
@@ -164,9 +221,12 @@ impl Document {
         let mut file = SceneFile::new(area, self.origin);
         file.cameras = self.cameras.clone();
         file.params = self.params;
-        file.region = self.region.clone();
+        file.areas = self.areas.clone();
+        file.limit_figures_to = self.limit_figures_to;
+        file.targets = self.targets.clone();
         file.custom_models = models.custom.clone();
         file.provenance = self.provenance.clone();
+        file.agent_log = self.agent_log.clone();
         if self.on_flat_ground {
             // Saved before the area loaded: still in the old frame.
             file.version = observation_core::scene::FLAT_GROUND_VERSION;
@@ -181,8 +241,12 @@ impl Document {
             origin: self.origin,
             cameras: self.cameras.clone(),
             params: self.params,
-            region: self.region.clone(),
+            areas: self.areas.clone(),
+            limit_figures_to: self.limit_figures_to,
+            targets: self.targets.clone(),
             custom_models: models.custom.clone(),
+            agent_log: self.agent_log.clone(),
+            accepted_proposals: self.accepted_proposals,
         }
     }
 
@@ -198,14 +262,18 @@ impl Document {
         self.origin = s.origin;
         self.cameras = s.cameras.clone();
         self.params = s.params;
-        self.region = s.region.clone();
+        self.areas = s.areas.clone();
+        self.limit_figures_to = s.limit_figures_to;
+        self.targets = s.targets.clone();
+        self.agent_log = s.agent_log.clone();
+        self.accepted_proposals = s.accepted_proposals;
         // Every step was recorded with its cameras on the terrain (none is
         // while a flat-ground scene waits for its area).
         self.on_flat_ground = false;
         // Never hand out an id the restored cameras already use (an import
         // resets `next_id`, so undoing past one can bring back higher ids).
         let max = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
-        self.next_id = self.next_id.max(max + 1);
+        self.next_id = self.next_id.max(max.saturating_add(1));
         models.custom = s.custom_models.clone();
         self.touch();
     }
@@ -222,17 +290,45 @@ impl Document {
         self.area = Some(file.area);
         self.on_flat_ground = file.on_flat_ground();
         self.origin = file.origin;
-        self.next_id = file.cameras.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        self.next_id = file
+            .cameras
+            .iter()
+            .map(|c| c.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         self.cameras = file.cameras;
         self.params = file.params;
-        self.region = file.region;
+        self.areas = file.areas;
+        self.limit_figures_to = file.limit_figures_to;
+        self.targets = file.targets;
         self.saved_provenance = file.provenance;
+        self.agent_log = file.agent_log;
         models.custom = file.custom_models;
         self.touch();
     }
 
-    /// An empty scene on the current area (no cameras, region or custom
-    /// models, default settings), or `None` before an area has loaded.
+    /// Takes the items of `file`, a scene on this document's area: its
+    /// cameras, settings, areas, targets, custom models and change log. The
+    /// area, origin and provenance stay as they are. This is how an accepted
+    /// proposal ([`crate::proposal`]), applied to this document's own
+    /// scene, comes back.
+    pub fn take_items(&mut self, file: SceneFile, models: &mut Models) {
+        let max = file.cameras.iter().map(|c| c.id).max().unwrap_or(0);
+        self.next_id = self.next_id.max(max.saturating_add(1));
+        self.cameras = file.cameras;
+        self.params = file.params;
+        self.areas = file.areas;
+        self.limit_figures_to = file.limit_figures_to;
+        self.targets = file.targets;
+        self.agent_log = file.agent_log;
+        self.accepted_proposals = self.accepted_proposals.wrapping_add(1);
+        models.custom = file.custom_models;
+        self.touch();
+    }
+
+    /// An empty scene on the current area (no cameras, areas, targets or
+    /// custom models, default settings), or `None` before an area has loaded.
     pub fn blank_file(&self) -> Option<SceneFile> {
         let mut file = SceneFile::new(self.area?, self.origin);
         file.provenance = self.provenance.clone();
@@ -244,7 +340,10 @@ impl Document {
     pub fn clear_document(&mut self, models: &mut Models) {
         self.cameras.clear();
         self.params = CoverageParams::default();
-        self.region = None;
+        self.areas.clear();
+        self.limit_figures_to = None;
+        self.targets.clear();
+        self.agent_log.clear();
         self.on_flat_ground = false;
         self.saved_provenance = None;
         self.next_id = 1;
@@ -270,8 +369,15 @@ pub struct Snapshot {
     pub origin: LatLon,
     pub cameras: Vec<CameraPlacement>,
     pub params: CoverageParams,
-    pub region: Option<Region>,
+    pub areas: Vec<LabelledArea>,
+    pub limit_figures_to: Option<u32>,
+    pub targets: Vec<Target>,
     pub custom_models: Vec<CameraModel>,
+    /// The change log, so undoing an accepted proposal takes its entry out.
+    pub agent_log: Vec<AgentLogEntry>,
+    /// [`Document::accepted_proposals`]: a step that changes it accepted a
+    /// proposal.
+    pub accepted_proposals: u64,
 }
 
 /// Request to (re)load an area.
@@ -315,6 +421,61 @@ mod tests {
         let mut f = SceneFile::new(AreaRef::Demo, LatLon::new(0.0, 0.0));
         f.provenance = p;
         f
+    }
+
+    #[test]
+    fn areas_and_targets_survive_load_edit_undo_and_save() {
+        use observation_core::footage::{AreaLabel, TargetPlace};
+        let mut models = Models::new(Catalog::default());
+        let mut f = file(None);
+        let square = |x: f32| vec![[x, 0.0], [x + 5.0, 0.0], [x + 5.0, 5.0]];
+        f.areas = vec![
+            LabelledArea {
+                id: 4,
+                label: Some(AreaLabel::Own),
+                name: Some("Garden".into()),
+                points: square(0.0),
+                enabled: true,
+            },
+            LabelledArea {
+                id: 9,
+                label: Some(AreaLabel::Neighbour),
+                name: None,
+                points: square(10.0),
+                enabled: true,
+            },
+        ];
+        f.limit_figures_to = Some(4);
+        f.targets = vec![Target {
+            id: 1,
+            name: "Gate".into(),
+            at: TargetPlace::Ground {
+                points: square(1.0),
+            },
+        }];
+        let mut doc = Document::default();
+        doc.load_file(f.clone(), &mut models);
+        assert_eq!(doc.to_file(&models), Some(f.clone()));
+        let before = doc.snapshot(&models);
+        // The Limit menu redraws the limiting area: its label, its name and
+        // the other areas stay.
+        doc.set_region(Some(Region {
+            points: square(2.0),
+            enabled: false,
+        }));
+        let saved = doc.to_file(&models).expect("an area");
+        assert_eq!(saved.areas[0].label, Some(AreaLabel::Own));
+        assert_eq!(saved.areas[0].name.as_deref(), Some("Garden"));
+        assert_eq!(
+            (saved.areas[0].points[0], saved.areas[0].enabled),
+            ([2.0, 0.0], false)
+        );
+        assert_eq!(saved.areas[1], f.areas[1]);
+        assert_eq!(saved.targets, f.targets);
+        doc.restore(&before, &mut models);
+        assert_eq!(doc.to_file(&models), Some(f));
+        doc.clear_document(&mut models);
+        assert!(doc.areas.is_empty() && doc.targets.is_empty() && doc.region().is_none());
     }
 
     #[test]
@@ -423,5 +584,60 @@ mod tests {
         let same = scene.snapshot(&models);
         scene.restore(&same, &mut models);
         assert!(scene.provenance.is_some());
+    }
+
+    /// Adds `n` cameras and checks that every id is unique and in range.
+    fn add_and_check(scene: &mut Document, n: usize) -> Vec<u32> {
+        let added: Vec<u32> = (0..n).map(|_| scene.add_camera(camera())).collect();
+        let mut ids: Vec<u32> = scene.cameras.iter().map(|c| c.id).collect();
+        let len = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), len, "no id is shared: {ids:?}");
+        assert!(added.iter().all(|&id| (1..=MAX_ITEM_ID).contains(&id)));
+        added
+    }
+
+    #[test]
+    fn camera_ids_at_the_top_of_the_range_neither_collide_nor_overflow() {
+        let mut models = Models::new(Catalog::default());
+        for top in [u32::MAX, MAX_ITEM_ID + 1, MAX_ITEM_ID] {
+            // A loaded file.
+            let mut scene = Document::default();
+            let mut f = file(None);
+            f.cameras.push(CameraPlacement {
+                id: top,
+                ..camera()
+            });
+            scene.load_file(f.clone(), &mut models);
+            assert_eq!(add_and_check(&mut scene, 3), [1, 2, 3]);
+
+            // An accepted proposal taken over cameras of the document's own.
+            let mut scene = Document::default();
+            scene.load_file(file(None), &mut models);
+            assert_eq!(add_and_check(&mut scene, 2), [1, 2]);
+            let mut taken = f.clone();
+            taken.cameras = scene.cameras.clone();
+            taken.cameras.push(CameraPlacement {
+                id: top,
+                ..camera()
+            });
+            scene.take_items(taken.clone(), &mut models);
+            assert_eq!(add_and_check(&mut scene, 2), [3, 4]);
+
+            // And undoing back to it.
+            let snapshot = scene.snapshot(&models);
+            scene.restore(&snapshot, &mut models);
+            add_and_check(&mut scene, 1);
+        }
+        // Below the top, ids carry on from the highest.
+        let mut scene = Document::default();
+        let mut f = file(None);
+        f.cameras.push(CameraPlacement {
+            id: MAX_ITEM_ID - 1,
+            ..camera()
+        });
+        scene.load_file(f, &mut models);
+        assert_eq!(add_and_check(&mut scene, 2), [MAX_ITEM_ID, 1]);
     }
 }

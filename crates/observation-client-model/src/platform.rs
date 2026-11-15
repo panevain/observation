@@ -1,6 +1,7 @@
 //! What the client needs from the page it runs in, as traits: HTTP and
-//! server-sent events, key-value storage, file download and upload, the wall
-//! clock, the system colour scheme and the coverage worker.
+//! server-sent events, key-value storage, file download and upload, the
+//! evidence sheet's PNG and print output, the wall clock, the system colour
+//! scheme and the coverage worker.
 //!
 //! The client implements each trait once for the browser and once for native
 //! builds (`observation-client`'s `platform` module); tests use the fakes in
@@ -10,6 +11,33 @@
 
 /// A reply body, or why there is none (already worded for the user).
 pub type Reply = Result<Vec<u8>, String>;
+
+/// Why a request failed, as [`Http::fetch_status`] reports it: enough to
+/// decide whether trying again could help.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    /// The reply's HTTP status; `None` when no reply came at all (offline,
+    /// a dead server, a blocked connection) or it is not known.
+    pub status: Option<u16>,
+    /// The reply's `Retry-After`, in seconds, when it gave one as a number.
+    pub retry_after_s: Option<u64>,
+    /// What went wrong, worded for the user (as a [`Reply`]'s error).
+    pub message: String,
+}
+
+impl Failure {
+    /// A failure whose status is not known.
+    pub fn without_status(message: String) -> Self {
+        Self {
+            status: None,
+            retry_after_s: None,
+            message,
+        }
+    }
+}
+
+/// A reply body, or why there is none with the reply's status.
+pub type StatusReply = Result<Vec<u8>, Failure>;
 
 /// One HTTP request.
 #[derive(Clone, PartialEq, Eq)]
@@ -45,6 +73,34 @@ impl HttpRequest {
     }
 }
 
+/// What a followed event stream ([`Http::follow`]) reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamEvent {
+    /// The data of one message of the followed event type.
+    Data(Vec<u8>),
+    /// The connection dropped; the browser is reconnecting.
+    Dropped,
+    /// The stream is closed for good (the server refused it, or it could
+    /// not be opened), with why; nothing more follows.
+    Closed(String),
+}
+
+/// Ends a followed stream ([`Http::follow`]) when [`StreamStop::stop`] is
+/// called: the browser closes it within a second, and nothing more is
+/// reported. Clones share the flag.
+#[derive(Debug, Clone, Default)]
+pub struct StreamStop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl StreamStop {
+    pub fn stop(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// HTTP requests and event streams to the server the page came from.
 ///
 /// Callbacks may run before `fetch` or `subscribe` returns (the native build
@@ -54,6 +110,15 @@ pub trait Http: Send + Sync + 'static {
     /// Sends the request; `done` is called once with the body of a successful
     /// reply or a description of the failure.
     fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>);
+    /// The same, but a failure carries the reply's status and
+    /// `Retry-After`, for callers that try again. By default (the native
+    /// build) neither is known.
+    fn fetch_status(&self, req: HttpRequest, done: Box<dyn FnOnce(StatusReply) + Send>) {
+        self.fetch(
+            req,
+            Box::new(move |reply| done(reply.map_err(Failure::without_status))),
+        );
+    }
     /// Follows a server-sent event stream: `on` is called with the data of
     /// every `event` message, and with an error whenever the stream drops;
     /// a stream that drops is reopened and lives as long as the page. If the
@@ -61,6 +126,13 @@ pub trait Http: Send + Sync + 'static {
     /// called once with an error, possibly before this returns, and never
     /// again.
     fn subscribe(&self, url: &str, event: &str, on: Box<dyn Fn(Reply) + Send>);
+    /// Follows a server-sent event stream until `stop` is set: `on` is
+    /// called with the data of every `event` message and whenever the
+    /// connection drops (the browser reconnects by itself). Unlike
+    /// [`Self::subscribe`] it is not reopened once the browser gives up (the
+    /// server refused it): `on` then gets [`StreamEvent::Closed`] and nothing
+    /// more. Nothing is reported once `stop` is set.
+    fn follow(&self, url: &str, event: &str, stop: StreamStop, on: Box<dyn Fn(StreamEvent) + Send>);
 }
 
 /// Why the browser refused the autosave.
@@ -120,6 +192,26 @@ pub trait FileDialogs: Send + Sync + 'static {
     /// returns. `done` is never called when the user cancels, nor in the
     /// native build, which has no picker.
     fn pick_text(&self, accept: &str, done: Box<dyn FnOnce(Result<PickedFile, String>) + Send>);
+}
+
+/// What the browser does with an evidence sheet besides saving its SVG
+/// (which goes through [`FileDialogs::download`]).
+///
+/// The sheet is A4 pages stacked in one SVG
+/// ([`observation_core::evidence::SheetSvg`]).
+pub trait SheetOutput: Send + Sync + 'static {
+    /// Draws the sheet on a canvas at twice its size and offers it as a PNG
+    /// named `name`; `done` is called once with the outcome, possibly before
+    /// this returns (the native build has no canvas and refuses at once).
+    fn download_png(
+        &self,
+        name: &str,
+        sheet: &observation_core::evidence::SheetSvg,
+        done: Box<dyn FnOnce(Result<(), String>) + Send>,
+    );
+    /// Opens the browser's print dialog on the sheet, one page per sheet
+    /// page (the dialog saves it as PDF), or says why it could not.
+    fn print(&self, sheet: &observation_core::evidence::SheetSvg) -> Result<(), String>;
 }
 
 /// The wall clock.

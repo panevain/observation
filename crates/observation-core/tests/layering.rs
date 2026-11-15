@@ -47,12 +47,14 @@ const LAYERS: &[(&str, u8)] = &[
     ("frustum", 4),
     ("occlusion", 4),
     ("coverage", 4),
+    ("footage", 4),
     ("example", 4),
     // 5: messages and records exchanged with the outside.
     ("coverage_job", 5),
     ("regions", 5),
     ("provenance", 5),
     ("scene", 5),
+    ("evidence", 5),
 ];
 
 /// Upward edges that remain, each with the reason: `(file under src/, path

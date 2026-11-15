@@ -11,6 +11,7 @@ use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, DoriLevel, Lighting, MAX_GROUP_CHARS,
 };
 use observation_core::example::{EXAMPLE_MODELS, example_cameras_around};
+use observation_core::footage::fresh_id;
 use observation_core::glam::Vec3;
 use observation_core::scene::{
     AreaRef, MAX_CAMERAS, MAX_CUSTOM_MODELS, SCENE_VERSION, SceneFile, lift_onto_terrain,
@@ -28,8 +29,8 @@ pub fn parse(scene: &Value) -> Result<SceneFile, ToolError> {
         other => SceneFile::from_json(&other.to_string())?,
     };
     if file.on_flat_ground() && file.area == AreaRef::Demo {
-        let terrain = &bundle_for(&file)?.terrain;
-        lift_onto_terrain(&mut file.cameras, terrain);
+        let bundle = bundle_for(&file)?;
+        lift_onto_terrain(&mut file.cameras, &bundle.terrain);
         file.version = SCENE_VERSION;
     }
     Ok(file)
@@ -155,22 +156,15 @@ pub struct Place {
     pub roll_deg: Option<f32>,
     /// Point the camera at this spot instead of using yaw and pitch.
     pub look_at: Option<Target>,
-    /// Name shown in the app. Defaults to "Camera <id>".
+    /// Name shown in the app. Defaults to "Camera `<id>`".
     pub label: Option<String>,
 }
 
-/// An id no camera in the scene has: one above the highest, or the lowest
-/// free one once the highest is `u32::MAX` (a scene holds at most
-/// [`MAX_CAMERAS`], so there is always one).
+/// An id no camera in the scene has, by the scene's rule
+/// ([`fresh_id`]): one above the highest, or the lowest free one once the
+/// highest is `MAX_ITEM_ID`.
 fn next_camera_id(scene: &SceneFile) -> u32 {
-    let taken = |id| scene.cameras.iter().any(|c| c.id == id);
-    match scene.cameras.iter().map(|c| c.id).max() {
-        None => 1,
-        Some(m) => m
-            .checked_add(1)
-            .or_else(|| (1..u32::MAX).find(|&id| !taken(id)))
-            .unwrap_or(0),
-    }
+    fresh_id(scene.cameras.iter().map(|c| c.id))
 }
 
 fn camera_mut(scene: &mut SceneFile, id: u32) -> Result<&mut CameraPlacement, ToolError> {
@@ -224,6 +218,7 @@ fn aim_at(cam: &mut CameraPlacement, p: Vec3) -> Result<(), ToolError> {
 /// The world position of `t`.
 fn target_point(scene: &SceneFile, t: Target) -> Result<Vec3, ToolError> {
     let bundle = bundle_for(scene)?;
+    let bundle = &*bundle;
     check_inside(bundle, t.x, t.z)?;
     let h = check_height(t.height_m.unwrap_or(scene.params.subject_height_m))?;
     Ok(Vec3::new(t.x, ground_y(bundle, t.x, t.z) + h, t.z))
@@ -240,6 +235,7 @@ pub fn place_camera(scene: &mut SceneFile, catalog: &Catalog, p: Place) -> Resul
         .ok_or_else(|| ToolError::NoModel(p.model_id.clone()))?
         .kind;
     let bundle = bundle_for(scene)?;
+    let bundle = &*bundle;
     check_inside(bundle, p.x, p.z)?;
     let height = check_height(p.height_m.unwrap_or(kind.default_mount_height_m()))?;
     let id = next_camera_id(scene);
@@ -276,6 +272,7 @@ pub fn move_camera(
     height_m: Option<f32>,
 ) -> Result<(), ToolError> {
     let bundle = bundle_for(scene)?;
+    let bundle = &*bundle;
     let cam = camera_mut(scene, id)?;
     let [ox, oy, oz] = cam.position;
     let (nx, nz) = (x.unwrap_or(ox), z.unwrap_or(oz));
@@ -544,7 +541,7 @@ pub fn add_example_cameras(
         .iter()
         .map(|c| [c.position[0], c.position[2]])
         .collect();
-    let placed = example_cameras_around(bundle_for(scene)?, &refs, count, &taken);
+    let placed = example_cameras_around(&*bundle_for(scene)?, &refs, count, &taken);
     let mut ids = Vec::with_capacity(placed.len());
     for mut c in placed {
         c.id = next_camera_id(scene);
@@ -617,6 +614,7 @@ mod tests {
         let b = place_at(&mut s, 5.0, 5.0);
         assert_eq!((a, b), (1, 2));
         let bundle = bundle_for(&s).unwrap();
+        let bundle = &*bundle;
         let ground = ground_y(bundle, 0.0, 0.0);
         assert!((s.cameras[0].position[1] - ground - 2.0).abs() < 1e-3);
         assert_eq!(s.cameras[0].label, "Camera 1");
@@ -801,6 +799,9 @@ mod tests {
         assert_eq!(a, 1);
         assert_eq!(s.cameras[1].id, 1, "the lowest free id");
         assert_eq!(place_at(&mut s, 2.0, 0.0), 2);
+        // Ids stay within the scene's range: past `MAX_ITEM_ID` too.
+        s.cameras[0].id = observation_core::scene::MAX_ITEM_ID;
+        assert_eq!(place_at(&mut s, 3.0, 0.0), 3);
     }
 
     #[test]
@@ -868,5 +869,39 @@ mod tests {
         assert!((from_obj.origin.lon - s.origin.lon).abs() < 1e-9);
         assert_eq!(from_obj.cameras, s.cameras);
         assert!(parse(&serde_json::json!({"format": "nope"})).is_err());
+    }
+
+    #[test]
+    fn edits_keep_areas_and_targets() {
+        let mut s = new_demo_scene().unwrap();
+        let mut value: Value = serde_json::from_str(&s.to_json()).unwrap();
+        value["areas"] = serde_json::json!([
+            {"id": 1, "label": "own", "name": "Garden", "points": [[0, 0], [10, 0], [10, 10]]},
+            {"id": 2, "label": "neighbour", "points": [[20, 0], [30, 0], [30, 10]]}
+        ]);
+        value["limit_figures_to"] = serde_json::json!(1);
+        value["targets"] = serde_json::json!([
+            {"id": 1, "name": "Gate", "at": {"kind": "wall", "point": [0, 1.5, 0], "normal": [0, 1]}}
+        ]);
+        s = parse(&value).unwrap();
+        set_coverage_params(
+            &mut s,
+            ParamsUpdate {
+                subject_height_m: Some(1.6),
+                ..ParamsUpdate::default()
+            },
+        );
+        let (checked, out) = finish(&s).unwrap();
+        assert_eq!((checked.areas.len(), checked.targets.len()), (2, 1));
+        assert_eq!(checked.figures_area().map(|a| a.id), Some(1));
+        assert_eq!(out["areas"][1]["label"], "neighbour");
+        assert_eq!(out["targets"][0]["name"], "Gate");
+        // The copy of the limiting area that older apps read.
+        assert_eq!(out["region"]["points"][1][0], 10.0);
+        // An old scene's region still limits the figures.
+        let mut old: Value = serde_json::from_str(&new_demo_scene().unwrap().to_json()).unwrap();
+        old["region"] = serde_json::json!({"points": [[0, 0], [10, 0], [10, 10]]});
+        let s = parse(&old).unwrap();
+        assert!(s.figures_area().is_some_and(|a| a.is_active()));
     }
 }

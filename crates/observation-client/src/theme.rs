@@ -13,10 +13,13 @@ use bevy_egui::egui::{
 };
 use crossbeam_channel::{Receiver, unbounded};
 use observation_core::camera::CameraKind;
+use observation_core::footage::AreaLabel;
 
 use crate::platform::ColorScheme;
 
-use observation_tokens::{FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors};
+use observation_tokens::{
+    AREA_COLORS_LIGHT, COVERAGE_RAMP, FONT, LAYOUT, RADIUS, Rgba, SPACE, UiColors,
+};
 pub use observation_tokens::{Layout, Radius, Space, TypeScale};
 
 /// Smallest supported viewport (CSS px). Below this the app shows a gate.
@@ -34,8 +37,16 @@ pub struct WorldColors {
     pub aim_target: Color32,
     /// Dark casing under neutral markers so they read on any map tile.
     pub halo: Color32,
-    /// Outline of the coverage region.
+    /// Outline of an unlabelled area (such as the single region of an older
+    /// scene).
     pub region: Color32,
+    /// Outlines of labelled areas, in [`AreaLabel::ALL`] order (Own,
+    /// Neighbour, Public, Other). Cool hues, clear of the coverage ramp, and
+    /// each area is listed with its label in the Places tab, so colour is
+    /// never the only cue.
+    pub areas: [Color32; 4],
+    /// Target markers, drawn over [`Self::halo`].
+    pub target: Color32,
     /// Edge of the loaded area and the hatching beyond it, shown while
     /// drawing a region. Red, though the warm band belongs to the coverage
     /// ramp: it only tints ground the overlay never paints, and the hatching
@@ -138,13 +149,6 @@ const KIND_COLORS_DARK: [Color32; 7] = [
     Color32::from_rgb(0x7D, 0x87, 0x96),
 ];
 
-const COVERAGE_RAMP: [Color32; 4] = [
-    Color32::from_rgba_unmultiplied_const(0xF5, 0xC5, 0x42, 140),
-    Color32::from_rgba_unmultiplied_const(0xF2, 0x8C, 0x28, 165),
-    Color32::from_rgba_unmultiplied_const(0xE0, 0x45, 0x3A, 185),
-    Color32::from_rgba_unmultiplied_const(0x9B, 0x2C, 0x8C, 205),
-];
-
 impl Tokens {
     pub fn light() -> Self {
         Self::scheme(
@@ -160,6 +164,8 @@ impl Tokens {
                 aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 halo: Color32::from_rgb(0x1B, 0x1F, 0x24),
                 region: Color32::from_rgb(0x1B, 0x1F, 0x24),
+                areas: AREA_COLORS_LIGHT.map(color),
+                target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 outside_area: Color32::from_rgb(0xC9, 0x2A, 0x2A),
                 address: Color32::from_rgb(0x8F, 0xA3, 0xEE),
             },
@@ -180,6 +186,13 @@ impl Tokens {
                 aim_target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 halo: Color32::from_rgb(0x12, 0x14, 0x17),
                 region: Color32::from_rgb(0x12, 0x14, 0x17),
+                areas: [
+                    Color32::from_rgb(0x2E, 0xC4, 0x9A),
+                    Color32::from_rgb(0x3D, 0x9B, 0xE0),
+                    Color32::from_rgb(0x8A, 0xCF, 0xF2),
+                    Color32::from_rgb(0xA8, 0x9C, 0xFA),
+                ],
+                target: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 outside_area: Color32::from_rgb(0xF0, 0x6A, 0x6A),
                 address: Color32::from_rgb(0x7C, 0x95, 0xF2),
             },
@@ -214,7 +227,7 @@ impl Tokens {
             scrim: color(ui.scrim),
             camera_palette,
             kind_colors,
-            coverage_ramp: COVERAGE_RAMP,
+            coverage_ramp: COVERAGE_RAMP.map(color),
             selection_box: color(ui.accent),
             world,
             space: SPACE,
@@ -251,6 +264,18 @@ impl Tokens {
     pub fn kind_color(&self, kind: CameraKind) -> Color32 {
         let i = CameraKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
         self.kind_colors[i % self.kind_colors.len()]
+    }
+
+    /// Outline colour of an area with `label` (unlabelled: the region
+    /// colour).
+    pub fn area_color(&self, label: Option<AreaLabel>) -> Color32 {
+        match label {
+            None => self.world.region,
+            Some(l) => {
+                let i = AreaLabel::ALL.iter().position(|x| *x == l).unwrap_or(0);
+                self.world.areas[i % self.world.areas.len()]
+            }
+        }
     }
 
     /// Colour for a cell seen by `count` cameras (`count ≥ 1`).
