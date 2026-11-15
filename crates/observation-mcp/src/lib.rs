@@ -28,6 +28,7 @@
 //! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
 //! | [`describe`] | the scene in words (surroundings, buildings, streets, mount points, a camera's view), and [`geometry`], its bearings, compass words and street helpers |
 //! | [`render`] | a top-down map of a scene, as a character grid or a PNG, and its tool |
+//! | [`optimise`] | the goal tools, which search placements and aims for a goal |
 //! | [`schema`] | the schema of tool fields held as untyped JSON objects |
 //! | [`server`] | the MCP tools, resources and prompts |
 //! | [`store`] | working scenes held by id (`s1`), `scene_id` on every scene tool, and the tools that open, export, undo, compare and batch-edit them |
@@ -46,6 +47,7 @@ pub mod figures;
 pub mod geometry;
 pub mod http;
 pub mod link;
+pub mod optimise;
 pub mod places;
 pub mod propose;
 pub mod queries;

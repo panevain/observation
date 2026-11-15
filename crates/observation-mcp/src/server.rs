@@ -69,6 +69,9 @@ describe_surroundings, list_buildings, list_streets and camera_view, and suggest
 for wall mounts to pass to place_camera. \
 To see the scene, call render_map: a north-up character map with a legend (format \"image\" \
 adds a picture), zoomed with center [x, z] and radius_m. \
+To choose where a camera goes or how to aim it, call suggest_placement, optimise_aim or \
+cover_target instead of trying positions yourself: they search on the server and return the \
+model's estimates. \
 Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
 the data date and the caveats the tools return.";
 
@@ -133,7 +136,8 @@ impl ObservationMcp {
                 + Self::proposal_tool_router()
                 + Self::store_tool_router()
                 + Self::describe_tool_router()
-                + Self::render_tool_router();
+                + Self::render_tool_router()
+                + Self::goal_tool_router();
             crate::store::document_scene_ids(tools)
         })
     }
