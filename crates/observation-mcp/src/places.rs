@@ -218,8 +218,11 @@ fn no_area(id: u32) -> ToolError {
     ToolError::invalid(format!("no area with id {id} in the scene"))
 }
 
-fn no_target(id: u32) -> ToolError {
-    ToolError::invalid(format!("no target with id {id} in the scene"))
+fn no_target(scene: &SceneFile, id: u32) -> ToolError {
+    ToolError::invalid(format!(
+        "no target with id {id} in the scene; {}",
+        crate::error::ids_there("targets", scene.targets.iter().map(|t| t.id), "add_target")
+    ))
 }
 
 /// Adds an area, or changes the one `e.area_id` names; returns its id.
@@ -415,7 +418,7 @@ fn snap_to_wall(
                 .cameras
                 .iter()
                 .find(|c| c.id == id)
-                .ok_or(ToolError::NoCamera(id))?;
+                .ok_or_else(|| ToolError::no_camera(scene, id))?;
             Some(Vec2::new(c.position[0], c.position[2]))
         }
         None => None,
@@ -488,7 +491,7 @@ pub fn update_target(
         .targets
         .iter()
         .position(|t| t.id == id)
-        .ok_or_else(|| no_target(id))?;
+        .ok_or_else(|| no_target(scene, id))?;
     let mut t = scene.targets[i].clone();
     if let Some(n) = name {
         let n = tidy_name(&n)?;
@@ -509,11 +512,10 @@ pub fn update_target(
 }
 
 pub fn remove_target(scene: &mut SceneFile, id: u32) -> Result<(), ToolError> {
-    let before = scene.targets.len();
-    scene.targets.retain(|t| t.id != id);
-    if scene.targets.len() == before {
-        return Err(no_target(id));
+    if !scene.targets.iter().any(|t| t.id == id) {
+        return Err(no_target(scene, id));
     }
+    scene.targets.retain(|t| t.id != id);
     Ok(())
 }
 

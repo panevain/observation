@@ -50,8 +50,11 @@ pub struct AppStateOut {
     pub ended: Option<String>,
     /// Grows each time the app shares a change; 0 until it has shared anything.
     pub revision: u64,
-    /// The scene open in the app, as the scene tools take it (checked as an
-    /// imported file is). Edits made with the tools do not reach the app.
+    /// What the app's scene holds, in one line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_summary: Option<String>,
+    /// The app's scene file (checked as an imported file is). To edit it,
+    /// call open_scene with from "app".
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<JsonObject>")]
     pub scene: Option<Value>,
@@ -97,7 +100,10 @@ impl AppStateOut {
             return out;
         };
         match edit::parse(&state.scene).and_then(|f| edit::finish(&f)) {
-            Ok((_, scene)) => out.scene = Some(scene),
+            Ok((file, scene)) => {
+                out.scene_summary = Some(crate::store::describe(&file));
+                out.scene = Some(scene);
+            }
             Err(e) => out.scene_problem = Some(e.to_string()),
         }
         out.scene_name = state.scene_name;
@@ -336,7 +342,7 @@ pub struct Disconnected {
 #[tool_router(router = app_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Connect to the Observation app the user has open on this computer, with the code from its Connect agent dialog. Then get_app_state reads their open scene, selection and shared point, and coverage and address tools work on their real area.",
+        description = "Connect to the Observation app open on this computer, with its address and the code from its Connect agent dialog. Then every tool works on the user's real area.",
         annotations(
             read_only_hint = false,
             idempotent_hint = false,
@@ -387,7 +393,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Read what the user has open in the connected Observation app: the scene (pass it to the scene tools), its area, the selected cameras and the point they shared. Subscribe to observation://app/state to hear of changes.",
+        description = "What the user has open in the connected app: a summary of the scene, its area, the selected cameras, a shared point and proposals. To edit the scene, call open_scene with from \"app\".",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn get_app_state(&self) -> Result<Json<AppStateOut>, String> {

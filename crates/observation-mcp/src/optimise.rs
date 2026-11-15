@@ -1496,7 +1496,7 @@ pub fn optimise(
         .cameras
         .iter()
         .find(|c| c.id == camera_id)
-        .ok_or(ToolError::NoCamera(camera_id))?;
+        .ok_or_else(|| ToolError::no_camera(&p.scene, camera_id))?;
     if !cam.enabled {
         return Err(ToolError::invalid(format!(
             "camera {camera_id} is disabled: enable it with update_camera first"
@@ -2248,7 +2248,7 @@ pub struct CoverArgs {
 #[tool_router(router = goal_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Suggest where to mount new cameras (1 to 4) on house fronts for a goal: street (most extra street not ruled out), targets, area or gaps. Returns each camera's model, [x, z], height, aim and gain, best first; apply=true adds them and returns the scene. Estimates: pass on the notes and caveats.",
+        description = "Suggest where to mount 1 to 4 new cameras on house fronts for a goal: street (the default), targets, area or gaps. Returns each camera's model, position, height, aim and gain, best first; apply=true adds them.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn suggest_placement(

@@ -12,6 +12,7 @@ use crate::area::{self, extent};
 use crate::catalog::{catalog, is_custom, model};
 use crate::edit::{self, CameraUpdate, Kind, ModelUpdate, NewModel, ParamsUpdate, Place, Target};
 use crate::figures::scene_figures;
+use crate::geometry;
 use crate::link::{AppLink, STATE_URI};
 use crate::schema::JsonObject;
 use observation_core::address::ON_OUTLINE_M;
@@ -265,6 +266,7 @@ pub struct ExampleArgs {
     #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// How many cameras to add (1 to 20).
+    #[schemars(range(min = 1, max = 20))]
     pub count: usize,
     /// Models to cycle through; omit for the app's example models (a mix of
     /// types and brands).
@@ -511,7 +513,7 @@ pub struct AddressOut {
 #[tool_router]
 impl ObservationMcp {
     #[tool(
-        description = "List camera models from the catalogue (and a scene's custom models), with fields of view, resolution and range at each detail level.",
+        description = "List camera models (and a scene's custom models), with fields of view, resolution and range at each detail level.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn list_camera_models(
@@ -547,7 +549,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Get one camera model by id, with its range at each detail level and its spec source.",
+        description = "One camera model by id: fields of view, resolution, range at each detail level by day and at night, and its spec source.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn get_camera_model(
@@ -590,7 +592,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Create a new, empty scene on the demo street, kept as a working scene. Prefer passing its scene_id (such as \"s1\") to the scene tools; the scene file is also in the `scene` field of the result.",
+        description = "Create an empty scene on the demo street, kept as a working scene. Prefer open_scene; this also returns the scene file.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -628,7 +630,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Set the scene's analysis settings: detail level, day or night, the height people are tested at, and the custom pixel density.",
+        description = "Set the scene's analysis settings: level (detect, observe, recognise or identify), lighting (day or night) and the height people are tested at.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn set_coverage_params(
@@ -643,14 +645,36 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Place a camera at [x, z] (metres east and south of the origin), mounted height_m above the ground, aimed by yaw and pitch or at a look_at spot.",
+        description = "Place a camera at x, z (metres east and south of the centre), height_m above the ground. yaw_deg is a compass bearing: 0 faces north, 90 east, 180 south, 270 west. Or give look_at. With neither, it faces the nearest street.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn place_camera(&self, Parameters(a): Parameters<PlaceArgs>) -> Result<Json<Edited>, String> {
         let cat = catalog().map_err(fail)?;
         let mut s = edit::parse(&a.scene).map_err(fail)?;
+        let aimed = a.camera.yaw_deg.is_some() || a.camera.look_at.is_some();
+        let at = [a.camera.x, a.camera.z];
         let id = edit::place_camera(&mut s, cat, a.camera).map_err(fail)?;
-        let mut out = Edited::new(format!("placed camera {id}"), &s).map_err(fail)?;
+        let yaw = s
+            .cameras
+            .iter()
+            .find(|c| c.id == id)
+            .map_or(0.0, |c| c.yaw_deg);
+        let facing = format!("{}° ({})", geometry::m0(yaw), geometry::compass(yaw));
+        let summary = if aimed {
+            format!("placed camera {id}, facing {facing}")
+        } else {
+            let street = area::bundle_for(&s)
+                .ok()
+                .and_then(|b| geometry::nearest_street(&b, at));
+            match street {
+                Some(st) => format!(
+                    "placed camera {id}, facing the nearest street, {}, at {facing}",
+                    st.label
+                ),
+                None => format!("placed camera {id}, facing {facing}: no street found to face"),
+            }
+        };
+        let mut out = Edited::new(summary, &s).map_err(fail)?;
         out.camera_id = Some(id);
         Ok(Json(out))
     }
@@ -668,7 +692,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Aim a camera: set any of its compass bearing (yaw), tilt (pitch) and roll, in degrees.",
+        description = "Aim a camera: yaw_deg (0 north, 90 east, 180 south, 270 west), pitch_deg (negative tilts down) and roll_deg. Omitted ones stay.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn aim_camera(&self, Parameters(a): Parameters<AimArgs>) -> Result<Json<Edited>, String> {
@@ -680,7 +704,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Point a camera at a spot on the area: [x, z] and a height above the ground there (default: the scene's subject height).",
+        description = "Point a camera at a spot: x, z and a height above the ground there (default: the scene's subject height).",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn point_camera_at(
@@ -723,7 +747,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Add example cameras on house fronts facing the street, clear of the cameras already in the scene, like those the app puts on a new demo street.",
+        description = "Add 1 to 20 example cameras on house fronts, facing the street, clear of the cameras already placed.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn add_example_cameras(
@@ -786,7 +810,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Compute how much street and building wall the scene's enabled cameras see, at each detail level, with buildings and terrain blocking the view. Pass on the caveats.",
+        description = "How much mapped street and building wall is not ruled out for the enabled cameras, with buildings and terrain in the way. At each detail level; pass on the caveats.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn compute_coverage(

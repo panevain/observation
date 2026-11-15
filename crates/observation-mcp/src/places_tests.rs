@@ -562,7 +562,7 @@ async fn camera_split_counts_areas_street_and_walls_without_addresses() {
         server.camera_split(Parameters(CameraSplitArgs {
             scene: s.clone(),
             camera_id,
-            dori: None,
+            level: None,
             lighting,
         }))
     };
@@ -623,7 +623,7 @@ async fn camera_split_counts_areas_street_and_walls_without_addresses() {
         .camera_split(Parameters(CameraSplitArgs {
             scene: off,
             camera_id: Some(1),
-            dori: None,
+            level: None,
             lighting: None,
         }))
         .await
@@ -636,7 +636,7 @@ async fn find_gaps(scene: Value, max_gaps: Option<usize>) -> Result<GapsOut, Str
     mcp()
         .find_gaps(Parameters(FindGapsArgs {
             scene,
-            dori: None,
+            level: None,
             lighting: None,
             max_gaps,
             min_area_m2: None,
@@ -701,7 +701,7 @@ async fn gaps_on_the_demo_street() {
     let e = mcp()
         .find_gaps(Parameters(FindGapsArgs {
             scene: empty(),
-            dori: None,
+            level: None,
             lighting: None,
             max_gaps: None,
             min_area_m2: Some(-1.0),

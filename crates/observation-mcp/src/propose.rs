@@ -26,8 +26,8 @@ use serde_json::Value;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProposeArgs {
-    /// The scene as you propose it: the app's scene (from get_app_state)
-    /// edited with the scene tools.
+    /// The scene as you propose it: a working scene opened with from "app"
+    /// and edited.
     #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// What the change does and why, in one sentence the user reads first
@@ -110,7 +110,8 @@ fn describe(status: ProposalStatus) -> (&'static str, &'static str) {
         ProposalStatus::Stale => (
             "stale",
             "The user changed something it touches before deciding, so it was not applied. \
-             Read get_app_state again and propose from the current scene if it still helps.",
+             Open the app's scene again (open_scene with from \"app\") and propose afresh if it \
+             still helps.",
         ),
         ProposalStatus::Superseded => (
             "superseded",
@@ -141,15 +142,15 @@ pub fn change_set(
 ) -> Result<(ChangeSet, Vec<String>), ToolError> {
     let changes = ChangeSet::between(base, proposed).map_err(|e| match e {
         ChangeError::OtherArea => ToolError::invalid(
-            "the scene is on another area than the one open in the app; propose changes to the \
-             scene get_app_state returns",
+            "the scene is on another area than the one open in the app: open the app's scene \
+             with open_scene from \"app\", edit it and propose that",
         ),
         other => ToolError::invalid(other.to_string()),
     })?;
     if changes.is_empty() {
         return Err(ToolError::invalid(
-            "nothing to propose: the scene is the same as the one open in the app. Edit a copy of \
-             get_app_state's scene with the scene tools, then propose the result",
+            "nothing to propose: the scene is the same as the one open in the app. Edit the working \
+             scene (opened with from \"app\") first, then propose it by scene_id",
         ));
     }
     changes
@@ -165,7 +166,7 @@ pub fn change_set(
 #[tool_router(router = proposal_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Propose a change to the scene open in the connected app, for the user to accept or reject there as a whole. Pass the app's scene (from get_app_state) edited with the scene tools, and a one-sentence summary. Nothing changes until the user accepts: never say the change is made before get_proposal says accepted. A new proposal replaces one still pending.",
+        description = "Propose your edits to the user in the connected app: pass scene_id of the working scene you edited (opened with from \"app\") and a one-sentence summary. The user accepts or rejects it as a whole; nothing changes before wait_for_decision says accepted.",
         annotations(
             read_only_hint = false,
             idempotent_hint = false,
@@ -180,7 +181,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Where a proposal stands: pending, accepted, rejected (with the user's reason), stale (the user changed something it touches first), superseded or withdrawn. The observation://app/state resource also changes when the user decides.",
+        description = "Where a proposal stands: pending, accepted, rejected (with the user's reason), stale (the user changed something it touches first), superseded or withdrawn.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn get_proposal(
@@ -260,8 +261,8 @@ async fn propose(mcp: &ObservationMcp, a: ProposeArgs) -> Result<Proposed, ToolE
         changes: lines,
         base_revision: view.revision,
         note: "The proposal is shown to the user in the app. Nothing has changed yet: the user \
-               accepts or rejects it as a whole. Tell them it is waiting for their decision, and \
-               check with get_proposal (or the observation://app/state resource)."
+               accepts or rejects it as a whole. Tell them it is waiting for their decision, then \
+               call wait_for_decision with its id."
             .to_owned(),
     })
 }

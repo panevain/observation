@@ -93,7 +93,7 @@ fn args(scene: Value) -> RenderMapArgs {
         radius_m: None,
         layers: None,
         coverage: None,
-        dori: None,
+        level: None,
         lighting: None,
         format: None,
     }
@@ -445,7 +445,7 @@ fn night_and_higher_detail_see_no_more_street() {
         let mut a = args(street_scene());
         a.center = Some([0.0, 10.0]);
         a.radius_m = Some(40.0);
-        a.dori = dori;
+        a.level = dori;
         a.lighting = lighting;
         let r = render(&a, None).unwrap();
         grid_rows(&r.text, &r.out)

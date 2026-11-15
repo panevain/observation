@@ -552,7 +552,7 @@ async fn places_and_queries_work_on_the_users_real_area() {
             mcp.camera_split(Parameters(CameraSplitArgs {
                 scene: scene.clone(),
                 camera_id: None,
-                dori: None,
+                level: None,
                 lighting: None,
             })),
         )
@@ -578,7 +578,7 @@ async fn places_and_queries_work_on_the_users_real_area() {
             args(&scene).as_ref(),
             mcp.find_gaps(Parameters(FindGapsArgs {
                 scene: scene.clone(),
-                dori: None,
+                level: None,
                 lighting: None,
                 max_gaps: None,
                 min_area_m2: None,

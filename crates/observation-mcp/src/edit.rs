@@ -7,6 +7,7 @@
 use crate::ToolError;
 use crate::area::{bundle_for, check_inside, ground_y};
 use crate::catalog::{is_custom, model, new_custom_id};
+use observation_core::bundle::AreaBundle;
 use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, DoriLevel, Lighting, MAX_GROUP_CHARS,
 };
@@ -146,7 +147,8 @@ impl From<Kind> for CameraKind {
     }
 }
 
-/// A detail level (DORI, EN 62676-4), as the tools accept it.
+/// A detail level, as the tools accept it: how much a person in view shows
+/// (the levels of EN 62676-4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Dori {
     /// 25 px/m: can tell a person is present.
@@ -173,7 +175,7 @@ impl From<Dori> for DoriLevel {
     }
 }
 
-/// Lighting, as the tools accept it.
+/// Day, or night (each camera's infrared range).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Light {
     Day,
@@ -201,9 +203,15 @@ pub struct Target {
     pub height_m: Option<f32>,
 }
 
+/// The model a camera placed without one gets: a common wall-mounted
+/// bullet camera, one of the app's example models.
+pub const DEFAULT_MODEL: &str = "reolink-rlc-810a";
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct Place {
-    /// Catalogue or custom model id (see `list_camera_models`).
+    /// Camera model id, from suggest_placement or list_camera_models; omit
+    /// for a common wall-mounted bullet camera (reolink-rlc-810a).
+    #[serde(default)]
     pub model_id: String,
     /// Metres east of the area's origin.
     pub x: f32,
@@ -212,8 +220,8 @@ pub struct Place {
     /// Mount height above the ground, metres. Defaults to the model kind's
     /// typical height (doorbell 1.2, floodlight 2.7, bullet 2.6, ...).
     pub height_m: Option<f32>,
-    /// Compass bearing of the view, degrees clockwise from north. Ignored
-    /// when `look_at` is given; defaults to 0 (north).
+    /// Compass bearing of the view: 0 north, 90 east, 180 south, 270 west.
+    /// Ignored when `look_at` is given; omit both to face the nearest street.
     pub yaw_deg: Option<f32>,
     /// Tilt, degrees (negative looks down). Ignored when `look_at` is
     /// given; defaults to the kind's typical tilt.
@@ -234,11 +242,12 @@ fn next_camera_id(scene: &SceneFile) -> u32 {
 }
 
 fn camera_mut(scene: &mut SceneFile, id: u32) -> Result<&mut CameraPlacement, ToolError> {
-    scene
+    let i = scene
         .cameras
-        .iter_mut()
-        .find(|c| c.id == id)
-        .ok_or(ToolError::NoCamera(id))
+        .iter()
+        .position(|c| c.id == id)
+        .ok_or_else(|| ToolError::no_camera(scene, id))?;
+    Ok(&mut scene.cameras[i])
 }
 
 fn check_height(h: f32) -> Result<f32, ToolError> {
@@ -297,8 +306,12 @@ pub fn place_camera(scene: &mut SceneFile, catalog: &Catalog, p: Place) -> Resul
             "a scene holds at most {MAX_CAMERAS} cameras"
         )));
     }
-    let kind = model(catalog, Some(scene), &p.model_id)
-        .ok_or_else(|| ToolError::NoModel(p.model_id.clone()))?
+    let model_id = match p.model_id.trim() {
+        "" => DEFAULT_MODEL.to_owned(),
+        id => id.to_owned(),
+    };
+    let kind = model(catalog, Some(scene), &model_id)
+        .ok_or_else(|| ToolError::NoModel(model_id.clone()))?
         .kind;
     let bundle = bundle_for(scene)?;
     let bundle = &*bundle;
@@ -311,9 +324,12 @@ pub fn place_camera(scene: &mut SceneFile, catalog: &Catalog, p: Place) -> Resul
             .label
             .filter(|l| !l.trim().is_empty())
             .unwrap_or_else(|| format!("Camera {id}")),
-        model_id: p.model_id,
+        model_id,
         position: [p.x, ground_y(bundle, p.x, p.z) + height, p.z],
-        yaw_deg: check_angle("yaw", p.yaw_deg.unwrap_or(0.0))?.rem_euclid(360.0),
+        yaw_deg: match p.yaw_deg {
+            Some(y) => check_angle("yaw", y)?.rem_euclid(360.0),
+            None => street_bearing(bundle, [p.x, p.z]).unwrap_or(0.0),
+        },
         pitch_deg: check_pitch(p.pitch_deg.unwrap_or(kind.default_pitch_deg()))?,
         roll_deg: check_angle("roll", p.roll_deg.unwrap_or(0.0))?,
         color: None,
@@ -325,6 +341,16 @@ pub fn place_camera(scene: &mut SceneFile, catalog: &Catalog, p: Place) -> Resul
     }
     scene.cameras.push(cam);
     Ok(id)
+}
+
+/// The bearing from `[x, z]` to the nearest point of the street it is on
+/// ([`crate::geometry::nearest_street`]), to the degree: where a camera
+/// placed without an aim faces. `None` in an area without streets, or on
+/// the street's centre line itself.
+pub fn street_bearing(bundle: &AreaBundle, at: [f32; 2]) -> Option<f32> {
+    let street = crate::geometry::nearest_street(bundle, at)?;
+    (street.distance_m > 0.01)
+        .then(|| crate::geometry::bearing_deg(at, street.point).round() % 360.0)
 }
 
 /// Moves a camera to `[x, z]` (either may be left as it is), at `height_m`
@@ -425,11 +451,10 @@ pub fn update_camera(
 }
 
 pub fn remove_camera(scene: &mut SceneFile, id: u32) -> Result<(), ToolError> {
-    let before = scene.cameras.len();
-    scene.cameras.retain(|c| c.id != id);
-    if scene.cameras.len() == before {
-        return Err(ToolError::NoCamera(id));
+    if !scene.cameras.iter().any(|c| c.id == id) {
+        return Err(ToolError::no_camera(scene, id));
     }
+    scene.cameras.retain(|c| c.id != id);
     Ok(())
 }
 
@@ -634,8 +659,9 @@ pub fn add_camera(scene: &mut SceneFile, mut camera: CameraPlacement) -> Result<
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
 pub struct ParamsUpdate {
-    /// The detail level the app shows.
-    pub dori: Option<Dori>,
+    /// Detail level: detect, observe, recognise or identify.
+    #[serde(alias = "dori")]
+    pub level: Option<Dori>,
     pub lighting: Option<Light>,
     /// Height above the ground at which people are tested, metres (0 = feet,
     /// about 1.0 = torso, about 1.6 = face).
@@ -647,7 +673,7 @@ pub struct ParamsUpdate {
 /// Changes the scene's analysis settings.
 pub fn set_coverage_params(scene: &mut SceneFile, u: ParamsUpdate) {
     let p = &mut scene.params;
-    if let Some(d) = u.dori {
+    if let Some(d) = u.level {
         p.dori = d.into();
     }
     if let Some(l) = u.lighting {
@@ -729,7 +755,7 @@ mod tests {
         remove_camera(&mut s, a).unwrap();
         assert!(matches!(
             remove_camera(&mut s, a),
-            Err(ToolError::NoCamera(1))
+            Err(ToolError::NoCamera(1, _))
         ));
         // Ids are not reused while a higher one exists.
         assert_eq!(place_at(&mut s, 0.0, 0.0), 3);

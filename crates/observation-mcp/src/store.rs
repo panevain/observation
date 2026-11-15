@@ -537,6 +537,16 @@ impl SceneStore {
 const SCENE_ID: &str = "scene_id";
 const RETURN_SCENE: &str = "return_scene";
 
+/// What every `scene_id` argument says, so that a small model reads one
+/// wording everywhere.
+pub const SCENE_ID_WORDS: &str = "The id from open_scene, such as \"s1\".";
+/// What every `scene` argument says.
+pub const SCENE_WORDS: &str = "A scene file; prefer scene_id.";
+/// The same for a tool whose scene is optional (it only adds custom models).
+const OPTIONAL_SCENE_ID_WORDS: &str =
+    "Omit unless the scene has custom models; then the id from open_scene, such as \"s1\".";
+const OPTIONAL_SCENE_WORDS: &str = "Omit unless the scene has custom models; prefer scene_id.";
+
 fn properties(schema: &Map<String, Value>) -> Option<&Map<String, Value>> {
     schema.get("properties")?.as_object()
 }
@@ -583,16 +593,26 @@ pub fn document_scene_ids(mut router: ToolRouter<ObservationMcp>) -> ToolRouter<
         }
         let edits = edits_scene(tool);
         let input = Arc::make_mut(&mut tool.input_schema);
+        let required = input
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|r| r.iter().any(|n| n == "scene"));
         not_required(input, "scene");
+        let (id_words, scene_words) = if required {
+            (SCENE_ID_WORDS, SCENE_WORDS)
+        } else {
+            (OPTIONAL_SCENE_ID_WORDS, OPTIONAL_SCENE_WORDS)
+        };
         add_property(
             input,
             SCENE_ID,
-            json!({
-                "type": "string",
-                "description": "The id open_scene gave, such as \"s1\". Pass it instead of \
-                                `scene`."
-            }),
+            json!({"type": "string", "description": id_words}),
         );
+        if let Some(Value::Object(scene)) =
+            input.get_mut("properties").and_then(|p| p.get_mut("scene"))
+        {
+            scene.insert("description".to_owned(), Value::from(scene_words));
+        }
         if !edits {
             continue;
         }
@@ -601,8 +621,7 @@ pub fn document_scene_ids(mut router: ToolRouter<ObservationMcp>) -> ToolRouter<
             RETURN_SCENE,
             json!({
                 "type": "boolean",
-                "description": "With scene_id: also return the whole edited scene. Default \
-                                false: the result has scene_id and version instead."
+                "description": "true to also return the whole scene file (default false)."
             }),
         );
         if let Some(output) = tool.output_schema.as_mut() {
@@ -950,19 +969,19 @@ pub struct OpenArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SceneIdArgs {
-    /// The id open_scene gave, such as "s1".
+    /// The id from open_scene, such as "s1".
     pub scene_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExportArgs {
-    /// The id open_scene gave, such as "s1", or "s1@3" for its version 3.
+    /// The id from open_scene, such as "s1", or "s1@3" for its version 3.
     pub scene_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UndoArgs {
-    /// The id open_scene gave, such as "s1".
+    /// The id from open_scene, such as "s1".
     pub scene_id: String,
     /// How many versions to go back (default 1).
     pub steps: Option<usize>,
@@ -1012,7 +1031,7 @@ pub struct EditStep {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyArgs {
-    /// The id open_scene gave, such as "s1".
+    /// The id from open_scene, such as "s1".
     pub scene_id: String,
     /// The edits, run in order (at most 50). If one fails, none is kept.
     pub edits: Vec<EditStep>,
@@ -1407,7 +1426,7 @@ impl ObservationMcp {
 #[tool_router(router = store_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Open a working scene the server keeps for you, and get its id (such as s1) to pass as scene_id to the scene tools instead of the whole scene. from: new (an empty demo scene, the default), app (the connected app's open scene) or json (a scene file given in json).",
+        description = "Open a working scene and get its id (such as \"s1\") to pass as scene_id to the scene tools. from: new (an empty demo scene, the default), app (the connected app's scene) or json (a scene file in json).",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1423,7 +1442,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Get a working scene's file (scene_id such as s1, or s1@3 for version 3), ready to import in the app or to pass to propose_changes.",
+        description = "Get a working scene's file (scene_id such as \"s1\", or \"s1@3\" for version 3), to import in the app.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) fn export_scene(
@@ -1532,7 +1551,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Run several scene edits on a working scene in order, as one new version, all or nothing. Each edit is {tool, args}: a scene-editing tool (place_camera, aim_camera, add_target, ...) and its arguments without scene. Returns each edit's result, such as the camera ids.",
+        description = "Run several scene edits on a working scene in order, as one version, all or nothing. Each edit is {tool, args}: a scene-editing tool and its arguments without scene_id.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

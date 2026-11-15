@@ -175,8 +175,11 @@ fn camera_label(scene: &SceneFile, id: u32) -> String {
         .unwrap_or_default()
 }
 
-fn no_target(id: u32) -> ToolError {
-    ToolError::invalid(format!("no target with id {id} in the scene"))
+fn no_target(scene: &SceneFile, id: u32) -> ToolError {
+    ToolError::invalid(format!(
+        "no target with id {id} in the scene; {}",
+        crate::error::ids_there("targets", scene.targets.iter().map(|t| t.id), "add_target")
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +403,7 @@ pub fn verdicts_on_targets(
                 .iter()
                 .find(|t| t.id == id)
                 .cloned()
-                .ok_or_else(|| no_target(id))?,
+                .ok_or_else(|| no_target(&s, id))?,
         ],
         None => s.targets.clone(),
     };
@@ -623,7 +626,7 @@ fn chosen<'a>(
         .cameras
         .iter()
         .find(|c| c.id == id)
-        .ok_or(ToolError::NoCamera(id))?;
+        .ok_or_else(|| ToolError::no_camera(scene, id))?;
     if !c.enabled {
         return Err(ToolError::invalid(format!(
             "camera {id} is disabled: enable it with update_camera first"
@@ -968,8 +971,10 @@ pub struct CameraSplitArgs {
     pub scene: Value,
     /// Only this camera; omit for every enabled camera.
     pub camera_id: Option<u32>,
-    /// The detail level; omit for the scene's.
-    pub dori: Option<Dori>,
+    /// Detail level (detect, observe, recognise or identify); omit for the
+    /// scene's.
+    #[serde(alias = "dori")]
+    pub level: Option<Dori>,
     /// Day or night; omit for the scene's.
     pub lighting: Option<Light>,
 }
@@ -991,8 +996,10 @@ pub struct CheckPointArgs {
 pub struct FindGapsArgs {
     #[schemars(with = "JsonObject")]
     pub scene: Value,
-    /// The detail level; omit for the scene's.
-    pub dori: Option<Dori>,
+    /// Detail level (detect, observe, recognise or identify); omit for the
+    /// scene's.
+    #[serde(alias = "dori")]
+    pub level: Option<Dori>,
     /// Day or night; omit for the scene's.
     pub lighting: Option<Light>,
     /// How many gaps to list, largest first (1 to 20, default 5).
@@ -1004,7 +1011,7 @@ pub struct FindGapsArgs {
 #[tool_router(router = query_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "For every target in the scene (or one), each enabled camera's verdict at every detail level by day and at night: \"not ruled out\", or \"ruled out\" with the reason (outside the view, out of range, blocked by a building or by the terrain). Never say a camera \"sees\" a target; pass on the wording and caveats.",
+        description = "Verdicts on the scene's targets (or one): for each enabled camera, \"not ruled out\" or \"ruled out\" with the reason. At each detail level by day and at night.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn target_verdicts(
@@ -1017,20 +1024,20 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Where each enabled camera's footage lands (or one camera's), at the scene's detail level and lighting or those given: m² of visible ground in each labelled area and per label (as ranges with the outlines moved 1 m in and out, beside each polygon's area), on the street, driveways and footpaths as mapped, and on unlabelled ground, and the wall seen per building by index and distance. Pass on the notes and caveats.",
+        description = "Where each enabled camera's footage lands (or one camera's): m² of visible ground in each labelled area, on the mapped street and elsewhere, and wall per building by index and distance. Areas are as the user drew them.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn camera_split(
         &self,
         Parameters(a): Parameters<CameraSplitArgs>,
     ) -> Result<Json<SplitOut>, String> {
-        off_runtime(move || split(&a.scene, a.camera_id, a.dori, a.lighting))
+        off_runtime(move || split(&a.scene, a.camera_id, a.level, a.lighting))
             .await
             .map(Json)
     }
 
     #[tool(
-        description = "Which enabled cameras do not rule out a point [x, z] at the scene's settings, and why each other one rules it out, with the verdicts at every detail level by day and at night.",
+        description = "Verdicts on one point [x, z]: for each enabled camera, \"not ruled out\" or \"ruled out\" with the reason (outside the view, out of range, blocked by a building or the terrain).",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn check_point(
@@ -1043,14 +1050,14 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "The largest connected stretches of street no enabled camera sees at the scene's detail level and lighting (or those given), largest first: each with its area, centroid, a point inside, a bounding box, the nearest camera, the street it is on and the nearest building by index (never an address). Limited to the area for the figures if the scene has one.",
+        description = "The largest stretches of mapped street ruled out for every enabled camera, largest first: area, a point inside to aim at, the street, the nearest camera and building (by index).",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn find_gaps(
         &self,
         Parameters(a): Parameters<FindGapsArgs>,
     ) -> Result<Json<GapsOut>, String> {
-        off_runtime(move || gaps(&a.scene, a.dori, a.lighting, a.max_gaps, a.min_area_m2))
+        off_runtime(move || gaps(&a.scene, a.level, a.lighting, a.max_gaps, a.min_area_m2))
             .await
             .map(Json)
     }
