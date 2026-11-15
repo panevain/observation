@@ -117,7 +117,7 @@ fn describe(status: ProposalStatus) -> (&'static str, &'static str) {
 }
 
 /// A model's name by id, from either scene's custom models or the catalogue.
-fn model_name(base: &SceneFile, proposed: &SceneFile, id: &str) -> Option<String> {
+pub(crate) fn model_name(base: &SceneFile, proposed: &SceneFile, id: &str) -> Option<String> {
     let cat = catalog().ok()?;
     model(cat, Some(proposed), id)
         .or_else(|| model(cat, Some(base), id))

@@ -751,3 +751,62 @@ async fn the_agent_proposes_and_hears_the_users_decision() {
     assert_eq!(accepted.status, "accepted");
     assert!(accepted.meaning.contains("one undo step"));
 }
+
+/// propose_changes takes a working scene's id, as every scene tool does
+/// through `call_tool`: the agent opens the app's scene, edits it by id and
+/// proposes it by id.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_working_scene_is_proposed_by_id() {
+    use crate::store::tests::{call, failed, http_app, ok};
+    let app = bridge_app(FakeHttp::new());
+    let base = serve(&app).await;
+    let browser = Browser::open(&base).await;
+    let mcp = http_app();
+    ok(&call(
+        &mcp,
+        "connect_app",
+        json!({"url": base, "code": browser.code}),
+    )
+    .await);
+    let Json(placed) = ObservationMcp::new()
+        .add_example_cameras(Parameters(ExampleArgs {
+            scene: demo_scene(),
+            count: 2,
+            model_ids: Vec::new(),
+        }))
+        .unwrap();
+    let ids = placed.camera_ids.unwrap();
+    browser
+        .share(json!({"scene": placed.scene, "area": {"kind": "demo"}}))
+        .await;
+
+    let opened = ok(&call(&mcp, "open_scene", json!({"from": "app"})).await);
+    assert_eq!(opened["scene_id"], "s1");
+    assert!(
+        opened["summary"].as_str().unwrap().contains("2 cameras"),
+        "{opened}"
+    );
+    let unchanged = json!({"scene_id": "s1", "summary": "x"});
+    let e = failed(&call(&mcp, "propose_changes", unchanged).await);
+    assert!(e.contains("nothing to propose"), "{e}");
+    let removed = json!({"scene_id": "s1", "id": ids[1]});
+    ok(&call(&mcp, "remove_camera", removed).await);
+    let proposed = ok(&call(
+        &mcp,
+        "propose_changes",
+        json!({"scene_id": "s1", "summary": "Remove the second camera"}),
+    )
+    .await);
+    assert_eq!(proposed["status"], "pending");
+    assert_eq!(proposed["changes"].as_array().unwrap().len(), 1);
+    assert!(
+        proposed["changes"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("Remove Camera"),
+        "{proposed}"
+    );
+    let unknown = json!({"scene_id": "s4", "summary": "x"});
+    let e = failed(&call(&mcp, "propose_changes", unknown).await);
+    assert!(e.contains("no scene s4"), "{e}");
+}

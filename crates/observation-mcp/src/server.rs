@@ -1,8 +1,9 @@
 //! The MCP tools, resources and prompts.
 //!
-//! The scene tools are read-only in MCP's sense: none changes anything
-//! outside the call. They return an edited copy of the scene they were given,
-//! for the agent to pass to the next call or save for the app to import. The
+//! The scene tools return an edited copy of the scene they were given, for
+//! the agent to pass to the next call or save for the app to import; given a
+//! working scene's `scene_id` instead, they store the edit as its next
+//! version ([`crate::store`]). The
 //! app tools ([`crate::app`]) open and close the one connection the server
 //! holds, to the user's open app.
 
@@ -19,7 +20,6 @@ use observation_core::provenance::{CAVEATS_SUMMARY, caveats_text, format_date};
 use observation_core::scene::AreaRef;
 use observation_core::scene::SceneFile;
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, Implementation, ListResourcesResult,
@@ -35,12 +35,14 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 const INSTRUCTIONS: &str = "\
 Observation estimates how much of a street home security cameras can see. \
-Scenes are not stored here: create one with create_scene, then pass the returned `scene` \
-to each editing tool and use the `scene` it returns. The result is a scene file the \
+Start with open_scene: it gives a scene_id such as \"s1\", which you pass as scene_id to every \
+scene tool, while the server keeps each edited version (undo, diff_scenes, apply_edits for \
+several edits at once, export_scene for the file). Without an id, pass the value of the `scene` \
+field of one tool's result as `scene` to the next. The result is a scene file the \
 Observation app can import. Positions are metres from the area's origin: x east, z south \
 (north is negative z); heights are metres above the ground. Bearings are degrees clockwise \
 from north. Offline only the demo street is available, so load_demo_area gives the area's \
@@ -68,11 +70,13 @@ the data date and the caveats the tools return.";
 const USAGE_MD: &str = include_str!("../../../docs/usage.md");
 const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
 
-/// The Observation MCP server. Its only state is the connection to the
-/// user's app ([`AppLink`]); clones share it.
+/// The Observation MCP server. Its state is the connection to the user's
+/// app ([`AppLink`]) and the working scenes ([`crate::store::SceneStore`]);
+/// clones share both.
 #[derive(Debug, Clone, Default)]
 pub struct ObservationMcp {
     pub(crate) link: Arc<AppLink>,
+    pub(crate) scenes: Arc<crate::store::SceneStore>,
     /// Served without sessions (stateless HTTP), so a legacy
     /// `resources/subscribe` would have nowhere to send its notifications.
     sessionless: bool,
@@ -113,13 +117,20 @@ impl ObservationMcp {
     }
 
     /// Every tool: the scene tools, the app tools, the place and query
-    /// tools, and the proposal tools.
-    pub fn all_tools() -> ToolRouter<Self> {
-        Self::tool_router()
-            + Self::app_tool_router()
-            + Self::places_tool_router()
-            + Self::query_tool_router()
-            + Self::proposal_tool_router()
+    /// tools, the proposal tools and the working-scene tools, with
+    /// `scene_id` documented on each that takes a scene
+    /// ([`crate::store::document_scene_ids`]). Built once, on first use.
+    pub fn all_tools() -> &'static ToolRouter<Self> {
+        static TOOLS: OnceLock<ToolRouter<ObservationMcp>> = OnceLock::new();
+        TOOLS.get_or_init(|| {
+            let tools = Self::tool_router()
+                + Self::app_tool_router()
+                + Self::places_tool_router()
+                + Self::query_tool_router()
+                + Self::proposal_tool_router()
+                + Self::store_tool_router();
+            crate::store::document_scene_ids(tools)
+        })
     }
 }
 
@@ -136,7 +147,7 @@ fn scene_area(arguments: Option<&serde_json::Map<String, Value>>) -> Option<Area
     serde_json::from_value(area).ok()
 }
 
-fn fail(e: ToolError) -> String {
+pub(crate) fn fail(e: ToolError) -> String {
     e.to_string()
 }
 
@@ -146,8 +157,8 @@ fn fail(e: ToolError) -> String {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SceneArg {
-    /// A scene file: the `scene` returned by the last scene tool, or a file
-    /// saved from the app (as a JSON object or a string).
+    /// A scene file: the value of the `scene` field of the last scene tool's
+    /// result, or a file saved from the app (as a JSON object or a string).
     #[schemars(with = "JsonObject")]
     pub scene: Value,
 }
@@ -304,7 +315,8 @@ pub struct Edited {
     /// The custom model created or changed, if one was.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
-    /// The edited scene: pass it to the next scene tool.
+    /// The edited scene file: pass this field's value as `scene` to the next
+    /// scene tool.
     #[schemars(with = "JsonObject")]
     pub scene: Value,
 }
@@ -565,18 +577,20 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Create a new, empty scene on the demo street. Pass the returned `scene` to the editing tools.",
-        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+        description = "Create a new, empty scene on the demo street, kept as a working scene. Prefer passing its scene_id (such as \"s1\") to the scene tools; the scene file is also in the `scene` field of the result.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
-    fn create_scene(&self) -> Result<Json<Edited>, String> {
-        let s = edit::new_demo_scene().map_err(fail)?;
-        Edited::new("created an empty scene on the demo street", &s)
-            .map(Json)
-            .map_err(fail)
+    fn create_scene(&self) -> Result<Json<crate::store::Created>, String> {
+        self.create().map(Json).map_err(fail)
     }
 
     #[tool(
-        description = "Check a scene file the way the app checks one it imports, and return it as the app would load it.",
+        description = "Check a scene file the way the app checks one it imports; the `scene` field of the result holds it as the app would load it.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn validate_scene(
@@ -1008,18 +1022,16 @@ impl ServerHandler for ObservationMcp {
         .with_instructions(INSTRUCTIONS)
     }
 
-    /// Fetches the area of the call's scene from the connected app's server
-    /// first, if it is a real area, then runs the tool with the connection's
-    /// areas in view (see [`area::bundle_for`]).
+    /// Reads a `scene_id` from the working scenes ([`crate::store`]), fetches
+    /// the area of the call's scene from the connected app's server first,
+    /// if it is a real area, then runs the tool with the connection's areas
+    /// in view (see [`area::bundle_for`]) and stores an edited scene.
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let arguments = request.arguments.clone();
-        let tcc = ToolCallContext::new(self, request, context);
-        self.in_tool_scope(arguments.as_ref(), Self::all_tools().call(tcc))
-            .await
+        self.call_with_scenes(request, context).await
     }
 
     fn accepted_subscription_filter(
@@ -1211,6 +1223,13 @@ mod tests {
             "propose_changes",
             "get_proposal",
             "withdraw_proposal",
+            "open_scene",
+            "export_scene",
+            "list_scenes",
+            "close_scene",
+            "undo",
+            "diff_scenes",
+            "apply_edits",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }

@@ -18,12 +18,43 @@ use observation_core::scene::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
+use std::borrow::Cow;
+
+/// The fields of what looks like a whole tool result passed where a scene
+/// belongs: an object, or a string holding one, without the `format` every
+/// scene file has. Small models are often unsure which of the two to pass.
+pub fn result_fields(scene: &Value) -> Option<Cow<'_, Map<String, Value>>> {
+    let fields = match scene {
+        Value::Object(fields) => Cow::Borrowed(fields),
+        Value::String(text) if text.trim_start().starts_with('{') => {
+            match serde_json::from_str::<Value>(text).ok()? {
+                Value::Object(fields) => Cow::Owned(fields),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    (!fields.contains_key("format")).then_some(fields)
+}
+
+/// A whole tool result passed where the value of its `scene` field belongs
+/// ([`result_fields`] with a `scene`): that value.
+pub fn unwrap_result(scene: &Value) -> Option<Value> {
+    result_fields(scene)?
+        .get("scene")
+        .filter(|s| s.is_object() || s.is_string())
+        .cloned()
+}
 
 /// Reads a scene passed to a tool: a scene file as a JSON object, or as a
-/// string holding one. A demo scene saved before terrain (version 1) is
-/// raised onto the demo street's ground, as the app does when it loads one.
+/// string holding one, or a whole tool result holding one in its `scene`
+/// field ([`unwrap_result`]). A demo scene saved before terrain (version 1)
+/// is raised onto the demo street's ground, as the app does when it loads
+/// one.
 pub fn parse(scene: &Value) -> Result<SceneFile, ToolError> {
+    let inner = unwrap_result(scene);
+    let scene = inner.as_ref().unwrap_or(scene);
     let mut file = match scene {
         Value::String(s) => SceneFile::from_json(s)?,
         other => SceneFile::from_json(&other.to_string())?,
@@ -54,8 +85,43 @@ pub fn new_demo_scene() -> Result<SceneFile, ToolError> {
     Ok(SceneFile::new(AreaRef::Demo, bundle.origin))
 }
 
+/// Implements `Deserialize` for a unit enum from its variant names (and any
+/// aliases) in any case, so "night", "Night" and "NIGHT" all read: small
+/// models do not keep to the schema's capitals. The schema still lists the
+/// names as written.
+macro_rules! deserialize_any_case {
+    ($ty:ident { $($variant:ident $(| $alias:literal)*),+ $(,)? }) => {
+        impl<'de> Deserialize<'de> for $ty {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let text = String::deserialize(d)?;
+                let t = text.trim();
+                $(
+                    if t.eq_ignore_ascii_case(stringify!($variant))
+                        $(|| t.eq_ignore_ascii_case($alias))*
+                    {
+                        return Ok(Self::$variant);
+                    }
+                )+
+                Err(serde::de::Error::unknown_variant(t, &[$(stringify!($variant)),+]))
+            }
+        }
+    };
+}
+
+deserialize_any_case!(Kind {
+    Doorbell,
+    Floodlight,
+    Spotlight,
+    Bullet,
+    Turret,
+    Dome,
+    Indoor
+});
+deserialize_any_case!(Dori { Detect, Observe, Recognise | "recognize", Identify, Custom });
+deserialize_any_case!(Light { Day, Night });
+
 /// A mount archetype, as the tools accept it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Kind {
     Doorbell,
     Floodlight,
@@ -81,7 +147,7 @@ impl From<Kind> for CameraKind {
 }
 
 /// A detail level (DORI, EN 62676-4), as the tools accept it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Dori {
     /// 25 px/m: can tell a person is present.
     Detect,
@@ -108,7 +174,7 @@ impl From<Dori> for DoriLevel {
 }
 
 /// Lighting, as the tools accept it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Light {
     Day,
     /// Limited to each camera's infrared range.
