@@ -9,7 +9,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use observation_agent_api::{
-    MAX_FAILED_CLAIMS, MAX_STATE_BYTES, PairingCreated, StateAccepted, StateView, paths,
+    COMMAND_BURST, MAX_COMMAND_BYTES, MAX_FAILED_CLAIMS, MAX_STATE_BYTES, PairingCreated,
+    StateAccepted, StateView, paths,
 };
 use observation_server::testing::TestApp;
 use serde_json::{Value, json};
@@ -656,4 +657,145 @@ async fn proposals_and_decisions_are_checked() {
         send(&app.router, req).await.0,
         StatusCode::PAYLOAD_TOO_LARGE
     );
+}
+
+async fn command(router: &Router, token: &str, command: Value) -> (StatusCode, Value) {
+    let (status, headers, body) = send(
+        router,
+        local(
+            Method::POST,
+            paths::COMMAND,
+            Some(token),
+            Some(json!({"v": 1, "command": command})),
+        ),
+    )
+    .await;
+    if status == StatusCode::ACCEPTED {
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    }
+    (status, json(&body))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_view_command_reaches_the_browser_as_an_event() {
+    let app = bridge_app();
+    let (browser, agent) = paired(&app.router).await;
+    // With no stream open nothing would hear it.
+    let focus = json!({"kind": "focus_view", "at": [12.5, -4.0], "distance_m": 40.0});
+    let (status, body) = command(&app.router, &agent, focus.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("not listening"),
+        "{body}"
+    );
+
+    let (_, _, mut stream) = open(
+        &app.router,
+        local(Method::GET, &events_uri(&browser), None, None),
+    )
+    .await;
+    stream.until("claimed").await;
+    let (status, sent) = command(&app.router, &agent, focus).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+    assert_eq!(sent, json!({"v": 1, "id": 1}));
+    let seen = stream.until("\"type\":\"command\"").await;
+    assert!(
+        seen.contains(
+            r#"{"v":1,"type":"command","id":1,"command":{"kind":"focus_view","at":[12.5,-4.0],"distance_m":40.0}}"#
+        ),
+        "{seen}"
+    );
+    // The note is tidied on the way.
+    let highlight = json!({"kind": "highlight", "what": {"kind": "camera", "id": 3},
+                           "note": "  blind\nspot "});
+    let (status, sent) = command(&app.router, &agent, highlight).await;
+    assert_eq!(
+        (status, sent["id"].as_u64()),
+        (StatusCode::ACCEPTED, Some(2))
+    );
+    let seen = stream.until(r#""id":2"#).await;
+    assert!(seen.contains(r#""note":"blind spot""#), "{seen}");
+    // Commands are not state: the agent's revision has not moved.
+    let (_, view) = get_state(&app.router, &agent, None).await;
+    assert_eq!(view["revision"], 0);
+    // A stream opened now does not get them again.
+    let (_, _, mut late) = open(
+        &app.router,
+        local(Method::GET, &events_uri(&browser), None, None),
+    )
+    .await;
+    let first = late.until("\n\n").await;
+    assert!(!first.contains("command"), "{first}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn view_commands_are_checked_and_limited() {
+    let app = bridge_app();
+    let (browser, agent) = paired(&app.router).await;
+    let (_, _, mut stream) = open(
+        &app.router,
+        local(Method::GET, &events_uri(&browser), None, None),
+    )
+    .await;
+    stream.until("claimed").await;
+    let select = json!({"kind": "select_cameras", "ids": [1]});
+    // Only the agent sends them.
+    assert_eq!(
+        command(&app.router, &browser, select.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // Unknown kinds, numbers out of range, an area the app cannot load, and
+    // a request to load one without a reason.
+    for bad in [
+        json!({"kind": "fly_through"}),
+        json!({"kind": "focus_view", "at": [99999.0, 0.0]}),
+        json!({"kind": "focus_view", "at": [0.0, 0.0], "distance_m": 1.0}),
+        json!({"kind": "set_view_options"}),
+        json!({"kind": "set_view_options", "detail_level": "custom"}),
+        json!({"kind": "highlight", "what": {"kind": "tree"}}),
+        json!({"kind": "request_load_area", "reason": "r",
+               "bbox": {"south": 51.0, "west": -1.0, "north": 52.0, "east": 0.0}}),
+        json!({"kind": "request_load_area", "reason": " ",
+               "bbox": {"south": 51.5, "west": -0.13, "north": 51.502, "east": -0.127}}),
+    ] {
+        let (status, body) = command(&app.router, &agent, bad.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad} {body}");
+    }
+    // The command's own size limit.
+    let huge = json!({"v": 1, "command": {"kind": "highlight", "what": {"kind": "clear"},
+                      "note": "x".repeat(MAX_COMMAND_BYTES)}});
+    let req = local(Method::POST, paths::COMMAND, Some(&agent), Some(huge));
+    assert_eq!(
+        send(&app.router, req).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    // From another computer the route is not there.
+    let away = request(
+        Method::POST,
+        paths::COMMAND,
+        Some("192.168.1.20"),
+        "127.0.0.1:8080",
+        Some(&agent),
+        Some(json!({"v": 1, "command": select}).to_string()),
+    );
+    assert_eq!(send(&app.router, away).await.0, StatusCode::NOT_FOUND);
+    // A burst of COMMAND_BURST, then 429 with when to try again.
+    for _ in 0..COMMAND_BURST {
+        assert_eq!(
+            command(&app.router, &agent, select.clone()).await.0,
+            StatusCode::ACCEPTED
+        );
+    }
+    let (status, headers, _) = send(
+        &app.router,
+        local(
+            Method::POST,
+            paths::COMMAND,
+            Some(&agent),
+            Some(json!({"v": 1, "command": select})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(headers[header::RETRY_AFTER], "1");
 }
