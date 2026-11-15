@@ -35,7 +35,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 const INSTRUCTIONS: &str = "\
 Observation estimates how much of a street home security cameras can see. \
@@ -119,15 +119,18 @@ impl ObservationMcp {
     /// Every tool: the scene tools, the app tools, the place and query
     /// tools, the proposal tools and the working-scene tools, with
     /// `scene_id` documented on each that takes a scene
-    /// ([`crate::store::document_scene_ids`]).
-    pub fn all_tools() -> ToolRouter<Self> {
-        let tools = Self::tool_router()
-            + Self::app_tool_router()
-            + Self::places_tool_router()
-            + Self::query_tool_router()
-            + Self::proposal_tool_router()
-            + Self::store_tool_router();
-        crate::store::document_scene_ids(tools)
+    /// ([`crate::store::document_scene_ids`]). Built once, on first use.
+    pub fn all_tools() -> &'static ToolRouter<Self> {
+        static TOOLS: OnceLock<ToolRouter<ObservationMcp>> = OnceLock::new();
+        TOOLS.get_or_init(|| {
+            let tools = Self::tool_router()
+                + Self::app_tool_router()
+                + Self::places_tool_router()
+                + Self::query_tool_router()
+                + Self::proposal_tool_router()
+                + Self::store_tool_router();
+            crate::store::document_scene_ids(tools)
+        })
     }
 }
 
@@ -144,7 +147,7 @@ fn scene_area(arguments: Option<&serde_json::Map<String, Value>>) -> Option<Area
     serde_json::from_value(area).ok()
 }
 
-fn fail(e: ToolError) -> String {
+pub(crate) fn fail(e: ToolError) -> String {
     e.to_string()
 }
 

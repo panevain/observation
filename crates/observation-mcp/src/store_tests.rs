@@ -92,19 +92,23 @@ fn ids_are_short_and_forgiving() {
 fn versions_are_kept_for_undo_up_to_the_limit() {
     let store = SceneStore::default();
     let base = empty();
-    let (id, v) = store.open(&base).unwrap();
-    assert_eq!((id.to_string().as_str(), v), ("s1", 1));
+    let opened = store.open(&base).unwrap();
+    let id = opened.id;
+    assert_eq!((id.to_string().as_str(), opened.version), ("s1", 1));
     // The same scene again adds no version.
-    assert_eq!(store.commit(id, 1, &base).unwrap(), 1);
+    assert_eq!(store.commit(id, 1, &base).unwrap().version, 1);
     for i in 0..30 {
         let next = with_height(&base, 2.0 + f64::from(i) / 4.0);
-        assert_eq!(store.commit(id, 1 + i, &next).unwrap(), 2 + i);
+        assert_eq!(store.commit(id, 1 + i, &next).unwrap().version, 2 + i);
     }
     let listed = store.list().unwrap();
     assert_eq!((listed[0].version, listed[0].undo_steps), (31, MAX_UNDO));
     // Versions before the 20 earlier ones kept are gone.
     let e = store.get(id, Some(10)).unwrap_err().to_string();
-    assert!(e.contains("keeps versions 11 to 31"), "{e}");
+    assert!(
+        e.contains("keeps versions 11, 12,") && e.ends_with(", 31"),
+        "{e}"
+    );
     assert_eq!(store.get(id, Some(11)).unwrap().1, 11);
 
     // An edit made from an older version is refused, not lost silently.
@@ -115,15 +119,49 @@ fn versions_are_kept_for_undo_up_to_the_limit() {
     assert_eq!(v, 29);
     assert_eq!(scene["params"]["subject_height_m"], json!(8.75));
     assert_eq!(undone["params"]["subject_height_m"], json!(9.25));
-    // Later versions are dropped: the next edit is version 30 again.
+    // Later versions are dropped, and their numbers are not used again.
     assert!(store.get(id, Some(31)).is_err());
-    assert_eq!(store.commit(id, 29, &base).unwrap(), 30);
+    assert_eq!(store.commit(id, 29, &base).unwrap().version, 32);
+    let e = store.get(id, Some(30)).unwrap_err().to_string();
+    assert!(e.ends_with("28, 29, 32"), "{e}");
     let e = store.undo(id, 21).unwrap_err().to_string();
     assert!(e.contains("1 to 19"), "{e}");
     assert!(store.undo(id, 0).is_err());
-    let (other, _) = store.open(&base).unwrap();
+    let other = store.open(&base).unwrap().id;
     let e = store.undo(other, 1).unwrap_err().to_string();
     assert!(e.contains("no earlier version"), "{e}");
+}
+
+/// An edit read from version 2, which undo then dropped and another edit
+/// replaced, is refused: the replacement has a new number, so the edit
+/// cannot land on a scene it was not made from.
+#[test]
+fn an_edit_from_an_undone_version_is_refused() {
+    let store = SceneStore::default();
+    let base = empty();
+    let id = store.open(&base).unwrap().id;
+    // A slow call reads version 2.
+    assert_eq!(
+        store
+            .commit(id, 1, &with_height(&base, 2.0))
+            .unwrap()
+            .version,
+        2
+    );
+    let (_, read) = store.latest(id).unwrap();
+    assert_eq!(read, 2);
+    // Meanwhile the agent undoes it and makes another edit.
+    store.undo(id, 1).unwrap();
+    let other = store.commit(id, 1, &with_height(&base, 3.0)).unwrap();
+    assert_eq!(other.version, 3);
+    // The slow call's edit no longer fits.
+    let e = store
+        .commit(id, read, &with_height(&base, 4.0))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("now at version 3"), "{e}");
+    // And s1@2 does not quietly name the other edit.
+    assert!(store.get(id, Some(2)).is_err());
 }
 
 #[test]
@@ -131,14 +169,16 @@ fn the_least_recently_used_scene_makes_room_and_says_so() {
     let store = SceneStore::default();
     let base = empty();
     let ids: Vec<SceneId> = (0..MAX_SCENES)
-        .map(|_| store.open(&base).unwrap().0)
+        .map(|_| store.open(&base).unwrap().id)
         .collect();
     // Using s1 makes s2 the least recently used.
     store.latest(ids[0]).unwrap();
-    let (newest, _) = store.open(&base).unwrap();
-    assert_eq!(newest.to_string(), "s33");
+    let newest = store.open(&base).unwrap();
+    assert_eq!(newest.id.to_string(), "s33");
+    assert_eq!(newest.closed, [ids[1]]);
+    assert_eq!(newest.closed_note(), "; closed s2 to make room");
     assert_eq!(store.ids().len(), MAX_SCENES);
-    assert_eq!(store.ids()[0], newest);
+    assert_eq!(store.ids()[0], newest.id);
     let e = store.latest(ids[1]).unwrap_err().to_string();
     assert!(e.contains("s2 was closed to make room"), "{e}");
     assert!(e.contains("at most 32"), "{e}");
@@ -153,6 +193,31 @@ fn the_least_recently_used_scene_makes_room_and_says_so() {
     assert!(store.close(ids[2]).is_err());
 }
 
+/// The ids closed to make room are forgotten oldest eviction first, not
+/// lowest id first.
+#[test]
+fn evictions_are_remembered_in_order() {
+    let store = SceneStore::default();
+    let base = empty();
+    let first: Vec<SceneId> = (0..MAX_SCENES)
+        .map(|_| store.open(&base).unwrap().id)
+        .collect();
+    // Keep s1 in use while hundreds of others come and go.
+    for _ in 0..EVICTED_REMEMBERED + 40 {
+        store.latest(first[0]).unwrap();
+        store.open(&base).unwrap();
+    }
+    // Now s1, the lowest id, is closed to make room, and more after it.
+    for _ in 0..=MAX_SCENES {
+        store.open(&base).unwrap();
+    }
+    let e = store.latest(first[0]).unwrap_err().to_string();
+    assert!(e.contains("s1 was closed to make room"), "{e}");
+    // s2 was evicted long before, so it is the one forgotten.
+    let e = store.latest(first[1]).unwrap_err().to_string();
+    assert!(e.starts_with("scene s2 was closed."), "{e}");
+}
+
 #[test]
 fn a_version_is_at_most_the_bridges_limit() {
     let store = SceneStore::default();
@@ -160,9 +225,51 @@ fn a_version_is_at_most_the_bridges_limit() {
     big["padding"] = json!("x".repeat(MAX_SCENE_BYTES));
     let e = store.open(&big).unwrap_err().to_string();
     assert!(e.contains("at most 1024 KiB"), "{e}");
-    let (id, _) = store.open(&empty()).unwrap();
+    let id = store.open(&empty()).unwrap().id;
     assert!(store.commit(id, 1, &big).is_err());
     assert!(store.ids().len() == 1);
+}
+
+/// Past the store's byte budget, the oldest earlier versions go first, then
+/// the least recently used scenes, never the one just written.
+#[test]
+fn the_store_keeps_within_its_byte_budget() {
+    let base = empty();
+    let size = base.to_string().len();
+    // Room for five versions.
+    let store = SceneStore::with_budget(size * 5 + size / 2);
+    let a = store.open(&base).unwrap().id;
+    for i in 0..3 {
+        store
+            .commit(a, 1 + i, &with_height(&base, 2.0 + f64::from(i)))
+            .unwrap();
+    }
+    let b = store.open(&base).unwrap();
+    assert!(b.closed.is_empty());
+    assert_eq!(store.list().unwrap().len(), 2);
+    // A sixth version drops a's oldest.
+    let c = store.open(&base).unwrap();
+    assert!(c.closed.is_empty());
+    let e = store.get(a, Some(1)).unwrap_err().to_string();
+    assert!(e.contains("keeps versions 2, 3, 4"), "{e}");
+    assert!(store.bytes() <= size * 5 + size / 2);
+    // Once no earlier versions are left, the least recently used scene goes.
+    store.undo(a, 2).unwrap();
+    store.latest(b.id).unwrap();
+    store.latest(c.id).unwrap();
+    for _ in 0..2 {
+        store.open(&base).unwrap();
+    }
+    let d = store.open(&base).unwrap();
+    assert_eq!(d.closed, [a], "{d:?}");
+    assert!(
+        store
+            .latest(a)
+            .unwrap_err()
+            .to_string()
+            .contains("closed to make room")
+    );
+    assert!(store.bytes() <= size * 5 + size / 2);
 }
 
 /// Every tool that takes a scene, the ones from other modules and any added
@@ -478,7 +585,8 @@ async fn create_scene_keeps_the_scene_and_a_whole_result_can_be_passed_on() {
     assert_eq!(created["version"], 1);
     assert!(created["scene"].is_object());
 
-    // The whole result where its `scene` field belongs.
+    // The whole result where its `scene` field belongs: it names a working
+    // scene, so the edit goes to that scene.
     let placed = ok(&call(
         &app,
         "place_camera",
@@ -486,23 +594,97 @@ async fn create_scene_keeps_the_scene_and_a_whole_result_can_be_passed_on() {
     )
     .await);
     assert_eq!(placed["camera_id"], 1);
-    assert!(placed["scene"].is_object() && placed.get("scene_id").is_none());
-    // And as text.
-    let coverage = ok(&call(
-        &app,
-        "compute_coverage",
-        json!({"scene": placed.to_string()}),
-    )
-    .await);
-    assert_eq!(coverage["cameras_counted"], json!([1]));
-
-    // The id works from the start.
+    assert_eq!(
+        (placed["scene_id"].clone(), placed["version"].clone()),
+        (json!("s1"), json!(2))
+    );
+    assert!(placed.get("scene").is_none(), "{placed}");
+    // A result of an edit by id, with no scene in it at all, as text too.
     let moved = ok(&call(
         &app,
         "place_camera",
-        json!({"scene_id": "s1", "model_id": model_id(), "x": 5.0, "z": 15.0}),
+        json!({"scene": placed.to_string(), "model_id": model_id(), "x": 5.0, "z": 15.0}),
     )
     .await);
-    assert_eq!(moved["version"], 2);
-    assert!(moved.get("scene").is_none());
+    assert_eq!(moved["version"], 3);
+    let coverage = ok(&call(&app, "compute_coverage", json!({"scene": moved})).await);
+    assert_eq!(coverage["cameras_counted"], json!([1, 2]));
+
+    // A result without an id stands for the scene inside it.
+    let checked = ok(&call(&app, "validate_scene", json!({"scene": empty()})).await);
+    let inline = ok(&call(
+        &app,
+        "place_camera",
+        json!({"scene": checked, "model_id": model_id(), "x": 0.0, "z": 15.0}),
+    )
+    .await);
+    assert!(inline["scene"].is_object() && inline.get("scene_id").is_none());
+    assert_eq!(
+        ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await)["version"],
+        3
+    );
+}
+
+#[tokio::test]
+async fn opening_a_scene_says_which_it_closed_to_make_room() {
+    let app = http_app();
+    for _ in 0..MAX_SCENES {
+        let created = ok(&call(&app, "create_scene", json!({})).await);
+        assert!(!created["summary"].as_str().unwrap().contains("closed"));
+    }
+    let created = ok(&call(&app, "create_scene", json!({})).await);
+    assert!(
+        created["summary"]
+            .as_str()
+            .unwrap()
+            .ends_with("as s33; closed s1 to make room"),
+        "{created}"
+    );
+    let opened = ok(&call(&app, "open_scene", json!({})).await);
+    assert!(
+        opened["summary"]
+            .as_str()
+            .unwrap()
+            .ends_with("; closed s2 to make room"),
+        "{opened}"
+    );
+}
+
+/// Small models write "night" and "identify"; the schema's capitals are not
+/// required.
+#[tokio::test]
+async fn analysis_settings_read_in_any_case() {
+    let app = http_app();
+    ok(&call(&app, "open_scene", json!({})).await);
+    let set = ok(&call(
+        &app,
+        "set_coverage_params",
+        json!({"scene_id": "s1", "lighting": "night", "dori": "IDENTIFY"}),
+    )
+    .await);
+    assert_eq!(set["version"], 2);
+    let scene = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await)["scene"].clone();
+    assert_eq!(scene["params"]["lighting"], "Night");
+    assert_eq!(scene["params"]["dori"], "Identify");
+    let us = ok(&call(
+        &app,
+        "set_coverage_params",
+        json!({"scene_id": "s1", "dori": "recognize"}),
+    )
+    .await);
+    assert_eq!(us["version"], 3);
+    let e = failed(
+        &call(
+            &app,
+            "set_coverage_params",
+            json!({"scene_id": "s1", "lighting": "dusk"}),
+        )
+        .await,
+    );
+    assert!(
+        e.contains("unknown variant `dusk`, expected `Day` or `Night`"),
+        "{e}"
+    );
+    let kind: edit::Kind = serde_json::from_value(json!(" doorbell ")).unwrap();
+    assert_eq!(kind, edit::Kind::Doorbell);
 }

@@ -7,7 +7,11 @@
 //!   closed that way says so when it is used again. Each scene keeps its
 //!   latest version and up to [`MAX_UNDO`] earlier ones, each at most
 //!   [`MAX_SCENE_BYTES`] of JSON (the agent bridge's limit for a shared
-//!   state). Ids are never reused within a store.
+//!   state), and all versions together at most [`MAX_STORE_BYTES`]: past
+//!   that the oldest earlier versions go first, then the least recently used
+//!   scenes. Ids are never reused within a store, nor version numbers within
+//!   a scene: undo goes back to an earlier version and drops the later ones,
+//!   and the next edit gets a new number.
 //! - **Scoping.** The store belongs to an [`ObservationMcp`] and its clones,
 //!   as the connection to the app does: one per stdio process, and over HTTP
 //!   one per bearer token ([`crate::http`]), so one client never sees
@@ -29,6 +33,7 @@ use crate::app::AppStateOut;
 use crate::edit;
 use crate::propose::model_name;
 use crate::schema::JsonObject;
+use crate::server::fail;
 use observation_core::camera::Lighting;
 use observation_core::scene::changes::ChangeSet;
 use observation_core::scene::{AreaRef, SceneFile};
@@ -44,7 +49,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -56,6 +61,10 @@ pub const MAX_UNDO: usize = 20;
 /// Largest version kept, bytes of compact JSON: the agent bridge's limit for
 /// a shared state, so any working scene can also be shared or proposed.
 pub const MAX_SCENE_BYTES: usize = observation_agent_api::MAX_STATE_BYTES;
+/// Most bytes one store keeps over all its versions. Past it the oldest
+/// earlier versions are dropped first, then the least recently used scenes
+/// are closed.
+pub const MAX_STORE_BYTES: usize = 64 << 20;
 /// Most edits one apply_edits call runs.
 pub const MAX_EDITS: usize = 50;
 /// Most change lines diff_scenes and undo return.
@@ -100,18 +109,34 @@ fn parse_ref(text: &str) -> Option<(SceneId, Option<u32>)> {
     }
 }
 
-/// One stored scene: its versions, oldest first, each with its number.
+/// One version of a scene.
+#[derive(Debug)]
+struct Version {
+    number: u32,
+    text: Arc<str>,
+    /// When it was stored, on the store's clock: the budget drops the
+    /// oldest earlier versions first.
+    made: u64,
+}
+
+/// One stored scene: its versions, oldest first.
 #[derive(Debug)]
 struct Working {
-    versions: VecDeque<(u32, Arc<str>)>,
+    versions: VecDeque<Version>,
+    /// The number the next version gets; numbers are never reused.
+    next_version: u32,
     /// When it was last used, on the store's clock.
     used: u64,
 }
 
 impl Working {
-    fn latest(&self) -> (u32, &Arc<str>) {
-        let (v, text) = self.versions.back().expect("a working scene has a version");
-        (*v, text)
+    fn latest(&self) -> &Version {
+        self.versions.back().expect("a working scene has a version")
+    }
+
+    fn numbers(&self) -> String {
+        let n: Vec<String> = self.versions.iter().map(|v| v.number.to_string()).collect();
+        n.join(", ")
     }
 }
 
@@ -119,9 +144,11 @@ impl Working {
 struct Inner {
     last_id: u64,
     clock: u64,
+    /// Bytes over all versions of all scenes.
+    bytes: usize,
     scenes: HashMap<SceneId, Working>,
-    /// Ids closed to make room, most recent last.
-    evicted: BTreeSet<SceneId>,
+    /// Ids closed to make room, oldest eviction first.
+    evicted: VecDeque<SceneId>,
 }
 
 impl Inner {
@@ -156,8 +183,9 @@ impl Inner {
         if !self.scenes.contains_key(&id) {
             let why = if self.evicted.contains(&id) {
                 format!(
-                    "scene {id} was closed to make room: at most {MAX_SCENES} working scenes are \
-                     kept, and it was the least recently used"
+                    "scene {id} was closed to make room: at most {MAX_SCENES} working scenes \
+                     ({} MiB in all) are kept, and it was the least recently used",
+                    MAX_STORE_BYTES >> 20
                 )
             } else if id.0 <= self.last_id {
                 format!("scene {id} was closed")
@@ -171,12 +199,62 @@ impl Inner {
         w.used = now;
         Ok(w)
     }
+
+    /// Closes `id` to make room, remembering that it was.
+    fn evict(&mut self, id: SceneId) {
+        if let Some(w) = self.scenes.remove(&id) {
+            self.bytes -= w.versions.iter().map(|v| v.text.len()).sum::<usize>();
+        }
+        self.evicted.push_back(id);
+        while self.evicted.len() > EVICTED_REMEMBERED {
+            self.evicted.pop_front();
+        }
+    }
+
+    /// Brings the store within `budget` bytes: drops the oldest earlier
+    /// version of any scene first, then closes the least recently used
+    /// scenes other than `keep`. Returns the scenes closed.
+    fn make_room(&mut self, budget: usize, keep: SceneId) -> Vec<SceneId> {
+        let mut closed = Vec::new();
+        while self.bytes > budget {
+            let oldest = self
+                .scenes
+                .iter()
+                .filter(|(_, w)| w.versions.len() > 1)
+                .filter_map(|(id, w)| w.versions.front().map(|v| (v.made, *id)))
+                .min();
+            if let Some((_, id)) = oldest {
+                if let Some(v) = self
+                    .scenes
+                    .get_mut(&id)
+                    .and_then(|w| w.versions.pop_front())
+                {
+                    self.bytes -= v.text.len();
+                }
+                continue;
+            }
+            let Some(&lru) = self.ids().iter().rev().find(|&&id| id != keep) else {
+                break;
+            };
+            self.evict(lru);
+            closed.push(lru);
+        }
+        closed
+    }
 }
 
 /// The working scenes of one client (see the module documentation).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SceneStore {
     inner: Mutex<Inner>,
+    /// [`MAX_STORE_BYTES`], or less in tests.
+    budget: usize,
+}
+
+impl Default for SceneStore {
+    fn default() -> Self {
+        Self::with_budget(MAX_STORE_BYTES)
+    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -210,33 +288,72 @@ pub struct Listed {
     pub scene: Value,
 }
 
+/// A stored version: the scene and its number.
+pub type Versioned = (Value, u32);
+
+/// A scene just stored: its version, and the scenes closed to make room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stored {
+    pub id: SceneId,
+    pub version: u32,
+    pub closed: Vec<SceneId>,
+}
+
+impl Stored {
+    /// "; closed s2 to make room", or nothing.
+    pub fn closed_note(&self) -> String {
+        if self.closed.is_empty() {
+            return String::new();
+        }
+        let ids: Vec<String> = self.closed.iter().map(ToString::to_string).collect();
+        format!("; closed {} to make room", ids.join(", "))
+    }
+}
+
 impl SceneStore {
+    /// A store that keeps at most `budget` bytes over all its versions.
+    pub fn with_budget(budget: usize) -> Self {
+        Self {
+            inner: Mutex::default(),
+            budget,
+        }
+    }
+
     /// Stores `scene` (a checked scene file) as a new working scene, closing
-    /// the least recently used one if the store is full.
-    pub fn open(&self, scene: &Value) -> Result<(SceneId, u32), ToolError> {
+    /// the least recently used ones if the store is full.
+    pub fn open(&self, scene: &Value) -> Result<Stored, ToolError> {
         let text = to_text(scene)?;
         let mut inner = lock(&self.inner);
+        let mut closed = Vec::new();
         while inner.scenes.len() >= MAX_SCENES {
             let Some(&oldest) = inner.ids().last() else {
                 break;
             };
-            inner.scenes.remove(&oldest);
-            inner.evicted.insert(oldest);
-            while inner.evicted.len() > EVICTED_REMEMBERED {
-                inner.evicted.pop_first();
-            }
+            inner.evict(oldest);
+            closed.push(oldest);
         }
         inner.last_id += 1;
         let id = SceneId(inner.last_id);
-        let used = inner.tick();
+        let now = inner.tick();
+        inner.bytes += text.len();
         inner.scenes.insert(
             id,
             Working {
-                versions: VecDeque::from([(1, text)]),
-                used,
+                versions: VecDeque::from([Version {
+                    number: 1,
+                    text,
+                    made: now,
+                }]),
+                next_version: 2,
+                used: now,
             },
         );
-        Ok((id, 1))
+        closed.extend(inner.make_room(self.budget, id));
+        Ok(Stored {
+            id,
+            version: 1,
+            closed,
+        })
     }
 
     /// The latest version of `id`, and its number.
@@ -246,89 +363,157 @@ impl SceneStore {
 
     /// Version `version` of `id` (the latest if `None`), and its number.
     pub fn get(&self, id: SceneId, version: Option<u32>) -> Result<(Value, u32), ToolError> {
-        let mut inner = lock(&self.inner);
-        let w = inner.working(id)?;
-        let (latest, text) = w.latest();
-        let Some(wanted) = version else {
-            return Ok((from_text(text)?, latest));
-        };
-        match w.versions.iter().find(|(v, _)| *v == wanted) {
-            Some((v, text)) => Ok((from_text(text)?, *v)),
-            None => {
-                let oldest = w.versions.front().map_or(latest, |(v, _)| *v);
-                Err(ToolError::invalid(format!(
-                    "scene {id} has no version {wanted}: it keeps versions {oldest} to {latest}"
-                )))
+        let (number, text) = {
+            let mut inner = lock(&self.inner);
+            let w = inner.working(id)?;
+            let found = match version {
+                None => Some(w.latest()),
+                Some(wanted) => w.versions.iter().find(|v| v.number == wanted),
+            };
+            match found {
+                Some(v) => (v.number, Arc::clone(&v.text)),
+                None => {
+                    return Err(ToolError::invalid(format!(
+                        "scene {id} has no version {}: it keeps versions {}",
+                        version.unwrap_or_default(),
+                        w.numbers()
+                    )));
+                }
             }
-        }
+        };
+        Ok((from_text(&text)?, number))
+    }
+
+    /// The latest version of `id` and the one before it, each with its
+    /// number: what its last edit changed.
+    pub fn last_edit(&self, id: SceneId) -> Result<(Versioned, Versioned), ToolError> {
+        let (before, after) = {
+            let mut inner = lock(&self.inner);
+            let w = inner.working(id)?;
+            let n = w.versions.len();
+            if n < 2 {
+                return Err(ToolError::invalid(format!(
+                    "scene {id} keeps no version before {} to compare it with",
+                    w.latest().number
+                )));
+            }
+            let pick = |v: &Version| (v.number, Arc::clone(&v.text));
+            (pick(&w.versions[n - 2]), pick(&w.versions[n - 1]))
+        };
+        Ok((
+            (from_text(&before.1)?, before.0),
+            (from_text(&after.1)?, after.0),
+        ))
     }
 
     /// Stores `scene` as the version after `based_on`, which must still be
-    /// the latest; returns the new version's number. An unchanged scene adds
-    /// no version.
-    pub fn commit(&self, id: SceneId, based_on: u32, scene: &Value) -> Result<u32, ToolError> {
+    /// the latest; returns the new version (an unchanged scene adds none).
+    pub fn commit(&self, id: SceneId, based_on: u32, scene: &Value) -> Result<Stored, ToolError> {
         let text = to_text(scene)?;
         let mut inner = lock(&self.inner);
+        let now = inner.tick();
         let w = inner.working(id)?;
-        let (latest, current) = w.latest();
-        if latest != based_on {
+        let latest = w.latest();
+        if latest.number != based_on {
             return Err(ToolError::invalid(format!(
-                "scene {id} changed while this call ran (it is now at version {latest}), so this \
-                 edit was not kept: make it again"
+                "scene {id} changed while this call ran (it is now at version {}), so this \
+                 edit was not kept: make it again",
+                latest.number
             )));
         }
-        if **current == *text {
-            return Ok(latest);
+        if *latest.text == *text {
+            return Ok(Stored {
+                id,
+                version: based_on,
+                closed: Vec::new(),
+            });
         }
-        let version = latest + 1;
-        w.versions.push_back((version, text));
+        let number = w.next_version;
+        w.next_version += 1;
+        let mut freed = 0;
+        let added = text.len();
+        w.versions.push_back(Version {
+            number,
+            text,
+            made: now,
+        });
         while w.versions.len() > MAX_UNDO + 1 {
-            w.versions.pop_front();
+            freed += w.versions.pop_front().map_or(0, |v| v.text.len());
         }
-        Ok(version)
+        inner.bytes = inner.bytes + added - freed;
+        let closed = inner.make_room(self.budget, id);
+        Ok(Stored {
+            id,
+            version: number,
+            closed,
+        })
     }
 
-    /// Goes back `steps` versions, dropping the later ones; returns the
-    /// version left latest, as `(version, scene)`, and the one undone.
+    /// Goes back `steps` versions, dropping the later ones (their numbers are
+    /// not used again); returns the version left latest, as
+    /// `(version, scene)`, and the one undone.
     pub fn undo(&self, id: SceneId, steps: usize) -> Result<((u32, Value), Value), ToolError> {
-        let mut inner = lock(&self.inner);
-        let w = inner.working(id)?;
-        let earlier = w.versions.len() - 1;
-        if steps == 0 || steps > earlier {
-            return Err(ToolError::invalid(match earlier {
-                0 => format!("scene {id} has no earlier version to go back to"),
-                n => format!("scene {id} can go back 1 to {n} steps"),
-            }));
-        }
-        let (_, undone) = w.latest();
-        let undone = from_text(undone)?;
-        w.versions.truncate(w.versions.len() - steps);
-        let (version, text) = w.latest();
-        Ok(((version, from_text(text)?), undone))
+        let (undone, (number, text)) = {
+            let mut inner = lock(&self.inner);
+            let w = inner.working(id)?;
+            let earlier = w.versions.len() - 1;
+            if steps == 0 || steps > earlier {
+                return Err(ToolError::invalid(match earlier {
+                    0 => format!("scene {id} has no earlier version to go back to"),
+                    n => format!("scene {id} can go back 1 to {n} steps"),
+                }));
+            }
+            let undone = Arc::clone(&w.latest().text);
+            let freed: usize = w
+                .versions
+                .drain(w.versions.len() - steps..)
+                .map(|v| v.text.len())
+                .sum();
+            let latest = w.latest();
+            let kept = (latest.number, Arc::clone(&latest.text));
+            inner.bytes -= freed;
+            (undone, kept)
+        };
+        Ok(((number, from_text(&text)?), from_text(&undone)?))
     }
 
     /// Closes `id`.
     pub fn close(&self, id: SceneId) -> Result<(), ToolError> {
         let mut inner = lock(&self.inner);
         inner.working(id)?;
-        inner.scenes.remove(&id);
+        if let Some(w) = inner.scenes.remove(&id) {
+            inner.bytes -= w.versions.iter().map(|v| v.text.len()).sum::<usize>();
+        }
         Ok(())
     }
 
     /// The open scenes, most recently used first.
     pub fn list(&self) -> Result<Vec<Listed>, ToolError> {
-        let inner = lock(&self.inner);
-        inner
-            .ids()
+        let handles: Vec<(SceneId, u32, usize, Arc<str>)> = {
+            let inner = lock(&self.inner);
+            inner
+                .ids()
+                .into_iter()
+                .filter_map(|id| {
+                    let w = inner.scenes.get(&id)?;
+                    let latest = w.latest();
+                    Some((
+                        id,
+                        latest.number,
+                        w.versions.len() - 1,
+                        Arc::clone(&latest.text),
+                    ))
+                })
+                .collect()
+        };
+        handles
             .into_iter()
-            .filter_map(|id| inner.scenes.get(&id).map(|w| (id, w)))
-            .map(|(id, w)| {
-                let (version, text) = w.latest();
+            .map(|(id, version, undo_steps, text)| {
                 Ok(Listed {
                     id,
                     version,
-                    undo_steps: w.versions.len() - 1,
-                    scene: from_text(text)?,
+                    undo_steps,
+                    scene: from_text(&text)?,
                 })
             })
             .collect()
@@ -337,6 +522,11 @@ impl SceneStore {
     /// The open ids, most recently used first.
     pub fn ids(&self) -> Vec<SceneId> {
         lock(&self.inner).ids()
+    }
+
+    /// Bytes over all versions kept.
+    pub fn bytes(&self) -> usize {
+        lock(&self.inner).bytes
     }
 }
 
@@ -466,9 +656,18 @@ pub fn prepare(
         Some(Value::Bool(b)) => b,
         Some(_) => return Err(ToolError::invalid("return_scene is true or false")),
     };
-    // A whole tool result passed as the scene: the value of its `scene` field,
-    // here so that the call's area is found from it too.
-    if let Some(inner) = args.get("scene").and_then(edit::unwrap_result) {
+    // A whole tool result passed as the scene. One of a working scene (with a
+    // `scene_id`, as create_scene's and every edit by id are) stands for that
+    // scene, so the edit is stored; any other, for the value of its `scene`
+    // field, put in place here so that the call's area is found from it too.
+    let result_id = args
+        .get("scene")
+        .and_then(edit::result_fields)
+        .and_then(|fields| fields.get(SCENE_ID).cloned());
+    if let Some(id) = result_id {
+        args.remove("scene");
+        args.entry(SCENE_ID).or_insert(id);
+    } else if let Some(inner) = args.get("scene").and_then(edit::unwrap_result) {
         args.insert("scene".to_owned(), inner);
     }
     // A small model may put the id where the scene goes.
@@ -505,6 +704,17 @@ pub fn prepare(
     }))
 }
 
+/// Arguments that name only the area of `scene`, for
+/// [`ObservationMcp::in_tool_scope`], without copying the whole scene.
+fn area_arguments(scene: Option<&Value>) -> Option<Map<String, Value>> {
+    let scene = match scene? {
+        // Rare: a scene sent as text. The scope reads its area from the text.
+        text @ Value::String(_) => text.clone(),
+        other => json!({ "area": other.get("area")? }),
+    };
+    Some(Map::from_iter([("scene".to_owned(), scene)]))
+}
+
 /// A failed call's result, with `e` for the agent.
 fn tool_error(e: &ToolError) -> CallToolResponse {
     CallToolResult::error(vec![ContentBlock::text(e.to_string())]).into()
@@ -530,15 +740,26 @@ pub fn finish(
     let Some(scene) = out.get("scene") else {
         return result.into();
     };
-    let version = match store.commit(call.id, call.based_on, scene) {
-        Ok(v) => v,
+    let stored = match store.commit(call.id, call.based_on, scene) {
+        Ok(stored) => stored,
         Err(e) => return tool_error(&e),
     };
     if !call.return_scene {
         out.remove("scene");
     }
     out.insert(SCENE_ID.to_owned(), Value::String(call.id.to_string()));
-    out.insert("version".to_owned(), Value::from(version));
+    out.insert("version".to_owned(), Value::from(stored.version));
+    if !stored.closed.is_empty() {
+        let note = stored.closed_note();
+        if let Some(Value::String(summary)) = out.get_mut("summary") {
+            summary.push_str(&note);
+        } else {
+            out.insert(
+                "note".to_owned(),
+                Value::String(note.trim_start_matches("; ").to_owned()),
+            );
+        }
+    }
     let text = Value::Object(out.clone()).to_string();
     result.content = vec![ContentBlock::text(text)];
     result.into()
@@ -563,11 +784,9 @@ impl ObservationMcp {
             Ok(call) => call,
             Err(e) => return Ok(tool_error(&e)),
         };
-        let arguments = request.arguments.clone();
+        let scope = area_arguments(request.arguments.as_ref().and_then(|a| a.get("scene")));
         let tcc = ToolCallContext::new(self, request, context);
-        let response = self
-            .in_tool_scope(arguments.as_ref(), tools.call(tcc))
-            .await?;
+        let response = self.in_tool_scope(scope.as_ref(), tools.call(tcc)).await?;
         Ok(match call {
             Some(call) => finish(&self.scenes, &call, response),
             None => response,
@@ -840,10 +1059,6 @@ pub struct Applied {
 // Tools
 // ---------------------------------------------------------------------------
 
-fn fail(e: ToolError) -> String {
-    e.to_string()
-}
-
 fn not_an_id(text: &str) -> ToolError {
     ToolError::invalid(format!(
         "`{text}` is not a working scene's id, such as s1 (list_scenes lists them)"
@@ -854,27 +1069,40 @@ fn id_of(text: &str) -> Result<SceneId, ToolError> {
     SceneId::parse(text).ok_or_else(|| not_an_id(text))
 }
 
-/// A scene file given inline, checked and tidied as the app loads it.
-fn checked(scene: &Value) -> Result<(SceneFile, Value), ToolError> {
-    let scene = match scene {
-        // A small model may send the file as text with JSON inside.
-        Value::String(text) => serde_json::from_str(text)
-            .map_err(|e| ToolError::invalid(format!("the scene is not valid JSON: {e}")))?,
-        other => other.clone(),
-    };
-    edit::finish(&edit::parse(&scene)?)
-}
-
-/// A side of diff_scenes, resolved: the scene, its name in the output, and
-/// the id and version it came from if it is stored.
+/// A side of diff_scenes, resolved: the scene and its name in the output.
 struct Side {
     scene: SceneFile,
     name: String,
-    stored: Option<(SceneId, u32)>,
+}
+
+impl Side {
+    fn stored(id: SceneId, (scene, version): (Value, u32)) -> Result<Self, ToolError> {
+        Ok(Self {
+            scene: edit::parse(&scene)?,
+            name: format!("{id} version {version}"),
+        })
+    }
+}
+
+/// An argument of the edit `n` (`name`) of apply_edits, as an object.
+fn step_args(n: usize, name: &str, args: Option<Value>) -> Result<Map<String, Value>, ToolError> {
+    let parsed = match args {
+        None | Some(Value::Null) => return Ok(Map::new()),
+        Some(Value::String(text)) => serde_json::from_str(&text).ok(),
+        other => other,
+    };
+    match parsed {
+        Some(Value::Object(m)) => Ok(m),
+        _ => Err(ToolError::invalid(format!(
+            "edit {n} ({name}): args is an object of the tool's arguments"
+        ))),
+    }
 }
 
 impl ObservationMcp {
-    fn side(&self, given: &Value, label: &str) -> Result<Side, ToolError> {
+    /// A side given as a stored version's reference (`s1`, `s1@2`), with
+    /// its id and version, or as a scene file.
+    fn side(&self, given: &Value, label: &str) -> Result<(Side, Option<SceneId>), ToolError> {
         match given {
             Value::String(text) if !text.trim_start().starts_with('{') => {
                 let (id, version) = parse_ref(text).ok_or_else(|| {
@@ -883,50 +1111,32 @@ impl ObservationMcp {
                          (s1@2) nor a scene file"
                     ))
                 })?;
-                let (scene, version) = self.scenes.get(id, version)?;
-                Ok(Side {
-                    scene: edit::parse(&scene)?,
-                    name: format!("{id} version {version}"),
-                    stored: Some((id, version)),
-                })
+                Ok((Side::stored(id, self.scenes.get(id, version)?)?, Some(id)))
             }
-            other => Ok(Side {
-                scene: checked(other)?.0,
-                name: format!("the scene given as {label}"),
-                stored: None,
-            }),
+            other => {
+                let (scene, _) = edit::finish(&edit::parse(other)?)?;
+                let name = format!("the scene given as {label}");
+                Ok((Side { scene, name }, None))
+            }
         }
     }
 
     fn diff(&self, a: &DiffArgs) -> Result<Diffed, ToolError> {
-        let from = self.side(&a.a, "a")?;
-        let to = match &a.b {
-            Some(b) => self.side(b, "b")?,
-            None => {
-                let Some((id, version)) = from.stored else {
-                    return Err(ToolError::invalid(
-                        "give b too: a is a scene file, not a working scene",
-                    ));
-                };
-                if matches!(&a.a, Value::String(t) if !t.contains('@')) {
-                    // a alone: what its latest version's edit changed.
-                    let previous = version.saturating_sub(1);
-                    if self.scenes.get(id, Some(previous)).is_err() {
-                        return Err(ToolError::invalid(format!(
-                            "{id} keeps no version before {version} to compare it with"
-                        )));
-                    }
-                    return self.diff(&DiffArgs {
-                        a: Value::String(format!("{id}@{previous}")),
-                        b: Some(Value::String(format!("{id}@{version}"))),
-                    });
-                }
-                let (latest, latest_version) = self.scenes.latest(id)?;
-                Side {
-                    scene: edit::parse(&latest)?,
-                    name: format!("{id} version {latest_version}"),
-                    stored: Some((id, latest_version)),
-                }
+        let (from, to) = match (&a.a, &a.b) {
+            (first, Some(second)) => (self.side(first, "a")?.0, self.side(second, "b")?.0),
+            // a alone as a plain id: what its last edit changed.
+            (Value::String(text), None) if !text.contains('@') => {
+                let id = id_of(text)?;
+                let (before, after) = self.scenes.last_edit(id)?;
+                (Side::stored(id, before)?, Side::stored(id, after)?)
+            }
+            // a alone as a version: from it to the latest.
+            (first, None) => {
+                let (from, id) = self.side(first, "a")?;
+                let id = id.ok_or_else(|| {
+                    ToolError::invalid("give b too: a is a scene file, not a working scene")
+                })?;
+                (from, Side::stored(id, self.scenes.latest(id)?)?)
             }
         };
         let compared = format!("{} to {}", from.name, to.name);
@@ -963,11 +1173,15 @@ impl ObservationMcp {
     /// create_scene: a new demo scene, stored, with its file.
     pub(crate) fn create(&self) -> Result<Created, ToolError> {
         let (_, scene) = edit::finish(&edit::new_demo_scene()?)?;
-        let (id, version) = self.scenes.open(&scene)?;
+        let stored = self.scenes.open(&scene)?;
         Ok(Created {
-            scene_id: id.to_string(),
-            version,
-            summary: format!("created an empty scene on the demo street as {id}"),
+            scene_id: stored.id.to_string(),
+            version: stored.version,
+            summary: format!(
+                "created an empty scene on the demo street as {}{}",
+                stored.id,
+                stored.closed_note()
+            ),
             scene,
         })
     }
@@ -985,7 +1199,7 @@ impl ObservationMcp {
                     .json
                     .as_ref()
                     .ok_or_else(|| ToolError::invalid("from = json needs the scene in `json`"))?;
-                checked(json)?.1
+                edit::finish(&edit::parse(json)?)?.1
             }
             OpenFrom::App => {
                 if !self.link.is_connected() {
@@ -1007,11 +1221,15 @@ impl ObservationMcp {
                 }
             }
         };
-        let (id, version) = self.scenes.open(&scene)?;
+        let stored = self.scenes.open(&scene)?;
         Ok(SceneHandle {
-            scene_id: id.to_string(),
-            version,
-            summary: line(id, version, &scene),
+            scene_id: stored.id.to_string(),
+            version: stored.version,
+            summary: format!(
+                "{}{}",
+                line(stored.id, stored.version, &scene),
+                stored.closed_note()
+            ),
         })
     }
 
@@ -1030,112 +1248,101 @@ impl ObservationMcp {
                 a.edits.len()
             )));
         }
+        let (scene, based_on) = self.scenes.latest(id)?;
+        // The scene's area is fetched once, and in view for every edit.
+        let scope = area_arguments(Some(&scene));
+        let (scene, steps) = self
+            .in_tool_scope(scope.as_ref(), self.run_edits(scene, a.edits, context))
+            .await?;
+        let stored = self.scenes.commit(id, based_on, &scene)?;
+        let summary = format!(
+            "applied {}; now {}{}",
+            count(steps.len(), "edit", "edits"),
+            line(id, stored.version, &scene),
+            stored.closed_note()
+        );
+        Ok(Applied {
+            scene_id: id.to_string(),
+            version: stored.version,
+            steps,
+            summary,
+        })
+    }
+
+    /// Runs `edits` on `scene` in order through the tool router; returns the
+    /// scene they leave and each edit's result, or why one failed.
+    async fn run_edits(
+        &self,
+        mut scene: Value,
+        edits: Vec<EditStep>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(Value, Vec<StepOut>), ToolError> {
         let tools = Self::all_tools();
         let allowed = || {
-            let mut names: Vec<String> = tools
+            let names: Vec<String> = tools
                 .list_all()
                 .iter()
                 .filter(|t| edits_scene(t))
                 .map(|t| t.name.to_string())
                 .collect();
-            names.sort();
             names.join(", ")
         };
-        let (mut scene, based_on) = self.scenes.latest(id)?;
-        let mut steps = Vec::with_capacity(a.edits.len());
-        for (i, step) in a.edits.into_iter().enumerate() {
+        let mut steps = Vec::with_capacity(edits.len());
+        for (i, step) in edits.into_iter().enumerate() {
             let n = i + 1;
             let name = step.tool.trim().to_owned();
-            let Some(tool) = tools.get(&name) else {
-                return Err(ToolError::invalid(format!(
-                    "edit {n}: there is no tool `{name}`; apply_edits runs these: {}",
-                    allowed()
-                )));
+            let failed = |why: &str| {
+                ToolError::invalid(format!(
+                    "edit {n} ({name}) failed, so no edit was kept: {why}"
+                ))
             };
-            if !edits_scene(tool) {
-                return Err(ToolError::invalid(format!(
-                    "edit {n}: {name} does not edit a scene; apply_edits runs these: {}",
-                    allowed()
-                )));
-            }
-            let mut args = match step.args {
-                None | Some(Value::Null) => Map::new(),
-                Some(Value::Object(m)) => m,
-                Some(Value::String(text)) => match serde_json::from_str(&text) {
-                    Ok(Value::Object(m)) => m,
-                    _ => {
-                        return Err(ToolError::invalid(format!(
-                            "edit {n} ({name}): args is an object of the tool's arguments"
-                        )));
-                    }
-                },
-                Some(_) => {
+            match tools.get(&name) {
+                None => {
                     return Err(ToolError::invalid(format!(
-                        "edit {n} ({name}): args is an object of the tool's arguments"
+                        "edit {n}: there is no tool `{name}`; apply_edits runs these: {}",
+                        allowed()
                     )));
                 }
-            };
+                Some(tool) if !edits_scene(tool) => {
+                    return Err(ToolError::invalid(format!(
+                        "edit {n}: {name} does not edit a scene; apply_edits runs these: {}",
+                        allowed()
+                    )));
+                }
+                Some(_) => {}
+            }
+            let mut args = step_args(n, &name, step.args)?;
             for key in ["scene", SCENE_ID, RETURN_SCENE] {
                 args.remove(key);
             }
             args.insert("scene".to_owned(), scene);
-            let request = CallToolRequestParams::new(name.clone()).with_arguments(args.clone());
+            let request = CallToolRequestParams::new(name.clone()).with_arguments(args);
             let tcc = ToolCallContext::new(self, request, context.clone());
-            let response = self
-                .in_tool_scope(Some(&args), tools.call(tcc))
-                .await
-                .map_err(|e| {
-                    ToolError::invalid(format!(
-                        "edit {n} ({name}) failed, so no edit was kept: {}",
-                        e.message
-                    ))
-                })?;
+            let response = tools.call(tcc).await.map_err(|e| failed(&e.message))?;
             let CallToolResponse::Complete(result) = response else {
-                return Err(ToolError::invalid(format!(
-                    "edit {n} ({name}) did not finish, so no edit was kept"
-                )));
+                return Err(failed("it did not finish"));
             };
-            let text: Vec<&str> = result
-                .content
-                .iter()
-                .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
-                .collect();
-            let structured = match (result.is_error, result.structured_content) {
+            let mut out = match (result.is_error, result.structured_content) {
                 (Some(true), _) | (_, None) => {
-                    return Err(ToolError::invalid(format!(
-                        "edit {n} ({name}) failed, so no edit was kept: {}",
-                        text.join(" ")
-                    )));
+                    let text: Vec<&str> = result
+                        .content
+                        .iter()
+                        .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
+                        .collect();
+                    return Err(failed(&text.join(" ")));
                 }
-                (_, Some(v)) => v,
+                (_, Some(Value::Object(out))) => out,
+                (_, Some(_)) => return Err(failed("it returned no scene")),
             };
-            let Value::Object(mut out) = structured else {
-                return Err(ToolError::invalid(format!(
-                    "edit {n} ({name}) returned no scene, so no edit was kept"
-                )));
-            };
-            scene = out.remove("scene").ok_or_else(|| {
-                ToolError::invalid(format!(
-                    "edit {n} ({name}) returned no scene, so no edit was kept"
-                ))
-            })?;
+            scene = out
+                .remove("scene")
+                .ok_or_else(|| failed("it returned no scene"))?;
             steps.push(StepOut {
                 tool: name,
                 result: Value::Object(out),
             });
         }
-        let version = self.scenes.commit(id, based_on, &scene)?;
-        let summary = format!(
-            "applied {}; now {}",
-            count(steps.len(), "edit", "edits"),
-            line(id, version, &scene)
-        );
-        Ok(Applied {
-            scene_id: id.to_string(),
-            version,
-            steps,
-            summary,
-        })
+        Ok((scene, steps))
     }
 }
 
