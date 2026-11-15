@@ -21,10 +21,12 @@ use crate::geometry::{
 use crate::queries::{ONE_SIDED, Settings, Sources, off_runtime};
 use crate::schema::JsonObject;
 use crate::server::{ObservationMcp, RangeRow};
+use observation_core::address::distance_to_footprint;
+use observation_core::building::Footprint;
 use observation_core::bundle::AreaBundle;
 use observation_core::camera::{CameraModel, CameraPlacement, DoriLevel, Lighting};
 use observation_core::coverage::{CoverageParams, StaticLayers};
-use observation_core::example::{WallMount, wall_mounts};
+use observation_core::example::{WallMount, wall_mounts_of};
 use observation_core::footage::{
     AreaLabel, FootageCamera, LabelledArea, Probe, Reason, Target, TargetPlace, Verdict,
     camera_verdicts, nearest_wall,
@@ -32,7 +34,6 @@ use observation_core::footage::{
 use observation_core::frustum::ViewCone;
 use observation_core::geo::{LatLon, Projection};
 use observation_core::glam::{Vec2, Vec3};
-use observation_core::occlusion::Occluders;
 use observation_core::scene::{AreaRef, SceneFile};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{tool, tool_router};
@@ -111,12 +112,12 @@ fn area_words(a: &LabelledArea) -> String {
     }
 }
 
-/// A target's name, or "target <id>" when it has none.
-fn target_name(t: &Target) -> String {
+/// "target 3 \"front door\"", or "target 3" when it has no name.
+fn target_words(t: &Target) -> String {
     if t.name.is_empty() {
         format!("target {}", t.id)
     } else {
-        format!("\"{}\"", t.name)
+        format!("target {} \"{}\"", t.id, t.name)
     }
 }
 
@@ -421,21 +422,20 @@ pub fn surroundings(
         })
         .collect();
 
-    let mut streets: Vec<(String, String, [f32; 2], f32)> = Vec::new();
-    for road in &bundle.roads {
-        let Some((p, d)) = nearest_on_polyline(at, &road.points) else {
-            continue;
-        };
-        if d > radius {
-            continue;
-        }
-        let label = street_label(road.name.as_deref(), &road.highway);
-        match streets.iter_mut().find(|s| s.0 == label) {
-            Some(s) if d < s.3 => *s = (label, road.highway.clone(), p, d),
-            Some(_) => {}
-            None => streets.push((label, road.highway.clone(), p, d)),
-        }
-    }
+    // Each name (or kind of unnamed way) once, at its nearest way.
+    let label_of = |r: &observation_core::bundle::Road| street_label(r.name.as_deref(), &r.highway);
+    let mut labels: Vec<String> = bundle.roads.iter().map(label_of).collect();
+    labels.sort_unstable();
+    labels.dedup();
+    let mut streets: Vec<(String, String, [f32; 2], f32)> = labels
+        .into_iter()
+        .filter_map(|label| {
+            let near = bundle.nearest_road(at, |r| label_of(r) == label)?;
+            let road = bundle.roads.get(near.index)?;
+            (near.distance_m <= radius)
+                .then(|| (label, road.highway.clone(), near.point, near.distance_m))
+        })
+        .collect();
     streets.sort_by(|a, b| a.3.total_cmp(&b.3).then(a.0.cmp(&b.0)));
     let streets: Vec<NearStreet> = streets
         .into_iter()
@@ -538,19 +538,6 @@ pub fn surroundings(
     Ok(out)
 }
 
-/// The nearest point of a polyline to `p`, and its distance.
-fn nearest_on_polyline(p: [f32; 2], points: &[[f32; 2]]) -> Option<([f32; 2], f32)> {
-    let at = Vec2::from_array(p);
-    points
-        .windows(2)
-        .map(|w| {
-            let c =
-                geometry::closest_on_segment(at, Vec2::from_array(w[0]), Vec2::from_array(w[1]));
-            (c.to_array(), c.distance(at))
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-}
-
 fn surroundings_summary(s: &SceneFile, o: &SurroundingsOut) -> String {
     let mut parts = Vec::new();
     let place = match o.inside_building {
@@ -631,7 +618,7 @@ fn surroundings_summary(s: &SceneFile, o: &SurroundingsOut) -> String {
             .targets
             .iter()
             .filter_map(|t| s.targets.iter().find(|x| x.id == t.target_id).zip(Some(t)))
-            .map(|(t, n)| format!("target {} {} {}", t.id, target_name(t), n.toward.words()))
+            .map(|(t, n)| format!("{} {}", target_words(t), n.toward.words()))
             .collect();
         parts.push(format!("Targets: {}.", list.join("; ")));
     }
@@ -1014,27 +1001,38 @@ pub struct MountsOut {
 /// The street a wall mount's street point lies on, and the distance from
 /// the wall to it.
 fn faced_street(bundle: &AreaBundle, w: &WallMount) -> Option<(String, f32)> {
-    let p = w.street?;
-    let road = bundle
-        .roads
-        .get(bundle.nearest_road(p.to_array(), |_| true)?.index)?;
+    let road = bundle.roads.get(w.road?)?;
     Some((
         street_label(road.name.as_deref(), &road.highway),
         w.street_distance_m(),
     ))
 }
 
+/// What `suggest_mount_points` is asked for.
+#[derive(Debug, Clone, Default)]
+pub struct MountQuery {
+    pub building: Option<usize>,
+    pub near: Option<[f32; 2]>,
+    pub radius_m: Option<f32>,
+    pub facing: Option<FacingArg>,
+    pub height_m: Option<f32>,
+    pub limit: Option<usize>,
+}
+
 /// Wall mounts for a camera: on house fronts facing the street (the walls
 /// the example cameras use), or on walls facing a bearing; clear of the
-/// cameras already placed.
-pub fn mount_points(
-    scene: &Value,
-    building: Option<usize>,
-    near: Option<[f32; 2]>,
-    facing: Option<FacingArg>,
-    height_m: Option<f32>,
-    limit: Option<usize>,
-) -> Result<MountsOut, ToolError> {
+/// cameras already placed. Only the walls of `building`, or of the
+/// buildings within `radius_m` of `near`, are considered when given. Tests
+/// lines of sight: call it off the async runtime.
+pub fn mount_points(scene: &Value, q: MountQuery) -> Result<MountsOut, ToolError> {
+    let MountQuery {
+        building,
+        near,
+        radius_m,
+        facing,
+        height_m,
+        limit,
+    } = q;
     let (s, bundle) = parse_with_bundle(scene)?;
     let limit = limit.unwrap_or(MOUNTS_LIMIT.0).clamp(1, MOUNTS_LIMIT.1);
     let height = height_m.unwrap_or(MOUNT_HEIGHT_M);
@@ -1054,6 +1052,18 @@ pub fn mount_points(
     if let Some(p) = near {
         check_inside(&bundle, p[0], p[1])?;
     }
+    if let Some(r) = radius_m
+        && !(r.is_finite() && r > 0.0)
+    {
+        return Err(ToolError::invalid(
+            "radius_m must be a positive number of metres",
+        ));
+    }
+    if radius_m.is_some() && near.is_none() {
+        return Err(ToolError::invalid(
+            "radius_m needs near: the point to measure from",
+        ));
+    }
     let bearing: Option<f32> = match &facing {
         None => None,
         Some(FacingArg::Degrees(d)) if d.is_finite() => Some(d.rem_euclid(360.0)),
@@ -1068,25 +1078,32 @@ pub fn mount_points(
             ))
         })?),
     };
-    let terrain = &bundle.terrain;
+    let layers = layers_for(&s)?;
+    let terrain = layers.terrain();
     let top = terrain.top();
-    let occluders = Occluders::new(bundle.footprints());
     let taken: Vec<Vec2> = s
         .cameras
         .iter()
         .map(|c| Vec2::new(c.position[0], c.position[2]))
         .collect();
-    let mut candidates: Vec<(WallMount, Vec3, f32)> = wall_mounts(&bundle)
+    let keep = |i: usize, f: &Footprint| {
+        building.is_none_or(|b| b == i)
+            && match (near, radius_m) {
+                (Some(p), Some(r)) => distance_to_footprint(p, f) <= r,
+                _ => true,
+            }
+    };
+    let mut candidates: Vec<(WallMount, Vec3, f32)> = wall_mounts_of(&bundle, keep)
         .into_iter()
-        .filter(|w| building.is_none_or(|b| w.building == b))
         .filter_map(|w| {
             let eye = w.eye(terrain, height);
-            if !w.fits_under_roof(eye) {
+            let xz = Vec2::new(eye.x, eye.z);
+            if !w.fits_under_roof(eye) || taken.iter().any(|t| t.distance(xz) <= MOUNT_CLEAR_M) {
                 return None;
             }
             let yaw = match bearing {
                 None => {
-                    if !(w.faces_street() && w.sees_street(eye, &occluders, terrain, top)) {
+                    if !(w.faces_street() && w.sees_street(eye, layers.occluders(), terrain, top)) {
                         return None;
                     }
                     w.street_yaw_deg()
@@ -1099,11 +1116,7 @@ pub fn mount_points(
                     b
                 }
             };
-            let xz = Vec2::new(eye.x, eye.z);
-            taken
-                .iter()
-                .all(|t| t.distance(xz) > MOUNT_CLEAR_M)
-                .then_some((w, eye, yaw))
+            Some((w, eye, yaw))
         })
         .collect();
     let key = |w: &WallMount, eye: &Vec3| match near {
@@ -1226,8 +1239,10 @@ pub struct CameraLine {
     pub model: Option<String>,
     pub enabled: bool,
     pub at: [f64; 2],
-    /// Mount height above the ground, metres.
-    pub height_m: f64,
+    /// Mount height above the ground, metres; absent when the area's ground
+    /// is not available here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_m: Option<f64>,
     /// Where it is relative to the nearest building and street, if the
     /// area's data is available.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1282,6 +1297,11 @@ pub struct SceneSummaryOut {
     /// The area the coverage figures are limited to, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub figures_limited_to: Option<u32>,
+    /// The area the scene names to limit the figures to while it is not in
+    /// effect (disabled, or without a usable outline), so the figures are
+    /// not limited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub figures_limit_not_in_effect: Option<u32>,
 }
 
 /// The whole scene in brief, without computing coverage.
@@ -1319,7 +1339,7 @@ pub fn summarise(scene: &Value) -> Result<SceneSummaryOut, ToolError> {
         .take(MAX_SUMMARY_CAMERAS)
         .map(|c| {
             let xz = [c.position[0], c.position[2]];
-            let ground = b.map_or(0.0, |b| ground_y(b, xz[0], xz[1]));
+            let ground = b.map(|b| ground_y(b, xz[0], xz[1]));
             CameraLine {
                 id: c.id,
                 label: c.label.clone(),
@@ -1327,7 +1347,7 @@ pub fn summarise(scene: &Value) -> Result<SceneSummaryOut, ToolError> {
                 model: model(cat, Some(&s), &c.model_id).map(CameraModel::display_name),
                 enabled: c.enabled,
                 at: xz1(xz),
-                height_m: m1(c.position[1] - ground),
+                height_m: ground.map(|g| m1(c.position[1] - g)),
                 place: b.map(|b| camera_place_words(b, c)),
                 facing: compass(c.yaw_deg),
                 yaw_deg: m0(c.yaw_deg.rem_euclid(360.0)) % 360.0,
@@ -1426,10 +1446,14 @@ pub fn summarise(scene: &Value) -> Result<SceneSummaryOut, ToolError> {
                 .clone()
                 .unwrap_or_else(|| format!("at [{:.0}, {:.0}]", line.at[0], line.at[1]));
             let off = if c.enabled { "" } else { " (disabled)" };
+            let up = match line.height_m {
+                Some(h) => format!("{h:.1} m up "),
+                // Without the area's ground, the height above it is unknown.
+                None => String::new(),
+            };
             parts.push(format!(
-                "{}{off}, {model}, {:.1} m up {place}, facing {} and {}.",
+                "{}{off}, {model}, {up}{place}, facing {} and {}.",
                 camera_words(c),
-                line.height_m,
                 line.facing,
                 tilt_words(c.pitch_deg)
             ));
@@ -1467,9 +1491,8 @@ pub fn summarise(scene: &Value) -> Result<SceneSummaryOut, ToolError> {
             .map(|t| {
                 let p = target_xz(t);
                 format!(
-                    "target {} {} ({} at [{:.0}, {:.0}])",
-                    t.id,
-                    target_name(t),
+                    "{} ({} at [{:.0}, {:.0}])",
+                    target_words(t),
                     target_kind(t),
                     p[0],
                     p[1]
@@ -1500,7 +1523,8 @@ pub fn summarise(scene: &Value) -> Result<SceneSummaryOut, ToolError> {
         custom_models,
         areas,
         targets,
-        figures_limited_to: limited.map(|a| a.id),
+        figures_limited_to: limited.filter(|a| a.is_active()).map(|a| a.id),
+        figures_limit_not_in_effect: limited.filter(|a| !a.is_active()).map(|a| a.id),
     })
 }
 
@@ -1512,7 +1536,7 @@ pub fn summarise(scene: &Value) -> Result<SceneSummaryOut, ToolError> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Blocked {
     Clear,
-    Building(Option<usize>),
+    Building(usize),
     /// Only walls that face away from the camera are in view.
     FacingAway,
     Terrain,
@@ -1522,11 +1546,10 @@ enum Blocked {
 fn blocked_text(b: Blocked, own: Option<usize>) -> String {
     match b {
         Blocked::Clear => "not ruled out".to_owned(),
-        Blocked::Building(Some(i)) if Some(i) == own => {
+        Blocked::Building(i) if Some(i) == own => {
             "ruled out: hidden behind its own walls".to_owned()
         }
-        Blocked::Building(Some(i)) => format!("ruled out: blocked by building {i}"),
-        Blocked::Building(None) => "ruled out: blocked by a building".to_owned(),
+        Blocked::Building(i) => format!("ruled out: blocked by building {i}"),
         Blocked::FacingAway => "ruled out: only walls facing away are in view".to_owned(),
         Blocked::Terrain => "ruled out: blocked by the terrain".to_owned(),
     }
@@ -1539,10 +1562,11 @@ struct Sample {
     normal: Option<Vec2>,
 }
 
-/// How the points of one thing in the cone fare: the nearest distance, the
-/// verdict and how many points were clear.
+/// How the points of one thing in the cone fare: the nearest point that
+/// counts (see [`tally`]), the verdict and how many points were clear.
 struct Tally {
     nearest_m: f32,
+    nearest: Vec3,
     blocked: Blocked,
     clear: usize,
     in_cone: usize,
@@ -1552,6 +1576,10 @@ struct Tally {
 /// every point in the cone is tested (to measure a street's clear length);
 /// otherwise testing stops at the first clear one. `None` if no point lies
 /// in the cone within range.
+///
+/// The nearest point reported is the nearest with a clear line; failing
+/// that, the nearest in the cone that faces the camera (so not one on a wall
+/// facing away); failing that, the nearest in the cone.
 fn tally(
     layers: &StaticLayers,
     cone: &ViewCone,
@@ -1571,33 +1599,40 @@ fn tally(
     near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     let mut t = Tally {
         nearest_m: near[0].0,
+        nearest: samples[near[0].1].p,
         blocked: Blocked::FacingAway,
         clear: 0,
         in_cone: near.len(),
     };
-    let mut building: Option<Option<usize>> = None;
+    let mut facing: Option<(f32, Vec3)> = None;
+    let mut first_clear: Option<(f32, Vec3)> = None;
+    let mut building: Option<usize> = None;
     let mut terrain = false;
-    for &(_, i) in &near {
+    for &(d, i) in &near {
         let s = &samples[i];
         if s.normal
             .is_some_and(|n| n.dot(Vec2::new(eye.x - s.p.x, eye.z - s.p.z)) <= 0.0)
         {
             continue;
         }
-        if layers.blocked_by_building(eye, s.p) {
-            if building.is_none() {
-                building = Some(layers.occluders().first_blocker(eye, s.p).map(|b| b.0));
-            }
+        facing.get_or_insert((d, s.p));
+        if let Some((b, _)) = layers.occluders().first_blocker(eye, s.p) {
+            building.get_or_insert(b);
             continue;
         }
         if layers.blocked_by_terrain(eye, s.p) {
             terrain = true;
             continue;
         }
+        first_clear.get_or_insert((d, s.p));
         t.clear += 1;
         if !count_all {
             break;
         }
+    }
+    if let Some((d, p)) = first_clear.or(facing) {
+        t.nearest_m = d;
+        t.nearest = p;
     }
     t.blocked = if t.clear > 0 {
         Blocked::Clear
@@ -1622,7 +1657,11 @@ fn wall_samples(
     let f = &bundle.buildings[i].footprint;
     let mut out = Vec::new();
     let (bottom, roof) = (f.bottom_y(), f.roof_y());
-    if roof - bottom < 0.4 {
+    // As `Occluders` does, skip a footprint that cannot form a solid (and
+    // would give `clamp` bounds that are not numbers).
+    let finite =
+        bottom.is_finite() && roof.is_finite() && f.outer.iter().flatten().all(|v| v.is_finite());
+    if !finite || roof - bottom < 0.4 {
         return out;
     }
     for w in geometry::walls(f) {
@@ -1679,9 +1718,11 @@ fn street_samples(
 pub struct ViewBuilding {
     /// The building's index in the area (never its address).
     pub building: usize,
-    /// From the camera to the nearest part in view, metres.
+    /// From the camera to the nearest part of it in view with a clear line
+    /// of sight; when it is ruled out, to the nearest part in view facing
+    /// the camera. Metres.
     pub distance_m: f64,
-    /// From the camera, degrees clockwise from north.
+    /// Towards that part from the camera, degrees clockwise from north.
     pub bearing_deg: f64,
     pub compass: &'static str,
     /// "not ruled out", or "ruled out: blocked by building N" and the like.
@@ -1692,7 +1733,8 @@ pub struct ViewBuilding {
 pub struct ViewStreet {
     pub street: String,
     pub kind: String,
-    /// From the camera to the nearest part in view, metres.
+    /// From the camera to the nearest part in view with a clear line of
+    /// sight (when it is ruled out, the nearest part in view), metres.
     pub distance_m: f64,
     /// Length of its centre line inside the view and range, about, metres.
     pub in_view_m: f64,
@@ -1879,8 +1921,7 @@ pub fn view(scene: &Value, id: u32) -> Result<CameraViewOut, ToolError> {
         .iter()
         .take(MAX_VIEW_BUILDINGS)
         .map(|(i, t)| {
-            let (p, _) = nearest_on_footprint(eye2, &bundle.buildings[*i].footprint);
-            let b = bearing_deg(eye2, p);
+            let b = bearing_deg(eye2, [t.nearest.x, t.nearest.z]);
             ViewBuilding {
                 building: *i,
                 distance_m: m1(t.nearest_m),
@@ -2209,6 +2250,8 @@ pub struct MountArgs {
     pub building: Option<usize>,
     /// Nearest this `[x, z]` first.
     pub near: Option<[f32; 2]>,
+    /// With near: only buildings within this many metres of it.
+    pub radius_m: Option<f32>,
     /// "street" (default): face the nearest street. Or a compass word
     /// ("south-east") or degrees clockwise from north.
     pub facing: Option<FacingArg>,
@@ -2279,13 +2322,21 @@ impl ObservationMcp {
         description = "Suggest wall mounts for a new camera, facing the street by default: each gives at [x, z], height_m, yaw_deg and pitch_deg to pass straight to place_camera. Optionally one building, near a point, or facing a compass direction.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
-    pub(crate) fn suggest_mount_points(
+    pub(crate) async fn suggest_mount_points(
         &self,
         Parameters(a): Parameters<MountArgs>,
     ) -> Result<Json<MountsOut>, String> {
-        mount_points(&a.scene, a.building, a.near, a.facing, a.height_m, a.limit)
+        let q = MountQuery {
+            building: a.building,
+            near: a.near,
+            radius_m: a.radius_m,
+            facing: a.facing,
+            height_m: a.height_m,
+            limit: a.limit,
+        };
+        off_runtime(move || mount_points(&a.scene, q))
+            .await
             .map(Json)
-            .map_err(fail)
     }
 
     #[tool(

@@ -8,9 +8,11 @@
 //! rather than an `f32`'s widened digits (`12.300000190734863`).
 
 use observation_core::address::distance_to_footprint;
-use observation_core::building::Footprint;
-use observation_core::bundle::AreaBundle;
+use observation_core::building::{Footprint, signed_area2};
+use observation_core::bundle::{AreaBundle, FOOT_WAYS};
+pub use observation_core::coverage::closest_on_segment;
 use observation_core::glam::Vec2;
+use observation_core::occlusion::point_in_ring;
 
 /// The eight compass points, from north clockwise.
 pub const COMPASS: [&str; 8] = [
@@ -23,23 +25,6 @@ pub const COMPASS: [&str; 8] = [
     "west",
     "north-west",
 ];
-
-/// OpenStreetMap `highway` types that are paths for people, not streets a
-/// house fronts.
-pub const FOOT_WAYS: [&str; 7] = [
-    "footway",
-    "path",
-    "pedestrian",
-    "steps",
-    "cycleway",
-    "bridleway",
-    "corridor",
-];
-
-/// How much nearer an unnamed way must be than a named street for the
-/// unnamed one to be given, metres: a driveway beside a named street is
-/// described by the street.
-pub const NAMED_STREET_SLACK_M: f32 = 5.0;
 
 /// `v` to one decimal, as an `f64` that prints as such.
 pub fn m1(v: f32) -> f64 {
@@ -85,16 +70,20 @@ pub fn unit_of_bearing(bearing_deg: f32) -> Vec2 {
 }
 
 /// A compass word or a number of degrees, as an agent may write a bearing:
-/// "north", "NE", "south-west", "135". `None` if it is neither.
+/// "north", "NE", "south-west", "135", "135 deg", "135 degrees", "135°".
+/// `None` if it is neither.
 pub fn parse_bearing(text: &str) -> Option<f32> {
-    let t = text.trim().to_ascii_lowercase().replace([' ', '_'], "-");
-    if let Ok(deg) = t
-        .trim_end_matches("deg")
-        .trim_end_matches('°')
-        .parse::<f32>()
-    {
+    let lower = text.trim().to_ascii_lowercase();
+    // Units first, before spaces become hyphens.
+    let number = ["degrees", "degree", "deg", "°"]
+        .iter()
+        .find_map(|unit| lower.strip_suffix(unit))
+        .unwrap_or(&lower)
+        .trim();
+    if let Ok(deg) = number.parse::<f32>() {
         return deg.is_finite().then(|| deg.rem_euclid(360.0));
     }
+    let t = lower.replace([' ', '_'], "-");
     let short = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
     let joined = t.replace('-', "");
     (0..8)
@@ -106,16 +95,6 @@ pub fn parse_bearing(text: &str) -> Option<f32> {
 pub fn angle_between(a_deg: f32, b_deg: f32) -> f32 {
     let d = (a_deg - b_deg).rem_euclid(360.0);
     d.min(360.0 - d)
-}
-
-/// The point of segment `a`–`b` nearest `p`.
-pub fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
-    let ab = b - a;
-    let len2 = ab.length_squared();
-    if len2 <= f32::EPSILON {
-        return a;
-    }
-    a + ab * ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
 }
 
 /// The point of a ring's outline nearest `p`, and its distance.
@@ -140,17 +119,6 @@ pub fn nearest_on_footprint(p: [f32; 2], f: &Footprint) -> ([f32; 2], f32) {
         return (p, 0.0);
     }
     nearest_on_ring(p, &f.outer).unwrap_or((p, f32::INFINITY))
-}
-
-/// Twice the signed area of a ring (positive when its corners run
-/// anticlockwise on the map, x east and z south).
-fn signed_area2(ring: &[[f32; 2]]) -> f32 {
-    (0..ring.len())
-        .map(|i| {
-            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum()
 }
 
 /// The enclosed area of a ring, m².
@@ -258,24 +226,18 @@ pub fn street_label(name: Option<&str>, highway: &str) -> String {
     }
 }
 
-/// The street whose centre line is nearest `p`: of the ways that are not
-/// footpaths (any way, if the area has only footpaths), with a named street
-/// preferred to an unnamed way up to [`NAMED_STREET_SLACK_M`] nearer.
+/// The street a building or camera at `p` is on, as
+/// [`AreaBundle::nearest_street`] chooses it (the nearest carriageway, or in
+/// an area without one the nearest way that is not a footpath), so that the
+/// descriptions and the mount points name the same street.
 pub fn nearest_street(bundle: &AreaBundle, p: [f32; 2]) -> Option<StreetNear> {
-    let not_foot = |h: &str| !FOOT_WAYS.contains(&h);
-    let near = bundle
-        .nearest_road(p, |r| not_foot(&r.highway))
-        .or_else(|| bundle.nearest_road(p, |_| true))?;
-    let named = bundle
-        .nearest_road(p, |r| r.name.is_some() && not_foot(&r.highway))
-        .filter(|n| n.distance_m <= near.distance_m + NAMED_STREET_SLACK_M);
-    let pick = named.unwrap_or(near);
-    let road = bundle.roads.get(pick.index)?;
+    let near = bundle.nearest_street(p)?;
+    let road = bundle.roads.get(near.index)?;
     Some(StreetNear {
-        index: pick.index,
+        index: near.index,
         label: street_label(road.name.as_deref(), &road.highway),
-        point: pick.point,
-        distance_m: pick.distance_m,
+        point: near.point,
+        distance_m: near.distance_m,
     })
 }
 
@@ -378,17 +340,7 @@ pub fn bounds(points: &[[f32; 2]]) -> ([f32; 2], [f32; 2]) {
 
 /// Whether `p` lies inside the polygon `ring` (even-odd).
 pub fn inside_ring(p: [f32; 2], ring: &[[f32; 2]]) -> bool {
-    let mut inside = false;
-    let n = ring.len();
-    for i in 0..n {
-        let (a, b) = (ring[i], ring[(i + n - 1) % n]);
-        if (a[1] > p[1]) != (b[1] > p[1])
-            && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
-        {
-            inside = !inside;
-        }
-    }
-    inside
+    point_in_ring(Vec2::from_array(p), ring)
 }
 
 #[cfg(test)]
@@ -429,6 +381,18 @@ mod tests {
         assert_eq!(parse_bearing("South West"), Some(225.0));
         assert_eq!(parse_bearing("southwest"), Some(225.0));
         assert_eq!(parse_bearing("135"), Some(135.0));
+        for text in [
+            "135 deg",
+            "135deg",
+            "135 degrees",
+            "135 Degrees",
+            "135°",
+            "135 °",
+            " 135.0 ",
+        ] {
+            assert_eq!(parse_bearing(text), Some(135.0), "{text}");
+        }
+        assert_eq!(parse_bearing("north east"), Some(45.0));
         assert_eq!(parse_bearing("-90"), Some(270.0));
         assert_eq!(parse_bearing("street"), None);
         assert_eq!(parse_bearing("nan"), None);

@@ -1,7 +1,7 @@
 //! The scene description tools on the demo street.
 
 use super::*;
-use crate::area::demo;
+use crate::area::{self, demo};
 use crate::edit::Place;
 use crate::places::{AreaEdit, LabelArg, PlaceArg, add_target, label_area};
 
@@ -73,6 +73,28 @@ fn no_addresses(out: &impl Serialize) {
     for a in addresses() {
         assert!(!text.contains(&a), "{a} in {text}");
     }
+}
+
+/// `mount_points` with its arguments in a row.
+fn mounts(
+    s: &Value,
+    building: Option<usize>,
+    near: Option<[f32; 2]>,
+    facing: Option<FacingArg>,
+    height_m: Option<f32>,
+    limit: Option<usize>,
+) -> Result<MountsOut, ToolError> {
+    mount_points(
+        s,
+        MountQuery {
+            building,
+            near,
+            radius_m: None,
+            facing,
+            height_m,
+            limit,
+        },
+    )
 }
 
 fn json(out: &impl Serialize) -> Value {
@@ -222,7 +244,7 @@ fn clipping_keeps_the_part_inside() {
 fn mount_points_face_the_street_and_go_straight_to_place_camera() {
     let cat = catalog().unwrap();
     let s = empty();
-    let out = mount_points(&s, None, Some([0.0, 15.0]), None, None, None).unwrap();
+    let out = mounts(&s, None, Some([0.0, 15.0]), None, None, None).unwrap();
     no_addresses(&out);
     assert_eq!(out.mounts.len(), MOUNTS_LIMIT.0);
     assert!(out.summary.contains("place_camera"));
@@ -264,7 +286,7 @@ fn mount_points_face_the_street_and_go_straight_to_place_camera() {
     .unwrap();
     let placed = edit::finish(&scene).unwrap().1;
     // Now that wall is taken: no suggestion lands within 3 m of the camera.
-    let again = mount_points(&placed, None, Some([0.0, 15.0]), None, None, None).unwrap();
+    let again = mounts(&placed, None, Some([0.0, 15.0]), None, None, None).unwrap();
     let c = &scene.cameras.iter().find(|c| c.id == id).unwrap().position;
     for m in &again.mounts {
         let d = Vec2::new(m.at[0] as f32, m.at[1] as f32).distance(Vec2::new(c[0], c[2]));
@@ -284,10 +306,10 @@ fn mount_points_face_the_street_and_go_straight_to_place_camera() {
 #[test]
 fn mount_points_on_one_building_or_facing_a_bearing() {
     let s = empty();
-    let one = mount_points(&s, Some(58), None, None, None, Some(20)).unwrap();
+    let one = mounts(&s, Some(58), None, None, None, Some(20)).unwrap();
     assert!(!one.mounts.is_empty());
     assert!(one.mounts.iter().all(|m| m.building == 58));
-    let north = mount_points(
+    let north = mounts(
         &s,
         None,
         None,
@@ -303,7 +325,7 @@ fn mount_points_on_one_building_or_facing_a_bearing() {
             .iter()
             .all(|m| m.yaw_deg == 0.0 && m.compass == "north")
     );
-    let east = mount_points(
+    let east = mounts(
         &s,
         Some(58),
         None,
@@ -318,7 +340,7 @@ fn mount_points_on_one_building_or_facing_a_bearing() {
             .iter()
             .all(|m| m.yaw_deg == 90.0 && m.building == 58)
     );
-    let street = mount_points(
+    let street = mounts(
         &s,
         Some(58),
         None,
@@ -329,14 +351,14 @@ fn mount_points_on_one_building_or_facing_a_bearing() {
     .unwrap();
     assert_eq!(json(&street), json(&one));
     // A doorbell height looks level.
-    let low = mount_points(&s, Some(58), None, None, Some(1.2), None).unwrap();
+    let low = mounts(&s, Some(58), None, None, Some(1.2), None).unwrap();
     assert!(
         low.mounts
             .iter()
             .all(|m| m.pitch_deg == 0.0 && m.height_m == 1.2)
     );
     // Too high for a 6 m house: none, with the reason.
-    let high = mount_points(&s, Some(58), None, None, Some(7.0), None).unwrap();
+    let high = mounts(&s, Some(58), None, None, Some(7.0), None).unwrap();
     assert!(high.mounts.is_empty());
     assert!(
         high.summary.contains("building 58 has no wall"),
@@ -344,8 +366,8 @@ fn mount_points_on_one_building_or_facing_a_bearing() {
         high.summary
     );
     for bad in [
-        mount_points(&s, Some(100_000), None, None, None, None),
-        mount_points(
+        mounts(&s, Some(100_000), None, None, None, None),
+        mounts(
             &s,
             None,
             None,
@@ -353,8 +375,8 @@ fn mount_points_on_one_building_or_facing_a_bearing() {
             None,
             None,
         ),
-        mount_points(&s, None, None, None, Some(0.0), None),
-        mount_points(&s, None, Some([1000.0, 0.0]), None, None, None),
+        mounts(&s, None, None, None, Some(0.0), None),
+        mounts(&s, None, Some([1000.0, 0.0]), None, None, None),
     ] {
         assert!(bad.is_err());
     }
@@ -374,7 +396,7 @@ fn the_scene_summary_holds_every_item() {
     assert_eq!(out.camera_count, 1);
     let c = &out.cameras[0];
     assert_eq!(c.facing, "north");
-    assert_eq!(c.height_m, 2.5);
+    assert_eq!(c.height_m, Some(2.5));
     assert_eq!(c.model.as_deref(), Some("Reolink RLC-810A"));
     assert_eq!(
         c.place.as_deref(),
@@ -399,19 +421,74 @@ fn the_scene_summary_holds_every_item() {
     crate::places::limit_figures_to(&mut f, Some(1)).unwrap();
     let limited = summarise(&edit::finish(&f).unwrap().1).unwrap();
     assert_eq!(limited.figures_limited_to, Some(1));
+    assert_eq!(limited.figures_limit_not_in_effect, None);
     assert!(limited.summary.contains("limited to area 1"));
+    // Disabled, the area names the limit but it is not in effect.
+    f.areas[0].enabled = false;
+    let off = summarise(&edit::finish(&f).unwrap().1).unwrap();
+    assert_eq!(off.figures_limited_to, None);
+    assert_eq!(off.figures_limit_not_in_effect, Some(1));
+    assert!(
+        off.summary.contains("so they are not limited"),
+        "{}",
+        off.summary
+    );
+}
+
+#[test]
+fn an_unnamed_target_is_named_once() {
+    let s = scene();
+    let mut f = edit::parse(&s).unwrap();
+    // The app keeps targets without a name; add_target refuses them.
+    f.targets.push(Target {
+        id: 2,
+        name: String::new(),
+        at: TargetPlace::Ground {
+            points: vec![[2.0, 12.0], [4.0, 12.0], [4.0, 14.0], [2.0, 14.0]],
+        },
+    });
+    let v = edit::finish(&f).unwrap().1;
+    let around = surroundings(&v, [0.0, 15.0], None, None).unwrap();
+    let summary = summarise(&v).unwrap();
+    for text in [&around.summary, &summary.summary] {
+        assert!(text.contains("target 2 "), "{text}");
+        assert!(!text.contains("target 2 target 2"), "{text}");
+        assert!(text.contains("target 1 \"path\""), "{text}");
+    }
 }
 
 #[test]
 fn a_scene_on_an_area_not_held_is_still_summarised() {
     use observation_core::geo::BBox;
     let bbox = BBox::new(47.0, -122.0, 47.002, -121.997).unwrap();
-    let f = SceneFile::new(AreaRef::Osm { bbox }, bbox.center());
+    let mut f = SceneFile::new(AreaRef::Osm { bbox }, bbox.center());
+    // A camera 3 m above world y 0: with the ground unknown, so is its
+    // height above it.
+    f.cameras.push(CameraPlacement {
+        id: 1,
+        label: "Porch".into(),
+        model_id: "reolink-rlc-810a".into(),
+        position: [0.0, 3.0, 0.0],
+        yaw_deg: 90.0,
+        pitch_deg: -20.0,
+        roll_deg: 0.0,
+        color: None,
+        enabled: true,
+        group: None,
+    });
     let v = serde_json::from_str::<Value>(&f.to_json()).unwrap();
     let out = summarise(&v).unwrap();
     assert_eq!(out.area.kind, "OpenStreetMap area");
     assert!(out.area.bbox.is_some() && out.area.building_count.is_none());
     assert!(out.summary.contains("connect the app"), "{}", out.summary);
+    assert_eq!(out.cameras[0].height_m, None);
+    assert!(!out.summary.contains(" m up"), "{}", out.summary);
+    assert!(
+        out.summary
+            .contains("Reolink RLC-810A, at [0, 0], facing east"),
+        "{}",
+        out.summary
+    );
     // The other tools need the area's data.
     assert!(surroundings(&v, [0.0, 0.0], None, None).is_err());
     // Converting needs only the origin.
@@ -529,7 +606,7 @@ async fn the_tools_answer_through_the_server() {
         "scene": s, "facing": 180, "building": 58
     }))
     .unwrap();
-    let Json(m) = mcp().suggest_mount_points(Parameters(args)).unwrap();
+    let Json(m) = mcp().suggest_mount_points(Parameters(args)).await.unwrap();
     assert!(!m.mounts.is_empty());
     assert!(m.mounts.iter().all(|m| m.yaw_deg == 180.0));
     let args: MountArgs =
@@ -538,4 +615,98 @@ async fn the_tools_answer_through_the_server() {
     // Outputs print short numbers.
     let text = serde_json::to_string(&json(&out)).unwrap();
     assert!(!text.contains("0000"), "{text}");
+}
+
+#[test]
+fn mount_points_near_a_point_within_a_radius() {
+    let s = empty();
+    let b = demo().unwrap();
+    let q = |radius_m| MountQuery {
+        near: Some([0.0, 15.0]),
+        radius_m,
+        limit: Some(20),
+        ..MountQuery::default()
+    };
+    let close = mount_points(&s, q(Some(12.0))).unwrap();
+    assert!(!close.mounts.is_empty());
+    for m in &close.mounts {
+        let d = observation_core::address::distance_to_footprint(
+            [0.0, 15.0],
+            &b.buildings[m.building].footprint,
+        );
+        assert!(d <= 12.0, "building {} is {d} m away", m.building);
+    }
+    let all = mount_points(&s, q(None)).unwrap();
+    assert!(all.mounts.len() > close.mounts.len());
+    // The nearest ones are the same either way.
+    assert_eq!(json(&all.mounts[0]), json(&close.mounts[0]));
+    let no_near = MountQuery {
+        radius_m: Some(10.0),
+        ..MountQuery::default()
+    };
+    assert!(mount_points(&s, no_near).is_err());
+    assert!(mount_points(&s, q(Some(-1.0))).is_err());
+}
+
+#[test]
+fn buildings_and_mount_points_name_the_same_street() {
+    let s = empty();
+    let b = demo().unwrap();
+    let out = mounts(&s, None, None, None, None, Some(20)).unwrap();
+    assert!(!out.mounts.is_empty());
+    for m in &out.mounts {
+        // The street a mount faces is the one the descriptions give for the
+        // wall it is on.
+        let wall = observation_core::example::wall_mounts_of(b, |i, _| i == m.building)
+            .into_iter()
+            .find(|w| Vec2::new(m.at[0] as f32, m.at[1] as f32).distance(w.at) < 0.3)
+            .unwrap();
+        let named = nearest_street(b, wall.at.to_array()).unwrap();
+        assert_eq!(m.street.as_deref(), Some(named.label.as_str()), "{m:?}");
+        assert_eq!(wall.road, Some(named.index));
+    }
+}
+
+#[test]
+fn the_nearest_part_in_view_is_one_that_counts() {
+    let layers = area::demo_layers().unwrap();
+    let eye = Vec3::new(
+        0.0,
+        layers.terrain().height_at(Vec2::new(0.0, 15.0)) + 2.5,
+        15.0,
+    );
+    let cone = ViewCone::from_angles(eye, 0.0, -10.0, 0.0, 90.0, 60.0, 50.0);
+    let at = |z: f32| layers.subject_at(Vec2::new(0.0, z), 1.0);
+    // The nearer point is on a wall facing away from the camera.
+    let samples = [
+        Sample {
+            p: at(12.0),
+            normal: Some(Vec2::new(0.0, -1.0)),
+        },
+        Sample {
+            p: at(10.0),
+            normal: None,
+        },
+    ];
+    let t = tally(layers, &cone, &samples, false).unwrap();
+    assert_eq!(t.in_cone, 2);
+    assert_eq!(t.blocked, Blocked::Clear);
+    assert!((t.nearest_m - (at(10.0) - eye).length()).abs() < 1e-4);
+    assert_eq!(t.nearest, at(10.0));
+    // Only the wall facing away: ruled out, and that point is all there is.
+    let t = tally(layers, &cone, &samples[..1], false).unwrap();
+    assert_eq!(t.blocked, Blocked::FacingAway);
+    assert_eq!(t.nearest, at(12.0));
+}
+
+#[test]
+fn a_footprint_with_a_height_that_is_not_a_number_is_skipped() {
+    let layers = area::demo_layers().unwrap();
+    let mut b = demo().unwrap().clone();
+    b.buildings[58].footprint.height_m = f32::NAN;
+    assert!(wall_samples(layers, &b, 58, 1.0).is_empty());
+    b.buildings[58].footprint.height_m = 6.0;
+    b.buildings[58].footprint.outer[0][0] = f32::INFINITY;
+    assert!(wall_samples(layers, &b, 58, 1.0).is_empty());
+    assert!(!wall_samples(layers, demo().unwrap(), 58, 1.0).is_empty());
 }
