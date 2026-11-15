@@ -22,6 +22,7 @@ use observation_core::camera::{ASSUMED_IR_RANGE_M, CameraKind, CameraModel, Dori
 use observation_core::provenance::{CAVEATS_SUMMARY, caveats_text, format_date};
 use observation_core::scene::AreaRef;
 use observation_core::scene::SceneFile;
+use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{
@@ -41,33 +42,13 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
-const INSTRUCTIONS: &str = "\
-Observation estimates which parts of a street home security cameras could see, from map data. \
-Call get_started first: it gives the workflow, the conventions and the wording rules in a few \
-lines. open_scene returns a scene_id such as \"s1\": pass it as scene_id to every scene tool. \
-The server keeps each version (undo, diff_scenes; apply_edits runs several edits as one; \
-export_scene gives the file). Positions are [x, z] metres from the area's centre, x east and z \
-south; yaw_deg is a compass bearing (0 north, 90 east, 180 south). To look, use scene_summary, \
-describe_surroundings and render_map; to choose mounts and aims, suggest_mount_points, \
-suggest_placement, optimise_aim and cover_target. Offline, only the demo street is available. \
-When the user connects their open app (connect_app, with its address and the code from its \
-Connect agent dialog), open_scene with from \"app\" opens their scene, and propose_changes with \
-that scene_id and a one-sentence summary asks them to accept your edits: nothing changes until \
-wait_for_decision says accepted. wait_for_app_change hears what they change. focus_view, \
-select_cameras, highlight and set_view_options show them a place, cameras or layers, and \
-request_load_area and search_places find and load an area; these change the view, never the \
-scene. Verdicts are one-sided: say \"not ruled out\" or \"ruled out: <reason>\", never that a \
-camera sees something. Name buildings by index and distance, never by address. Always pass on \
-the data date and caveats_summary: the figures are estimates that leave out trees, fences and \
-vehicles.";
-
 const USAGE_MD: &str = include_str!("../../../docs/usage.md");
 const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
 
 /// The Observation MCP server. Its state is the connection to the user's
 /// app ([`AppLink`]) and the working scenes ([`crate::store::SceneStore`]);
 /// clones share both.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ObservationMcp {
     pub(crate) link: Arc<AppLink>,
     pub(crate) scenes: Arc<crate::store::SceneStore>,
@@ -76,6 +57,18 @@ pub struct ObservationMcp {
     /// Served without sessions (stateless HTTP), so a legacy
     /// `resources/subscribe` would have nowhere to send its notifications.
     sessionless: bool,
+}
+
+impl Default for ObservationMcp {
+    /// Offers every tool ([`Toolbox::shared`]: built once per process).
+    fn default() -> Self {
+        Self {
+            link: Arc::default(),
+            scenes: Arc::default(),
+            tools: Toolbox::shared(ToolSelection::default()),
+            sessionless: false,
+        }
+    }
 }
 
 impl ObservationMcp {
@@ -139,9 +132,26 @@ impl ObservationMcp {
     }
 
     /// This server, offering the tools `selection` chooses.
-    pub fn with_tools(mut self, selection: ToolSelection) -> Self {
-        self.tools = Arc::new(Toolbox::new(selection));
+    pub fn with_tools(self, selection: ToolSelection) -> Self {
+        self.with_toolbox(Toolbox::shared(selection))
+    }
+
+    /// This server, offering the tools of `toolbox`, which servers for the
+    /// same selection share.
+    pub fn with_toolbox(mut self, toolbox: Arc<Toolbox>) -> Self {
+        self.tools = toolbox;
         self
+    }
+
+    /// The prompts whose tools are all offered ([`PROMPT_TOOLS`]).
+    fn offered_prompts(&self) -> PromptRouter<Self> {
+        let mut router = Self::prompt_router();
+        for (prompt, tools) in PROMPT_TOOLS {
+            if !tools.iter().all(|t| self.tools.offers(t)) {
+                router.remove_route(prompt);
+            }
+        }
+        router
     }
 }
 
@@ -622,6 +632,9 @@ pub struct CoverageBrief {
     pub summary: String,
     pub level: String,
     pub lighting: String,
+    /// Whether only the street inside the scene's area for the figures
+    /// counts (see limit_figures_to).
+    pub region_limited: bool,
     /// Mapped street (roads, driveways and footpaths), m².
     pub street_m2: f64,
     /// The part not ruled out for at least one camera, m².
@@ -657,9 +670,14 @@ impl From<&CoverageOut> for CoverageBrief {
             "by day"
         };
         let n = f.cameras_counted.len();
+        let street = if f.region_limited {
+            "the mapped street inside the area for the figures"
+        } else {
+            "the mapped street"
+        };
         let summary = match l {
             Some(l) if n > 0 => format!(
-                "At {} {light}, up to {} of the mapped street ({} of {} m²) is not ruled out \
+                "At {} {light}, up to {} of {street} ({} of {} m²) is not ruled out \
                  for at least one of {n} camera{}; {} for two or more; {} of building walls",
                 l.level,
                 percent(l.street_fraction),
@@ -678,6 +696,7 @@ impl From<&CoverageOut> for CoverageBrief {
             summary,
             level: f.selected_level.clone(),
             lighting: f.lighting.clone(),
+            region_limited: f.region_limited,
             street_m2: l.map_or(0.0, |l| l.street_m2),
             street_seen_m2: l.map_or(0.0, |l| l.street_seen_m2),
             street_fraction: l.map_or(0.0, |l| l.street_fraction),
@@ -883,27 +902,21 @@ impl ObservationMcp {
     fn place_camera(&self, Parameters(a): Parameters<PlaceArgs>) -> Result<Json<Edited>, String> {
         let cat = catalog().map_err(fail)?;
         let mut s = edit::parse(&a.scene).map_err(fail)?;
-        let aimed = a.camera.yaw_deg.is_some() || a.camera.look_at.is_some();
-        let at = [a.camera.x, a.camera.z];
-        let id = edit::place_camera(&mut s, cat, a.camera).map_err(fail)?;
+        let edit::Placed { id, aim } =
+            edit::place_camera_aimed(&mut s, cat, a.camera).map_err(fail)?;
         let yaw = s
             .cameras
             .iter()
             .find(|c| c.id == id)
             .map_or(0.0, |c| c.yaw_deg);
         let facing = format!("{}° ({})", geometry::m0(yaw), geometry::compass(yaw));
-        let summary = if aimed {
-            format!("placed camera {id}, facing {facing}")
-        } else {
-            let street = area::bundle_for(&s)
-                .ok()
-                .and_then(|b| geometry::nearest_street(&b, at));
-            match street {
-                Some(st) => format!(
-                    "placed camera {id}, facing the nearest street, {}, at {facing}",
-                    st.label
-                ),
-                None => format!("placed camera {id}, facing {facing}: no street found to face"),
+        let summary = match aim {
+            edit::PlacedAim::Given => format!("placed camera {id}, facing {facing}"),
+            edit::PlacedAim::Street(street) => {
+                format!("placed camera {id}, facing the nearest street, {street}, at {facing}")
+            }
+            edit::PlacedAim::NoStreet => {
+                format!("placed camera {id}, facing {facing}: no street found to face")
             }
         };
         let mut out = Edited::new(summary, &s).map_err(fail)?;
@@ -1110,6 +1123,74 @@ pub struct CompareArgs {
     pub model_ids: String,
 }
 
+impl ObservationMcp {
+    /// Step 7 of drive_the_app: how to show an accepted change, with the
+    /// view tools that are offered.
+    fn show_the_result(&self) -> &'static str {
+        let offers = |t: &str| self.tools.offers(t);
+        match (
+            offers("focus_view") && offers("highlight"),
+            offers("select_cameras"),
+        ) {
+            (true, true) => {
+                "If I accept, show me the result with focus_view and highlight, or \
+                 select_cameras for the cameras you changed."
+            }
+            (true, false) => "If I accept, show me the result with focus_view and highlight.",
+            (false, true) => "If I accept, select the cameras you changed with select_cameras.",
+            (false, false) => "If I accept, tell me what changed.",
+        }
+    }
+}
+
+/// The tools each prompt relies on: a prompt is listed only when all of
+/// them are offered. Tools a prompt names only as an option ("if the app is
+/// connected") are left out here, and its text names them only when they
+/// are offered.
+const PROMPT_TOOLS: [(&str, &[&str]); 4] = [
+    (
+        "assess_street_coverage",
+        &[
+            "open_scene",
+            "render_map",
+            "add_example_cameras",
+            "place_camera",
+            "set_coverage_params",
+            "compute_coverage",
+            "find_gaps",
+            "export_scene",
+        ],
+    ),
+    (
+        "where_footage_lands",
+        &[
+            "open_scene",
+            "label_area",
+            "add_target",
+            "camera_split",
+            "target_verdicts",
+            "export_scene",
+        ],
+    ),
+    (
+        "drive_the_app",
+        &[
+            "connect_app",
+            "open_scene",
+            "scene_summary",
+            "render_map",
+            "suggest_mount_points",
+            "suggest_placement",
+            "place_camera",
+            "compute_coverage",
+            "check_point",
+            "propose_changes",
+            "wait_for_decision",
+        ],
+    ),
+    ("compare_cameras", &["get_camera_model"]),
+];
+
 #[prompt_router]
 impl ObservationMcp {
     #[prompt(
@@ -1139,9 +1220,9 @@ impl ObservationMcp {
     fn where_footage_lands(&self) -> Vec<PromptMessage> {
         vec![PromptMessage::new_text(
             Role::User,
-            "Using the Observation tools, help me see where my cameras' footage lands. Work on \
-             my open scene if the app is connected (open_scene with from \"app\"), otherwise on \
-             a new scene on the demo street (open_scene), and pass its scene_id to every tool. Ask me which ground is mine and which is my neighbours', and mark \
+            format!(
+                "Using the Observation tools, help me see where my cameras' footage lands. {} \
+             and pass its scene_id to every tool. Ask me which ground is mine and which is my neighbours', and mark \
              each with label_area (label own, neighbour or public, with a short name); the \
              outlines are as I describe them, not property records. Ask which places matter to \
              me, such as my front door, a side gate or a path, and mark each with add_target. \
@@ -1153,8 +1234,20 @@ impl ObservationMcp {
              never that a camera \"sees\" a place. Name buildings by index and distance, \
              never by address. Quote the data date and the caveats_summary, and explain that \
              hedges, fences, trees and vehicles are not modelled and can only block more. \
-             Finally give me the scene from export_scene, or, if the app is connected, propose \
-             the areas and targets with propose_changes.",
+             Finally give me the scene from export_scene{}.",
+                if self.tools.offers("connect_app") {
+                    "Work on my open scene if the app is connected (open_scene with from \"app\"), \
+                  otherwise on a new scene on the demo street (open_scene),"
+                } else {
+                    "Work on a new scene on the demo street (open_scene),"
+                },
+                if self.tools.offers("propose_changes") {
+                    ", or, if the app is connected, propose the areas and targets with \
+                  propose_changes"
+                } else {
+                    ""
+                }
+            ),
         )]
     }
 
@@ -1165,7 +1258,8 @@ impl ObservationMcp {
     fn drive_the_app(&self) -> Vec<PromptMessage> {
         vec![PromptMessage::new_text(
             Role::User,
-            "Using the Observation tools, work with my open Observation app, one step at a \
+            format!(
+                "Using the Observation tools, work with my open Observation app, one step at a \
              time:\n\
              1. Ask me for the app's address and the code from its Connect agent dialog, then \
              call connect_app.\n\
@@ -1179,12 +1273,12 @@ impl ObservationMcp {
              6. Call propose_changes with the scene_id and a one-sentence summary, tell me it is \
              waiting for my decision, then call wait_for_decision with its id until it is no \
              longer pending.\n\
-             7. If I accept, show me the result with focus_view and highlight, or select_cameras \
-             for the cameras you changed. If I reject it, read my reason and ask me what to \
-             change.\n\
+             7. {} If I reject it, read my reason and ask me what to change.\n\
              Say \"not ruled out\" or \"ruled out\" with the reason, never that a camera sees \
              something; name buildings by index and distance, never by address; and quote the \
              data date and the caveats_summary.",
+                self.show_the_result()
+            ),
         )]
     }
 
@@ -1279,7 +1373,7 @@ impl ObservationMcp {
     }
 }
 
-#[prompt_handler]
+#[prompt_handler(router = self.offered_prompts())]
 impl ServerHandler for ObservationMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(
@@ -1294,7 +1388,7 @@ impl ServerHandler for ObservationMcp {
             Implementation::new("observation-mcp", env!("CARGO_PKG_VERSION"))
                 .with_title("Observation"),
         )
-        .with_instructions(INSTRUCTIONS)
+        .with_instructions(self.tools.instructions())
     }
 
     /// Reads a `scene_id` from the working scenes ([`crate::store`]), fetches
@@ -1319,7 +1413,7 @@ impl ServerHandler for ObservationMcp {
         let cache_hints = context
             .protocol_version()
             .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28);
-        let mut result = ListToolsResult::with_all_items(self.tools.tools().to_vec());
+        let mut result = ListToolsResult::with_all_items(self.tools.listed());
         result.ttl_ms = cache_hints.then_some(0);
         result.cache_scope = cache_hints.then_some(CacheScope::Public);
         Ok(result)
@@ -1460,40 +1554,88 @@ mod link_tests;
 mod tests {
     use super::*;
 
-    /// The instructions lead with get_started and scene_id, name every tool
-    /// they mention correctly, and stay short.
+    /// The instructions lead with get_started and scene_id, name only
+    /// offered tools, and stay short.
     #[test]
-    fn the_instructions_are_short_and_lead_with_get_started() {
-        assert!(INSTRUCTIONS.len() < 1_800, "{} bytes", INSTRUCTIONS.len());
-        let lead = &INSTRUCTIONS[..300];
+    fn the_instructions_are_short_and_name_only_offered_tools() {
+        let full = ObservationMcp::new();
+        let text = full.get_info().instructions.unwrap_or_default();
+        assert!(text.len() < 1_800, "{} bytes", text.len());
+        let lead = &text[..300];
         assert!(lead.contains("get_started") && lead.contains("scene_id"));
         for rule in ["not ruled out", "never by address", "caveats_summary"] {
-            assert!(INSTRUCTIONS.contains(rule), "{rule}");
+            assert!(text.contains(rule), "{rule}");
         }
-        let names: Vec<String> = ObservationMcp::all_tools()
-            .list_all()
-            .into_iter()
-            .map(|t| t.name.to_string())
-            .collect();
-        let view = [
-            "focus_view",
-            "select_cameras",
-            "highlight",
-            "set_view_options",
-            "request_load_area",
-            "search_places",
-        ];
-        for word in INSTRUCTIONS.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
-            if word.contains('_') && !matches!(word, "scene_id" | "yaw_deg" | "caveats_summary") {
-                assert!(
-                    names.iter().any(|n| n == word) || view.contains(&word),
-                    "{word} is no tool"
-                );
-            }
+        for tool in [
+            "propose_changes",
+            "wait_for_app_change",
+            "optimise_aim",
+            "undo",
+        ] {
+            assert!(text.contains(tool), "{tool}");
         }
-        for tool in view {
-            assert!(INSTRUCTIONS.contains(tool), "{tool}");
+        for selection in crate::guide::tests::selections() {
+            let server = ObservationMcp::new().with_tools(selection.clone());
+            let text = server.get_info().instructions.unwrap_or_default();
+            assert_eq!(
+                crate::guide::tests::unoffered_tools(&server, &text),
+                Vec::<String>::new(),
+                "{selection:?}:\n{text}"
+            );
+            assert!(text.contains("get_started") && text.contains("never by address"));
         }
+        let small = ObservationMcp::new().with_tools(ToolSelection::profile(Profile::Small));
+        let text = small.get_info().instructions.unwrap_or_default();
+        assert!(
+            !text.contains("connect_app") && text.contains("render_map"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn brief_coverage_says_when_the_figures_are_limited_to_an_area() {
+        let full = |region_limited| CoverageOut {
+            lighting: "Day".into(),
+            subject_height_m: 1.7,
+            selected_level: "Recognise".into(),
+            region_limited,
+            cameras_counted: vec![1],
+            cameras_skipped: Vec::new(),
+            levels: vec![LevelOut {
+                level: "Recognise".into(),
+                ppm: 125.0,
+                street_m2: 200.0,
+                street_seen_m2: 50.0,
+                street_seen_multi_m2: 0.0,
+                open_ground_seen_m2: 60.0,
+                facade_m2: 100.0,
+                facade_seen_m2: 10.0,
+                street_fraction: 0.25,
+                street_multi_fraction: 0.0,
+                facade_fraction: 0.1,
+            }],
+            osm_data_as_of: None,
+            caveats_summary: CAVEATS_SUMMARY.into(),
+            caveats: String::new(),
+        };
+        let limited = CoverageBrief::from(&full(true));
+        assert!(limited.region_limited);
+        assert!(
+            limited
+                .summary
+                .contains("25% of the mapped street inside the area for the figures"),
+            "{}",
+            limited.summary
+        );
+        let whole = CoverageBrief::from(&full(false));
+        assert!(!whole.region_limited);
+        assert!(
+            whole
+                .summary
+                .contains("25% of the mapped street (50 of 200 m²)"),
+            "{}",
+            whole.summary
+        );
     }
 
     #[test]
@@ -1690,20 +1832,79 @@ mod tests {
         assert!(out.osm_data_as_of.is_some());
     }
 
-    #[test]
-    fn the_prompts_are_listed() {
-        let names: Vec<String> = ObservationMcp::prompt_router()
+    fn prompt_names(server: &ObservationMcp) -> Vec<String> {
+        let mut names: Vec<String> = server
+            .offered_prompts()
             .list_all()
             .into_iter()
             .map(|p| p.name.to_string())
             .collect();
-        for n in [
-            "assess_street_coverage",
-            "compare_cameras",
-            "drive_the_app",
-            "where_footage_lands",
-        ] {
-            assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
+        names.sort_unstable();
+        names
+    }
+
+    #[test]
+    fn the_prompts_are_listed_when_their_tools_are_offered() {
+        let all = prompt_names(&ObservationMcp::new());
+        assert_eq!(
+            all,
+            [
+                "assess_street_coverage",
+                "compare_cameras",
+                "drive_the_app",
+                "where_footage_lands",
+            ]
+        );
+        for (name, _) in PROMPT_TOOLS {
+            assert!(ObservationMcp::prompt_router().has_route(name), "{name}");
+        }
+        let small = ObservationMcp::new().with_tools(ToolSelection::profile(Profile::Small));
+        assert_eq!(prompt_names(&small), ["assess_street_coverage"]);
+        let app = ObservationMcp::new().with_tools(ToolSelection::profile(Profile::SmallApp));
+        assert_eq!(
+            prompt_names(&app),
+            ["assess_street_coverage", "drive_the_app"]
+        );
+    }
+
+    /// The text of `prompt` as `server` gives it.
+    fn prompt_text(server: &ObservationMcp, prompt: &str) -> String {
+        let messages = match prompt {
+            "assess_street_coverage" => server.assess_street_coverage(),
+            "where_footage_lands" => server.where_footage_lands(),
+            "drive_the_app" => server.drive_the_app(),
+            _ => server.compare_cameras(Parameters(CompareArgs {
+                model_ids: "a, b".into(),
+            })),
+        };
+        serde_json::to_string(&messages).unwrap()
+    }
+
+    #[test]
+    fn a_listed_prompt_names_only_offered_tools() {
+        let mut selections = crate::guide::tests::selections();
+        selections.push(ToolSelection {
+            profile: Profile::Full,
+            groups: Some(vec![Group::Scenes, Group::Places, Group::Analysis]),
+        });
+        selections.push(ToolSelection {
+            profile: Profile::Full,
+            groups: Group::ALL
+                .into_iter()
+                .filter(|g| *g != Group::View)
+                .collect::<Vec<_>>()
+                .into(),
+        });
+        for selection in selections {
+            let server = ObservationMcp::new().with_tools(selection.clone());
+            for name in prompt_names(&server) {
+                let text = prompt_text(&server, &name);
+                assert_eq!(
+                    crate::guide::tests::unoffered_tools(&server, &text),
+                    Vec::<String>::new(),
+                    "{name} in {selection:?}:\n{text}"
+                );
+            }
         }
     }
 }

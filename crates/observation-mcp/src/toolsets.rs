@@ -1,7 +1,7 @@
 //! Which tools a client is offered, and how: tool groups, profiles, and the
 //! trimmed schemas small models read.
 //!
-//! - **Groups** follow the tool routers ([`ObservationMcp::all_tools`]
+//! - **Groups** follow the tool routers (`grouped_routers` in [`crate::server`]
 //!   names each router's group): a tool added to a router joins its group
 //!   without a change here. `OBS_MCP_TOOLSETS` (or `--toolsets`) offers only
 //!   the groups it names; `get_started` (group `guide`) is always offered.
@@ -22,7 +22,7 @@ use crate::ObservationMcp;
 use rmcp::model::Tool;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 /// A group of tools, as `OBS_MCP_TOOLSETS` names it.
@@ -129,6 +129,18 @@ pub const APP_TOOLS: &[&str] = &[
     "select_cameras",
 ];
 
+/// The tools of the view router ([`Group::View`]), which comes in its own
+/// change. The profiles and the guide may name them before it is there: a
+/// name that is no tool is skipped, never an error.
+pub const VIEW_TOOLS: &[&str] = &[
+    "focus_view",
+    "select_cameras",
+    "highlight",
+    "set_view_options",
+    "request_load_area",
+    "search_places",
+];
+
 /// A tool profile, as `OBS_MCP_PROFILE` names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Profile {
@@ -168,6 +180,15 @@ impl Profile {
             Self::Full => true,
             Self::Small => SMALL_TOOLS.contains(&tool),
             Self::SmallApp => SMALL_TOOLS.contains(&tool) || APP_TOOLS.contains(&tool),
+        }
+    }
+
+    /// The tools the profile names, `None` for every tool.
+    pub fn names(self) -> Option<Vec<&'static str>> {
+        match self {
+            Self::Full => None,
+            Self::Small => Some(SMALL_TOOLS.to_vec()),
+            Self::SmallApp => Some([SMALL_TOOLS, APP_TOOLS].concat()),
         }
     }
 }
@@ -275,24 +296,34 @@ fn parse_groups(list: &str) -> Result<Vec<Group>, SelectionError> {
     Ok(groups)
 }
 
-/// The tools one selection offers, with their schemas as listed.
+/// The tools one selection offers, with their schemas as listed, and the
+/// guide and instructions that name only them. Built once per selection
+/// and shared ([`Toolbox::shared`]).
 #[derive(Debug)]
 pub struct Toolbox {
     selection: ToolSelection,
-    listed: Vec<Tool>,
+    listed: Arc<[Tool]>,
     names: HashSet<String>,
-}
-
-impl Default for Toolbox {
-    fn default() -> Self {
-        Self::new(ToolSelection::default())
-    }
+    guide: String,
+    instructions: String,
 }
 
 impl Toolbox {
     pub fn new(selection: ToolSelection) -> Self {
         let compact = selection.profile.compact();
-        let listed: Vec<Tool> = ObservationMcp::all_tools()
+        let tools = ObservationMcp::all_tools();
+        // A profile may name a tool this build lacks, such as a view tool
+        // before the view router is here: it is skipped.
+        for name in selection.profile.names().unwrap_or_default() {
+            if !tools.has_route(name) {
+                tracing::debug!(
+                    tool = name,
+                    profile = selection.profile.name(),
+                    "the profile names a tool this server lacks; skipped"
+                );
+            }
+        }
+        let listed: Arc<[Tool]> = tools
             .list_all()
             .into_iter()
             .filter(|t| selection.offers(&t.name, ObservationMcp::tool_group(&t.name)))
@@ -301,12 +332,38 @@ impl Toolbox {
                 trim(t, compact, required)
             })
             .collect();
-        let names = listed.iter().map(|t| t.name.to_string()).collect();
+        let names: HashSet<String> = listed.iter().map(|t| t.name.to_string()).collect();
+        let offered = |tool: &str| names.contains(tool);
+        let guide = crate::guide::guide(offered);
+        let instructions = crate::guide::instructions(offered);
         Self {
             selection,
             listed,
             names,
+            guide,
+            instructions,
         }
+    }
+
+    /// The toolbox for `selection`: the full one is built once per process
+    /// and shared, any other is built here.
+    pub fn shared(selection: ToolSelection) -> Arc<Self> {
+        static FULL: OnceLock<Arc<Toolbox>> = OnceLock::new();
+        if selection == ToolSelection::default() {
+            Arc::clone(FULL.get_or_init(|| Arc::new(Self::new(ToolSelection::default()))))
+        } else {
+            Arc::new(Self::new(selection))
+        }
+    }
+
+    /// `get_started`'s text for these tools.
+    pub fn guide(&self) -> &str {
+        &self.guide
+    }
+
+    /// The server's instructions for these tools.
+    pub fn instructions(&self) -> &str {
+        &self.instructions
     }
 
     pub fn selection(&self) -> &ToolSelection {
@@ -320,6 +377,12 @@ impl Toolbox {
     /// The tools as tools/list gives them.
     pub fn tools(&self) -> &[Tool] {
         &self.listed
+    }
+
+    /// The tools for a tools/list result. Each [`Tool`] holds its schemas
+    /// behind `Arc`s, so this copies little more than the list.
+    pub fn listed(&self) -> Vec<Tool> {
+        self.listed.to_vec()
     }
 
     pub fn get(&self, name: &str) -> Option<&Tool> {
@@ -408,6 +471,9 @@ fn hide_scene(input: &mut Map<String, Value>, scene_required: bool) {
     for name in HIDDEN_IN_COMPACT {
         props.remove(name);
     }
+    for p in props.values_mut() {
+        drop_custom_level(p);
+    }
     if props.remove("scene").is_none() {
         return;
     }
@@ -425,28 +491,64 @@ fn hide_scene(input: &mut Map<String, Value>, scene_required: bool) {
     }
 }
 
+/// Removes the `Custom` detail level from the level choices in `schema`:
+/// its pixel density, `custom_ppm`, is hidden in the small profiles.
+fn drop_custom_level(schema: &mut Value) {
+    match schema {
+        Value::Object(map) => {
+            if let Some(Value::Array(options)) = map.get_mut("enum")
+                && options.iter().any(|o| o == "Identify")
+            {
+                options.retain(|o| o != "Custom");
+            }
+            for sub in map.values_mut() {
+                drop_custom_level(sub);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(drop_custom_level),
+        _ => {}
+    }
+}
+
 /// How deep `$ref`s are followed when inlined (the tools' types nest a few
 /// levels; this only stops a cycle).
 const MAX_INLINE_DEPTH: usize = 8;
+
+/// Inlines `map`'s `$ref` from `defs`, keeping `map`'s own description.
+/// False when there is none, or when it cannot be inlined: past
+/// [`MAX_INLINE_DEPTH`] (a cycle), or naming no definition. Such a
+/// reference into `$defs`, which the compact schema leaves out, is dropped
+/// rather than left dangling; any other (such as `"#"`) is left as it is.
+fn inline_ref(map: &mut Map<String, Value>, defs: Option<&Value>, depth: usize) -> bool {
+    let Some(Value::String(r)) = map.get("$ref") else {
+        return false;
+    };
+    let Some(name) = r.strip_prefix("#/$defs/") else {
+        return false;
+    };
+    let def = match defs.and_then(|d| d.get(name)) {
+        Some(Value::Object(def)) if depth < MAX_INLINE_DEPTH => def.clone(),
+        _ => {
+            map.remove("$ref");
+            return false;
+        }
+    };
+    map.remove("$ref");
+    for (k, v) in def {
+        if k == "description" && map.contains_key("description") {
+            continue;
+        }
+        map.entry(k).or_insert(v);
+    }
+    true
+}
 
 fn compact_schema(value: &mut Value, defs: Option<&Value>, depth: usize) {
     let Value::Object(map) = value else {
         return;
     };
-    // Inline a reference, keeping this schema's own description.
-    if let Some(Value::String(r)) = map.get("$ref").cloned()
-        && depth < MAX_INLINE_DEPTH
-        && let Some(Value::Object(def)) = r
-            .strip_prefix("#/$defs/")
-            .and_then(|name| defs.and_then(|d| d.get(name)))
-    {
-        map.remove("$ref");
-        for (k, v) in def {
-            if k == "description" && map.contains_key("description") {
-                continue;
-            }
-            map.entry(k.clone()).or_insert_with(|| v.clone());
-        }
+    // Inline a reference, then compact what it brought in, one level deeper.
+    if inline_ref(map, defs, depth) {
         compact_schema(value, defs, depth + 1);
         return;
     }
@@ -485,13 +587,11 @@ fn compact_schema(value: &mut Value, defs: Option<&Value>, depth: usize) {
             map.insert(key.to_owned(), Value::Array(kept));
         }
     }
-    if map.contains_key("$ref") {
+    // Dropping a null alternative may have left a reference to inline.
+    if inline_ref(map, defs, depth) {
         compact_schema(value, defs, depth + 1);
         return;
     }
-    let Value::Object(map) = value else {
-        return;
-    };
     // A choice of strings → a plain `enum`.
     if let Some(Value::Array(options)) = map.get("oneOf") {
         let names: Option<Vec<Vec<Value>>> = options

@@ -792,6 +792,31 @@ pub fn finish(
     result.into()
 }
 
+/// A writer that only counts the bytes written to it.
+#[derive(Default)]
+struct ByteCount(usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The bytes of `value` as compact JSON, counted as it is written, so
+/// nothing is allocated.
+fn json_bytes(value: &impl Serialize) -> usize {
+    let mut count = ByteCount::default();
+    match serde_json::to_writer(&mut count, value) {
+        Ok(()) => count.0,
+        Err(_) => 0,
+    }
+}
+
 /// A call's argument names, sorted, and the bytes of its arguments as
 /// compact JSON: what [`log_call`] records instead of the values.
 fn argument_shape(arguments: Option<&Map<String, Value>>) -> (String, usize) {
@@ -800,8 +825,7 @@ fn argument_shape(arguments: Option<&Map<String, Value>>) -> (String, usize) {
     };
     let mut keys: Vec<&str> = args.keys().map(String::as_str).collect();
     keys.sort_unstable();
-    let bytes = serde_json::to_vec(args).map_or(0, |b| b.len());
-    (keys.join(","), bytes)
+    (keys.join(","), json_bytes(args))
 }
 
 /// Logs one line per tool call: the tool, its argument names and size, how
@@ -821,7 +845,7 @@ fn log_call(
             } else {
                 "ok"
             },
-            serde_json::to_vec(result).map_or(0, |b| b.len()),
+            json_bytes(result),
         ),
         Ok(_) => ("ok", 0),
         Err(_) => ("refused", 0),
@@ -847,6 +871,9 @@ impl ObservationMcp {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if !tracing::enabled!(tracing::Level::INFO) {
+            return self.run_call(request, context).await;
+        }
         let started = std::time::Instant::now();
         let tool = request.name.to_string();
         let (keys, argument_bytes) = argument_shape(request.arguments.as_ref());
@@ -1216,12 +1243,32 @@ fn resolve_refs(value: &mut Value, n: usize, steps: &[StepOut]) -> Result<(), To
     Ok(())
 }
 
+/// The edit and the path of `text`, if the whole of it is a reference:
+/// `$`, the edit's number, then one or more fields, each a name
+/// (`[A-Za-z_][A-Za-z0-9_]*`) or an index (digits), after a dot. Any other
+/// string, such as a label "$1.50 doorbell", is left as it is.
+fn reference_form(text: &str) -> Option<(&str, Vec<&str>)> {
+    let rest = text.strip_prefix('$')?;
+    let mut parts = rest.split('.');
+    let edit = parts.next()?;
+    let path: Vec<&str> = parts.collect();
+    let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    let name = |p: &str| {
+        let mut bytes = p.bytes();
+        bytes
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+            && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    };
+    (digits(edit) && !path.is_empty() && path.iter().all(|p| digits(p) || name(p)))
+        .then_some((edit, path))
+}
+
 /// The value `text` refers to, if it is a reference (`$<edit>.<field>`).
 fn step_ref(text: &str, n: usize, steps: &[StepOut]) -> Result<Option<Value>, ToolError> {
-    let Some(rest) = text.trim().strip_prefix('$') else {
+    let Some((edit, path)) = reference_form(text) else {
         return Ok(None);
     };
-    let (edit, path) = rest.split_once('.').unwrap_or((rest, ""));
     let Ok(k) = edit.parse::<usize>() else {
         return Ok(None);
     };
@@ -1237,11 +1284,8 @@ fn step_ref(text: &str, n: usize, steps: &[StepOut]) -> Result<Option<Value>, To
             n - 1
         )));
     }
-    if path.is_empty() {
-        return Err(bad("names no field".to_owned()));
-    }
     let mut at = &steps[k - 1].result;
-    for part in path.split('.') {
+    for part in path {
         let next = match at {
             Value::Object(m) => m.get(part),
             Value::Array(items) => part.parse::<usize>().ok().and_then(|i| items.get(i)),

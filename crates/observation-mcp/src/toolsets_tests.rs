@@ -49,20 +49,26 @@ fn every_tool_has_a_group_and_every_listed_name_a_tool() {
         assert!(ObservationMcp::tool_group(&t.name).is_some(), "{}", t.name);
     }
     // The view tools come with their own router; until it is there they are
-    // simply not offered.
-    let view = [
-        "focus_view",
-        "select_cameras",
-        "highlight",
-        "set_view_options",
-        "request_load_area",
-        "search_places",
-    ];
+    // simply not offered, and once it is, they are in the view group.
     for name in SMALL_TOOLS.iter().chain(APP_TOOLS) {
         assert!(
-            all.iter().any(|t| t.name == *name) || view.contains(name),
+            all.iter().any(|t| t.name == *name) || VIEW_TOOLS.contains(name),
             "{name} is in a profile but is no tool"
         );
+    }
+    for name in VIEW_TOOLS {
+        if let Some(group) = ObservationMcp::tool_group(name) {
+            assert_eq!(group, Group::View, "{name}");
+        }
+    }
+    for t in &all {
+        if ObservationMcp::tool_group(&t.name) == Some(Group::View) {
+            assert!(
+                VIEW_TOOLS.contains(&t.name.as_ref()),
+                "{} is not in VIEW_TOOLS",
+                t.name
+            );
+        }
     }
     assert_eq!(
         ObservationMcp::tool_group("check_point"),
@@ -177,6 +183,112 @@ fn small_profiles_list_plain_schemas() {
     // The description gives 1 to 20, so the bounds are left to it.
     assert_eq!(count["type"], "integer");
     assert!(count.get("minimum").is_none(), "{count}");
+}
+
+/// Clients on protocols before 2026-07-28, the TypeScript SDK among them,
+/// reject a tool list with an output schema whose root is not an object.
+#[test]
+fn every_output_schema_is_an_object_in_every_profile() {
+    let mut selections: Vec<ToolSelection> = Profile::ALL
+        .into_iter()
+        .map(ToolSelection::profile)
+        .collect();
+    selections.push(ToolSelection {
+        profile: Profile::Full,
+        groups: Some(Group::ALL.to_vec()),
+    });
+    for selection in selections {
+        let (tools, _) = listed(selection.clone());
+        for t in &tools {
+            if let Some(out) = &t.output_schema {
+                assert_eq!(
+                    out.get("type"),
+                    Some(&json!("object")),
+                    "{} in {selection:?}: {}",
+                    t.name,
+                    Value::Object((**out).clone())
+                );
+            }
+        }
+    }
+    // The tools with a brief and a full form give both under the object.
+    let (tools, _) = listed(ToolSelection::default());
+    let coverage = tools.iter().find(|t| t.name == "compute_coverage").unwrap();
+    let out = coverage.output_schema.as_ref().unwrap();
+    assert_eq!(out["anyOf"].as_array().map(Vec::len), Some(2), "{out:?}");
+}
+
+fn tool_with(input: Value) -> Tool {
+    let Value::Object(input) = input else {
+        panic!("not an object")
+    };
+    Tool::new("t", "A test tool.", Arc::new(input))
+}
+
+#[test]
+fn a_reference_that_cannot_be_inlined_ends_the_walk() {
+    // A definition that refers to itself, a reference to the root and one to
+    // a definition there is not: trimming ends, and leaves no reference into
+    // the `$defs` it drops.
+    let tool = tool_with(json!({
+        "type": "object",
+        "properties": {
+            "node": {"$ref": "#/$defs/Node"},
+            "root": {"$ref": "#"},
+            "missing": {"anyOf": [{"$ref": "#/$defs/Missing"}, {"type": "null"}]},
+        },
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "next": {"anyOf": [{"$ref": "#/$defs/Node"}, {"type": "null"}]},
+                    "other": {"$ref": "#/$defs/Node"},
+                },
+            },
+        },
+    }));
+    let trimmed = trim(tool, true, false);
+    let input = Value::Object((*trimmed.input_schema).clone());
+    let mut found = Vec::new();
+    walk(&input, "", &mut found);
+    let refs: Vec<&Value> = found
+        .iter()
+        .filter(|(path, _)| path.ends_with("/$ref"))
+        .map(|(_, v)| *v)
+        .collect();
+    assert!(refs.iter().all(|r| *r == "#"), "{input}");
+    assert_eq!(input["properties"]["root"]["$ref"], "#");
+    assert_eq!(input["properties"]["node"]["type"], "object");
+    assert_eq!(
+        input["properties"]["node"]["properties"]["next"]["type"],
+        "object"
+    );
+    assert!(input.get("$defs").is_none());
+}
+
+#[test]
+fn the_small_profiles_hide_the_custom_level_with_its_density() {
+    let levels = |profile| {
+        let (tools, _) = listed(ToolSelection::profile(profile));
+        let params = tools
+            .iter()
+            .find(|t| t.name == "set_coverage_params")
+            .unwrap()
+            .input_schema
+            .clone();
+        serde_json::to_string(&*params).unwrap()
+    };
+    let small = levels(Profile::Small);
+    assert!(
+        small.contains("Identify") && !small.contains("Custom"),
+        "{small}"
+    );
+    assert!(!small.contains("custom_ppm"), "{small}");
+    let full = levels(Profile::Full);
+    assert!(
+        full.contains("Custom") && full.contains("custom_ppm"),
+        "{full}"
+    );
 }
 
 #[test]
@@ -308,6 +420,11 @@ async fn analysis_results_are_brief_in_the_small_profiles() {
         assert!(brief["caveats_summary"].is_string(), "{tool}: {brief}");
         assert!(brief.get("osm_data_as_of").is_some(), "{tool}: {brief}");
         assert!(full["caveats"].is_string(), "{tool}: {full}");
+        if tool != "check_point" {
+            // Whether the figures are limited to an area is kept in brief.
+            assert_eq!(brief["region_limited"], full["region_limited"], "{tool}");
+            assert_eq!(brief["region_limited"], false, "{tool}: {brief}");
+        }
         assert!(
             short_numbers(&brief) && short_numbers(&full),
             "{tool}: {full}"

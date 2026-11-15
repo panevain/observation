@@ -31,7 +31,7 @@ pub mod auth;
 pub mod config;
 
 use crate::ObservationMcp;
-use crate::toolsets::ToolSelection;
+use crate::toolsets::{ToolSelection, Toolbox};
 use auth::Tokens;
 use axum::Router;
 use axum::extract::{Request, State};
@@ -103,9 +103,10 @@ pub fn router_for(
         .with_max_request_body_bytes(MAX_BODY_BYTES)
         .with_cancellation_token(shutdown.clone());
     // Every request of one client is served by clones of one server, which
-    // share its connection to the app.
+    // share its connection to the app; every client shares the tools.
+    let toolbox = Toolbox::shared(tools.clone());
     let service = || {
-        let mcp = ObservationMcp::sessionless().with_tools(tools.clone());
+        let mcp = ObservationMcp::sessionless().with_toolbox(Arc::clone(&toolbox));
         StreamableHttpService::new(
             move || Ok(mcp.clone()),
             Arc::new(NeverSessionManager::default()),

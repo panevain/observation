@@ -68,12 +68,35 @@ pub enum Verbosity {
     Full,
 }
 
-/// A result in either form, as the call's verbosity chose.
-#[derive(Debug, Serialize, JsonSchema)]
+/// A result in either form, as the call's verbosity chose. It serialises
+/// as the form itself, with no tag.
+#[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum Report<B, F> {
     Brief(B),
     Full(F),
+}
+
+/// An object that is one of the two forms. An untagged enum's own schema is
+/// a bare `anyOf`, and clients on protocols before 2026-07-28 (the
+/// TypeScript SDK among them) reject an output schema whose root is not
+/// `"type": "object"`, and with it the whole tool list.
+impl<B: JsonSchema, F: JsonSchema> JsonSchema for Report<B, F> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        format!("Report_{}_{}", B::schema_name(), F::schema_name()).into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "description": "The brief or the full form, as verbosity chose.",
+            "anyOf": [generator.subschema_for::<B>(), generator.subschema_for::<F>()],
+        })
+    }
 }
 
 impl<B, F> Report<B, F> {
@@ -1042,6 +1065,9 @@ pub struct GapsBrief {
     pub level: String,
     /// "Day" or "Night".
     pub lighting: String,
+    /// Whether only the street inside the scene's area for the figures
+    /// counts (see limit_figures_to).
+    pub region_limited: bool,
     /// The mapped street counted, m².
     pub street_m2: f64,
     /// The part of it ruled out for every enabled camera, m².
@@ -1060,6 +1086,7 @@ impl From<&GapsOut> for GapsBrief {
         Self {
             level: f.settings.level.clone(),
             lighting: f.settings.lighting.clone(),
+            region_limited: f.region_limited,
             street_m2: f.street_m2,
             unseen_street_m2: f.unseen_street_m2,
             gap_count: f.gap_count,

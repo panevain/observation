@@ -614,7 +614,6 @@ async fn apply_edits_refers_to_earlier_edits() {
             json!({"id": "$1.model_id", "yaw_deg": 0}),
             "names nothing edit 1 (place_camera) returned",
         ),
-        (json!({"id": "$1", "yaw_deg": 0}), "names no field"),
     ] {
         let e = failed(
             &call(
@@ -631,6 +630,55 @@ async fn apply_edits_refers_to_earlier_edits() {
     }
     let now = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await);
     assert_eq!(now["version"], 3, "the failed batches kept nothing");
+
+    // Only a whole string of that form is a reference: a label with a
+    // dollar amount, or "$1" alone, is a label.
+    let labelled = ok(&call(
+        &app,
+        "apply_edits",
+        json!({"scene_id": "s1", "edits": [
+            {"tool": "place_camera", "args": {"x": 0.0, "z": 15.0, "label": "$1.50 doorbell"}},
+            {"tool": "update_camera", "args": {"id": "$1.camera_id", "label": "$1"}},
+            {"tool": "place_camera", "args": {"x": 2.0, "z": 15.0, "label": "$1.camera_id!"}},
+        ]}),
+    )
+    .await);
+    let steps = labelled["steps"].as_array().unwrap();
+    let scene = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await)["scene"].clone();
+    let label_of = |id: &Value| {
+        scene["cameras"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == *id)
+            .map(|c| c["label"].clone())
+    };
+    assert_eq!(
+        label_of(&steps[0]["result"]["camera_id"]),
+        Some(json!("$1"))
+    );
+    assert_eq!(
+        label_of(&steps[2]["result"]["camera_id"]),
+        Some(json!("$1.camera_id!"))
+    );
+}
+
+#[test]
+fn only_a_whole_reference_is_a_reference() {
+    for (text, form) in [
+        ("$1.camera_id", Some(("1", vec!["camera_id"]))),
+        ("$12.camera_ids.0", Some(("12", vec!["camera_ids", "0"]))),
+        ("$1.50", Some(("1", vec!["50"]))),
+        ("$1.50 doorbell", None),
+        ("$1", None),
+        ("$1.", None),
+        ("$x.camera_id", None),
+        (" $1.camera_id", None),
+        ("$1.2nd", None),
+        ("costs $1.camera_id", None),
+    ] {
+        assert_eq!(super::reference_form(text), form, "{text}");
+    }
 }
 
 #[test]
@@ -811,4 +859,14 @@ fn a_tool_call_is_logged_without_its_values() {
     for value in ["Smith", "Elm Road", "s1", "4.5"] {
         assert!(!line.contains(value), "{value} logged in {line}");
     }
+}
+
+#[test]
+fn logged_sizes_are_counted_without_a_buffer() {
+    let args = json!({"scene_id": "s1", "label": "Porch ✓", "x": 1.5, "edits": [1, 2]});
+    let compact = serde_json::to_vec(&args).unwrap().len();
+    assert_eq!(super::json_bytes(&args), compact);
+    let (keys, bytes) = super::argument_shape(args.as_object());
+    assert_eq!(keys, "edits,label,scene_id,x");
+    assert_eq!(bytes, compact);
 }
