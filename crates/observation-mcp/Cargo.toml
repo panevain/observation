@@ -16,7 +16,7 @@ observation-core.workspace = true
 observation-mapdata.workspace = true
 # The agent bridge's contract, and its only HTTP client: observation-upstream's guarded one
 # (deny.toml allows reqwest nowhere else).
-observation-agent-api.workspace = true
+observation-agent-api = { workspace = true, features = ["schema"] }
 observation-upstream.workspace = true
 # The coverage ramp and map colours of render_map's picture, as the app and the evidence sheet
 # draw them.

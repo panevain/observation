@@ -257,7 +257,7 @@ async fn the_view_tools_reach_the_app_as_commands() {
     let Json(done) = mcp
         .highlight(Parameters(HighlightArgs {
             camera: None,
-            target: Some(IdOrName::Name("front door".into())),
+            target: Some(ItemRef::Name("front door".into())),
             area: None,
             point: None,
             clear: false,
@@ -279,7 +279,7 @@ async fn the_view_tools_reach_the_app_as_commands() {
         .highlight(Parameters(HighlightArgs {
             camera: None,
             target: None,
-            area: Some(IdOrName::Name("their drive".into())),
+            area: Some(ItemRef::Name("their drive".into())),
             point: None,
             clear: false,
             note: None,
@@ -306,24 +306,25 @@ async fn the_view_tools_reach_the_app_as_commands() {
     // View settings, and a refusal when nothing is given.
     let Json(done) = mcp
         .set_view_options(Parameters(ViewOptionsArgs {
-            night: Some(true),
-            detail_level: Some(Level::Recognise),
-            overlay: None,
+            overlay: Some(OverlayColours::PerCamera),
             cones: Some(false),
             walls: None,
         }))
         .await
         .unwrap();
-    assert!(done.summary.contains("can undo"), "{}", done.summary);
+    assert!(
+        done.summary
+            .contains("the overlay per camera, every view cone hidden"),
+        "{}",
+        done.summary
+    );
     let seen = browser.until("set_view_options").await;
     assert!(
-        seen.contains(r#""night":true,"detail_level":"recognise","cones":false"#),
+        seen.contains(r#""overlay":"per_camera","cones":false"#),
         "{seen}"
     );
     let e = mcp
         .set_view_options(Parameters(ViewOptionsArgs {
-            night: None,
-            detail_level: None,
             overlay: None,
             cones: None,
             walls: None,
@@ -332,24 +333,43 @@ async fn the_view_tools_reach_the_app_as_commands() {
         .map(drop)
         .unwrap_err();
     assert!(e.contains("at least one"), "{e}");
+    assert!(e.contains("propose_changes"), "{e}");
 
     // A request to load an area: a town-sized bbox becomes the 500 m
-    // around its centre, and the user decides.
+    // around the place's own point, and the user decides.
     let Json(done) = mcp
         .request_load_area(Parameters(LoadAreaArgs {
             bbox: Some([51.0, -1.0, 51.1, -0.9]),
-            center: None,
+            center: Some([51.02, -0.98]),
             radius_m: None,
             reason: "  to see\nyour street ".into(),
         }))
         .await
         .unwrap();
     assert!(done.summary.contains("unless they click Load"));
-    assert!(done.summary.contains("500 m square"), "{}", done.summary);
+    assert!(
+        done.summary
+            .contains("500 m square around the place's point"),
+        "{}",
+        done.summary
+    );
     let b = done.bbox.unwrap();
-    assert!((b[0] + b[2]) / 2.0 - 51.05 < 1e-9);
+    assert!(((b[0] + b[2]) / 2.0 - 51.02).abs() < 1e-9, "{b:?}");
+    assert!(((b[1] + b[3]) / 2.0 + 0.98).abs() < 1e-9, "{b:?}");
     let seen = browser.until("request_load_area").await;
     assert!(seen.contains(r#""reason":"to see your street""#), "{seen}");
+    // A place given as a point is not refused.
+    let Json(done) = mcp
+        .request_load_area(Parameters(LoadAreaArgs {
+            bbox: Some([51.5007, -0.1246, 51.5007, -0.1246]),
+            center: None,
+            radius_m: None,
+            reason: "your street".into(),
+        }))
+        .await
+        .unwrap();
+    assert!(done.summary.contains("had no size"), "{}", done.summary);
+    browser.until("request_load_area").await;
     // A reason is needed, and is checked before anything is sent.
     let e = mcp
         .request_load_area(Parameters(LoadAreaArgs {
