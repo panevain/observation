@@ -187,6 +187,9 @@ ENTRYPOINT ["/usr/local/bin/observation-regions"]
 # beside the binary. Run it with stdin attached and no TTY:
 #   docker build --target mcp -t observation-mcp .
 #   docker run --rm -i --network none observation-mcp
+# Or over Streamable HTTP with bearer tokens (compose.yaml's mcp-http service):
+#   docker run --rm --read-only -p 127.0.0.1:8090:8090 -e OBS_MCP_LISTEN=0.0.0.0:8090 \
+#     -e OBS_MCP_TOKENS_FILE=/run/secrets/mcp_tokens -v ./tokens:/run/secrets/mcp_tokens:ro observation-mcp
 # ---------------------------------------------------------------------------
 FROM chef AS mcp-build
 
@@ -201,7 +204,7 @@ RUN cargo auditable build --release --locked -p observation-mcp \
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS mcp
 
 LABEL org.opencontainers.image.title="observation-mcp" \
-      org.opencontainers.image.description="MCP server for Observation (stdio): camera catalogue, scene editing and coverage on the demo street, offline" \
+      org.opencontainers.image.description="MCP server for Observation (stdio, or HTTP with bearer tokens): camera catalogue, scene editing and coverage on the demo street, offline" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 

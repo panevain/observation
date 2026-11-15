@@ -29,6 +29,14 @@ The MCP server for AI agents is an image too. It speaks MCP over stdio and works
 docker run --rm -i --network none ghcr.io/panevain/observation-mcp   # or `docker build --target mcp`
 ```
 
+MCP clients that connect over HTTP rather than starting a process can use the same server as an HTTP service, behind bearer tokens (see [MCP server over HTTP](docs/design.md#mcp-server-over-http)):
+
+```sh
+OBS_MCP_TOKENS="laptop:$(openssl rand -base64 32)" cargo run --release -p observation-mcp -- --http 127.0.0.1:8090
+```
+
+The client then sends `Authorization: Bearer <secret>` to `http://127.0.0.1:8090/mcp`. `docker compose --profile mcp-http up -d mcp-http` runs the image that way, with the tokens from `OBS_MCP_TOKENS`. It speaks plain HTTP, so keep it on loopback or put a TLS-terminating proxy in front. A client in a browser page, such as llama.cpp's chat page, also needs its page's origin allowed, for which the server answers CORS: `OBS_MCP_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080` for `llama-server`'s default port.
+
 #### AI agents
 
 The MCP server (`observation-mcp`) gives an agent the camera catalogue, scene editing and coverage figures, and the places you and the agent both name: areas labelled as your own, a neighbour's or public, and targets such as a front door. It reports where each camera's footage lands, whether the model rules out that a camera sees a target or a point and why, and the largest stretches of street no camera sees. To let it see what you have open in the app, and work on your real area instead of the demo street, start the server with the agent bridge on and open the app on the same computer:
@@ -96,7 +104,7 @@ The shipped WebAssembly module is 26.1 MB raw and 7.8 MB gzip. See [Bundle size]
 | `crates/observation-server` | axum server: Overpass pipeline, bundle cache, tile proxy, demo street, region management relay, static files |
 | `crates/observation-regions` | Optional region agent (`regions` image target): imports Geofabrik extracts into local Overpass databases and answers queries for them |
 | `crates/observation-tokens` | Design token values (scales, minimum viewport, UI colour roles) shared by the client theme and `web/index.html`'s CSS, which trunk writes with its `token-css` binary |
-| `crates/observation-mcp` | MCP server for AI agents (stdio, `mcp` image target): the camera catalogue, scene editing and coverage figures on the demo street, offline, or on the user's real area when connected to the open app |
+| `crates/observation-mcp` | MCP server for AI agents (stdio or HTTP with bearer tokens, `mcp` image target): the camera catalogue, scene editing and coverage figures on the demo street, offline, or on the user's real area when connected to the open app |
 | `crates/observation-agent-api` | The agent bridge's contract between the browser, the server and the MCP server: routes, limits, versioned bodies, and the agent's proposals and the user's decisions |
 | `crates/observation-client` | Bevy/egui client compiled to WebAssembly; embeds the camera catalogue |
 | `web/` | `index.html` trunk entry point: loading screen and small-screen gate (`tokens.css` is generated) |
