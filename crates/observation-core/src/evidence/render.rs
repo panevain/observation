@@ -990,7 +990,7 @@ fn footage(p: &mut Pages, f: &Figures) {
                 .any(|(_, s)| s.labels.iter().any(|x| x.label == *l))
         })
         .collect();
-    let mut header = vec!["Camera", "Ground seen", "On the street"];
+    let mut header = vec!["Camera", "Ground seen", "Street, driveways, footpaths"];
     header.extend(labels.iter().map(|l| l.label()));
     header.extend(["Unlabelled ground", "Walls seen"]);
     let cols = columns(110.0, header.len() - 1);

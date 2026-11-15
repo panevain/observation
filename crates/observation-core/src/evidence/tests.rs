@@ -450,7 +450,7 @@ fn the_methodology_is_written_from_the_constants() {
         subject_height_m: 1.65,
         ..CoverageParams::default()
     };
-    let text: String = methodology(&params, 0.5, 1.0, &[])
+    let text: String = methodology(&params, 0.5, 1.0, &[], Tier::Aggregate)
         .iter()
         .flat_map(|s| std::iter::once(s.heading.clone()).chain(s.paragraphs.clone()))
         .collect::<Vec<_>>()
@@ -492,7 +492,7 @@ fn the_sheet_prints_the_methodology_caveats_and_settings() {
     let f = Fixture::new();
     let svg = f.sheet(Tier::Aggregate, Some(1), &[]).svg;
     let text = words(&svg);
-    for s in methodology(&f.params, 0.5, 1.0, &[]) {
+    for s in methodology(&f.params, 0.5, 1.0, &[], Tier::Aggregate) {
         assert!(text.contains(&s.heading), "lacks {}", s.heading);
         for p in s.paragraphs {
             let p = p.strip_prefix("• ").map_or(p.clone(), |r| format!("• {r}"));
@@ -530,9 +530,75 @@ fn the_agent_log_is_listed_when_there_is_one() {
         accepted_unix: 1_793_999_000,
         summary: "Turned camera 2 away from the neighbour's garden".to_owned(),
     }];
+    let accepted = crate::provenance::format_utc_minute(1_793_999_000);
+    // The Exact sheet lists each change with its summary.
+    let text = words(&f.sheet(Tier::Exact, None, &log).svg);
+    assert!(text.contains(AGENT_LOG_HEADING));
+    assert!(text.contains(&format!(
+        "{accepted}: Turned camera 2 away from the neighbour's garden"
+    )));
+    // The Aggregate sheet says how many and when, and where the rest is.
     let text = words(&f.sheet(Tier::Aggregate, None, &log).svg);
     assert!(text.contains(AGENT_LOG_HEADING));
-    assert!(text.contains("Turned camera 2 away from the neighbour's garden"));
+    assert!(text.contains("proposed 1 change to this scene"));
+    assert!(text.contains(&format!("Accepted {accepted}")));
+    assert!(text.contains("appear on the Exact sheet"));
+    assert!(!text.contains("Turned camera 2"));
+}
+
+#[test]
+fn the_aggregate_sheet_leaves_agent_summaries_out() {
+    // A summary is the agent's free text, and can say where a camera is or
+    // whose house it is on.
+    let f = Fixture::new();
+    let log = [
+        AgentChange {
+            accepted_unix: 1_793_999_000,
+            summary: "Moved the porch camera to x 12, z \u{2212}3.5".to_owned(),
+        },
+        AgentChange {
+            accepted_unix: 1_793_999_600,
+            summary: "Aimed the camera on 14 Acacia Avenue at the gate".to_owned(),
+        },
+    ];
+    let svg = f.sheet(Tier::Aggregate, None, &log).svg;
+    let text = words(&svg);
+    assert!(text.contains("proposed 2 changes"));
+    for leak in [
+        "x 12",
+        "\u{2212}3.5",
+        "-3.5",
+        "porch",
+        "Acacia",
+        "14 Acacia Avenue",
+        "Moved",
+        "Aimed",
+    ] {
+        assert!(!svg.contains(leak), "the Aggregate sheet has {leak:?}");
+    }
+    // The Exact sheet, for the owner, keeps them.
+    let text = words(&f.sheet(Tier::Exact, None, &log).svg);
+    assert!(text.contains("x 12, z \u{2212}3.5") && text.contains("14 Acacia Avenue"));
+}
+
+#[test]
+fn characters_xml_does_not_allow_never_reach_the_sheet() {
+    // U+FFFE and U+FFFF are not XML characters, and no character reference
+    // can stand for them: a sheet holding one is not well-formed XML.
+    let mut f = Fixture::new();
+    f.targets[0].name = "Side\u{FFFF}gate\u{FFFE}".to_owned();
+    f.areas[0].name = Some("My\u{FFFE}garden\u{1}".to_owned());
+    let log = [AgentChange {
+        accepted_unix: 1_793_999_000,
+        summary: "Turned\u{FFFF}camera\u{FFFE}2".to_owned(),
+    }];
+    for tier in Tier::ALL {
+        let svg = f.sheet(tier, Some(1), &log).svg;
+        let bad: Vec<char> = svg.chars().filter(|&c| !super::svg::xml_char(c)).collect();
+        assert!(bad.is_empty(), "{tier:?} sheet has {bad:?}");
+        assert!(words(&svg).contains("Side gate"), "{tier:?}");
+    }
+    assert!(words(&f.sheet(Tier::Exact, None, &log).svg).contains("Turned camera 2"));
 }
 
 #[test]

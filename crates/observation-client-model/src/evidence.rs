@@ -66,24 +66,28 @@ pub fn sheet_file_stem(scene: &str, generated_unix: u64, tier: Tier) -> String {
 }
 
 /// Why no sheet can be made yet, or `None` when one can: an area must be
-/// loaded and every enabled camera's coverage worked out far enough.
+/// loaded and every enabled camera's coverage worked out, far enough, for
+/// the camera as it is now ([`CoverageState::current_sight`]). Sight lines
+/// kept from before a camera was moved, turned or given another model would
+/// mix old figures with new ones.
 pub fn not_ready(
     doc: &Document,
     models: &Models,
     coverage: &CoverageState,
     area_loaded: bool,
-) -> Option<&'static str> {
+) -> Option<String> {
     if !area_loaded || doc.area.is_none() {
-        return Some("Load an area first.");
+        return Some("Load an area first.".to_owned());
     }
-    let behind = doc.cameras.iter().filter(|c| c.enabled).any(|c| {
-        models.get(&c.model_id).is_some_and(|m| {
-            coverage
-                .sight(c.id)
-                .is_none_or(|s| !s.covers(doc.params.sight_range_m(m)))
-        })
-    });
-    behind.then_some("Coverage is still being worked out; the sheet can be made once it is done.")
+    let behind = doc.cameras.iter().filter(|c| c.enabled).find(|c| {
+        models
+            .get(&c.model_id)
+            .is_some_and(|m| coverage.current_sight(c, m, &doc.params).is_none())
+    })?;
+    Some(format!(
+        "Coverage is still being worked out for camera {}; the sheet can be made once it is done.",
+        behind.id
+    ))
 }
 
 /// The open scene's sheet at `tier`, from the coverage already computed for
@@ -101,17 +105,18 @@ pub fn build_sheet(
     tier: Tier,
 ) -> Result<SheetSvg, String> {
     if let Some(why) = not_ready(doc, models, coverage, true) {
-        return Err(why.to_owned());
+        return Err(why);
     }
     let cameras: Vec<SheetCamera> = doc
         .cameras
         .iter()
         .filter(|c| c.enabled)
         .filter_map(|c| {
+            let model = models.get(&c.model_id)?;
             Some(SheetCamera {
                 placement: c,
-                model: models.get(&c.model_id)?,
-                sight: coverage.sight(c.id)?,
+                model,
+                sight: coverage.current_sight(c, model, &doc.params)?,
             })
         })
         .collect();

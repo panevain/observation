@@ -5,10 +5,9 @@
 //! keeps the counts.
 
 use observation_core::camera::{CameraModel, CameraPlacement, DoriLevel};
-#[cfg(doc)]
-use observation_core::coverage::CoverageParams;
 use observation_core::coverage::{
-    CoverageCounts, CoverageStats, RegionMask, Sight, StaticLayers, Tally, Visibility,
+    CoverageCounts, CoverageParams, CoverageStats, RegionMask, Sight, StaticLayers, Tally,
+    Visibility,
 };
 use observation_core::coverage_job::JobResult;
 use observation_core::frustum::ViewCone;
@@ -127,6 +126,22 @@ impl CoverageState {
     /// [`Sight::covers`]).
     pub fn sight(&self, id: u32) -> Option<&Sight> {
         self.cams.get(&id).map(|(_, s)| s)
+    }
+
+    /// Camera `c`'s sight lines if they are current: worked out for its
+    /// pose and `m`'s fields of view at `params`' subject height, and
+    /// reaching as far as `params` need for `m`. `None` while they are being
+    /// worked out (again), when [`Self::sight`] may still hold those of an
+    /// earlier pose or model.
+    pub fn current_sight(
+        &self,
+        c: &CameraPlacement,
+        m: &CameraModel,
+        params: &CoverageParams,
+    ) -> Option<&Sight> {
+        let (k, sight) = self.cams.get(&c.id)?;
+        (*k == key(c, m, params.subject_height_m) && sight.covers(params.sight_range_m(m)))
+            .then_some(sight)
     }
 
     /// What [`Self::visibility`] of a camera is worked out from: the cache

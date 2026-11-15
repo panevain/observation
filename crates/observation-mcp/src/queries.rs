@@ -40,8 +40,9 @@ pub const ONE_SIDED: &str = "Verdicts are one-sided. \"Not ruled out\" means the
 pub const SPLIT_NOTES: &str = "Areas and labels are as the user drew them, not property records. \
     Each area figure is a range in m²: low with every outline moved 1 m inward, as drawn, and high \
     moved 1 m outward; read it beside the polygon's own area. Areas may overlap, so area figures \
-    need not add up; label figures count each cell once. street_m2 is road surface as mapped in \
-    OpenStreetMap, whatever is drawn over it. Walls are listed by building index and distance, \
+    need not add up; label figures count each cell once. street_m2 is the street as mapped in \
+    OpenStreetMap, whatever is drawn over it: roads, and also driveways (service ways) and \
+    footpaths, which are often private, so it is not all public ground. Walls are listed by building index and distance, \
     never by address. Every figure is \"up to\": what the model leaves out can only hide more.";
 
 /// How to read the gaps; returned with them.
@@ -577,9 +578,10 @@ pub struct CameraSplitOut {
     pub range_m: f32,
     /// All the ground the camera sees, m².
     pub ground_m2: f32,
-    /// The part on the public street (road surface as mapped), m².
+    /// The part on the street, driveways and footpaths as mapped in
+    /// OpenStreetMap (driveways and footpaths are often private), m².
     pub street_m2: f32,
-    /// The part neither on the street nor in a labelled area.
+    /// The part neither on that mapped street nor in a labelled area.
     pub unlabelled: RangeOut,
     /// Each enabled area with a usable outline, in the scene's order.
     pub areas: Vec<AreaSplitOut>,
@@ -1010,7 +1012,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Where each enabled camera's footage lands (or one camera's), at the scene's detail level and lighting or those given: m² of visible ground in each labelled area and per label (as ranges with the outlines moved 1 m in and out, beside each polygon's area), on the public street and on unlabelled ground, and the wall seen per building by index and distance. Pass on the notes and caveats.",
+        description = "Where each enabled camera's footage lands (or one camera's), at the scene's detail level and lighting or those given: m² of visible ground in each labelled area and per label (as ranges with the outlines moved 1 m in and out, beside each polygon's area), on the street, driveways and footpaths as mapped, and on unlabelled ground, and the wall seen per building by index and distance. Pass on the notes and caveats.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn camera_split(

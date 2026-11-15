@@ -10,7 +10,9 @@ use observation_core::coverage::{CoverageParams, outline_problem};
 use observation_core::footage::{AreaLabel, LabelledArea, Target, TargetPlace};
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::Provenance;
-use observation_core::scene::{AreaRef, MAX_AREAS, MAX_TARGETS, SceneError, SceneFile};
+use observation_core::scene::{
+    AreaRef, MAX_AREAS, MAX_ITEM_ID, MAX_TARGETS, SceneError, SceneFile,
+};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
@@ -217,8 +219,15 @@ fn plain_model(n: usize) -> CameraModel {
     }
 }
 
-/// Labelled areas as a file might hold them: repeated ids, untidy names,
-/// now and then too many corners or a corner out of range.
+/// Ids as a file might hold them: small ones that repeat, now and then one
+/// above `MAX_ITEM_ID`.
+fn junk_id() -> impl Strategy<Value = u32> {
+    prop_oneof![9 => 0..4u32, 1 => MAX_ITEM_ID - 1..=u32::MAX]
+}
+
+/// Labelled areas as a file might hold them: repeated ids or ids out of
+/// range, untidy names, now and then too many corners or a corner out of
+/// range.
 fn junk_areas() -> impl Strategy<Value = Vec<LabelledArea>> {
     let points = prop_oneof![
         9 => prop::collection::vec([scene_num(), scene_num()], 0..6),
@@ -231,7 +240,7 @@ fn junk_areas() -> impl Strategy<Value = Vec<LabelledArea>> {
     ]);
     let label = prop::option::of(prop::sample::select(AreaLabel::ALL.to_vec()));
     prop::collection::vec(
-        (0..4u32, label, name, points, any::<bool>()).prop_map(
+        (junk_id(), label, name, points, any::<bool>()).prop_map(
             |(id, label, name, points, enabled)| LabelledArea {
                 id,
                 label,
@@ -244,7 +253,8 @@ fn junk_areas() -> impl Strategy<Value = Vec<LabelledArea>> {
     )
 }
 
-/// Targets as a file might hold them: repeated ids, untidy names, outlines
+/// Targets as a file might hold them: repeated ids or ids out of range,
+/// untidy names, outlines
 /// that are too large or enclose nothing, walls without a direction.
 fn junk_targets() -> impl Strategy<Value = Vec<Target>> {
     let ground = prop::collection::vec([scene_num(), scene_num()], 0..6)
@@ -255,7 +265,7 @@ fn junk_targets() -> impl Strategy<Value = Vec<Target>> {
     )
         .prop_map(|(point, normal)| TargetPlace::Wall { point, normal });
     prop::collection::vec(
-        (0..4u32, text(8), prop_oneof![ground, wall]).prop_map(|(id, name, at)| Target {
+        (junk_id(), text(8), prop_oneof![ground, wall]).prop_map(|(id, name, at)| Target {
             id,
             name,
             at,
@@ -343,7 +353,9 @@ fn junk_scene() -> impl Strategy<Value = SceneFile> {
             )| {
                 let mut s = SceneFile::new(area, LatLon::new(lat, lon));
                 s.version = version;
-                s.cameras = cameras;
+                // Unique ids within range, as a clean file has.
+                let mut seen = std::collections::HashSet::new();
+                s.cameras = cameras.into_iter().filter(|c| seen.insert(c.id)).collect();
                 s.custom_models = custom_models;
                 s.params = params;
                 s.areas = areas;
@@ -416,7 +428,7 @@ fn clean_scene() -> impl Strategy<Value = SceneFile> {
     });
     let camera = (
         (
-            any::<u32>(),
+            0..=MAX_ITEM_ID,
             text(10),
             prop::sample::select(vec![
                 "custom-model-1",
@@ -554,7 +566,9 @@ fn clean_scene() -> impl Strategy<Value = SceneFile> {
                 let origin = LatLon::new(after_one_trip(lat), after_one_trip(lon));
                 let mut s = SceneFile::new(area, origin);
                 s.version = version;
-                s.cameras = cameras;
+                // Unique ids within range, as a clean file has.
+                let mut seen = std::collections::HashSet::new();
+                s.cameras = cameras.into_iter().filter(|c| seen.insert(c.id)).collect();
                 s.custom_models = custom_models;
                 s.params = params;
                 s.limit_figures_to =
@@ -614,7 +628,10 @@ fn clean_targets() -> impl Strategy<Value = Vec<Target>> {
 fn is_clean(input: &SceneFile, loaded: &SceneFile) -> Result<(), TestCaseError> {
     let within = |v: f32| v.is_finite() && v.abs() < 10_000.0;
     prop_assert!(loaded.cameras.len() <= 256 && loaded.custom_models.len() <= 64);
+    let mut camera_ids = std::collections::HashSet::new();
     for c in &loaded.cameras {
+        prop_assert!(camera_ids.insert(c.id), "repeated camera id {}", c.id);
+        prop_assert!(c.id <= MAX_ITEM_ID, "camera id {} out of range", c.id);
         prop_assert!(c.position.iter().all(|&v| within(v)));
         prop_assert!(
             [c.yaw_deg, c.pitch_deg, c.roll_deg]
@@ -664,6 +681,7 @@ fn is_clean(input: &SceneFile, loaded: &SceneFile) -> Result<(), TestCaseError> 
     for a in &loaded.areas {
         prop_assert!(a.points.len() <= 256 && a.points.iter().flatten().all(|&v| within(v)));
         prop_assert!(area_ids.insert(a.id), "repeated area id {}", a.id);
+        prop_assert!(a.id <= MAX_ITEM_ID, "area id {} out of range", a.id);
         if let Some(n) = &a.name {
             prop_assert!(!n.is_empty() && tidy(n), "{:?}", n);
         }
@@ -674,6 +692,7 @@ fn is_clean(input: &SceneFile, loaded: &SceneFile) -> Result<(), TestCaseError> 
     let mut target_ids = std::collections::HashSet::new();
     for t in &loaded.targets {
         prop_assert!(target_ids.insert(t.id), "repeated target id {}", t.id);
+        prop_assert!(t.id <= MAX_ITEM_ID, "target id {} out of range", t.id);
         prop_assert!(tidy(&t.name), "{:?}", t.name);
         prop_assert!(t.at.problem().is_none());
         match &t.at {

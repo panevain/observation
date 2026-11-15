@@ -204,6 +204,61 @@ async fn the_agent_hears_when_the_app_disconnects() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_new_code_that_fails_keeps_the_connection_open() {
+    let app = bridge_app(FakeHttp::new());
+    let base = serve(&app).await;
+    let browser = Browser::open(&base).await;
+    let mcp = ObservationMcp::new();
+    connect(&mcp, &base, &browser.code).await.unwrap();
+    let mut changes = mcp.link().subscribe();
+
+    // A wrong code, and an address the agent may not use: the connection
+    // stays, the error says so, and the app hears nothing of it.
+    let e = connect(&mcp, &base, "0000-0000")
+        .await
+        .map(drop)
+        .expect_err("an error");
+    assert!(e.contains("no pairing has that code"), "{e}");
+    assert!(
+        e.contains(&format!("The connection to the app at {base} is kept")),
+        "{e}"
+    );
+    let e = connect(&mcp, "http://observation.example", "ABCD-EFGH")
+        .await
+        .map(drop)
+        .expect_err("an error");
+    assert!(e.contains("is kept"), "{e}");
+    assert!(mcp.link().is_connected());
+    assert_eq!(mcp.link().snapshot().ended, None);
+    assert_eq!(app.state.agent().unwrap().len(), 1, "the pairing stands");
+    // The app can still share, and the agent still hears it.
+    let revision = browser
+        .share(json!({"scene": demo_scene(), "scene_name": "Home"}))
+        .await;
+    while mcp.link().snapshot().view.map(|v| v.revision) != Some(revision) {
+        next_change(&mut changes).await;
+    }
+    let Json(state) = mcp.get_app_state().await.unwrap();
+    assert!(state.connected);
+    assert_eq!(state.scene_name.as_deref(), Some("Home"));
+
+    // A code that works switches to its pairing and ends the old one.
+    let other = Browser::open(&base).await;
+    assert_eq!(app.state.agent().unwrap().len(), 2);
+    connect(&mcp, &base, &other.code).await.unwrap();
+    assert_eq!(app.state.agent().unwrap().len(), 1, "the old pairing ended");
+    let revision = other
+        .share(json!({"scene": demo_scene(), "scene_name": "Other"}))
+        .await;
+    let mut changes = mcp.link().subscribe();
+    while mcp.link().snapshot().view.map(|v| v.revision) != Some(revision) {
+        next_change(&mut changes).await;
+    }
+    let Json(state) = mcp.get_app_state().await.unwrap();
+    assert_eq!(state.scene_name.as_deref(), Some("Other"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn connecting_is_refused_with_reasons() {
     let mcp = ObservationMcp::new();
     // Without a connection there is nothing to read.

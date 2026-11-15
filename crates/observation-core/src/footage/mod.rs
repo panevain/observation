@@ -33,9 +33,9 @@ mod wall;
 mod tests;
 
 pub use area::{
-    AreaLabel, LabelledArea, MAX_AREAS, MAX_NAME_CHARS, MAX_TARGET_POINTS, MAX_TARGET_SPAN_M,
-    MAX_TARGETS, Target, TargetPlace, TargetProblem, WALL_TARGET_SIZE_M, area_by_id,
-    area_by_id_mut, fresh_id, set_figures_area,
+    AreaLabel, LabelledArea, MAX_AREAS, MAX_ITEM_ID, MAX_NAME_CHARS, MAX_TARGET_POINTS,
+    MAX_TARGET_SPAN_M, MAX_TARGETS, Target, TargetPlace, TargetProblem, WALL_TARGET_SIZE_M,
+    area_by_id, area_by_id_mut, fresh_id, set_figures_area,
 };
 pub use gaps::{Gap, gaps_where, seen_ground, street_gaps, unseen_street};
 pub use split::{
