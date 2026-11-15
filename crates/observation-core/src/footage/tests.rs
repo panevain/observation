@@ -8,7 +8,7 @@ use crate::road::Road;
 use crate::terrain::Terrain;
 use crate::testing::box_footprint;
 use crate::util::planar::{dist_to_segment, point_in_ring};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 
 /// A 3840 px wide, 90° camera: Detect 76.8 m, Observe 31.0 m, Recognise
 /// 15.4 m, Identify 7.7 m by day; 7.5 m at night (no IR range given).
@@ -219,6 +219,69 @@ fn hills_rule_out_by_terrain() {
         verdict(&v[0].cameras[0], DoriLevel::Detect, Lighting::Day),
         NOT
     );
+}
+
+#[test]
+fn clear_points_give_the_verdict_for_any_aim() {
+    // A mound behind the house, so terrain blocks some lines as well.
+    let mound = Terrain::sample_from(
+        Vec2::splat(-60.0),
+        Vec2::splat(60.0),
+        |p| {
+            Some(if (-40.0..=-34.0).contains(&p.y) {
+                6.0
+            } else {
+                0.0
+            })
+        },
+        "",
+    )
+    .expect("a valid mound");
+    let l = street_on(mound);
+    let targets = [
+        ground_target(1, rect(-2.0, -12.0, 2.0, -10.0)),
+        ground_target(2, rect(10.0, -45.0, 14.0, -42.0)),
+        ground_target(3, rect(-3.0, -22.0, 3.0, -18.0)),
+        Target {
+            id: 4,
+            name: "door".into(),
+            at: TargetPlace::Wall {
+                point: [0.0, 1.5, -15.0],
+                normal: [0.0, 1.0],
+            },
+        },
+        Target {
+            id: 5,
+            name: "shed".into(),
+            at: TargetPlace::Wall {
+                point: [32.0, 1.5, -8.0],
+                normal: [0.0, -1.0],
+            },
+        },
+    ];
+    let (mut agree, mut open) = (0, 0);
+    for (x, z) in [(0.0, 5.0), (20.0, -2.0), (-20.0, -30.0), (32.0, -14.0)] {
+        let eye = Vec3::new(x, 2.5, z);
+        for t in &targets {
+            let probe = Probe::target(&l, t, 1.0);
+            let clear = probe.clear_from(&l, eye, 40.0);
+            for yaw in (0..360).step_by(15) {
+                for pitch in [-40.0, -20.0, -5.0, 10.0] {
+                    for range in [8.0, 25.0, 40.0] {
+                        let cone =
+                            ViewCone::from_angles(eye, yaw as f32, pitch, 0.0, 90.0, 60.0, range);
+                        let want = Reach::of(&l, &cone, &probe).verdict(range) == NOT;
+                        let got = clear.iter().any(|p| cone.contains(*p));
+                        assert_eq!(got, want, "target {} from {eye} at {yaw}°, {pitch}°", t.id);
+                        agree += 1;
+                        open += usize::from(want);
+                    }
+                }
+            }
+        }
+    }
+    // Both answers occur.
+    assert!(open > 100 && open < agree - 100, "{open} of {agree}");
 }
 
 #[test]
