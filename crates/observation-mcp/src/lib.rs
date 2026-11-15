@@ -32,6 +32,8 @@
 //! | [`optimise`] | the goal tools, which search placements and aims for a goal |
 //! | [`schema`] | the schema of tool fields held as untyped JSON objects |
 //! | [`server`] | the MCP tools, resources and prompts |
+//! | [`guide`] | `get_started`: the workflow, conventions and wording in one short call |
+//! | [`toolsets`] | tool groups and profiles, the trimmed schemas small models read |
 //! | [`store`] | working scenes held by id (`s1`), `scene_id` on every scene tool, and the tools that open, export, undo, compare and batch-edit them |
 //! | [`http`] | the Streamable HTTP transport and its bearer-token authentication |
 //!
@@ -46,6 +48,7 @@ pub mod edit;
 pub mod error;
 pub mod figures;
 pub mod geometry;
+pub mod guide;
 pub mod http;
 pub mod link;
 pub mod optimise;
@@ -56,6 +59,7 @@ pub mod render;
 pub mod schema;
 pub mod server;
 pub mod store;
+pub mod toolsets;
 pub mod view;
 
 pub use error::ToolError;

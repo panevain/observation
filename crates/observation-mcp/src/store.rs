@@ -697,7 +697,15 @@ pub fn prepare(
         args.insert(SCENE_ID.to_owned(), Value::String(id.to_string()));
         args.remove("scene");
     }
+    let no_scene = args.get("scene").is_none_or(Value::is_null);
     let id = match args.remove(SCENE_ID) {
+        None | Some(Value::Null) if no_scene && ObservationMcp::scene_required(&tool.name) => {
+            return Err(ToolError::invalid(format!(
+                "{} needs a scene: call open_scene first, then pass the scene_id it gives, \
+                 such as \"s1\"",
+                tool.name
+            )));
+        }
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(text)) => SceneId::parse(&text).ok_or_else(|| {
             ToolError::invalid(format!(
@@ -853,6 +861,11 @@ impl ObservationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let tools = Self::all_tools();
+        if !self.tools.offers(&request.name) {
+            return Ok(tool_error(&ToolError::invalid(
+                self.tools.refusal(&request.name),
+            )));
+        }
         let call = match prepare(
             &self.scenes,
             tools.get(&request.name),
@@ -1359,7 +1372,7 @@ impl ObservationMcp {
             let names: Vec<String> = tools
                 .list_all()
                 .iter()
-                .filter(|t| edits_scene(t))
+                .filter(|t| edits_scene(t) && self.tools.offers(&t.name))
                 .map(|t| t.name.to_string())
                 .collect();
             names.join(", ")
@@ -1383,6 +1396,13 @@ impl ObservationMcp {
                 Some(tool) if !edits_scene(tool) => {
                     return Err(ToolError::invalid(format!(
                         "edit {n}: {name} does not edit a scene; apply_edits runs these: {}",
+                        allowed()
+                    )));
+                }
+                Some(_) if !self.tools.offers(&name) => {
+                    return Err(ToolError::invalid(format!(
+                        "edit {n}: {name} is not offered by {}; apply_edits runs these: {}",
+                        self.tools.selection().describe(),
                         allowed()
                     )));
                 }

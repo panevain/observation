@@ -53,8 +53,8 @@ pub struct AppStateOut {
     /// What the app's scene holds, in one line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_summary: Option<String>,
-    /// The app's scene file (checked as an imported file is). To edit it,
-    /// call open_scene with from "app".
+    /// The app's scene file (checked as an imported file is); left out in
+    /// the small profiles. To edit it, call open_scene with from "app".
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<JsonObject>")]
     pub scene: Option<Value>,
@@ -80,6 +80,15 @@ pub struct AppStateOut {
 }
 
 impl AppStateOut {
+    /// The state as `mcp`'s profile reports it: without the scene file in
+    /// the small profiles, whose models open it with open_scene instead.
+    pub fn for_profile(mut self, mcp: &ObservationMcp) -> Self {
+        if mcp.profile().compact() {
+            self.scene = None;
+        }
+        self
+    }
+
     pub fn of(s: Snapshot) -> Self {
         let mut out = Self {
             connected: s.server.is_some(),
@@ -356,7 +365,7 @@ impl ObservationMcp {
         self.link
             .connect(&a.url, &a.code)
             .await
-            .map(|s| Json(AppStateOut::of(s)))
+            .map(|s| Json(AppStateOut::of(s).for_profile(self)))
             .map_err(|e| e.to_string())
     }
 
@@ -407,7 +416,7 @@ impl ObservationMcp {
         self.link
             .refresh()
             .await
-            .map(|s| Json(AppStateOut::of(s)))
+            .map(|s| Json(AppStateOut::of(s).for_profile(self)))
             .map_err(|e| e.to_string())
     }
 }

@@ -15,6 +15,7 @@ use crate::figures::scene_figures;
 use crate::geometry;
 use crate::link::{AppLink, STATE_URI};
 use crate::schema::JsonObject;
+use crate::toolsets::{Group, Profile, ToolSelection, Toolbox};
 use observation_core::address::ON_OUTLINE_M;
 use observation_core::camera::{ASSUMED_IR_RANGE_M, CameraKind, CameraModel, DoriLevel, Lighting};
 use observation_core::provenance::{CAVEATS_SUMMARY, caveats_text, format_date};
@@ -23,19 +24,20 @@ use observation_core::scene::SceneFile;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, Implementation, ListResourcesResult,
-    PaginatedRequestParams, PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource,
-    ResourceContents, ResourceUpdatedNotificationParam, Role, ServerCapabilities, ServerConfig,
-    SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
+    CacheScope, CallToolRequestParams, CallToolResponse, Implementation, ListResourcesResult,
+    ListToolsResult, PaginatedRequestParams, PromptMessage, ProtocolVersion,
+    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
+    ResourceUpdatedNotificationParam, Role, ServerCapabilities, ServerConfig,
+    SubscribeRequestParams, SubscriptionFilter, Tool, UnsubscribeRequestParams,
 };
 use rmcp::service::{RequestContext, SubscriptionContext};
 use rmcp::{
-    ErrorData, RoleServer, ServerHandler, prompt, prompt_handler, prompt_router, tool,
-    tool_handler, tool_router,
+    ErrorData, RoleServer, ServerHandler, prompt, prompt_handler, prompt_router, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 const INSTRUCTIONS: &str = "\
@@ -89,6 +91,8 @@ const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
 pub struct ObservationMcp {
     pub(crate) link: Arc<AppLink>,
     pub(crate) scenes: Arc<crate::store::SceneStore>,
+    /// The tools offered, as listed ([`crate::toolsets`]).
+    pub(crate) tools: Arc<Toolbox>,
     /// Served without sessions (stateless HTTP), so a legacy
     /// `resources/subscribe` would have nowhere to send its notifications.
     sessionless: bool,
@@ -131,21 +135,93 @@ impl ObservationMcp {
     /// Every tool, with `scene_id` documented on each that takes a scene
     /// ([`crate::store::document_scene_ids`]). Built once, on first use.
     pub fn all_tools() -> &'static ToolRouter<Self> {
-        static TOOLS: OnceLock<ToolRouter<ObservationMcp>> = OnceLock::new();
-        TOOLS.get_or_init(|| {
-            let tools = Self::tool_router()
-                + Self::app_tool_router()
-                + Self::places_tool_router()
-                + Self::query_tool_router()
-                + Self::proposal_tool_router()
-                + Self::store_tool_router()
-                + Self::describe_tool_router()
-                + Self::render_tool_router()
-                + Self::goal_tool_router()
-                + Self::view_tool_router();
-            crate::store::document_scene_ids(tools)
-        })
+        &registry().router
     }
+
+    /// The group `tool` is in, if there is such a tool.
+    pub fn tool_group(tool: &str) -> Option<Group> {
+        registry().groups.get(tool).copied()
+    }
+
+    /// Whether `tool` must be given a scene (`scene` or `scene_id`).
+    pub fn scene_required(tool: &str) -> bool {
+        registry().scene_required.contains(tool)
+    }
+
+    /// The tools this server offers ([`crate::toolsets`]).
+    pub fn toolbox(&self) -> &Toolbox {
+        &self.tools
+    }
+
+    /// The profile the tools are offered in.
+    pub fn profile(&self) -> Profile {
+        self.tools.profile()
+    }
+
+    /// This server, offering the tools `selection` chooses.
+    pub fn with_tools(mut self, selection: ToolSelection) -> Self {
+        self.tools = Arc::new(Toolbox::new(selection));
+        self
+    }
+}
+
+/// Every tool router, with the group its tools are in
+/// ([`crate::toolsets::Group`]). A new router is one line here.
+fn grouped_routers() -> Vec<(Group, ToolRouter<ObservationMcp>)> {
+    vec![
+        (Group::Guide, ObservationMcp::guide_tool_router()),
+        (Group::Scenes, ObservationMcp::store_tool_router()),
+        (Group::Scenes, ObservationMcp::scene_tool_router()),
+        (Group::Cameras, ObservationMcp::camera_tool_router()),
+        (Group::Models, ObservationMcp::model_tool_router()),
+        (Group::Places, ObservationMcp::places_tool_router()),
+        (Group::Analysis, ObservationMcp::coverage_tool_router()),
+        (Group::Analysis, ObservationMcp::query_tool_router()),
+        (Group::Describe, ObservationMcp::describe_tool_router()),
+        (Group::Map, ObservationMcp::render_tool_router()),
+        (Group::Goals, ObservationMcp::goal_tool_router()),
+        (Group::App, ObservationMcp::app_tool_router()),
+        (Group::Proposals, ObservationMcp::proposal_tool_router()),
+        (Group::View, ObservationMcp::view_tool_router()),
+    ]
+}
+
+/// Every tool, each tool's group, and the tools that need a scene.
+#[derive(Debug)]
+struct Registry {
+    router: ToolRouter<ObservationMcp>,
+    groups: HashMap<String, Group>,
+    scene_required: HashSet<String>,
+}
+
+fn registry() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut router = ToolRouter::new();
+        let mut groups = HashMap::new();
+        for (group, r) in grouped_routers() {
+            for name in r.map.keys() {
+                groups.insert(name.to_string(), group);
+            }
+            router.merge(r);
+        }
+        let scene_required = router
+            .list_all()
+            .iter()
+            .filter(|t| {
+                t.input_schema
+                    .get("required")
+                    .and_then(Value::as_array)
+                    .is_some_and(|r| r.iter().any(|n| n == "scene"))
+            })
+            .map(|t| t.name.to_string())
+            .collect();
+        Registry {
+            router: crate::store::document_scene_ids(router),
+            groups,
+            scene_required,
+        }
+    })
 }
 
 /// The area of the `scene` argument of a tool call, if it has one.
@@ -510,64 +586,9 @@ pub struct AddressOut {
 // Tools
 // ---------------------------------------------------------------------------
 
-#[tool_router]
+/// Scenes: the demo street's extent, and scene files made or checked whole.
+#[tool_router(router = scene_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
-    #[tool(
-        description = "List camera models (and a scene's custom models), with fields of view, resolution and range at each detail level.",
-        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
-    )]
-    fn list_camera_models(
-        &self,
-        Parameters(a): Parameters<ListModelsArgs>,
-    ) -> Result<Json<ModelList>, String> {
-        let cat = catalog().map_err(fail)?;
-        let scene = a
-            .scene
-            .as_ref()
-            .map(edit::parse)
-            .transpose()
-            .map_err(fail)?;
-        let kind = a.kind.map(CameraKind::from);
-        let vendor = a.vendor.map(|v| v.to_lowercase());
-        let customs = scene.iter().flat_map(|s| &s.custom_models);
-        let models = cat
-            .models
-            .iter()
-            .chain(customs)
-            .filter(|m| kind.is_none_or(|k| m.kind == k))
-            .filter(|m| {
-                vendor
-                    .as_ref()
-                    .is_none_or(|v| m.vendor.to_lowercase() == *v)
-            })
-            .map(ModelInfo::of)
-            .collect();
-        Ok(Json(ModelList {
-            catalog_fingerprint: cat.fingerprint(),
-            models,
-        }))
-    }
-
-    #[tool(
-        description = "One camera model by id: fields of view, resolution, range at each detail level by day and at night, and its spec source.",
-        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
-    )]
-    fn get_camera_model(
-        &self,
-        Parameters(a): Parameters<GetModelArgs>,
-    ) -> Result<Json<ModelInfo>, String> {
-        let cat = catalog().map_err(fail)?;
-        let scene = a
-            .scene
-            .as_ref()
-            .map(edit::parse)
-            .transpose()
-            .map_err(fail)?;
-        model(cat, scene.as_ref(), &a.id)
-            .map(|m| Json(ModelInfo::of(m)))
-            .ok_or_else(|| fail(ToolError::NoModel(a.id)))
-    }
-
     #[tool(
         description = "Describe the demo street: its extent in metres (where cameras can go), building count, street names and data date.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -628,22 +649,116 @@ impl ObservationMcp {
             cameras_with_unknown_model: unknown,
         }))
     }
+}
 
+/// Camera models: the catalogue and a scene's custom models.
+#[tool_router(router = model_tool_router, vis = "pub(crate)")]
+impl ObservationMcp {
     #[tool(
-        description = "Set the scene's analysis settings: level (detect, observe, recognise or identify), lighting (day or night) and the height people are tested at.",
+        description = "List camera models (and a scene's custom models), with fields of view, resolution and range at each detail level.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
-    fn set_coverage_params(
+    fn list_camera_models(
         &self,
-        Parameters(a): Parameters<ParamsArgs>,
+        Parameters(a): Parameters<ListModelsArgs>,
+    ) -> Result<Json<ModelList>, String> {
+        let cat = catalog().map_err(fail)?;
+        let scene = a
+            .scene
+            .as_ref()
+            .map(edit::parse)
+            .transpose()
+            .map_err(fail)?;
+        let kind = a.kind.map(CameraKind::from);
+        let vendor = a.vendor.map(|v| v.to_lowercase());
+        let customs = scene.iter().flat_map(|s| &s.custom_models);
+        let models = cat
+            .models
+            .iter()
+            .chain(customs)
+            .filter(|m| kind.is_none_or(|k| m.kind == k))
+            .filter(|m| {
+                vendor
+                    .as_ref()
+                    .is_none_or(|v| m.vendor.to_lowercase() == *v)
+            })
+            .map(ModelInfo::of)
+            .collect();
+        Ok(Json(ModelList {
+            catalog_fingerprint: cat.fingerprint(),
+            models,
+        }))
+    }
+
+    #[tool(
+        description = "One camera model by id: fields of view, resolution, range at each detail level by day and at night, and its spec source.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    fn get_camera_model(
+        &self,
+        Parameters(a): Parameters<GetModelArgs>,
+    ) -> Result<Json<ModelInfo>, String> {
+        let cat = catalog().map_err(fail)?;
+        let scene = a
+            .scene
+            .as_ref()
+            .map(edit::parse)
+            .transpose()
+            .map_err(fail)?;
+        model(cat, scene.as_ref(), &a.id)
+            .map(|m| Json(ModelInfo::of(m)))
+            .ok_or_else(|| fail(ToolError::NoModel(a.id)))
+    }
+
+    #[tool(
+        description = "Create a custom camera model in the scene from its specifications; returns its id for place_camera.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    fn create_custom_model(
+        &self,
+        Parameters(a): Parameters<NewModelArgs>,
     ) -> Result<Json<Edited>, String> {
         let mut s = edit::parse(&a.scene).map_err(fail)?;
-        edit::set_coverage_params(&mut s, a.params);
-        Edited::new("updated the analysis settings", &s)
+        let id = edit::create_custom_model(&mut s, a.model).map_err(fail)?;
+        let mut out = Edited::new(format!("created custom model {id}"), &s).map_err(fail)?;
+        out.model_id = Some(id);
+        Ok(Json(out))
+    }
+
+    #[tool(
+        description = "Change a custom camera model's specifications. Cameras using it keep using it.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    fn update_custom_model(
+        &self,
+        Parameters(a): Parameters<UpdateModelArgs>,
+    ) -> Result<Json<Edited>, String> {
+        let mut s = edit::parse(&a.scene).map_err(fail)?;
+        edit::update_custom_model(&mut s, &a.id, a.changes).map_err(fail)?;
+        let mut out = Edited::new(format!("updated custom model {}", a.id), &s).map_err(fail)?;
+        out.model_id = Some(a.id);
+        Ok(Json(out))
+    }
+
+    #[tool(
+        description = "Delete a custom camera model. Refused while cameras use it.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    fn delete_custom_model(
+        &self,
+        Parameters(a): Parameters<ModelIdArgs>,
+    ) -> Result<Json<Edited>, String> {
+        let mut s = edit::parse(&a.scene).map_err(fail)?;
+        edit::delete_custom_model(&mut s, &a.id).map_err(fail)?;
+        Edited::new(format!("deleted custom model {}", a.id), &s)
             .map(Json)
             .map_err(fail)
     }
+}
 
+/// Cameras: placing, moving, aiming and removing them.
+#[tool_router(router = camera_tool_router, vis = "pub(crate)")]
+impl ObservationMcp {
     #[tool(
         description = "Place a camera at x, z (metres east and south of the centre), height_m above the ground. yaw_deg is a compass bearing: 0 faces north, 90 east, 180 south, 270 west. Or give look_at. With neither, it faces the nearest street.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -763,48 +878,22 @@ impl ObservationMcp {
         out.camera_ids = Some(ids);
         Ok(Json(out))
     }
+}
 
+/// Analysis settings and the coverage figures.
+#[tool_router(router = coverage_tool_router, vis = "pub(crate)")]
+impl ObservationMcp {
     #[tool(
-        description = "Create a custom camera model in the scene from its specifications; returns its id for place_camera.",
+        description = "Set the scene's analysis settings: level (detect, observe, recognise or identify), lighting (day or night) and the height people are tested at.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
-    fn create_custom_model(
+    fn set_coverage_params(
         &self,
-        Parameters(a): Parameters<NewModelArgs>,
+        Parameters(a): Parameters<ParamsArgs>,
     ) -> Result<Json<Edited>, String> {
         let mut s = edit::parse(&a.scene).map_err(fail)?;
-        let id = edit::create_custom_model(&mut s, a.model).map_err(fail)?;
-        let mut out = Edited::new(format!("created custom model {id}"), &s).map_err(fail)?;
-        out.model_id = Some(id);
-        Ok(Json(out))
-    }
-
-    #[tool(
-        description = "Change a custom camera model's specifications. Cameras using it keep using it.",
-        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
-    )]
-    fn update_custom_model(
-        &self,
-        Parameters(a): Parameters<UpdateModelArgs>,
-    ) -> Result<Json<Edited>, String> {
-        let mut s = edit::parse(&a.scene).map_err(fail)?;
-        edit::update_custom_model(&mut s, &a.id, a.changes).map_err(fail)?;
-        let mut out = Edited::new(format!("updated custom model {}", a.id), &s).map_err(fail)?;
-        out.model_id = Some(a.id);
-        Ok(Json(out))
-    }
-
-    #[tool(
-        description = "Delete a custom camera model. Refused while cameras use it.",
-        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
-    )]
-    fn delete_custom_model(
-        &self,
-        Parameters(a): Parameters<ModelIdArgs>,
-    ) -> Result<Json<Edited>, String> {
-        let mut s = edit::parse(&a.scene).map_err(fail)?;
-        edit::delete_custom_model(&mut s, &a.id).map_err(fail)?;
-        Edited::new(format!("deleted custom model {}", a.id), &s)
+        edit::set_coverage_params(&mut s, a.params);
+        Edited::new("updated the analysis settings", &s)
             .map(Json)
             .map_err(fail)
     }
@@ -1040,7 +1129,6 @@ impl ObservationMcp {
     }
 }
 
-#[tool_handler(router = Self::all_tools())]
 #[prompt_handler]
 impl ServerHandler for ObservationMcp {
     fn get_info(&self) -> ServerConfig {
@@ -1069,6 +1157,26 @@ impl ServerHandler for ObservationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         self.call_with_scenes(request, context).await
+    }
+
+    /// The tools the selection offers, with their schemas as it lists them
+    /// ([`crate::toolsets`]).
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        let cache_hints = context
+            .protocol_version()
+            .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28);
+        let mut result = ListToolsResult::with_all_items(self.tools.tools().to_vec());
+        result.ttl_ms = cache_hints.then_some(0);
+        result.cache_scope = cache_hints.then_some(CacheScope::Public);
+        Ok(result)
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        self.tools.get(name).cloned()
     }
 
     fn accepted_subscription_filter(
