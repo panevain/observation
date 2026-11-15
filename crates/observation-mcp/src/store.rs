@@ -765,12 +765,70 @@ pub fn finish(
     result.into()
 }
 
+/// A call's argument names, sorted, and the bytes of its arguments as
+/// compact JSON: what [`log_call`] records instead of the values.
+fn argument_shape(arguments: Option<&Map<String, Value>>) -> (String, usize) {
+    let Some(args) = arguments else {
+        return (String::new(), 0);
+    };
+    let mut keys: Vec<&str> = args.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    let bytes = serde_json::to_vec(args).map_or(0, |b| b.len());
+    (keys.join(","), bytes)
+}
+
+/// Logs one line per tool call: the tool, its argument names and size, how
+/// long it took, whether it failed and the size of its result. Argument
+/// values and results are never logged: a scene may hold the user's places.
+fn log_call(
+    tool: &str,
+    keys: &str,
+    argument_bytes: usize,
+    took: std::time::Duration,
+    response: &Result<CallToolResponse, ErrorData>,
+) {
+    let (outcome, result_bytes) = match response {
+        Ok(CallToolResponse::Complete(result)) => (
+            if result.is_error == Some(true) {
+                "error"
+            } else {
+                "ok"
+            },
+            serde_json::to_vec(result).map_or(0, |b| b.len()),
+        ),
+        Ok(_) => ("ok", 0),
+        Err(_) => ("refused", 0),
+    };
+    tracing::info!(
+        tool,
+        arguments = keys,
+        argument_bytes,
+        ms = u64::try_from(took.as_millis()).unwrap_or(u64::MAX),
+        outcome,
+        result_bytes,
+        "tool call"
+    );
+}
+
 impl ObservationMcp {
     /// Runs a tool call as [`ServerHandler::call_tool`](rmcp::ServerHandler::call_tool)
     /// does: with a `scene_id` read from and written back to the store (see
     /// the module documentation), and in the scope of the scene's area
-    /// ([`Self::in_tool_scope`]).
+    /// ([`Self::in_tool_scope`]), and logs it ([`log_call`]).
     pub async fn call_with_scenes(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let started = std::time::Instant::now();
+        let tool = request.name.to_string();
+        let (keys, argument_bytes) = argument_shape(request.arguments.as_ref());
+        let response = self.run_call(request, context).await;
+        log_call(&tool, &keys, argument_bytes, started.elapsed(), &response);
+        response
+    }
+
+    async fn run_call(
         &self,
         mut request: CallToolRequestParams,
         context: RequestContext<RoleServer>,

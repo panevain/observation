@@ -688,3 +688,59 @@ async fn analysis_settings_read_in_any_case() {
     let kind: edit::Kind = serde_json::from_value(json!(" doorbell ")).unwrap();
     assert_eq!(kind, edit::Kind::Doorbell);
 }
+
+/// A writer that keeps what the log wrote, for the test below.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        lock(&self.0).extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_tool_call_is_logged_without_its_values() {
+    let args = json!({"scene_id": "s1", "label": "Mrs Smith's gate", "x": 4.5});
+    let (keys, bytes) = argument_shape(args.as_object());
+    assert_eq!(keys, "label,scene_id,x");
+    assert_eq!(bytes, args.to_string().len());
+    assert_eq!(argument_shape(None), (String::new(), 0));
+
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let result: CallToolResponse =
+        CallToolResult::structured(json!({"summary": "placed camera 1 at 12 Elm Road"})).into();
+    tracing::subscriber::with_default(subscriber, || {
+        log_call(
+            "place_camera",
+            &keys,
+            bytes,
+            std::time::Duration::from_millis(7),
+            &Ok(result),
+        );
+    });
+    let line = String::from_utf8(lock(&captured.0).clone()).unwrap();
+    for part in [
+        "tool call",
+        "tool=\"place_camera\"",
+        "arguments=\"label,scene_id,x\"",
+        "ms=7",
+        "outcome=\"ok\"",
+        "result_bytes=",
+    ] {
+        assert!(line.contains(part), "{part} in {line}");
+    }
+    for value in ["Smith", "Elm Road", "s1", "4.5"] {
+        assert!(!line.contains(value), "{value} logged in {line}");
+    }
+}
