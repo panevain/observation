@@ -12,6 +12,7 @@ use crate::ToolError;
 use crate::area::{self, bundle_for, check_inside, layers_for};
 use crate::catalog::{catalog, model};
 use crate::edit::{self, Dori, Light};
+use crate::schema::JsonObject;
 use crate::server::{ObservationMcp, SkippedOut};
 use observation_core::address::distance_to_footprint;
 use observation_core::bundle::AreaBundle;
@@ -955,6 +956,7 @@ pub fn gaps(
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TargetVerdictsArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// Only this target; omit for every target in the scene.
     pub target_id: Option<u32>,
@@ -962,6 +964,7 @@ pub struct TargetVerdictsArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CameraSplitArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// Only this camera; omit for every enabled camera.
     pub camera_id: Option<u32>,
@@ -973,6 +976,7 @@ pub struct CameraSplitArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WhoSeesArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// Metres east of the origin.
     pub x: f32,
@@ -985,6 +989,7 @@ pub struct WhoSeesArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindGapsArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The detail level; omit for the scene's.
     pub dori: Option<Dori>,

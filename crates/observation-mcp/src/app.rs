@@ -3,6 +3,7 @@
 use crate::ObservationMcp;
 use crate::edit;
 use crate::link::Snapshot;
+use crate::schema::JsonObject;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{tool, tool_router};
 use schemars::JsonSchema;
@@ -49,6 +50,7 @@ pub struct AppStateOut {
     /// The scene open in the app, as the scene tools take it (checked as an
     /// imported file is). Edits made with the tools do not reach the app.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<JsonObject>")]
     pub scene: Option<Value>,
     /// Why the shared scene could not be read, if it could not.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,6 +60,7 @@ pub struct AppStateOut {
     pub scene_name: Option<String>,
     /// The loaded area: `{"kind": "demo"}` or `{"kind": "osm", "bbox": {...}}`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<JsonObject>")]
     pub area: Option<Value>,
     /// The ids of the cameras the user has selected.
     pub selection: Vec<u32>,
