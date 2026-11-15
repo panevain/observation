@@ -111,15 +111,18 @@ services:
   # The same MCP server over Streamable HTTP, for MCP clients that connect to a URL rather than
   # start a process. Every request needs `Authorization: Bearer <secret>` for one of the
   # name:secret pairs in OBS_MCP_TOKENS (comma-separated; secrets of at least 32 characters, e.g.
-  # `openssl rand -base64 32`), which reach the server as a Compose secret, not an environment
-  # variable that `docker inspect` would show:
+  # `openssl rand -base64 32`), passed on as OBS_REGIONS_TOKEN is; unset, the server refuses to
+  # start and says why (`docker compose logs mcp-http`):
   #   OBS_MCP_TOKENS="laptop:$(openssl rand -base64 32)" docker compose --profile mcp-http up -d mcp-http
+  # (A Compose secret with an `environment` source would keep them out of `docker inspect`, but
+  # Compose copies such secrets into the container, which a read-only root filesystem refuses.)
   # The endpoint is http://localhost:${OBS_MCP_PORT:-8090}/mcp, on loopback only: it speaks
   # plain HTTP, so to serve other computers put a TLS-terminating proxy in front and set
   # OBS_MCP_ALLOWED_HOSTS to the name clients use. Browser origins are refused unless listed in
   # OBS_MCP_ALLOWED_ORIGINS, which the server then answers CORS for (for llama.cpp's chat page
-  # on llama-server's default port: http://localhost:8080,http://127.0.0.1:8080). It reaches nothing, but has a network for its port, so the agent
-  # bridge (connect_app) is out of reach here as in the `mcp` service. See docs/design.md.
+  # on llama-server's default port: http://localhost:8080,http://127.0.0.1:8080). It reaches
+  # nothing, but has a network for its port, so the agent bridge (connect_app) is out of reach
+  # here as in the `mcp` service. See docs/design.md.
   mcp-http:
     image: ${OBS_MCP_IMAGE:-ghcr.io/panevain/observation-mcp:${OBS_VERSION:-latest}}
     build:
@@ -132,22 +135,13 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    secrets:
-      - source: mcp_tokens
-        target: mcp_tokens
     environment:
       OBS_MCP_LISTEN: 0.0.0.0:8090
-      OBS_MCP_TOKENS_FILE: /run/secrets/mcp_tokens
+      OBS_MCP_TOKENS: ${OBS_MCP_TOKENS:-}
       OBS_MCP_ALLOWED_HOSTS: ${OBS_MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}
       OBS_MCP_ALLOWED_ORIGINS: ${OBS_MCP_ALLOWED_ORIGINS:-}
       # rmcp logs every request at info.
       RUST_LOG: ${OBS_MCP_LOG:-info,rmcp=warn}
-
-secrets:
-  # The mcp-http service's tokens: OBS_MCP_TOKENS's value, as the file it reads (pairs
-  # separated by commas or new lines).
-  mcp_tokens:
-    environment: OBS_MCP_TOKENS
 
 volumes:
   cache:

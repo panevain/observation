@@ -422,3 +422,87 @@ fn config_with_origins(origins: &[&str]) -> HttpConfig {
         ..config(Auth::Disabled)
     }
 }
+
+/// A `subscriptions/listen` stream (MCP 2026-07-28) is answered with an SSE
+/// response at once and stays open past the request timeout, which only
+/// limits the wait for a request's first message.
+#[tokio::test(start_paused = true)]
+async fn listen_streams_outlive_the_request_timeout() {
+    use observation_mcp::http::REQUEST_TIMEOUT;
+    use std::time::Duration;
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "subscriptions/listen",
+        "params": {
+            "notifications": {"resourceSubscriptions": ["observation://app/state"]},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    })
+    .to_string();
+    let req = post()
+        .header(header::AUTHORIZATION, format!("Bearer {LAPTOP}"))
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "subscriptions/listen")
+        .body(Body::from(body))
+        .expect("request");
+    let res = tokio::time::timeout(Duration::from_secs(5), app().oneshot(req))
+        .await
+        .expect("answered at once")
+        .expect("infallible");
+    if res.status() != StatusCode::OK {
+        let status = res.status();
+        let bytes = res.into_body().collect().await.expect("body").to_bytes();
+        panic!("{status}: {}", String::from_utf8_lossy(&bytes));
+    }
+    assert!(
+        res.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .expect("ascii")
+            .starts_with("text/event-stream")
+    );
+    let mut body = res.into_body();
+    let first = body
+        .frame()
+        .await
+        .expect("a first event")
+        .expect("no error")
+        .into_data()
+        .expect("data");
+    let first = String::from_utf8_lossy(&first);
+    assert!(first.contains("data:"), "{first}");
+
+    // Well past the request timeout the stream still delivers (keep-alive
+    // comments, as nothing changes), rather than ending.
+    tokio::time::advance(REQUEST_TIMEOUT + Duration::from_secs(5)).await;
+    let later = body.frame().await;
+    assert!(matches!(later, Some(Ok(_))), "the stream ended: {later:?}");
+}
+
+/// The legacy `resources/subscribe` would have no session to notify on, so
+/// over HTTP it is refused with an error that says what to use instead.
+#[tokio::test]
+async fn legacy_subscribe_is_refused_over_http() {
+    let req = post()
+        .header(header::AUTHORIZATION, format!("Bearer {LAPTOP}"))
+        .header("mcp-protocol-version", "2025-11-25")
+        .body(Body::from(rpc(
+            6,
+            "resources/subscribe",
+            json!({"uri": "observation://app/state"}),
+        )))
+        .expect("request");
+    let (status, _, body) = send(app(), req).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let error = &message(&body)["error"];
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("subscriptions/listen")),
+        "{body}"
+    );
+}

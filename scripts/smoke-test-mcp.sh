@@ -2,8 +2,8 @@
 # Smoke test for a locally loaded MCP server image: runs as nonroot, and answers the MCP
 # handshake, tools/list and a call that loads the compiled-in demo street over stdio, with no
 # network, a read-only filesystem and no capabilities (as compose.yaml runs it). Then over
-# Streamable HTTP, read-only with no capabilities and its tokens in a file (as compose.yaml's
-# mcp-http service runs it): /healthz answers, /mcp refuses a missing or wrong bearer token
+# Streamable HTTP, read-only with no capabilities and its tokens in a file (OBS_MCP_TOKENS_FILE,
+# as a Docker secret would give them; compose.yaml's mcp-http service passes OBS_MCP_TOKENS): /healthz answers, /mcp refuses a missing or wrong bearer token
 # and a foreign Origin, answers CORS for an allowed one, and serves the handshake and the demo
 # street to a right token.
 # Usage: scripts/smoke-test-mcp.sh IMAGE
@@ -116,7 +116,10 @@ jq -e '.result.serverInfo.name == "observation-mcp"' "${tmp}/body" >/dev/null \
 expect 200 "$(post "${requests[3]}" -H "Authorization: Bearer ${secret}" -H 'MCP-Protocol-Version: 2025-11-25')" "load_demo_area"
 jq -e '.result.isError != true and (.result.structuredContent.building_count // 0) > 0' "${tmp}/body" >/dev/null \
   || { echo "load_demo_area over HTTP: $(cat "${tmp}/body")" >&2; exit 1; }
-if docker logs "${http_name}" 2>&1 | grep -qF "${secret}"; then
+# Into a variable first: with pipefail, `docker logs | grep -q` could fail on SIGPIPE when grep
+# stops at a match, and so hide one.
+logs="$(docker logs "${http_name}" 2>&1)"
+if grep -qF -- "${secret}" <<<"${logs}"; then
   echo "the server logged a bearer token" >&2
   exit 1
 fi

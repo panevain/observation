@@ -72,11 +72,24 @@ const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
 #[derive(Debug, Clone, Default)]
 pub struct ObservationMcp {
     pub(crate) link: Arc<AppLink>,
+    /// Served without sessions (stateless HTTP), so a legacy
+    /// `resources/subscribe` would have nowhere to send its notifications.
+    sessionless: bool,
 }
 
 impl ObservationMcp {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A server for a transport without sessions (stateless Streamable
+    /// HTTP): it refuses the legacy `resources/subscribe`, whose
+    /// notifications would be lost, and points to `subscriptions/listen`.
+    pub fn sessionless() -> Self {
+        Self {
+            sessionless: true,
+            ..Self::default()
+        }
     }
 
     /// The connection to the user's app.
@@ -1040,6 +1053,13 @@ impl ServerHandler for ObservationMcp {
                     "{} does not change, so there is nothing to subscribe to",
                     request.uri
                 ),
+                None,
+            ));
+        }
+        if self.sessionless {
+            return Err(ErrorData::invalid_request(
+                "this server has no sessions to send notifications on: use subscriptions/listen \
+                 (MCP 2026-07-28), or read observation://app/state or get_app_state again",
                 None,
             ));
         }

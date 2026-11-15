@@ -31,7 +31,7 @@ pub mod auth;
 pub mod config;
 
 use crate::ObservationMcp;
-use auth::{ClientName, Tokens};
+use auth::Tokens;
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -55,8 +55,11 @@ pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 
 /// How long a request may take to produce its first message (for an
 /// ordinary request, its result) before it is cancelled and answered with
-/// 503.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// 503. A tool on a connected app's real area may first wait for the app's
+/// server to build the area's bundle ([`crate::link`] allows that 90 s), so
+/// this leaves half a minute more for the tool itself.
+pub const REQUEST_TIMEOUT: Duration =
+    Duration::from_secs(crate::link::BUNDLE_TIMEOUT.as_secs() + 30);
 
 /// How long open streams may keep the server up after SIGINT or SIGTERM.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -71,8 +74,8 @@ type McpService = StreamableHttpService<ObservationMcp, NeverSessionManager>;
 
 /// Who may use the endpoint, and the server each of them reaches.
 enum Clients {
-    /// The tokens, and a server for each, in the same order.
-    Tokens(Tokens, Vec<McpService>),
+    /// The tokens, each with its own server.
+    Tokens(Tokens<McpService>),
     /// Anyone, all through one server.
     Anyone(McpService),
 }
@@ -91,7 +94,7 @@ pub fn router(config: &HttpConfig, shutdown: &CancellationToken) -> Router {
     // Every request of one client is served by clones of one server, which
     // share its connection to the app.
     let service = || {
-        let mcp = ObservationMcp::new();
+        let mcp = ObservationMcp::sessionless();
         StreamableHttpService::new(
             move || Ok(mcp.clone()),
             Arc::new(NeverSessionManager::default()),
@@ -99,10 +102,9 @@ pub fn router(config: &HttpConfig, shutdown: &CancellationToken) -> Router {
         )
     };
     let clients = match &config.auth {
-        Auth::Tokens(tokens) => {
-            let services = tokens.iter().map(|_| service()).collect();
-            Clients::Tokens(Tokens::new(tokens.clone()), services)
-        }
+        Auth::Tokens(tokens) => Clients::Tokens(Tokens::new(
+            tokens.iter().map(|t| (t.clone(), service())).collect(),
+        )),
         Auth::Disabled => Clients::Anyone(service()),
     };
     let mut app = Router::new()
@@ -140,21 +142,15 @@ fn cors(allowed: Vec<String>) -> CorsLayer {
 }
 
 /// Authenticates a request and hands it to its client's server.
-async fn mcp(State(clients): State<Arc<Clients>>, mut req: Request) -> Response {
-    let (service, name) = match &*clients {
-        Clients::Tokens(tokens, services) => match tokens.authenticate(req.headers()) {
-            Ok(i) => match (services.get(i), tokens.iter().nth(i)) {
-                (Some(s), Some(t)) => (s.clone(), Some(t.name.clone())),
-                _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            },
+async fn mcp(State(clients): State<Arc<Clients>>, req: Request) -> Response {
+    let (client, service) = match &*clients {
+        Clients::Tokens(tokens) => match tokens.authenticate(req.headers()) {
+            Ok((name, service)) => (name, service.clone()),
             Err(refused) => return refused.into_response(),
         },
-        Clients::Anyone(s) => (s.clone(), None),
+        Clients::Anyone(service) => ("anyone", service.clone()),
     };
-    let span = tracing::info_span!("mcp", client = name.as_deref().unwrap_or("anyone"));
-    if let Some(name) = name {
-        req.extensions_mut().insert(ClientName(name));
-    }
+    let span = tracing::info_span!("mcp", client);
     async move {
         match service.oneshot(req).await {
             Ok(res) => res.into_response(),

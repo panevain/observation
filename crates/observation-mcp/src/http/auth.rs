@@ -3,44 +3,54 @@
 use super::config::Token;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
 
-/// The name of the token that authenticated a request, in its extensions
-/// (and so in an MCP handler's `RequestContext` extensions, through the
-/// request's `http::request::Parts`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClientName(pub String);
+/// The shortest time between two warnings about refused tokens; refusals in
+/// between are counted and reported with the next one, so a client guessing
+/// tokens cannot flood the log.
+pub const WARN_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The configured tokens, shared by every request.
+/// The configured tokens, each with what a request that presents it gets
+/// (for the server, its own MCP service).
 #[derive(Debug)]
-pub struct Tokens(Vec<Token>);
+pub struct Tokens<T> {
+    entries: Vec<(Token, T)>,
+    warned: Mutex<Warned>,
+}
 
-impl Tokens {
-    pub fn new(tokens: Vec<Token>) -> Self {
-        Self(tokens)
+/// When refused tokens were last reported, and how many since.
+#[derive(Debug, Default)]
+struct Warned {
+    at: Option<Instant>,
+    unreported: u64,
+}
+
+impl<T> Tokens<T> {
+    pub fn new(entries: Vec<(Token, T)>) -> Self {
+        Self {
+            entries,
+            warned: Mutex::new(Warned::default()),
+        }
     }
 
-    /// The tokens, in the order they were configured.
-    pub fn iter(&self) -> impl Iterator<Item = &Token> {
-        self.0.iter()
-    }
-
-    /// The index of the token whose secret is `given`. Every secret is
-    /// compared, in constant time for its length, so the time taken does not
-    /// show which one (if any) matched or how much of it was right.
-    fn find(&self, given: &[u8]) -> Option<usize> {
+    /// The entry whose secret is `given`. Every secret is compared, in
+    /// constant time for its length, so the time taken does not show which
+    /// one (if any) matched or how much of it was right.
+    fn find(&self, given: &[u8]) -> Option<&(Token, T)> {
         let mut found = None;
-        for (i, t) in self.0.iter().enumerate() {
-            if bool::from(t.secret.as_bytes().ct_eq(given)) {
-                found = Some(i);
+        for entry in &self.entries {
+            if bool::from(entry.0.secret.as_bytes().ct_eq(given)) {
+                found = Some(entry);
             }
         }
         found
     }
 
-    /// The index of the token a request's `Authorization: Bearer <secret>`
-    /// header names, or why it was refused.
-    pub fn authenticate(&self, headers: &HeaderMap) -> Result<usize, Refused> {
+    /// The token a request's `Authorization: Bearer <secret>` header names,
+    /// with its value, or why the request was refused.
+    pub fn authenticate(&self, headers: &HeaderMap) -> Result<(&str, &T), Refused> {
         let given = headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
@@ -49,10 +59,35 @@ impl Tokens {
             tracing::debug!("refused a request without a bearer token");
             return Err(Refused::Missing);
         };
-        self.find(given.as_bytes()).ok_or_else(|| {
-            tracing::warn!("refused a request with an unknown bearer token");
-            Refused::Unknown
-        })
+        match self.find(given.as_bytes()) {
+            Some((token, value)) => Ok((token.name.as_str(), value)),
+            None => {
+                self.warn_refused(Instant::now());
+                Err(Refused::Unknown)
+            }
+        }
+    }
+
+    /// Counts a refused token, and warns about it unless it is less than
+    /// [`WARN_INTERVAL`] since the last warning. Returns whether it warned.
+    fn warn_refused(&self, now: Instant) -> bool {
+        let mut w = self
+            .warned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        w.unreported += 1;
+        if w.at
+            .is_some_and(|at| now.duration_since(at) < WARN_INTERVAL)
+        {
+            return false;
+        }
+        tracing::warn!(
+            refused = w.unreported,
+            "refused requests with an unknown bearer token (reported at most once a minute)"
+        );
+        w.at = Some(now);
+        w.unreported = 0;
+        true
     }
 }
 
@@ -97,27 +132,58 @@ impl IntoResponse for Refused {
 mod tests {
     use super::*;
 
-    fn tokens() -> Tokens {
+    fn token(name: &str, secret: String) -> Token {
+        Token {
+            name: name.into(),
+            secret,
+        }
+    }
+
+    fn tokens() -> Tokens<u8> {
         Tokens::new(vec![
-            Token {
-                name: "laptop".into(),
-                secret: "a".repeat(32),
-            },
-            Token {
-                name: "ci".into(),
-                secret: "b".repeat(32),
-            },
+            (token("laptop", "a".repeat(32)), 1),
+            (token("ci", "b".repeat(32)), 2),
         ])
+    }
+
+    fn bearer_header(secret: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {secret}")).expect("header"),
+        );
+        h
     }
 
     #[test]
     fn finds_the_matching_token() {
         let t = tokens();
-        assert_eq!(t.find("a".repeat(32).as_bytes()), Some(0));
-        assert_eq!(t.find("b".repeat(32).as_bytes()), Some(1));
-        assert_eq!(t.find("a".repeat(31).as_bytes()), None);
-        assert_eq!(t.find("a".repeat(33).as_bytes()), None);
-        assert_eq!(t.find(b""), None);
+        assert_eq!(
+            t.authenticate(&bearer_header(&"a".repeat(32))),
+            Ok(("laptop", &1))
+        );
+        assert_eq!(
+            t.authenticate(&bearer_header(&"b".repeat(32))),
+            Ok(("ci", &2))
+        );
+        for wrong in ["a".repeat(31), "a".repeat(33), "c".repeat(32)] {
+            assert_eq!(
+                t.authenticate(&bearer_header(&wrong)),
+                Err(Refused::Unknown)
+            );
+        }
+        assert_eq!(t.authenticate(&HeaderMap::new()), Err(Refused::Missing));
+    }
+
+    #[test]
+    fn warns_about_refusals_at_most_once_an_interval() {
+        let t = tokens();
+        let start = Instant::now();
+        assert!(t.warn_refused(start));
+        assert!(!t.warn_refused(start + Duration::from_secs(1)));
+        assert!(!t.warn_refused(start + WARN_INTERVAL - Duration::from_secs(1)));
+        assert!(t.warn_refused(start + WARN_INTERVAL));
+        assert!(!t.warn_refused(start + WARN_INTERVAL + Duration::from_secs(1)));
     }
 
     #[test]

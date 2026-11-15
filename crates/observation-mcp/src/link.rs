@@ -41,7 +41,7 @@ pub const AGENT_NAME: &str = "Observation MCP";
 const MAX_BUNDLE_BYTES: usize = 64 << 20;
 /// Longest a bundle may take: the server may build it from Overpass (its
 /// own request timeout is 80 s).
-const BUNDLE_TIMEOUT: Duration = Duration::from_secs(90);
+pub(crate) const BUNDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// Longest any other request may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Failed long polls in a row after which the connection counts as lost.

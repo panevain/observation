@@ -130,7 +130,10 @@ impl HttpConfig {
         };
         let tokens = match (get("OBS_MCP_TOKENS"), get("OBS_MCP_TOKENS_FILE")) {
             (Some(_), Some(_)) => return Err(ConfigError::BothTokenSources),
-            (Some(list), None) => Some(parse_tokens("OBS_MCP_TOKENS", list.split(','))?),
+            (Some(list), None) => {
+                let entries = list.split(',').filter(|e| !e.trim().is_empty());
+                Some(parse_tokens("OBS_MCP_TOKENS", entries)?)
+            }
             (None, Some(path)) => {
                 let text = read(Path::new(&path)).map_err(|reason| ConfigError::TokensFile {
                     path: path.clone(),
@@ -368,7 +371,8 @@ mod tests {
 
     #[test]
     fn tokens_from_env_with_defaults() {
-        let tokens = format!("laptop:{S1}, ci : {S2}");
+        // Spaces around entries and empty entries (a trailing comma) are ignored.
+        let tokens = format!("laptop:{S1}, ci : {S2},");
         let c = load(
             None,
             &[
@@ -440,6 +444,10 @@ mod tests {
 
     #[test]
     fn refuses_to_serve_without_tokens() {
+        assert_eq!(
+            load(Some("127.0.0.1:1"), &[("OBS_MCP_TOKENS", " , ")], &[]),
+            Err(ConfigError::NoTokens)
+        );
         assert_eq!(
             load(Some("127.0.0.1:1"), &[], &[]),
             Err(ConfigError::NoTokens)
