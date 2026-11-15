@@ -756,11 +756,13 @@ fn ground_hit(
     (xz.cmpge(lo).all() && xz.cmple(hi).all()).then_some(p)
 }
 
-/// How close to the first corner a click closes the region, metres: it grows
-/// with the zoom so the corner stays easy to hit, and is drawn around it.
-/// The widest a target outline's closing circle gets, metres.
+/// The widest a target outline's closing circle gets, metres, whatever the
+/// zoom: a target is a few metres across, so a wider circle would close it
+/// before its last corners are in.
 const TARGET_SNAP_M: f32 = 0.5;
 
+/// How close to the first corner a click closes the region, metres: it grows
+/// with the zoom so the corner stays easy to hit, and is drawn around it.
 pub fn region_snap_m(view_distance: f32) -> f32 {
     (view_distance * 0.02).clamp(1.0, 10.0)
 }

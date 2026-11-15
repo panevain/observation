@@ -12,11 +12,12 @@
 //! events that arrived, and every [`POST_INTERVAL`] seconds, while a pairing
 //! is open, posts the state if its JSON differs from what was posted last
 //! (so a change of scene, selection or pinned point goes out within half a
-//! second, and nothing goes out while nothing changes). A refused post is
-//! tried again after [`RETRY_AFTER`] seconds. The event stream reconnects by
-//! itself when the connection drops; when the server closes it or says the
-//! pairing ended, the link ends. Pairings do not survive a reload: the token
-//! is held in memory only.
+//! second, and nothing goes out while nothing changes). The state, and its
+//! JSON, are built only when their [`StateKey`] or the pinned point changed.
+//! A refused post is tried again after [`RETRY_AFTER`] seconds. The event
+//! stream reconnects by itself when the connection drops; when the server
+//! closes it or says the pairing ended, the link ends. Pairings do not
+//! survive a reload: the token is held in memory only.
 //!
 //! Replies come back through the [`Http`] port's callbacks into a shared
 //! inbox, so the link needs no channel of the client's; each carries the
@@ -24,24 +25,97 @@
 //!
 //! The link also holds the agent's proposal, if one came (see
 //! [`crate::proposal`]): a new one replaces the one shown, which the agent
-//! superseded. [`AgentLink::follow_proposal`] keeps it checked against the
-//! document and tells the agent, once, when it goes stale; Accept and
-//! Reject send the user's decision.
+//! superseded. Proposal ids rise within a pairing, and the server sends the
+//! pending proposal again to every event stream it opens, so after a
+//! reconnect one with an id already seen is ignored: the card keeps its
+//! state, and nothing is toasted or decided twice.
+//! [`AgentLink::follow_proposal`] keeps it checked against the document and
+//! tells the agent, once, when it goes stale; Accept and Reject send the
+//! user's decision.
+//!
+//! A decision is sent at most once per proposal, and goes out ahead of the
+//! state: while one is on its way no state is posted, so the agent never
+//! reads a scene with a proposal applied before it hears that it was
+//! accepted, and the two share the pairing's post budget without the state
+//! starving the decision. A decision that gets no answer, a 429, a 408 or a
+//! 5xx is tried again, after the server's `Retry-After` when it gives one,
+//! else after [`DECISION_RETRY_FIRST`] seconds, doubling up to
+//! [`DECISION_RETRY_MAX`]; the card says it is telling the agent meanwhile.
+//! It stops when it is delivered, when the server answers 409 (decided
+//! already; after a retry that means an earlier try got through) or any
+//! other refusal, which the card then shows, or when the pairing ends.
 
 use crate::document::{Document, Models};
-use crate::platform::{Http, HttpRequest, Reply, StreamEvent, StreamStop};
+use crate::platform::{Failure, Http, HttpRequest, Reply, StatusReply, StreamEvent, StreamStop};
 use crate::proposal::{Accepted, PendingProposal, stale_reason};
 use observation_agent_api::{
     BrowserEvent, BrowserEventKind, CreatePairing, Decision, DecisionPost, PROTOCOL_VERSION,
     PairingCreated, PairingPhase, PinnedPoint, Proposal, SharedState, StatePost, display_code,
     paths, version_ok,
 };
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// Seconds between checks of whether the state changed.
 pub const POST_INTERVAL: f32 = 0.5;
 /// Seconds before a refused post is tried again.
 pub const RETRY_AFTER: f32 = 5.0;
+/// Seconds before an undelivered decision is first tried again, when the
+/// server does not say; each further try waits twice as long as the last.
+pub const DECISION_RETRY_FIRST: f32 = 1.0;
+/// The longest wait between tries of a decision, seconds, unless the
+/// server's `Retry-After` asks for longer.
+pub const DECISION_RETRY_MAX: f32 = 30.0;
+/// The longest `Retry-After` honoured for a decision, seconds.
+const DECISION_RETRY_AFTER_MAX: f32 = 300.0;
+
+/// What the shared state is built from, cheap to compare:
+/// [`AgentLink::update`] builds the state, and its JSON, only when this or
+/// the pinned point changed since it last did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StateKey {
+    /// The document's revision, which every change of it (its area
+    /// included) bumps.
+    pub revision: u64,
+    /// Changes whenever the camera models may have (the client passes its
+    /// `Models` resource's change tick): the custom models are part of the
+    /// scene.
+    pub models: u64,
+    pub scene_name: String,
+    pub selected: Option<u32>,
+}
+
+/// A decision on its way to the server.
+#[derive(Debug)]
+struct Outgoing {
+    /// The proposal decided.
+    id: u64,
+    body: Option<String>,
+    /// Tries sent so far.
+    tries: u32,
+    /// Seconds before the next try.
+    wait: f32,
+    /// A try is waiting for its answer.
+    in_flight: bool,
+}
+
+/// How long to wait before trying an undelivered decision again, after
+/// `tries` tries and this failure; `None` when trying again cannot help.
+fn retry_wait(failure: &Failure, tries: u32) -> Option<f32> {
+    let worth_it = match failure.status {
+        // No answer at all: offline, or the server is restarting.
+        None => true,
+        Some(status) => status == 408 || status == 429 || (500..=599).contains(&status),
+    };
+    if !worth_it {
+        return None;
+    }
+    let doublings = tries.saturating_sub(1).min(5);
+    let backoff = (DECISION_RETRY_FIRST * f32::from(1u8 << doublings)).min(DECISION_RETRY_MAX);
+    Some(failure.retry_after_s.map_or(backoff, |s| {
+        (s as f32).clamp(DECISION_RETRY_FIRST, DECISION_RETRY_AFTER_MAX)
+    }))
+}
 
 /// Where the link stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +138,7 @@ enum Incoming {
     Posted(Reply),
     Stream(StreamEvent),
     /// The reply to a decision on this proposal.
-    Decided(u64, Reply),
+    Decided(u64, StatusReply),
 }
 
 type Inbox = Arc<Mutex<Vec<(u64, Incoming)>>>;
@@ -84,6 +158,8 @@ pub struct AgentLink {
     inbox: Inbox,
     /// The state JSON posted last (or being posted).
     last_posted: Option<String>,
+    /// What the state was last built from, with the pinned point's number.
+    built_from: Option<(StateKey, u64)>,
     posting: bool,
     timer: f32,
     /// Seconds to wait before the next post (after a refusal).
@@ -96,6 +172,12 @@ pub struct AgentLink {
     proposal: Option<PendingProposal>,
     /// A proposal that arrived and is not on the card yet.
     arrived: Option<Proposal>,
+    /// The highest proposal id taken in this pairing (0 for none).
+    newest_proposal: u64,
+    /// Decisions to deliver, oldest first; only the first is ever sent.
+    outbox: VecDeque<Outgoing>,
+    /// The proposals a decision was sent for in this pairing.
+    decided: Vec<u64>,
     /// The proposal card is open.
     pub card_open: bool,
     /// What to tell the user in a toast.
@@ -113,6 +195,7 @@ impl Default for AgentLink {
             stop: None,
             inbox: Arc::default(),
             last_posted: None,
+            built_from: None,
             posting: false,
             timer: 0.0,
             backoff: 0.0,
@@ -121,6 +204,9 @@ impl Default for AgentLink {
             pin_seq: 0,
             proposal: None,
             arrived: None,
+            newest_proposal: 0,
+            outbox: VecDeque::new(),
+            decided: Vec::new(),
             card_open: false,
             notices: Vec::new(),
         }
@@ -138,7 +224,9 @@ pub fn shared_state(
     pinned: Option<PinnedPoint>,
 ) -> Option<SharedState> {
     let file = doc.to_file(models)?;
-    let scene = serde_json::from_str(&file.to_json()).ok()?;
+    // Through the JSON text, so numbers read exactly as in an exported file
+    // (an `f32` straight into a `Value` would carry its binary noise).
+    let scene = serde_json::from_str(&serde_json::to_string(&file).ok()?).ok()?;
     let mut state = SharedState {
         scene,
         scene_name: Some(scene_name.to_owned()),
@@ -214,7 +302,9 @@ impl AgentLink {
     /// proposal against the document; when that makes it stale, tells the
     /// agent. Run after every frame's edits.
     pub fn follow_proposal(&mut self, http: &dyn Http, doc: &Document, models: &Models) {
-        if let Some(p) = self.arrived.take() {
+        // One already taken (sent again to a reopened stream) stays as it is.
+        if let Some(p) = self.arrived.take().filter(|p| p.id > self.newest_proposal) {
+            self.newest_proposal = p.id;
             let p = PendingProposal::new(p, models);
             self.notices
                 .push(format!("The agent proposes: {}", p.summary));
@@ -276,6 +366,9 @@ impl AgentLink {
         }
     }
 
+    /// Queues the user's decision on proposal `id` and sends it if nothing
+    /// is ahead of it. A proposal is decided once: a second decision for it
+    /// is dropped.
     fn send_decision(
         &mut self,
         http: &dyn Http,
@@ -283,12 +376,16 @@ impl AgentLink {
         decision: Decision,
         reason: Option<String>,
     ) {
-        let Some(token) = self.token.clone() else {
-            if let Some(p) = self.proposal.as_mut().filter(|p| p.id == id) {
+        if self.decided.contains(&id) {
+            return;
+        }
+        if self.token.is_none() {
+            if let Some(p) = self.proposal_with(id) {
                 p.decision_error = Some("the connection to the agent has ended".into());
             }
             return;
-        };
+        }
+        self.decided.push(id);
         let body = serde_json::to_string(&DecisionPost {
             v: PROTOCOL_VERSION,
             id,
@@ -296,8 +393,34 @@ impl AgentLink {
             reason,
         })
         .ok();
+        self.outbox.push_back(Outgoing {
+            id,
+            body,
+            tries: 0,
+            wait: 0.0,
+            in_flight: false,
+        });
+        self.send_next_decision(http, 0.0);
+    }
+
+    /// Sends the first queued decision once its wait is over (`dt` seconds
+    /// have passed since the last call), unless a try of it is in flight.
+    fn send_next_decision(&mut self, http: &dyn Http, dt: f32) {
+        let Some(token) = self.token.clone() else {
+            return;
+        };
+        let Some(next) = self.outbox.front_mut().filter(|o| !o.in_flight) else {
+            return;
+        };
+        next.wait -= dt;
+        if next.wait > 0.0 {
+            return;
+        }
+        next.in_flight = true;
+        next.tries += 1;
+        let (id, body) = (next.id, next.body.clone());
         let (inbox, generation) = (Arc::clone(&self.inbox), self.generation);
-        http.fetch(
+        http.fetch_status(
             HttpRequest {
                 url: paths::DECISION.to_owned(),
                 method: "POST",
@@ -306,6 +429,48 @@ impl AgentLink {
             },
             Box::new(move |reply| push(&inbox, generation, Incoming::Decided(id, reply))),
         );
+    }
+
+    /// The reply to a try of the first queued decision: delivered, to be
+    /// tried again, or given up.
+    fn decided_reply(&mut self, id: u64, reply: StatusReply) {
+        let Some(sent) = self
+            .outbox
+            .front_mut()
+            .filter(|o| o.id == id && o.in_flight)
+        else {
+            return;
+        };
+        sent.in_flight = false;
+        let tries = sent.tries;
+        let failure = match reply {
+            Ok(_) => None,
+            Err(failure) => match retry_wait(&failure, tries) {
+                Some(wait) => {
+                    sent.wait = wait;
+                    if let Some(p) = self.proposal_with(id) {
+                        p.decision_retrying = true;
+                    }
+                    return;
+                }
+                None => Some(failure),
+            },
+        };
+        self.outbox.pop_front();
+        // A 409 after a retry: an earlier try reached the server, and only
+        // its answer was lost.
+        let error = failure
+            .filter(|f| f.status != Some(409) || tries == 1)
+            .map(|f| f.message);
+        if let Some(p) = self.proposal_with(id) {
+            p.decision_retrying = false;
+            p.decision_error = error;
+        }
+    }
+
+    /// The proposal on the card, if it is proposal `id`.
+    fn proposal_with(&mut self, id: u64) -> Option<&mut PendingProposal> {
+        self.proposal.as_mut().filter(|p| p.id == id)
     }
 
     /// Asks for a new pairing (Connect agent), unless one is open.
@@ -371,6 +536,7 @@ impl AgentLink {
         self.token = None;
         self.generation += 1;
         self.last_posted = None;
+        self.built_from = None;
         self.posting = false;
         self.timer = 0.0;
         self.backoff = 0.0;
@@ -378,6 +544,15 @@ impl AgentLink {
         self.pinned = None;
         self.pin_seq = 0;
         self.arrived = None;
+        self.newest_proposal = 0;
+        self.decided.clear();
+        for undelivered in std::mem::take(&mut self.outbox) {
+            if let Some(p) = self.proposal_with(undelivered.id) {
+                p.decision_retrying = false;
+                p.decision_error =
+                    Some("the connection to the agent ended before it was told".into());
+            }
+        }
         if let Some(p) = &mut self.proposal {
             p.close("The connection to the agent ended before you decided.");
         }
@@ -388,21 +563,27 @@ impl AgentLink {
         self.phase = LinkPhase::Ended { why: why.into() };
     }
 
-    /// Takes in what arrived, then posts the state if it is time and it
-    /// changed. `dt` is the frame's wall-clock seconds; `state` builds what
-    /// the app shares, given the pinned point (see [`shared_state`]).
+    /// Takes in what arrived, sends a decision that is due, then posts the
+    /// state if it is time and it changed (never while a decision is on its
+    /// way). `dt` is the frame's wall-clock seconds; `key` says what the
+    /// state is built from, and `state` builds it, given the pinned point
+    /// (see [`shared_state`]), only when `key` or the pinned point changed.
     pub fn update(
         &mut self,
         http: &dyn Http,
         dt: f32,
+        key: StateKey,
         state: impl FnOnce(Option<PinnedPoint>) -> Option<SharedState>,
     ) {
         self.take_in(http);
         if !matches!(
             self.phase,
             LinkPhase::Waiting { .. } | LinkPhase::Connected { .. }
-        ) || self.posting
-        {
+        ) {
+            return;
+        }
+        self.send_next_decision(http, dt);
+        if self.posting || !self.outbox.is_empty() {
             return;
         }
         self.timer += dt;
@@ -413,6 +594,11 @@ impl AgentLink {
         let Some(token) = self.token.clone() else {
             return;
         };
+        let built_from = (key, self.pin_seq);
+        if self.built_from.as_ref() == Some(&built_from) {
+            return;
+        }
+        self.built_from = Some(built_from);
         let Some(state) = state(self.pinned) else {
             return;
         };
@@ -459,18 +645,14 @@ impl AgentLink {
                         Err(why) => {
                             // Posted again once the wait is over.
                             self.last_posted = None;
+                            self.built_from = None;
                             self.backoff = RETRY_AFTER;
                             self.post_error = Some(why);
                         }
                     }
                 }
                 Incoming::Stream(event) => self.stream(event),
-                Incoming::Decided(id, Err(why)) => {
-                    if let Some(p) = self.proposal.as_mut().filter(|p| p.id == id) {
-                        p.decision_error = Some(why);
-                    }
-                }
-                Incoming::Decided(_, Ok(_)) => {}
+                Incoming::Decided(id, reply) => self.decided_reply(id, reply),
             }
         }
     }
@@ -543,8 +725,11 @@ impl AgentLink {
                     }
                     BrowserEventKind::Proposal { proposal } => {
                         // The card takes it after the frame's edits, with
-                        // the models' names (see `follow_proposal`).
-                        self.arrived = Some(proposal);
+                        // the models' names (see `follow_proposal`). Ids
+                        // rise, so an older one is never wanted.
+                        if self.arrived.as_ref().is_none_or(|a| a.id < proposal.id) {
+                            self.arrived = Some(proposal);
+                        }
                     }
                     BrowserEventKind::ProposalWithdrawn { id } => {
                         if self.arrived.as_ref().is_some_and(|p| p.id == id) {

@@ -5,8 +5,8 @@
 //! computed by the same [`CoverageBackend`] as the document's: in the
 //! browser, in the coverage worker. Its cameras' ids carry
 //! [`PREVIEW_ID_BIT`], so its jobs never collide with the document's (the
-//! backend keeps one job per camera id), and every result the backend
-//! returns is offered to both states, each keeping only its own. A camera
+//! backend keeps one job per camera id), and the backend's results are
+//! split by that bit between the two states. A camera
 //! the proposal leaves as it is takes the document's sight lines, so only
 //! new and changed cameras are computed.
 
@@ -16,11 +16,12 @@ use crate::document::{Document, Models};
 use observation_core::camera::{DoriLevel, Lighting};
 use observation_core::coverage::{CoverageStats, StaticLayers};
 use observation_core::coverage_job::JobResult;
-use observation_core::scene::SceneFile;
+use observation_core::scene::{MAX_ITEM_ID, SceneFile};
 
-/// Set in the ids of the preview's cameras. Scenes number their cameras
-/// from 1 upwards, so the document's ids stay below it.
-pub const PREVIEW_ID_BIT: u32 = 1 << 31;
+/// Set in the ids of the preview's cameras. A scene's camera ids stay at or
+/// below [`MAX_ITEM_ID`], just under it: the scene sanitiser, change sets
+/// and the document's id counter all keep them there.
+pub const PREVIEW_ID_BIT: u32 = MAX_ITEM_ID + 1;
 
 /// A proposed scene to preview: proposal `id`'s scene at `revision`.
 #[derive(Debug, Clone, Copy)]
@@ -44,22 +45,34 @@ struct Inner {
 #[derive(Debug, Default)]
 pub struct Preview {
     inner: Option<Inner>,
+    /// The proposed scene has a camera id with [`PREVIEW_ID_BIT`] set, so
+    /// it is not previewed (see [`Preview::unavailable`]).
+    unavailable: bool,
 }
 
 impl Preview {
     /// Stops previewing (no proposal, or a new area).
     pub fn clear(&mut self) {
         self.inner = None;
+        self.unavailable = false;
     }
 
+    /// Whether a proposed scene is being previewed, or was refused.
     pub fn is_active(&self) -> bool {
-        self.inner.is_some()
+        self.inner.is_some() || self.unavailable
+    }
+
+    /// The proposed scene cannot be previewed: it has a camera id outside
+    /// a scene's range, which [`PREVIEW_ID_BIT`] cannot mark. Its figures
+    /// never come, so the card should not wait for them.
+    pub fn unavailable(&self) -> bool {
+        self.unavailable
     }
 
     /// Brings the preview up to date with `proposed`. `main` is the
     /// document's state, whose sight lines unchanged cameras take; `results`
-    /// are this frame's results from `backend` (the document's state is
-    /// offered them too).
+    /// are this frame's results from `backend` for ids with
+    /// [`PREVIEW_ID_BIT`] (the document's state takes the others).
     pub fn update(
         &mut self,
         proposed: Proposed,
@@ -69,6 +82,20 @@ impl Preview {
         results: Vec<JobResult>,
         backend: &mut CoverageBackend,
     ) {
+        // Never true while scene ids keep to `MAX_ITEM_ID`. Were it true,
+        // marking such a camera's id would give it another camera's id, and
+        // the two would share the backend's jobs.
+        if proposed
+            .scene
+            .cameras
+            .iter()
+            .any(|c| c.id & PREVIEW_ID_BIT != 0)
+        {
+            self.inner = None;
+            self.unavailable = true;
+            return;
+        }
+        self.unavailable = false;
         let source = (proposed.id, proposed.revision);
         if self.inner.as_ref().is_none_or(|i| i.source != source) {
             let mut file = proposed.scene.clone();
@@ -233,5 +260,48 @@ mod tests {
         assert!(preview.is_active());
         preview.clear();
         assert!(preview.stats(&backend).is_none());
+    }
+
+    #[test]
+    fn a_camera_id_with_the_preview_bit_is_not_previewed() {
+        let (layers, models) = world();
+        let mut doc = Document::default();
+        doc.area = Some(AreaRef::Demo);
+        doc.cameras = vec![camera(1, -60.0, 90.0)];
+        let mut backend = CoverageBackend::default();
+        let mut main = CoverageState::default();
+        update(&mut main, &doc, &models, &layers, Vec::new(), &mut backend);
+        assert_eq!(backend.submitted(), 1);
+
+        // Marked, camera 1 | bit 31 would be the document's camera 1's twin.
+        let mut proposed = doc.to_file(&models).unwrap();
+        proposed
+            .cameras
+            .push(camera(1 | PREVIEW_ID_BIT, 60.0, 270.0));
+        let mut preview = Preview::default();
+        let at = Proposed {
+            id: 1,
+            revision: 1,
+            scene: &proposed,
+        };
+        preview.update(at, &main, &models, &layers, Vec::new(), &mut backend);
+        assert_eq!(backend.submitted(), 1, "no job is shared or sent");
+        assert!(preview.unavailable() && preview.is_active());
+        assert!(preview.stats(&backend).is_none());
+        assert!(preview.settings().is_none());
+
+        // A usable revision of it is previewed again.
+        proposed.cameras.pop();
+        proposed.cameras.push(camera(2, 60.0, 270.0));
+        let at = Proposed {
+            id: 1,
+            revision: 2,
+            scene: &proposed,
+        };
+        preview.update(at, &main, &models, &layers, Vec::new(), &mut backend);
+        assert!(!preview.unavailable());
+        assert!(preview.stats(&backend).is_some());
+        preview.clear();
+        assert!(!preview.is_active());
     }
 }

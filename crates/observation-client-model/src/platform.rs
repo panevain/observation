@@ -12,6 +12,33 @@
 /// A reply body, or why there is none (already worded for the user).
 pub type Reply = Result<Vec<u8>, String>;
 
+/// Why a request failed, as [`Http::fetch_status`] reports it: enough to
+/// decide whether trying again could help.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    /// The reply's HTTP status; `None` when no reply came at all (offline,
+    /// a dead server, a blocked connection) or it is not known.
+    pub status: Option<u16>,
+    /// The reply's `Retry-After`, in seconds, when it gave one as a number.
+    pub retry_after_s: Option<u64>,
+    /// What went wrong, worded for the user (as a [`Reply`]'s error).
+    pub message: String,
+}
+
+impl Failure {
+    /// A failure whose status is not known.
+    pub fn without_status(message: String) -> Self {
+        Self {
+            status: None,
+            retry_after_s: None,
+            message,
+        }
+    }
+}
+
+/// A reply body, or why there is none with the reply's status.
+pub type StatusReply = Result<Vec<u8>, Failure>;
+
 /// One HTTP request.
 #[derive(Clone, PartialEq, Eq)]
 pub struct HttpRequest {
@@ -83,6 +110,15 @@ pub trait Http: Send + Sync + 'static {
     /// Sends the request; `done` is called once with the body of a successful
     /// reply or a description of the failure.
     fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>);
+    /// The same, but a failure carries the reply's status and
+    /// `Retry-After`, for callers that try again. By default (the native
+    /// build) neither is known.
+    fn fetch_status(&self, req: HttpRequest, done: Box<dyn FnOnce(StatusReply) + Send>) {
+        self.fetch(
+            req,
+            Box::new(move |reply| done(reply.map_err(Failure::without_status))),
+        );
+    }
     /// Follows a server-sent event stream: `on` is called with the data of
     /// every `event` message, and with an error whenever the stream drops;
     /// a stream that drops is reopened and lives as long as the page. If the

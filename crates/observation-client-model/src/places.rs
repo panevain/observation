@@ -112,6 +112,19 @@ fn finish_area(ctx: &mut EditCtx) {
         AreaDraw::Redraw(id) if area_by_id(&ctx.doc.get().areas, Some(id)).is_some() => Some(id),
         _ => None,
     };
+    // Redrawing an area keeps the count; any other drawing may add one.
+    let adds = match ctx.editor.area_draw {
+        AreaDraw::Limit => ctx.doc.get().region().is_none(),
+        AreaDraw::Redraw(_) => redraw.is_none(),
+        AreaDraw::New => true,
+    };
+    if adds && ctx.doc.get().areas.len() >= MAX_AREAS {
+        ctx.editor.region_draft = region.points;
+        ctx.toasts.error(format!(
+            "A scene holds at most {MAX_AREAS} areas; delete one you no longer need first"
+        ));
+        return;
+    }
     match (ctx.editor.area_draw, redraw) {
         (AreaDraw::Limit, _) => {
             let doc = ctx.doc.get_mut();
@@ -134,13 +147,6 @@ fn finish_area(ctx: &mut EditCtx) {
             ctx.editor.tool = Tool::Select;
         }
         _ => {
-            if ctx.doc.get().areas.len() >= MAX_AREAS {
-                ctx.editor.region_draft = region.points;
-                ctx.toasts.error(format!(
-                    "A scene holds at most {MAX_AREAS} areas; delete one you no longer need first"
-                ));
-                return;
-            }
             let doc = ctx.doc.get_mut();
             let id = fresh_id(doc.areas.iter().map(|a| a.id));
             doc.areas.push(LabelledArea {
@@ -519,6 +525,30 @@ mod tests {
         assert_eq!(f.doc.areas.len(), MAX_AREAS);
         assert_eq!(f.editor.region_draft.len(), 4, "kept");
         assert_eq!(f.toasts()[0].0, ToastKind::Error);
+
+        // Nor does drawing the limiting area add a 65th, or redrawing an
+        // area deleted meanwhile.
+        let full =
+            format!("A scene holds at most {MAX_AREAS} areas; delete one you no longer need first");
+        for draw in [AreaDraw::Limit, AreaDraw::Redraw(999)] {
+            f.editor.region_draft.clear();
+            f.editor.area_draw = draw;
+            let revision = f.doc.revision;
+            f.draw(&square(0.0, 10.0));
+            assert_eq!((f.doc.areas.len(), f.doc.revision), (MAX_AREAS, revision));
+            assert_eq!(f.doc.limit_figures_to, None);
+            assert_eq!(f.editor.region_draft.len(), 4, "kept");
+            assert_eq!(f.editor.area_draw, draw, "still drawing it");
+            assert_eq!(f.toasts().last(), Some(&(ToastKind::Error, full.as_str())));
+        }
+
+        // Redrawing the limiting area when there is one changes no count.
+        set_figures_limit(&mut f.doc, Some(3));
+        f.editor.region_draft.clear();
+        f.editor.area_draw = AreaDraw::Limit;
+        f.draw(&square(40.0, 10.0));
+        assert_eq!(f.doc.areas.len(), MAX_AREAS);
+        assert_eq!(f.doc.region().map(|r| r.points[0]), Some([40.0, 0.0]));
     }
 
     #[test]

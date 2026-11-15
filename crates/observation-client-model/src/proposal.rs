@@ -82,6 +82,8 @@ pub struct PendingProposal {
     pub reason: String,
     /// The decision could not be sent to the agent: why.
     pub decision_error: Option<String>,
+    /// The decision did not get through yet and is being tried again.
+    pub decision_retrying: bool,
     /// The scene accepting would leave, from the current document; `None`
     /// unless the proposal is open and usable.
     proposed: Option<SceneFile>,
@@ -95,7 +97,8 @@ pub struct PendingProposal {
 /// as the agent read it; `None` before an area has loaded.
 pub fn current_scene(doc: &Document, models: &Models) -> Option<SceneFile> {
     let file = doc.to_file(models)?;
-    SceneFile::from_json(&file.to_json()).ok()
+    // Compact rather than the export's indented text: it reads the same.
+    SceneFile::from_json(&serde_json::to_string(&file).ok()?).ok()
 }
 
 impl PendingProposal {
@@ -133,6 +136,7 @@ impl PendingProposal {
             standing,
             reason: String::new(),
             decision_error: None,
+            decision_retrying: false,
             proposed: None,
             proposed_revision: 0,
             checked: None,
@@ -264,6 +268,8 @@ pub struct ProposalCardVm {
     pub accept_tip: String,
     /// The decision could not be sent.
     pub decision_error: Option<String>,
+    /// The decision is being tried again ("Telling the agent…").
+    pub telling_agent: bool,
 }
 
 impl ProposalCardVm {
@@ -302,6 +308,7 @@ impl ProposalCardVm {
             can_reject: p.standing.is_open(),
             accept_tip,
             decision_error: p.decision_error.clone(),
+            telling_agent: p.decision_retrying,
         }
     }
 }

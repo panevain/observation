@@ -11,7 +11,9 @@ use super::{
 };
 use bevy::log::warn;
 use observation_client_model::coverage::backend::not_started;
-use observation_client_model::platform::{JobChannel, Reply, StreamEvent, StreamStop};
+use observation_client_model::platform::{
+    Failure, JobChannel, Reply, StatusReply, StreamEvent, StreamStop,
+};
 use observation_core::evidence::{PAGE_HEIGHT, PAGE_WIDTH, SheetSvg};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -37,6 +39,10 @@ struct Fetch;
 
 impl Http for Fetch {
     fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>) {
+        spawn_fetch(req, move |reply| done(reply.map_err(|f| f.message)));
+    }
+
+    fn fetch_status(&self, req: HttpRequest, done: Box<dyn FnOnce(StatusReply) + Send>) {
         spawn_fetch(req, done);
     }
 
@@ -163,18 +169,20 @@ pub fn js_cause(e: &wasm_bindgen::JsValue) -> String {
     }
 }
 
-fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+fn spawn_fetch(req: HttpRequest, done: impl FnOnce(StatusReply) + 'static) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     wasm_bindgen_futures::spawn_local(async move {
         let result = async {
-            let window = web_sys::window()
-                .ok_or("the browser gave the app no window to make requests from")?;
+            let no_reply = |message: String| Failure::without_status(message);
+            let window = web_sys::window().ok_or_else(|| {
+                no_reply("the browser gave the app no window to make requests from".into())
+            })?;
             let init = web_sys::RequestInit::new();
             init.set_method(req.method);
             let headers = web_sys::Headers::new()
-                .map_err(|e| format!("could not build the request: {}", js_cause(&e)))?;
+                .map_err(|e| no_reply(format!("could not build the request: {}", js_cause(&e))))?;
             if let Some(body) = &req.body {
                 let _ = headers.set("content-type", "application/json");
                 init.set_body(&wasm_bindgen::JsValue::from_str(body));
@@ -189,16 +197,23 @@ fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 's
                 JsFuture::from(window.fetch_with_str_and_init(&req.url, &init))
                     .await
                     .map_err(|e| {
-                        format!(
+                        no_reply(format!(
                             "the server did not answer (you may be offline, or it may be down): {}",
                             js_cause(&e)
-                        )
+                        ))
                     })?
                     .dyn_into()
                     .map_err(|_| {
-                        "the browser returned something other than a response".to_owned()
+                        no_reply("the browser returned something other than a response".to_owned())
                     })?;
             if !resp.ok() {
+                // Seconds only; the date form is not worth reading here.
+                let retry_after_s = resp
+                    .headers()
+                    .get("retry-after")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.trim().parse::<u64>().ok());
                 let body = match resp.text() {
                     Ok(text) => JsFuture::from(text)
                         .await
@@ -207,24 +222,24 @@ fn spawn_fetch(req: HttpRequest, done: impl FnOnce(Result<Vec<u8>, String>) + 's
                         .unwrap_or_default(),
                     Err(_) => String::new(),
                 };
-                return Err(observation_client_model::net::http_failure(
-                    resp.status(),
-                    &body,
-                ));
+                return Err(Failure {
+                    status: Some(resp.status()),
+                    retry_after_s,
+                    message: observation_client_model::net::http_failure(resp.status(), &body),
+                });
             }
             let read_err = |e: wasm_bindgen::JsValue| {
-                format!(
+                no_reply(format!(
                     "the connection dropped while the reply was downloading: {}",
                     js_cause(&e)
-                )
+                ))
             };
             let buf = JsFuture::from(resp.array_buffer().map_err(read_err)?)
                 .await
                 .map_err(read_err)?;
-            Ok(js_sys::Uint8Array::new(&buf).to_vec())
+            Ok::<_, Failure>(js_sys::Uint8Array::new(&buf).to_vec())
         }
-        .await
-        .map_err(|e: String| e);
+        .await;
         done(result);
     });
 }

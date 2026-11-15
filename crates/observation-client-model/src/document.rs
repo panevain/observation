@@ -15,7 +15,7 @@ use observation_core::footage::{
 use observation_core::geo::{BBox, LatLon};
 use observation_core::provenance::{DataChange, Provenance};
 use observation_core::scene::agent_log::AgentLogEntry;
-use observation_core::scene::{AreaRef, SceneFile};
+use observation_core::scene::{AreaRef, MAX_ITEM_ID, SceneFile};
 
 pub mod area_load;
 
@@ -110,6 +110,12 @@ pub struct Document {
     /// The agent proposals accepted into this scene, oldest first (saved
     /// with it; see [`observation_core::scene::agent_log`]).
     pub agent_log: Vec<AgentLogEntry>,
+    /// Counts the proposals taken in with [`Self::take_items`] (undo puts
+    /// back the count of the step it returns to), so the history tells an
+    /// accepted proposal from an import that brings a longer change log.
+    pub accepted_proposals: u64,
+    /// The id the next camera gets if no camera has it (see
+    /// [`Self::fresh_camera_id`]); only ever a hint.
     next_id: u32,
     /// Bumped on every change; drives sync, coverage and autosave.
     pub revision: u64,
@@ -129,6 +135,7 @@ impl Default for Document {
             provenance: None,
             saved_provenance: None,
             agent_log: Vec::new(),
+            accepted_proposals: 0,
             next_id: 1,
             revision: 0,
         }
@@ -150,8 +157,9 @@ impl Document {
     }
 
     pub fn add_camera(&mut self, mut c: CameraPlacement) -> u32 {
-        c.id = self.next_id;
-        self.next_id += 1;
+        c.id = self.fresh_camera_id();
+        // At most `MAX_ITEM_ID`, so this cannot overflow.
+        self.next_id = c.id + 1;
         if c.label.is_empty() {
             c.label = format!("Camera {}", c.id);
         }
@@ -159,6 +167,23 @@ impl Document {
         self.cameras.push(c);
         self.touch();
         id
+    }
+
+    /// An id for a new camera that no camera has, at most [`MAX_ITEM_ID`]:
+    /// the counter's next one, so ids are not reused while counting up; else
+    /// one above the highest; else (a file or a proposal brought an id at
+    /// the top of the range) the lowest unused one, which exists because a
+    /// scene holds far fewer cameras than ids.
+    fn fresh_camera_id(&self) -> u32 {
+        let taken = |id: u32| self.cameras.iter().any(|c| c.id == id);
+        if (1..=MAX_ITEM_ID).contains(&self.next_id) && !taken(self.next_id) {
+            return self.next_id;
+        }
+        let highest = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
+        if highest < MAX_ITEM_ID {
+            return highest + 1;
+        }
+        (1..=MAX_ITEM_ID).find(|&id| !taken(id)).unwrap_or(1)
     }
 
     pub fn remove_camera(&mut self, id: u32) {
@@ -221,6 +246,7 @@ impl Document {
             targets: self.targets.clone(),
             custom_models: models.custom.clone(),
             agent_log: self.agent_log.clone(),
+            accepted_proposals: self.accepted_proposals,
         }
     }
 
@@ -240,13 +266,14 @@ impl Document {
         self.limit_figures_to = s.limit_figures_to;
         self.targets = s.targets.clone();
         self.agent_log = s.agent_log.clone();
+        self.accepted_proposals = s.accepted_proposals;
         // Every step was recorded with its cameras on the terrain (none is
         // while a flat-ground scene waits for its area).
         self.on_flat_ground = false;
         // Never hand out an id the restored cameras already use (an import
         // resets `next_id`, so undoing past one can bring back higher ids).
         let max = self.cameras.iter().map(|c| c.id).max().unwrap_or(0);
-        self.next_id = self.next_id.max(max + 1);
+        self.next_id = self.next_id.max(max.saturating_add(1));
         models.custom = s.custom_models.clone();
         self.touch();
     }
@@ -263,7 +290,13 @@ impl Document {
         self.area = Some(file.area);
         self.on_flat_ground = file.on_flat_ground();
         self.origin = file.origin;
-        self.next_id = file.cameras.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        self.next_id = file
+            .cameras
+            .iter()
+            .map(|c| c.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         self.cameras = file.cameras;
         self.params = file.params;
         self.areas = file.areas;
@@ -289,6 +322,7 @@ impl Document {
         self.limit_figures_to = file.limit_figures_to;
         self.targets = file.targets;
         self.agent_log = file.agent_log;
+        self.accepted_proposals = self.accepted_proposals.wrapping_add(1);
         models.custom = file.custom_models;
         self.touch();
     }
@@ -341,6 +375,9 @@ pub struct Snapshot {
     pub custom_models: Vec<CameraModel>,
     /// The change log, so undoing an accepted proposal takes its entry out.
     pub agent_log: Vec<AgentLogEntry>,
+    /// [`Document::accepted_proposals`]: a step that changes it accepted a
+    /// proposal.
+    pub accepted_proposals: u64,
 }
 
 /// Request to (re)load an area.
@@ -547,5 +584,60 @@ mod tests {
         let same = scene.snapshot(&models);
         scene.restore(&same, &mut models);
         assert!(scene.provenance.is_some());
+    }
+
+    /// Adds `n` cameras and checks that every id is unique and in range.
+    fn add_and_check(scene: &mut Document, n: usize) -> Vec<u32> {
+        let added: Vec<u32> = (0..n).map(|_| scene.add_camera(camera())).collect();
+        let mut ids: Vec<u32> = scene.cameras.iter().map(|c| c.id).collect();
+        let len = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), len, "no id is shared: {ids:?}");
+        assert!(added.iter().all(|&id| (1..=MAX_ITEM_ID).contains(&id)));
+        added
+    }
+
+    #[test]
+    fn camera_ids_at_the_top_of_the_range_neither_collide_nor_overflow() {
+        let mut models = Models::new(Catalog::default());
+        for top in [u32::MAX, MAX_ITEM_ID + 1, MAX_ITEM_ID] {
+            // A loaded file.
+            let mut scene = Document::default();
+            let mut f = file(None);
+            f.cameras.push(CameraPlacement {
+                id: top,
+                ..camera()
+            });
+            scene.load_file(f.clone(), &mut models);
+            assert_eq!(add_and_check(&mut scene, 3), [1, 2, 3]);
+
+            // An accepted proposal taken over cameras of the document's own.
+            let mut scene = Document::default();
+            scene.load_file(file(None), &mut models);
+            assert_eq!(add_and_check(&mut scene, 2), [1, 2]);
+            let mut taken = f.clone();
+            taken.cameras = scene.cameras.clone();
+            taken.cameras.push(CameraPlacement {
+                id: top,
+                ..camera()
+            });
+            scene.take_items(taken.clone(), &mut models);
+            assert_eq!(add_and_check(&mut scene, 2), [3, 4]);
+
+            // And undoing back to it.
+            let snapshot = scene.snapshot(&models);
+            scene.restore(&snapshot, &mut models);
+            add_and_check(&mut scene, 1);
+        }
+        // Below the top, ids carry on from the highest.
+        let mut scene = Document::default();
+        let mut f = file(None);
+        f.cameras.push(CameraPlacement {
+            id: MAX_ITEM_ID - 1,
+            ..camera()
+        });
+        scene.load_file(f, &mut models);
+        assert_eq!(add_and_check(&mut scene, 2), [MAX_ITEM_ID, 1]);
     }
 }

@@ -19,7 +19,7 @@ use crate::world::{AreaLoadSet, CLEAR, FacadeOverlay, OutsideArea, Overlay, texe
 use bevy::prelude::*;
 use observation_client_model::coverage;
 use observation_client_model::coverage::backend::{self, WorkerNote};
-use observation_client_model::coverage::preview::{Preview, Proposed};
+use observation_client_model::coverage::preview::{PREVIEW_ID_BIT, Preview, Proposed};
 use observation_client_model::editor::AreaDraw;
 use observation_client_model::proposal::Settings;
 use observation_core::camera::{CameraModel, CameraPlacement};
@@ -42,6 +42,8 @@ pub struct ProposalCoverage {
     /// The proposed scene's figures at its selected level and lighting,
     /// once every camera's sight lines are in.
     pub after: Option<(Settings, CoverageStats)>,
+    /// The proposed scene cannot be previewed, so `after` never comes.
+    pub unavailable: bool,
 }
 
 /// Where coverage jobs run, as a non-send resource: in the browser it owns
@@ -153,12 +155,11 @@ fn update_coverage(
             scene,
         })
     });
-    // Both states are offered every result; each keeps its own cameras'.
-    let preview_results = if proposed.is_some() {
-        results.clone()
-    } else {
-        Vec::new()
-    };
+    // The preview's cameras carry `PREVIEW_ID_BIT`; each state takes its
+    // own cameras' results (the preview's are dropped when there is none).
+    let (preview_results, results): (Vec<_>, Vec<_>) = results
+        .into_iter()
+        .partition(|r| r.camera_id & PREVIEW_ID_BIT != 0);
     if !results.is_empty() || scene.is_changed() || models.is_changed() || !state.counted() {
         coverage::update(&mut state, &scene, &models, layers, results, &mut backend);
     }
@@ -175,10 +176,15 @@ fn update_coverage(
             if proposal.after != after {
                 proposal.after = after;
             }
+            let unavailable = proposal.preview.unavailable();
+            if proposal.unavailable != unavailable {
+                proposal.unavailable = unavailable;
+            }
         }
         None if proposal.preview.is_active() || proposal.after.is_some() => {
             proposal.preview.clear();
             proposal.after = None;
+            proposal.unavailable = false;
         }
         None => {}
     }
@@ -809,7 +815,7 @@ mod tests {
             paths::PAIRINGS,
             Ok(br#"{"v":1,"code":"ABCDEFGH","browser_token":"t","code_expires_in_s":600,"idle_timeout_s":1800}"#.to_vec()),
         ));
-        link.update(&http, 0.0, |_| None);
+        link.update(&http, 0.0, Default::default(), |_| None);
         let w = app.world();
         let (scene, models) = (w.resource::<Scene>(), w.resource::<Models>());
         let base = current_scene(scene, models).unwrap();
@@ -828,7 +834,7 @@ mod tests {
             &format!("{}?token=t", paths::EVENTS),
             &StreamEvent::Data(serde_json::to_vec(&event).unwrap()),
         );
-        link.update(&http, 0.0, |_| None);
+        link.update(&http, 0.0, Default::default(), |_| None);
         link.follow_proposal(&http, scene, models);
         assert!(link.proposal().and_then(|p| p.proposed()).is_some());
         **app.world_mut().resource_mut::<crate::agent::AgentLinkRes>() = link;

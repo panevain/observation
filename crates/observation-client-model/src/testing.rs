@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::platform::{
-    Clock, ColorScheme, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore, PickedFile,
-    Reply, SaveFailure, StreamEvent, StreamStop,
+    Clock, ColorScheme, Failure, FileDialogs, Http, HttpRequest, JobChannel, KeyValueStore,
+    PickedFile, Reply, SaveFailure, StatusReply, StreamEvent, StreamStop,
 };
 use observation_core::coverage::StaticLayers;
 use observation_core::coverage_job::{JobRequest, JobResponse};
@@ -21,7 +21,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-type Done = Box<dyn FnOnce(Reply) + Send>;
+type Done = Box<dyn FnOnce(StatusReply) + Send>;
 type Listener = Box<dyn Fn(Reply) + Send>;
 type Follower = Box<dyn Fn(StreamEvent) + Send>;
 
@@ -92,17 +92,43 @@ impl FakeHttp {
 
     /// Answers the oldest pending request for `url`; false if there is none.
     pub fn respond(&self, url: &str, reply: Reply) -> bool {
-        self.respond_where(|r| r.url == url, reply)
+        self.respond_where(|r| r.url == url, without_status(reply))
     }
 
     /// Answers the oldest pending `method` request for `url`; false if there is none.
     pub fn respond_to(&self, method: &str, url: &str, reply: Reply) -> bool {
-        self.respond_where(|r| r.method == method && r.url == url, reply)
+        self.respond_where(
+            |r| r.method == method && r.url == url,
+            without_status(reply),
+        )
+    }
+
+    /// Answers the oldest pending `method` request for `url` with a failed
+    /// reply of HTTP `status`, with `Retry-After` if given; false if there
+    /// is none. (A [`Self::respond_to`] error is a failure with no status.)
+    pub fn fail_to(
+        &self,
+        method: &str,
+        url: &str,
+        status: u16,
+        retry_after_s: Option<u64>,
+        message: &str,
+    ) -> bool {
+        let failure = Failure {
+            status: Some(status),
+            retry_after_s,
+            message: message.to_owned(),
+        };
+        self.respond_where(|r| r.method == method && r.url == url, Err(failure))
     }
 
     /// Answers the pending request at `index` (oldest first, as in
     /// [`Self::pending`]); false if there is none.
     pub fn respond_at(&self, index: usize, reply: Reply) -> bool {
+        self.respond_status_at(index, without_status(reply))
+    }
+
+    fn respond_status_at(&self, index: usize, reply: StatusReply) -> bool {
         let done = {
             let mut pending = lock(&self.pending);
             if index >= pending.len() {
@@ -115,9 +141,9 @@ impl FakeHttp {
         true
     }
 
-    fn respond_where(&self, matches: impl Fn(&HttpRequest) -> bool, reply: Reply) -> bool {
+    fn respond_where(&self, matches: impl Fn(&HttpRequest) -> bool, reply: StatusReply) -> bool {
         let index = lock(&self.pending).iter().position(|(r, _)| matches(r));
-        index.is_some_and(|i| self.respond_at(i, reply))
+        index.is_some_and(|i| self.respond_status_at(i, reply))
     }
 
     /// Delivers `reply` to every subscriber of `url`; returns how many there
@@ -168,11 +194,22 @@ impl FakeHttp {
     }
 }
 
+fn without_status(reply: Reply) -> StatusReply {
+    reply.map_err(Failure::without_status)
+}
+
 impl Http for FakeHttp {
     fn fetch(&self, req: HttpRequest, done: Box<dyn FnOnce(Reply) + Send>) {
+        self.fetch_status(
+            req,
+            Box::new(move |reply| done(reply.map_err(|f| f.message))),
+        );
+    }
+
+    fn fetch_status(&self, req: HttpRequest, done: Box<dyn FnOnce(StatusReply) + Send>) {
         lock(&self.sent).push(req.clone());
         match &self.immediate {
-            Some(reply) => done(reply.clone()),
+            Some(reply) => done(without_status(reply.clone())),
             None => lock(&self.pending).push((req, done)),
         }
     }

@@ -19,7 +19,7 @@ use crate::theme::{Tokens, to_bevy};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
-use observation_client_model::agent::{AgentLink, shared_state};
+use observation_client_model::agent::{AgentLink, StateKey, shared_state};
 use observation_core::footage::TargetPlace;
 use observation_core::scene::changes::Change;
 
@@ -95,7 +95,14 @@ fn keep_up(
     }
     let name = slots.index.active_name();
     let http = &*platform.http;
-    link.update(http, time.delta_secs(), |pinned| {
+    // Cheap to compare: the state is built only when one of these changed.
+    let key = StateKey {
+        revision: scene.revision,
+        models: u64::from(models.last_changed().get()),
+        scene_name: name.to_owned(),
+        selected: editor.selected,
+    };
+    link.update(http, time.delta_secs(), key, |pinned| {
         shared_state(&scene, &models, name, editor.selected, pinned)
     });
     link.follow_proposal(http, &scene, &models);

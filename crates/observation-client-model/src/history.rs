@@ -11,7 +11,7 @@ use crate::editor::{Editor, Tool};
 use crate::toasts::{ToastAction, Toasts};
 use observation_core::camera::CameraModel;
 use observation_core::scene::AreaRef;
-use observation_core::scene::agent_log::AgentLogEntry;
+use observation_core::scene::agent_log::{AgentLogEntry, MAX_AGENT_LOG};
 
 /// Steps kept in each direction.
 pub const MAX_STEPS: usize = 100;
@@ -167,7 +167,7 @@ impl History {
 /// an Undo for, described.
 fn destructive(before: &Snapshot, after: &Snapshot) -> Option<String> {
     // An accepted proposal can change much at once: always offer its Undo.
-    if let Some(entry) = accepted_proposal(&before.agent_log, &after.agent_log) {
+    if let Some(entry) = accepted_proposal(before, after) {
         return Some(format!("Applied the agent's proposal: {}", entry.summary));
     }
     let lost = before
@@ -205,6 +205,7 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         targets,
         custom_models: b,
         agent_log,
+        accepted_proposals,
     } = before;
     let a = &after.custom_models;
     let rest_equal = *area == after.area
@@ -214,7 +215,8 @@ fn deleted_model<'a>(before: &'a Snapshot, after: &Snapshot) -> Option<&'a Camer
         && *areas == after.areas
         && *limit_figures_to == after.limit_figures_to
         && *targets == after.targets
-        && *agent_log == after.agent_log;
+        && *agent_log == after.agent_log
+        && *accepted_proposals == after.accepted_proposals;
     if !rest_equal || b.len() != a.len() + 1 {
         return None;
     }
@@ -248,14 +250,20 @@ fn deleted_place(before: &Snapshot, after: &Snapshot) -> Option<String> {
     }
 }
 
-/// The proposal whose acceptance turned the change log `before` into
-/// `after`: one entry appended (and, with the log full, its oldest dropped).
-fn accepted_proposal<'a>(
-    before: &[AgentLogEntry],
-    after: &'a [AgentLogEntry],
-) -> Option<&'a AgentLogEntry> {
-    let (last, rest) = after.split_last()?;
-    (before.ends_with(rest) && before.last() != Some(last)).then_some(last)
+/// The proposal whose acceptance made the step from `before` to `after`:
+/// one taken in ([`Snapshot::accepted_proposals`] moved), on the same area,
+/// with one entry appended to an otherwise unchanged change log (and, with
+/// the log full, its oldest entry dropped). An import that brings a log one
+/// entry longer is not one.
+fn accepted_proposal<'a>(before: &Snapshot, after: &'a Snapshot) -> Option<&'a AgentLogEntry> {
+    if before.accepted_proposals == after.accepted_proposals || before.area != after.area {
+        return None;
+    }
+    let (b, a) = (before.agent_log.as_slice(), after.agent_log.as_slice());
+    let (last, kept) = a.split_last()?;
+    let appended = b == kept;
+    let appended_to_full = a.len() == MAX_AGENT_LOG && b.len() == MAX_AGENT_LOG && b[1..] == *kept;
+    (appended || appended_to_full).then_some(last)
 }
 
 /// A short name for the change from `before` to `after`.
@@ -264,7 +272,7 @@ fn describe(before: &Snapshot, after: &Snapshot) -> String {
         return "area change".to_owned();
     }
     // An accepted proposal is one step, named after its summary.
-    if let Some(entry) = accepted_proposal(&before.agent_log, &after.agent_log) {
+    if let Some(entry) = accepted_proposal(before, after) {
         return format!("Agent: {}", entry.summary);
     }
     let added: Vec<_> = after
@@ -604,6 +612,117 @@ mod tests {
             Some((ToastKind::Info, "Undid: area change", None))
         );
         assert_eq!(f.doc.cameras.len(), 1);
+    }
+
+    fn entry(summary: &str) -> AgentLogEntry {
+        AgentLogEntry::new(summary, 1_793_475_782).expect("a summary")
+    }
+
+    impl Fixture {
+        /// Imports the document's own scene with change log `log`.
+        fn import(&mut self, log: Vec<AgentLogEntry>) {
+            let mut file = self.doc.to_file(&self.models).expect("an area");
+            file.agent_log = log;
+            self.doc.load_file(file, &mut self.models);
+            self.observe(false);
+        }
+
+        /// Takes in the document's own scene with change log `log`, as
+        /// accepting a proposal does.
+        fn take(&mut self, log: Vec<AgentLogEntry>) {
+            let mut file = self.doc.to_file(&self.models).expect("an area");
+            file.agent_log = log;
+            self.doc.take_items(file, &mut self.models);
+            self.observe(false);
+        }
+
+        fn agent_step(&self) -> bool {
+            self.history
+                .undo_label()
+                .is_some_and(|l| l.starts_with("Agent:"))
+        }
+    }
+
+    #[test]
+    fn only_one_entry_appended_to_the_same_log_is_an_accepted_proposal() {
+        // An import of a one-entry log over an empty log, then over another
+        // one-entry log, is not the agent's.
+        let mut f = Fixture::new();
+        for summary in ["Imported", "Imported again"] {
+            f.import(vec![entry(summary)]);
+            assert!(f.history.can_undo());
+            assert!(!f.agent_step(), "{:?}", f.history.undo_label());
+            assert_eq!(f.last_toast(), None, "no Undo offered");
+        }
+
+        // A genuine acceptance is.
+        let mut log = f.doc.agent_log.clone();
+        log.push(entry("Add a camera by the gate"));
+        f.take(log);
+        assert_eq!(
+            f.history.undo_label().as_deref(),
+            Some("Agent: Add a camera by the gate")
+        );
+        assert_eq!(
+            f.last_toast(),
+            Some((
+                ToastKind::Info,
+                "Applied the agent's proposal: Add a camera by the gate",
+                Some(&ToastAction::Undo)
+            ))
+        );
+        // Undo and redo keep its name.
+        f.step(HistoryOp::Undo).expect("a step");
+        assert_eq!(
+            f.history.redo_label().as_deref(),
+            Some("Agent: Add a camera by the gate")
+        );
+        f.step(HistoryOp::Redo).expect("a step");
+        assert!(f.agent_step());
+
+        // So is one with the log full, which drops its oldest entry; but not
+        // an import of a full log, nor a log taken in that is not one entry
+        // longer.
+        f.import(
+            (0..MAX_AGENT_LOG)
+                .map(|i| entry(&format!("P{i}")))
+                .collect(),
+        );
+        assert!(!f.agent_step());
+        let mut log = f.doc.agent_log.clone();
+        log.remove(0);
+        log.push(entry("The newest"));
+        f.take(log);
+        assert_eq!(f.history.undo_label().as_deref(), Some("Agent: The newest"));
+        let mut log = f.doc.agent_log.clone();
+        log.remove(1);
+        log.push(entry("Not appended"));
+        f.take(log);
+        assert!(!f.agent_step());
+        f.take(vec![entry("Only one")]);
+        assert!(!f.agent_step());
+    }
+
+    #[test]
+    fn a_new_area_with_one_more_log_entry_still_reports_the_cameras_removed() {
+        let mut f = Fixture::new();
+        f.add("Porch");
+        f.doc.area = Some(AreaRef::Osm {
+            bbox: BBox::new(51.0, -0.1, 51.001, -0.099).expect("valid box"),
+        });
+        f.doc.cameras.clear();
+        f.doc.agent_log.push(entry("From the imported file"));
+        f.doc.touch();
+        f.observe(false);
+        assert_eq!(
+            f.last_toast(),
+            Some((
+                ToastKind::Info,
+                "New area loaded; 1 camera(s) removed",
+                Some(&ToastAction::Undo)
+            ))
+        );
+        assert_eq!(f.history.undo_label().as_deref(), Some("area change"));
     }
 
     #[test]

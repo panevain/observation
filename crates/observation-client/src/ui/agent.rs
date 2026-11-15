@@ -183,7 +183,9 @@ pub fn proposal_card(
             d.proposal_coverage.after.as_ref().map(|(s, a)| (*s, a)),
         )
     });
-    let computing = p.proposed().is_some() && d.proposal_coverage.after.is_none();
+    let computing = p.proposed().is_some()
+        && d.proposal_coverage.after.is_none()
+        && !d.proposal_coverage.unavailable;
     let mut open = true;
     let mut close = false;
     let mut action = None;
@@ -246,6 +248,12 @@ pub fn proposal_card(
                 ui.add(
                     egui::Label::new(RichText::new(format!("{icon} {status}")).color(color)).wrap(),
                 );
+            }
+            if vm.telling_agent {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    hint(ui, t, "Telling the agent…");
+                });
             }
             if let Some(e) = &vm.decision_error {
                 ui.add(

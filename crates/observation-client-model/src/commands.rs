@@ -15,7 +15,7 @@ use observation_core::camera::{
 };
 use observation_core::coverage::CoverageParams;
 use observation_core::glam::Vec3;
-use observation_core::scene::MAX_CUSTOM_MODELS;
+use observation_core::scene::{MAX_CAMERAS, MAX_CUSTOM_MODELS};
 use observation_core::terrain::Terrain;
 
 /// Cameras are mounted this far in front of the surface they are placed on.
@@ -182,6 +182,18 @@ pub fn keys(ctx: &mut EditCtx, pressed: &dyn Fn(Key) -> bool, modifier_held: boo
     pressed(Key::Focus)
 }
 
+/// Whether `doc` has room for one more camera; if not, says so. A scene
+/// with more than [`MAX_CAMERAS`] could not be restored or imported.
+fn room_for_a_camera(doc: &Document, toasts: &mut Toasts) -> bool {
+    let room = doc.cameras.len() < MAX_CAMERAS;
+    if !room {
+        toasts.error(format!(
+            "A scene holds at most {MAX_CAMERAS} cameras; delete one you no longer need first"
+        ));
+    }
+    room
+}
+
 /// A click/tap (press + release without dragging).
 pub fn click(ctx: &mut EditCtx, models: &Models, hit: Option<Hit>) {
     let editor = &mut *ctx.editor;
@@ -198,6 +210,9 @@ pub fn click(ctx: &mut EditCtx, models: &Models, hit: Option<Hit>) {
             let Some(hit) = hit else { return };
             if let HitTarget::Camera(id) = hit.target {
                 select(editor, panels, id);
+                return;
+            }
+            if !room_for_a_camera(ctx.doc.get(), ctx.toasts) {
                 return;
             }
             let kind = models.kind_of(&editor.place_model);
@@ -339,6 +354,9 @@ pub fn camera_action(ctx: &mut EditCtx, terrain: &Terrain, id: u32, action: Came
             editor.tool = Tool::Move;
         }
         CameraAction::Duplicate => {
+            if !room_for_a_camera(ctx.doc.get(), ctx.toasts) {
+                return false;
+            }
             let mut copy = c;
             copy.label = String::new();
             // A metre east, at the same height above the ground.
@@ -617,6 +635,26 @@ mod tests {
         assert_eq!(f.doc.cameras[0].yaw_deg, 90.0);
         assert_eq!(f.editor.tool, Tool::Place);
         assert!(f.toasts.is_empty());
+    }
+
+    #[test]
+    fn a_full_scene_takes_no_more_cameras() {
+        let mut f = Fixture::default().with_camera();
+        let first = f.doc.cameras[0].clone();
+        for _ in 1..MAX_CAMERAS {
+            f.doc.add_camera(first.clone());
+        }
+        let full = format!(
+            "A scene holds at most {MAX_CAMERAS} cameras; delete one you no longer need first"
+        );
+        f.editor.tool = Tool::Place;
+        click(&mut f.ctx(), &models(), Some(wall()));
+        assert_eq!(f.doc.cameras.len(), MAX_CAMERAS);
+        assert_eq!(f.toasts(), [(ToastKind::Error, full.as_str())]);
+        f.toasts = Toasts::default();
+        assert_eq!(act(&mut f, 1, CameraAction::Duplicate), (false, 0));
+        assert_eq!(f.doc.cameras.len(), MAX_CAMERAS);
+        assert_eq!(f.toasts(), [(ToastKind::Error, full.as_str())]);
     }
 
     #[test]
