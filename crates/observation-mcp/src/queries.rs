@@ -12,6 +12,7 @@ use crate::ToolError;
 use crate::area::{self, bundle_for, check_inside, layers_for};
 use crate::catalog::{catalog, model};
 use crate::edit::{self, Dori, Light};
+use crate::geometry::{m1, xz1};
 use crate::schema::JsonObject;
 use crate::server::{ObservationMcp, SkippedOut};
 use observation_core::address::distance_to_footprint;
@@ -56,6 +57,91 @@ pub const GAP_NOTES: &str = "A gap is a connected run of mapped street (road, dr
 /// Most gaps `find_gaps` lists.
 pub const MAX_GAPS: usize = 20;
 
+/// How much an analysis tool returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Verbosity {
+    /// The level and lighting asked for, a line per camera, the data date
+    /// and the caveats in a line.
+    Brief,
+    /// Everything, with the full caveats and how to read them.
+    Full,
+}
+
+/// A result in either form, as the call's verbosity chose.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Report<B, F> {
+    Brief(B),
+    Full(F),
+}
+
+impl<B, F> Report<B, F> {
+    /// `full`, or its brief form.
+    pub fn of(verbosity: Verbosity, full: F, brief: impl FnOnce(&F) -> B) -> Self {
+        match verbosity {
+            Verbosity::Brief => Self::Brief(brief(&full)),
+            Verbosity::Full => Self::Full(full),
+        }
+    }
+
+    /// The full form, if this is it.
+    pub fn full(self) -> Option<F> {
+        match self {
+            Self::Full(f) => Some(f),
+            Self::Brief(_) => None,
+        }
+    }
+
+    /// The brief form, if this is it.
+    pub fn brief(self) -> Option<B> {
+        match self {
+            Self::Brief(b) => Some(b),
+            Self::Full(_) => None,
+        }
+    }
+}
+
+impl ObservationMcp {
+    /// The verbosity a call asked for, or its profile's: brief in the small
+    /// profiles, full otherwise.
+    pub fn verbosity(&self, asked: Option<Verbosity>) -> Verbosity {
+        asked.unwrap_or(if self.profile().compact() {
+            Verbosity::Brief
+        } else {
+            Verbosity::Full
+        })
+    }
+}
+
+/// What a brief result keeps of [`Sources`].
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct BriefSources {
+    /// When the OpenStreetMap data was current, if known; pass it on.
+    pub osm_data_as_of: Option<String>,
+    /// The caveats in one line; pass it on.
+    pub caveats_summary: String,
+}
+
+impl From<&Sources> for BriefSources {
+    fn from(s: &Sources) -> Self {
+        Self {
+            osm_data_as_of: s.osm_data_as_of.clone(),
+            caveats_summary: s.caveats_summary.clone(),
+        }
+    }
+}
+
+/// "camera 2 (Drive), 14.3 m: ruled out: outside the view".
+fn camera_line(c: &CameraVerdictOut) -> String {
+    let name = if c.camera_label.is_empty() {
+        format!("camera {}", c.camera_id)
+    } else {
+        format!("camera {} ({})", c.camera_id, c.camera_label)
+    };
+    format!("{name}, {} m: {}", c.nearest_m, c.selected)
+}
+
 /// Where the figures come from and what they leave out.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct Sources {
@@ -83,20 +169,20 @@ pub struct Settings {
     /// The detail level.
     pub level: String,
     /// Its pixel density, px/m.
-    pub ppm: f32,
+    pub ppm: f64,
     /// "Day" or "Night".
     pub lighting: String,
     /// The height above the ground people are tested at, metres.
-    pub subject_height_m: f32,
+    pub subject_height_m: f64,
 }
 
 impl Settings {
     pub(crate) fn of(p: &CoverageParams) -> Self {
         Self {
             level: p.dori.label().to_owned(),
-            ppm: p.pixels_per_metre(),
+            ppm: m1(p.pixels_per_metre()),
             lighting: lighting_name(p.lighting).to_owned(),
-            subject_height_m: p.subject_height_m,
+            subject_height_m: m1(p.subject_height_m),
         }
     }
 }
@@ -193,7 +279,7 @@ pub struct VerdictOut {
     /// "Day" or "Night".
     pub lighting: String,
     /// The camera's range at this level and lighting, metres.
-    pub range_m: f32,
+    pub range_m: f64,
     /// "not ruled out" or "ruled out".
     pub verdict: String,
     /// Why it is ruled out: `outside_view`, `out_of_range`,
@@ -229,7 +315,7 @@ pub struct CameraVerdictOut {
     pub camera_label: String,
     /// Straight-line distance from the camera to the nearest point of the
     /// place, metres.
-    pub nearest_m: f32,
+    pub nearest_m: f64,
     /// The verdict at the detail level and lighting the query used.
     pub selected: String,
     /// Every level by day and at night, in a line.
@@ -246,7 +332,7 @@ impl CameraVerdictOut {
             .map(|v| VerdictOut {
                 level: v.level.label().to_owned(),
                 lighting: lighting_name(v.lighting).to_owned(),
-                range_m: v.range_m,
+                range_m: m1(v.range_m),
                 verdict: if v.verdict.is_ruled_out() {
                     "ruled out"
                 } else {
@@ -267,7 +353,7 @@ impl CameraVerdictOut {
         Self {
             camera_id: cv.camera_id,
             camera_label: camera_label(scene, cv.camera_id),
-            nearest_m: cv.nearest_m,
+            nearest_m: m1(cv.nearest_m),
             selected,
             summary: camera_summary(cv),
             verdicts,
@@ -384,6 +470,52 @@ fn kind_of(t: &Target) -> &'static str {
     }
 }
 
+/// One target's verdicts, briefly.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TargetBrief {
+    pub target_id: u32,
+    pub name: String,
+    /// The verdicts in a line.
+    pub summary: String,
+    /// One line per enabled camera: its distance and verdict.
+    pub cameras: Vec<String>,
+}
+
+/// target_verdicts' brief form: the scene's level and lighting only.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TargetVerdictsBrief {
+    pub level: String,
+    /// "Day" or "Night".
+    pub lighting: String,
+    pub targets: Vec<TargetBrief>,
+    /// Cameras not tested, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cameras_skipped: Vec<SkippedOut>,
+    #[serde(flatten)]
+    pub sources: BriefSources,
+}
+
+impl From<&TargetVerdictsOut> for TargetVerdictsBrief {
+    fn from(f: &TargetVerdictsOut) -> Self {
+        Self {
+            level: f.settings.level.clone(),
+            lighting: f.settings.lighting.clone(),
+            targets: f
+                .targets
+                .iter()
+                .map(|t| TargetBrief {
+                    target_id: t.target_id,
+                    name: t.name.clone(),
+                    summary: t.summary.clone(),
+                    cameras: t.cameras.iter().map(camera_line).collect(),
+                })
+                .collect(),
+            cameras_skipped: f.cameras_skipped.clone(),
+            sources: (&f.sources).into(),
+        }
+    }
+}
+
 /// Every enabled camera's verdicts on the scene's targets (or the one
 /// `target_id` names).
 pub fn verdicts_on_targets(
@@ -446,8 +578,8 @@ pub fn verdicts_on_targets(
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PointOut {
     /// The point, metres east and south of the origin.
-    pub x: f32,
-    pub z: f32,
+    pub x: f64,
+    pub z: f64,
     pub settings: Settings,
     /// Whether the point lies inside a building footprint (hidden from
     /// every camera).
@@ -461,6 +593,40 @@ pub struct PointOut {
     pub wording: String,
     #[serde(flatten)]
     pub sources: Sources,
+}
+
+/// check_point's brief form: the scene's level and lighting only.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PointBrief {
+    pub x: f64,
+    pub z: f64,
+    pub level: String,
+    /// "Day" or "Night".
+    pub lighting: String,
+    /// The verdicts in a line.
+    pub summary: String,
+    /// One line per enabled camera: its distance and verdict.
+    pub cameras: Vec<String>,
+    /// Cameras not tested, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cameras_skipped: Vec<SkippedOut>,
+    #[serde(flatten)]
+    pub sources: BriefSources,
+}
+
+impl From<&PointOut> for PointBrief {
+    fn from(f: &PointOut) -> Self {
+        Self {
+            x: f.x,
+            z: f.z,
+            level: f.settings.level.clone(),
+            lighting: f.settings.lighting.clone(),
+            summary: f.summary.clone(),
+            cameras: f.cameras.iter().map(camera_line).collect(),
+            cameras_skipped: f.cameras_skipped.clone(),
+            sources: (&f.sources).into(),
+        }
+    }
 }
 
 /// Every enabled camera's verdicts on the point `[x, z]`, at `height_m`
@@ -494,8 +660,8 @@ pub fn verdicts_on_point(
         summary.push_str("; the point is inside a building footprint");
     }
     Ok(PointOut {
-        x,
-        z,
+        x: m1(x),
+        z: m1(z),
         settings: Settings::of(&params),
         inside_building,
         summary,
@@ -517,18 +683,18 @@ pub fn verdicts_on_point(
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
 pub struct RangeOut {
     /// With the outlines moved 1 m inward (for unlabelled ground, outward).
-    pub low_m2: f32,
-    pub as_drawn_m2: f32,
+    pub low_m2: f64,
+    pub as_drawn_m2: f64,
     /// With the outlines moved 1 m outward (for unlabelled ground, inward).
-    pub high_m2: f32,
+    pub high_m2: f64,
 }
 
 impl From<SeenRange> for RangeOut {
     fn from(r: SeenRange) -> Self {
         Self {
-            low_m2: r.low_m2,
-            as_drawn_m2: r.as_drawn_m2,
-            high_m2: r.high_m2,
+            low_m2: m1(r.low_m2),
+            as_drawn_m2: m1(r.as_drawn_m2),
+            high_m2: m1(r.high_m2),
         }
     }
 }
@@ -552,7 +718,7 @@ pub struct AreaSplitOut {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// The outline's own area as drawn, m².
-    pub polygon_m2: f32,
+    pub polygon_m2: f64,
     /// The camera's visible ground inside it.
     pub seen: RangeOut,
 }
@@ -570,8 +736,8 @@ pub struct WallSplitOut {
     pub building: u32,
     /// Distance from the camera to the nearest patch of it the camera sees,
     /// metres.
-    pub distance_m: f32,
-    pub seen_m2: f32,
+    pub distance_m: f64,
+    pub seen_m2: f64,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -579,12 +745,12 @@ pub struct CameraSplitOut {
     pub camera_id: u32,
     pub camera_label: String,
     /// The range counted out to, metres.
-    pub range_m: f32,
+    pub range_m: f64,
     /// All the ground the camera sees, m².
-    pub ground_m2: f32,
+    pub ground_m2: f64,
     /// The part on the street, driveways and footpaths as mapped in
     /// OpenStreetMap (driveways and footpaths are often private), m².
-    pub street_m2: f32,
+    pub street_m2: f64,
     /// The part neither on that mapped street nor in a labelled area.
     pub unlabelled: RangeOut,
     /// Each enabled area with a usable outline, in the scene's order.
@@ -592,7 +758,7 @@ pub struct CameraSplitOut {
     /// Each label some enabled area has.
     pub labels: Vec<LabelSplitOut>,
     /// All the wall the camera sees, m².
-    pub walls_m2: f32,
+    pub walls_m2: f64,
     /// The wall it sees per building, nearest first.
     pub walls: Vec<WallSplitOut>,
 }
@@ -601,7 +767,7 @@ pub struct CameraSplitOut {
 pub struct SplitOut {
     pub settings: Settings,
     /// How far the outlines are moved in and out for the ranges, metres.
-    pub offset_m: f32,
+    pub offset_m: f64,
     pub cameras: Vec<CameraSplitOut>,
     /// Cameras not counted, and why.
     pub cameras_skipped: Vec<SkippedOut>,
@@ -609,6 +775,72 @@ pub struct SplitOut {
     pub notes: String,
     #[serde(flatten)]
     pub sources: Sources,
+}
+
+/// camera_split's brief form: a line per camera.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SplitBrief {
+    pub level: String,
+    /// "Day" or "Night".
+    pub lighting: String,
+    /// One line per camera: its ground, the mapped street, each labelled
+    /// area (low to high, m²) and the walls it sees.
+    pub cameras: Vec<String>,
+    /// Cameras not counted, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cameras_skipped: Vec<SkippedOut>,
+    #[serde(flatten)]
+    pub sources: BriefSources,
+}
+
+/// "40.1 to 55.2 m²", or "40.1 m²" when the readings agree.
+fn range_words(r: &RangeOut) -> String {
+    if r.low_m2 == r.high_m2 {
+        format!("{} m²", r.low_m2)
+    } else {
+        format!("{} to {} m²", r.low_m2, r.high_m2)
+    }
+}
+
+fn split_line(c: &CameraSplitOut) -> String {
+    let name = if c.camera_label.is_empty() {
+        format!("camera {}", c.camera_id)
+    } else {
+        format!("camera {} ({})", c.camera_id, c.camera_label)
+    };
+    let mut parts = vec![format!(
+        "{name}, range {} m: {} m² of ground, {} m² on the mapped street",
+        c.range_m, c.ground_m2, c.street_m2
+    )];
+    for a in &c.areas {
+        let label = a.label.as_deref().unwrap_or("unlabelled");
+        let what = match &a.name {
+            Some(n) => format!("area {} ({label}, \"{n}\")", a.area_id),
+            None => format!("area {} ({label})", a.area_id),
+        };
+        parts.push(format!("{what} {}", range_words(&a.seen)));
+    }
+    parts.push(format!("other ground {}", range_words(&c.unlabelled)));
+    match c.walls.first() {
+        Some(w) => parts.push(format!(
+            "walls {} m², the nearest building {} at {} m",
+            c.walls_m2, w.building, w.distance_m
+        )),
+        None => parts.push("no walls".to_owned()),
+    }
+    parts.join("; ")
+}
+
+impl From<&SplitOut> for SplitBrief {
+    fn from(f: &SplitOut) -> Self {
+        Self {
+            level: f.settings.level.clone(),
+            lighting: f.settings.lighting.clone(),
+            cameras: f.cameras.iter().map(split_line).collect(),
+            cameras_skipped: f.cameras_skipped.clone(),
+            sources: (&f.sources).into(),
+        }
+    }
 }
 
 /// The enabled cameras with known models, or the one `id` names (refused if
@@ -668,8 +900,8 @@ pub fn split(
                 .iter()
                 .map(|w| WallSplitOut {
                     building: w.building,
-                    distance_m: w.distance_m,
-                    seen_m2: w.seen_m2,
+                    distance_m: m1(w.distance_m),
+                    seen_m2: m1(w.seen_m2),
                 })
                 .collect();
             walls.sort_by(|a, b| {
@@ -680,9 +912,9 @@ pub fn split(
             CameraSplitOut {
                 camera_id: c.camera_id,
                 camera_label: camera_label(&s, c.camera_id),
-                range_m: c.range_m,
-                ground_m2: sp.ground_m2,
-                street_m2: sp.street_m2,
+                range_m: m1(c.range_m),
+                ground_m2: m1(sp.ground_m2),
+                street_m2: m1(sp.street_m2),
                 unlabelled: sp.unlabelled.into(),
                 areas: sp
                     .areas
@@ -691,7 +923,7 @@ pub fn split(
                         area_id: a.area_id,
                         name: name_of(a.area_id),
                         label: a.label.map(|l| label_name(l).to_owned()),
-                        polygon_m2: a.polygon_m2,
+                        polygon_m2: m1(a.polygon_m2),
                         seen: a.seen.into(),
                     })
                     .collect(),
@@ -703,7 +935,7 @@ pub fn split(
                         seen: l.seen.into(),
                     })
                     .collect(),
-                walls_m2: sp.walls_m2,
+                walls_m2: m1(sp.walls_m2),
                 walls,
             }
         })
@@ -714,7 +946,7 @@ pub fn split(
     };
     Ok(SplitOut {
         settings: Settings::of(&params),
-        offset_m: masks.offset_m(),
+        offset_m: m1(masks.offset_m()),
         cameras,
         cameras_skipped,
         notes: SPLIT_NOTES.to_owned(),
@@ -731,7 +963,7 @@ pub struct NearCameraOut {
     pub camera_id: u32,
     pub camera_label: String,
     /// From the camera to the nearest part of the gap, in plan, metres.
-    pub distance_m: f32,
+    pub distance_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -742,7 +974,7 @@ pub struct NearStreetOut {
     /// Its OpenStreetMap `highway` type, such as `residential` or `footway`.
     pub highway: String,
     /// From the gap's inside point to the street's centre line, metres.
-    pub distance_m: f32,
+    pub distance_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -750,24 +982,24 @@ pub struct NearBuildingOut {
     /// The building's index in the area (never its address).
     pub building: u32,
     /// From the gap's inside point to the building, metres.
-    pub distance_m: f32,
+    pub distance_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct GapOut {
     /// 1 for the largest.
     pub rank: usize,
-    pub area_m2: f32,
+    pub area_m2: f64,
     /// The mean of the gap's cells, `[x, z]`; it may lie off the gap where
     /// the street bends.
-    pub centroid: [f32; 2],
+    pub centroid: [f64; 2],
     /// A point inside the gap near its centroid, `[x, z]`: point a camera
     /// here (point_camera_at) or ask check_point about it.
-    pub inside: [f32; 2],
+    pub inside: [f64; 2],
     /// The smallest `[x, z]` of the gap.
-    pub min: [f32; 2],
+    pub min: [f64; 2],
     /// The largest `[x, z]` of the gap.
-    pub max: [f32; 2],
+    pub max: [f64; 2],
     /// The enabled camera nearest the gap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nearest_camera: Option<NearCameraOut>,
@@ -788,9 +1020,9 @@ pub struct GapsOut {
     /// counts (see limit_figures_to).
     pub region_limited: bool,
     /// The mapped street counted, m².
-    pub street_m2: f32,
+    pub street_m2: f64,
     /// The part of it no enabled camera sees, m², in gaps of any size.
-    pub unseen_street_m2: f32,
+    pub unseen_street_m2: f64,
     /// How many gaps are at least `min_area_m2`.
     pub gap_count: usize,
     /// The largest gaps, largest first.
@@ -804,12 +1036,52 @@ pub struct GapsOut {
     pub sources: Sources,
 }
 
+/// find_gaps' brief form: a line per gap.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GapsBrief {
+    pub level: String,
+    /// "Day" or "Night".
+    pub lighting: String,
+    /// The mapped street counted, m².
+    pub street_m2: f64,
+    /// The part of it ruled out for every enabled camera, m².
+    pub unseen_street_m2: f64,
+    /// How many gaps there are of at least min_area_m2.
+    pub gap_count: usize,
+    /// The largest gaps, largest first, a line each with a point inside to
+    /// aim at.
+    pub gaps: Vec<String>,
+    #[serde(flatten)]
+    pub sources: BriefSources,
+}
+
+impl From<&GapsOut> for GapsBrief {
+    fn from(f: &GapsOut) -> Self {
+        Self {
+            level: f.settings.level.clone(),
+            lighting: f.settings.lighting.clone(),
+            street_m2: f.street_m2,
+            unseen_street_m2: f.unseen_street_m2,
+            gap_count: f.gap_count,
+            gaps: f
+                .gaps
+                .iter()
+                .map(|g| format!("{}. {}", g.rank, g.description))
+                .collect(),
+            sources: (&f.sources).into(),
+        }
+    }
+}
+
 /// The building within 30 m nearest `p`, by index and distance.
 fn nearest_building(bundle: &AreaBundle, p: [f32; 2]) -> Option<NearBuildingOut> {
     let i = bundle.building_near(p, 30.0)?;
     Some(NearBuildingOut {
         building: u32::try_from(i).ok()?,
-        distance_m: distance_to_footprint(p, &bundle.buildings.get(i)?.footprint),
+        distance_m: m1(distance_to_footprint(
+            p,
+            &bundle.buildings.get(i)?.footprint,
+        )),
     })
 }
 
@@ -865,7 +1137,7 @@ fn gap_out(
         .map(|(id, d)| NearCameraOut {
             camera_id: id,
             camera_label: camera_label(scene, id),
-            distance_m: d,
+            distance_m: m1(d),
         });
     let street = bundle.nearest_road(g.inside, |_| true).and_then(|near| {
         let road = bundle.roads.get(near.index)?;
@@ -879,16 +1151,16 @@ fn gap_out(
         Some(NearStreetOut {
             name: road.name.clone(),
             highway: road.highway.clone(),
-            distance_m,
+            distance_m: m1(distance_m),
         })
     });
     let mut out = GapOut {
         rank,
-        area_m2: g.area_m2,
-        centroid: g.centroid,
-        inside: g.inside,
-        min: g.min,
-        max: g.max,
+        area_m2: m1(g.area_m2),
+        centroid: xz1(g.centroid),
+        inside: xz1(g.inside),
+        min: xz1(g.min),
+        max: xz1(g.max),
         nearest_camera,
         street,
         nearest_building: nearest_building(bundle, g.inside),
@@ -942,8 +1214,8 @@ pub fn gaps(
     Ok(GapsOut {
         settings: Settings::of(&params),
         region_limited: region.is_some(),
-        street_m2: street_cells as f32 * cell_m2,
-        unseen_street_m2: unseen as f32,
+        street_m2: m1(street_cells as f32 * cell_m2),
+        unseen_street_m2: m1(unseen as f32),
         gap_count: big.len(),
         gaps,
         cameras_counted: cams.iter().map(|c| c.placement.id).collect(),
@@ -963,6 +1235,9 @@ pub struct TargetVerdictsArgs {
     pub scene: Value,
     /// Only this target; omit for every target in the scene.
     pub target_id: Option<u32>,
+    /// "brief" (the scene's level and lighting) or "full" (every level by
+    /// day and at night, the caveats).
+    pub verbosity: Option<Verbosity>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -977,6 +1252,8 @@ pub struct CameraSplitArgs {
     pub level: Option<Dori>,
     /// Day or night; omit for the scene's.
     pub lighting: Option<Light>,
+    /// "brief" (a line per camera) or "full" (every figure, the notes).
+    pub verbosity: Option<Verbosity>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -990,6 +1267,9 @@ pub struct CheckPointArgs {
     /// Height above the ground to test at, metres (0 to 10); omit for the
     /// scene's subject height.
     pub height_m: Option<f32>,
+    /// "brief" (the scene's level and lighting) or "full" (every level by
+    /// day and at night, the caveats).
+    pub verbosity: Option<Verbosity>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1006,21 +1286,24 @@ pub struct FindGapsArgs {
     pub max_gaps: Option<usize>,
     /// Leave out gaps smaller than this, m² (default 1).
     pub min_area_m2: Option<f32>,
+    /// "brief" (a line per gap) or "full" (every figure, the notes).
+    pub verbosity: Option<Verbosity>,
 }
 
 #[tool_router(router = query_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Verdicts on the scene's targets (or one): for each enabled camera, \"not ruled out\" or \"ruled out\" with the reason. At each detail level by day and at night.",
+        description = "Verdicts on the scene's targets (or one): for each enabled camera, \"not ruled out\" or \"ruled out\" with the reason.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn target_verdicts(
         &self,
         Parameters(a): Parameters<TargetVerdictsArgs>,
-    ) -> Result<Json<TargetVerdictsOut>, String> {
+    ) -> Result<Json<Report<TargetVerdictsBrief, TargetVerdictsOut>>, String> {
+        let v = self.verbosity(a.verbosity);
         off_runtime(move || verdicts_on_targets(&a.scene, a.target_id))
             .await
-            .map(Json)
+            .map(|f| Json(Report::of(v, f, |f| f.into())))
     }
 
     #[tool(
@@ -1030,10 +1313,11 @@ impl ObservationMcp {
     pub(crate) async fn camera_split(
         &self,
         Parameters(a): Parameters<CameraSplitArgs>,
-    ) -> Result<Json<SplitOut>, String> {
+    ) -> Result<Json<Report<SplitBrief, SplitOut>>, String> {
+        let v = self.verbosity(a.verbosity);
         off_runtime(move || split(&a.scene, a.camera_id, a.level, a.lighting))
             .await
-            .map(Json)
+            .map(|f| Json(Report::of(v, f, |f| f.into())))
     }
 
     #[tool(
@@ -1043,10 +1327,11 @@ impl ObservationMcp {
     pub(crate) async fn check_point(
         &self,
         Parameters(a): Parameters<CheckPointArgs>,
-    ) -> Result<Json<PointOut>, String> {
+    ) -> Result<Json<Report<PointBrief, PointOut>>, String> {
+        let v = self.verbosity(a.verbosity);
         off_runtime(move || verdicts_on_point(&a.scene, a.x, a.z, a.height_m))
             .await
-            .map(Json)
+            .map(|f| Json(Report::of(v, f, |f| f.into())))
     }
 
     #[tool(
@@ -1056,9 +1341,10 @@ impl ObservationMcp {
     pub(crate) async fn find_gaps(
         &self,
         Parameters(a): Parameters<FindGapsArgs>,
-    ) -> Result<Json<GapsOut>, String> {
+    ) -> Result<Json<Report<GapsBrief, GapsOut>>, String> {
+        let v = self.verbosity(a.verbosity);
         off_runtime(move || gaps(&a.scene, a.level, a.lighting, a.max_gaps, a.min_area_m2))
             .await
-            .map(Json)
+            .map(|f| Json(Report::of(v, f, |f| f.into())))
     }
 }

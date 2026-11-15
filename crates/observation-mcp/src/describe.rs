@@ -168,9 +168,9 @@ fn lighting_name(l: Lighting) -> &'static str {
 fn settings_of(p: &CoverageParams) -> Settings {
     Settings {
         level: p.dori.label().to_owned(),
-        ppm: p.pixels_per_metre(),
+        ppm: m1(p.pixels_per_metre()),
         lighting: lighting_name(p.lighting).to_owned(),
-        subject_height_m: p.subject_height_m,
+        subject_height_m: m1(p.subject_height_m),
     }
 }
 
@@ -2023,9 +2023,9 @@ pub fn view(scene: &Value, id: u32) -> Result<CameraViewOut, ToolError> {
             let ppm = l.pixels_per_metre()?;
             Some(RangeRow {
                 level: l.label().to_owned(),
-                ppm,
-                day_m: m.effective_range_m(ppm, Lighting::Day),
-                night_m: m.effective_range_m(ppm, Lighting::Night),
+                ppm: m1(ppm),
+                day_m: m1(m.effective_range_m(ppm, Lighting::Day)),
+                night_m: m1(m.effective_range_m(ppm, Lighting::Night)),
             })
         })
         .collect();

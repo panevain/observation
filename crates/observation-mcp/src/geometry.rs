@@ -36,6 +36,11 @@ pub fn xz1(p: [f32; 2]) -> [f64; 2] {
     [m1(p[0]), m1(p[1])]
 }
 
+/// `v` to three decimals, as an `f64`: a fraction such as 0.412.
+pub fn r3(v: f32) -> f64 {
+    (f64::from(v) * 1000.0).round() / 1000.0
+}
+
 /// `v` to the nearest whole number, as an `f64`.
 pub fn m0(v: f32) -> f64 {
     f64::from(v).round()

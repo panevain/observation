@@ -95,7 +95,7 @@ fn each_profile_stays_within_its_token_budget() {
     for (profile, budget) in [
         (Profile::Small, 4_000),
         (Profile::SmallApp, 5_500),
-        (Profile::Full, 38_000),
+        (Profile::Full, 40_000),
     ] {
         let (tools, text) = listed(ToolSelection::profile(profile));
         let n = tokens(&text);
@@ -269,4 +269,107 @@ async fn a_tool_outside_the_profile_is_refused_by_name() {
         json!({"scene_id": "s1", "edits": [{"tool": "add_example_cameras", "args": {"count": 1}}]});
     let e = failed(&call(&app, "apply_edits", edits).await);
     assert!(e.contains("edit 1") && e.contains("not offered"), "{e}");
+}
+
+/// Whether every number in `v` prints in a few digits, as a rounded `f64`
+/// does, rather than as an `f32` widened (`8.231399536132812`).
+fn short_numbers(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.to_string().len() <= 10,
+        Value::Array(items) => items.iter().all(short_numbers),
+        Value::Object(m) => m.values().all(short_numbers),
+        _ => true,
+    }
+}
+
+/// The analysis tools answer briefly by default in the small profiles, and
+/// in full when asked; the full profile is the other way round.
+#[tokio::test]
+async fn analysis_results_are_brief_in_the_small_profiles() {
+    let app = app_with(ToolSelection::profile(Profile::SmallApp));
+    ok(&call(&app, "open_scene", json!({})).await);
+    ok(&call(
+        &app,
+        "add_example_cameras",
+        json!({"scene_id": "s1", "count": 3}),
+    )
+    .await);
+    let mut sizes = Vec::new();
+    for (tool, args) in [
+        ("compute_coverage", json!({"scene_id": "s1"})),
+        ("check_point", json!({"scene_id": "s1", "x": 0, "z": 10})),
+        ("find_gaps", json!({"scene_id": "s1"})),
+    ] {
+        let brief = ok(&call(&app, tool, args.clone()).await);
+        let mut asked = args.clone();
+        asked["verbosity"] = json!("full");
+        let full = ok(&call(&app, tool, asked).await);
+        assert!(brief.get("caveats").is_none(), "{tool}: {brief}");
+        assert!(brief["caveats_summary"].is_string(), "{tool}: {brief}");
+        assert!(brief.get("osm_data_as_of").is_some(), "{tool}: {brief}");
+        assert!(full["caveats"].is_string(), "{tool}: {full}");
+        assert!(
+            short_numbers(&brief) && short_numbers(&full),
+            "{tool}: {full}"
+        );
+        sizes.push((tool, brief.to_string().len(), full.to_string().len()));
+    }
+    println!("brief and full result bytes: {sizes:?}");
+    for (tool, brief, full) in sizes {
+        assert!(brief * 2 < full, "{tool}: {brief} of {full} bytes");
+    }
+    let point = ok(&call(
+        &app,
+        "check_point",
+        json!({"scene_id": "s1", "x": 0, "z": 10}),
+    )
+    .await);
+    let lines = point["cameras"].as_array().unwrap();
+    assert_eq!(lines.len(), 3, "{point}");
+    assert!(
+        lines.iter().all(|l| {
+            let l = l.as_str().unwrap();
+            l.contains(" m: not ruled out") || l.contains(" m: ruled out: ")
+        }),
+        "{point}"
+    );
+    let coverage = ok(&call(&app, "compute_coverage", json!({"scene_id": "s1"})).await);
+    let summary = coverage["summary"].as_str().unwrap();
+    assert!(summary.contains("of the mapped street"), "{summary}");
+    assert!(!summary.contains(" sees"), "{summary}");
+
+    // The full profile answers in full unless asked.
+    let app = app_with(ToolSelection::default());
+    ok(&call(&app, "open_scene", json!({})).await);
+    let full = ok(&call(&app, "compute_coverage", json!({"scene_id": "s1"})).await);
+    assert_eq!(full["levels"].as_array().unwrap().len(), 4);
+    let brief = ok(&call(
+        &app,
+        "compute_coverage",
+        json!({"scene_id": "s1", "verbosity": "brief"}),
+    )
+    .await);
+    assert!(
+        brief["summary"]
+            .as_str()
+            .unwrap()
+            .contains("no enabled cameras")
+    );
+
+    // The model list is brief in every profile.
+    let models = ok(&call(&app, "list_camera_models", json!({})).await);
+    let first = &models["models"][0];
+    assert!(
+        first["hfov_deg"].is_number() && first.get("ranges").is_none(),
+        "{first}"
+    );
+    assert_eq!(models["count"], models["models"].as_array().unwrap().len());
+    let all = ok(&call(&app, "list_camera_models", json!({"detail": "full"})).await);
+    assert!(all["models"][0]["ranges"].is_array());
+    println!(
+        "list_camera_models bytes: brief {}, full {}",
+        models.to_string().len(),
+        all.to_string().len()
+    );
+    assert!(models.to_string().len() * 4 < all.to_string().len());
 }

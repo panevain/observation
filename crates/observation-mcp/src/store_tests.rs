@@ -299,7 +299,7 @@ fn every_scene_tool_takes_a_scene_id() {
         assert!(!required(input, "scene"), "{} requires scene", tool.name);
         let output = tool.output_schema.as_ref();
         let returns = output
-            .and_then(|o| o["properties"].as_object())
+            .and_then(|o| o.get("properties").and_then(Value::as_object))
             .is_some_and(|p| p.contains_key("scene"));
         if !returns {
             assert!(!props.contains_key(RETURN_SCENE), "{}", tool.name);

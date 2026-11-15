@@ -45,7 +45,8 @@ fn rect(c: [f32; 2], half: f32) -> Vec<[f32; 2]> {
 
 /// The point inside the largest gap in `s`'s street: a spot on the street.
 fn on_street(s: &SceneFile) -> [f32; 2] {
-    gaps(&value(s), None, None, Some(1), None).unwrap().gaps[0].inside
+    let [x, z] = gaps(&value(s), None, None, Some(1), None).unwrap().gaps[0].inside;
+    [x as f32, z as f32]
 }
 
 fn with_target(mut s: SceneFile, name: &str, at: [f32; 2]) -> (SceneFile, u32) {
@@ -166,7 +167,10 @@ fn applied_suggestions_are_the_cameras_suggested() {
     let before = gaps(&s, None, None, None, None).unwrap();
     let after = gaps(out.scene.as_ref().unwrap(), None, None, None, None).unwrap();
     let gained = before.unseen_street_m2 - after.unseen_street_m2;
-    assert!((gained - (out.after - out.before)).abs() < 0.5, "{gained}");
+    assert!(
+        (gained - f64::from(out.after - out.before)).abs() < 0.5,
+        "{gained}"
+    );
     assert!(out.summary.contains("Added as camera(s) 2, 3"));
 }
 

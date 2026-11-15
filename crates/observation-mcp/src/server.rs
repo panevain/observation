@@ -14,6 +14,7 @@ use crate::edit::{self, CameraUpdate, Kind, ModelUpdate, NewModel, ParamsUpdate,
 use crate::figures::scene_figures;
 use crate::geometry;
 use crate::link::{AppLink, STATE_URI};
+use crate::queries::{Report, Verbosity};
 use crate::schema::JsonObject;
 use crate::toolsets::{Group, Profile, ToolSelection, Toolbox};
 use observation_core::address::ON_OUTLINE_M;
@@ -254,6 +255,15 @@ pub struct SceneArg {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CoverageArgs {
+    #[schemars(with = "JsonObject")]
+    pub scene: Value,
+    /// "brief" (the scene's level and lighting, in a line) or "full" (every
+    /// level, the caveats).
+    pub verbosity: Option<Verbosity>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListModelsArgs {
     /// Only models of this kind.
     pub kind: Option<Kind>,
@@ -262,6 +272,9 @@ pub struct ListModelsArgs {
     /// A scene whose custom models to list as well.
     #[schemars(with = "Option<JsonObject>")]
     pub scene: Option<Value>,
+    /// "brief" (the default: id, vendor, name, kind, field of view and
+    /// night-vision range) or "full" (resolution and ranges as well).
+    pub detail: Option<Verbosity>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -429,11 +442,11 @@ impl Edited {
 pub struct RangeRow {
     pub level: String,
     /// Pixel density, px/m.
-    pub ppm: f32,
+    pub ppm: f64,
     /// Range by day, metres.
-    pub day_m: f32,
+    pub day_m: f64,
     /// Range at night (limited to the infrared range), metres.
-    pub night_m: f32,
+    pub night_m: f64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -442,12 +455,12 @@ pub struct ModelInfo {
     pub vendor: String,
     pub name: String,
     pub kind: String,
-    pub hfov_deg: f32,
-    pub vfov_deg: f32,
+    pub hfov_deg: f64,
+    pub vfov_deg: f64,
     /// `[width, height]`, pixels.
     pub resolution: [u32; 2],
     /// Advertised night-vision range, metres.
-    pub ir_range_m: Option<f32>,
+    pub ir_range_m: Option<f64>,
     /// Whether night ranges assume the default infrared range because the
     /// maker publishes none.
     pub ir_range_assumed: bool,
@@ -469,9 +482,9 @@ impl ModelInfo {
                 let ppm = l.pixels_per_metre()?;
                 Some(RangeRow {
                     level: l.label().to_owned(),
-                    ppm,
-                    day_m: m.effective_range_m(ppm, Lighting::Day),
-                    night_m: m.effective_range_m(ppm, Lighting::Night),
+                    ppm: geometry::m1(ppm),
+                    day_m: geometry::m1(m.effective_range_m(ppm, Lighting::Day)),
+                    night_m: geometry::m1(m.effective_range_m(ppm, Lighting::Night)),
                 })
             })
             .collect();
@@ -480,15 +493,62 @@ impl ModelInfo {
             vendor: m.vendor.clone(),
             name: m.name.clone(),
             kind: m.kind.label().to_owned(),
-            hfov_deg: m.hfov_deg,
-            vfov_deg: m.vfov_deg,
+            hfov_deg: geometry::m1(m.hfov_deg),
+            vfov_deg: geometry::m1(m.vfov_deg),
             resolution: m.resolution,
-            ir_range_m: m.ir_range_m,
+            ir_range_m: m.ir_range_m.map(geometry::m1),
             ir_range_assumed: m.ir_range_m.is_none(),
             custom: is_custom(&m.id),
             ranges,
             source: m.source.clone(),
             notes: m.notes.clone(),
+        }
+    }
+}
+
+/// A camera model in a line of the brief list.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ModelBrief {
+    pub id: String,
+    pub vendor: String,
+    pub name: String,
+    pub kind: String,
+    /// Horizontal field of view, degrees.
+    pub hfov_deg: f64,
+    /// Advertised night-vision range, metres; absent when the maker
+    /// publishes none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub night_vision_m: Option<f64>,
+}
+
+/// list_camera_models' brief form.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ModelListBrief {
+    pub count: usize,
+    pub models: Vec<ModelBrief>,
+    /// Where the rest is.
+    pub note: String,
+}
+
+impl From<&ModelList> for ModelListBrief {
+    fn from(f: &ModelList) -> Self {
+        Self {
+            count: f.models.len(),
+            models: f
+                .models
+                .iter()
+                .map(|m| ModelBrief {
+                    id: m.id.clone(),
+                    vendor: m.vendor.clone(),
+                    name: m.name.clone(),
+                    kind: m.kind.clone(),
+                    hfov_deg: m.hfov_deg,
+                    night_vision_m: m.ir_range_m,
+                })
+                .collect(),
+            note: "get_camera_model gives one model's ranges at each detail level; detail \
+                   \"full\" gives them for every model"
+                .to_owned(),
         }
     }
 }
@@ -533,23 +593,23 @@ pub struct Validated {
 pub struct LevelOut {
     pub level: String,
     /// Pixel density, px/m.
-    pub ppm: f32,
+    pub ppm: f64,
     /// Street surface (roads, driveways and footpaths), m².
-    pub street_m2: f32,
-    pub street_seen_m2: f32,
+    pub street_m2: f64,
+    pub street_seen_m2: f64,
     /// Street seen by at least two cameras, m².
-    pub street_seen_multi_m2: f32,
+    pub street_seen_multi_m2: f64,
     /// Any open ground seen, m².
-    pub open_ground_seen_m2: f32,
+    pub open_ground_seen_m2: f64,
     /// Building walls, m².
-    pub facade_m2: f32,
-    pub facade_seen_m2: f32,
-    pub street_fraction: f32,
-    pub street_multi_fraction: f32,
-    pub facade_fraction: f32,
+    pub facade_m2: f64,
+    pub facade_seen_m2: f64,
+    pub street_fraction: f64,
+    pub street_multi_fraction: f64,
+    pub facade_fraction: f64,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct SkippedOut {
     pub id: u32,
     pub reason: String,
@@ -558,7 +618,7 @@ pub struct SkippedOut {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CoverageOut {
     pub lighting: String,
-    pub subject_height_m: f32,
+    pub subject_height_m: f64,
     /// The level the scene has selected.
     pub selected_level: String,
     /// Whether the figures are limited to the scene's area for the figures
@@ -574,6 +634,82 @@ pub struct CoverageOut {
     pub caveats_summary: String,
     /// Everything the figures leave out; pass it on.
     pub caveats: String,
+}
+
+/// compute_coverage's brief form: the scene's level and lighting only.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CoverageBrief {
+    /// The figures in a sentence.
+    pub summary: String,
+    pub level: String,
+    pub lighting: String,
+    /// Mapped street (roads, driveways and footpaths), m².
+    pub street_m2: f64,
+    /// The part not ruled out for at least one camera, m².
+    pub street_seen_m2: f64,
+    pub street_fraction: f64,
+    /// The share not ruled out for two cameras or more.
+    pub street_multi_fraction: f64,
+    /// The share of building walls not ruled out.
+    pub facade_fraction: f64,
+    pub cameras_counted: Vec<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cameras_skipped: Vec<SkippedOut>,
+    /// When the OpenStreetMap data was current, if known; pass it on.
+    pub osm_data_as_of: Option<String>,
+    /// The caveats in one line; pass it on.
+    pub caveats_summary: String,
+}
+
+fn percent(fraction: f64) -> String {
+    format!("{:.0}%", fraction * 100.0)
+}
+
+impl From<&CoverageOut> for CoverageBrief {
+    fn from(f: &CoverageOut) -> Self {
+        let l = f
+            .levels
+            .iter()
+            .find(|l| l.level == f.selected_level)
+            .or(f.levels.first());
+        let light = if f.lighting == "Night" {
+            "at night"
+        } else {
+            "by day"
+        };
+        let n = f.cameras_counted.len();
+        let summary = match l {
+            Some(l) if n > 0 => format!(
+                "At {} {light}, up to {} of the mapped street ({} of {} m²) is not ruled out \
+                 for at least one of {n} camera{}; {} for two or more; {} of building walls",
+                l.level,
+                percent(l.street_fraction),
+                l.street_seen_m2,
+                l.street_m2,
+                if n == 1 { "" } else { "s" },
+                percent(l.street_multi_fraction),
+                percent(l.facade_fraction),
+            ),
+            _ => format!(
+                "At {} {light}: no enabled cameras to count",
+                f.selected_level
+            ),
+        };
+        Self {
+            summary,
+            level: f.selected_level.clone(),
+            lighting: f.lighting.clone(),
+            street_m2: l.map_or(0.0, |l| l.street_m2),
+            street_seen_m2: l.map_or(0.0, |l| l.street_seen_m2),
+            street_fraction: l.map_or(0.0, |l| l.street_fraction),
+            street_multi_fraction: l.map_or(0.0, |l| l.street_multi_fraction),
+            facade_fraction: l.map_or(0.0, |l| l.facade_fraction),
+            cameras_counted: f.cameras_counted.clone(),
+            cameras_skipped: f.cameras_skipped.clone(),
+            osm_data_as_of: f.osm_data_as_of.clone(),
+            caveats_summary: f.caveats_summary.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -655,13 +791,13 @@ impl ObservationMcp {
 #[tool_router(router = model_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "List camera models (and a scene's custom models), with fields of view, resolution and range at each detail level.",
+        description = "List camera models: id, vendor, name, kind, horizontal field of view and night-vision range. detail \"full\" adds resolution and the range at each detail level.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn list_camera_models(
         &self,
         Parameters(a): Parameters<ListModelsArgs>,
-    ) -> Result<Json<ModelList>, String> {
+    ) -> Result<Json<Report<ModelListBrief, ModelList>>, String> {
         let cat = catalog().map_err(fail)?;
         let scene = a
             .scene
@@ -684,10 +820,12 @@ impl ObservationMcp {
             })
             .map(ModelInfo::of)
             .collect();
-        Ok(Json(ModelList {
+        let full = ModelList {
             catalog_fingerprint: cat.fingerprint(),
             models,
-        }))
+        };
+        let detail = a.detail.unwrap_or(Verbosity::Brief);
+        Ok(Json(Report::of(detail, full, |f| f.into())))
     }
 
     #[tool(
@@ -899,13 +1037,14 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "How much mapped street and building wall is not ruled out for the enabled cameras, with buildings and terrain in the way. At each detail level; pass on the caveats.",
+        description = "How much mapped street and building wall is not ruled out for the enabled cameras, with buildings and terrain in the way. Pass on the data date and caveats_summary.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn compute_coverage(
         &self,
-        Parameters(a): Parameters<SceneArg>,
-    ) -> Result<Json<CoverageOut>, String> {
+        Parameters(a): Parameters<CoverageArgs>,
+    ) -> Result<Json<Report<CoverageBrief, CoverageOut>>, String> {
+        let v = self.verbosity(a.verbosity);
         // Line of sight over the whole area is CPU work: keep it off the async runtime,
         // with the connection's real areas in view.
         let areas = area::current_areas();
@@ -915,7 +1054,7 @@ impl ObservationMcp {
         })
         .await
         .map_err(|e| format!("coverage failed: {e}"))?
-        .map(Json)
+        .map(|f| Json(Report::of(v, f, |f| f.into())))
         .map_err(fail)
     }
 
@@ -949,21 +1088,21 @@ fn coverage(scene: &Value) -> Result<CoverageOut, ToolError> {
         .iter()
         .map(|l| LevelOut {
             level: l.level.label().to_owned(),
-            ppm: l.ppm,
-            street_m2: l.stats.street_m2,
-            street_seen_m2: l.stats.street_seen_m2,
-            street_seen_multi_m2: l.stats.street_seen_multi_m2,
-            open_ground_seen_m2: l.stats.open_ground_seen_m2,
-            facade_m2: l.stats.facade_m2,
-            facade_seen_m2: l.stats.facade_seen_m2,
-            street_fraction: l.stats.street_fraction(),
-            street_multi_fraction: l.stats.street_multi_fraction(),
-            facade_fraction: l.stats.facade_fraction(),
+            ppm: geometry::m1(l.ppm),
+            street_m2: geometry::m1(l.stats.street_m2),
+            street_seen_m2: geometry::m1(l.stats.street_seen_m2),
+            street_seen_multi_m2: geometry::m1(l.stats.street_seen_multi_m2),
+            open_ground_seen_m2: geometry::m1(l.stats.open_ground_seen_m2),
+            facade_m2: geometry::m1(l.stats.facade_m2),
+            facade_seen_m2: geometry::m1(l.stats.facade_seen_m2),
+            street_fraction: geometry::r3(l.stats.street_fraction()),
+            street_multi_fraction: geometry::r3(l.stats.street_multi_fraction()),
+            facade_fraction: geometry::r3(l.stats.facade_fraction()),
         })
         .collect();
     Ok(CoverageOut {
         lighting: format!("{:?}", s.params.lighting),
-        subject_height_m: s.params.subject_height_m,
+        subject_height_m: geometry::m1(s.params.subject_height_m),
         selected_level: s.params.dori.label().to_owned(),
         region_limited: f.region_limited,
         cameras_counted: f.counted,
@@ -1491,11 +1630,13 @@ mod tests {
             }))
             .unwrap();
         let Json(out) = s
-            .compute_coverage(Parameters(SceneArg {
+            .compute_coverage(Parameters(CoverageArgs {
                 scene: placed.scene,
+                verbosity: None,
             }))
             .await
             .unwrap();
+        let out = out.full().unwrap();
         assert_eq!(out.levels.len(), 4);
         assert!(out.levels[0].street_seen_m2 > 0.0);
         assert!(out.caveats.contains("trees"));

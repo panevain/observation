@@ -361,8 +361,9 @@ async fn coverage_runs_on_the_users_real_area_while_connected() {
 
     // Offline, a real area is refused as before.
     let offline = mcp
-        .compute_coverage(Parameters(SceneArg {
+        .compute_coverage(Parameters(CoverageArgs {
             scene: scene.clone(),
+            verbosity: None,
         }))
         .await
         .map(drop)
@@ -397,12 +398,14 @@ async fn coverage_runs_on_the_users_real_area_while_connected() {
     let Json(out) = mcp
         .in_tool_scope(
             args(&placed).as_ref(),
-            mcp.compute_coverage(Parameters(SceneArg {
+            mcp.compute_coverage(Parameters(CoverageArgs {
                 scene: placed.clone(),
+                verbosity: None,
             })),
         )
         .await
         .unwrap();
+    let out = out.full().unwrap();
     assert_eq!(out.cameras_counted.len(), 3);
     assert!(out.levels[0].street_m2 > 1000.0, "{:?}", out.levels[0]);
     assert!(out.levels[0].street_seen_m2 > 0.0);
@@ -425,7 +428,10 @@ async fn coverage_runs_on_the_users_real_area_while_connected() {
     let again = mcp
         .in_tool_scope(
             args(&placed).as_ref(),
-            mcp.compute_coverage(Parameters(SceneArg { scene: placed })),
+            mcp.compute_coverage(Parameters(CoverageArgs {
+                scene: placed,
+                verbosity: None,
+            })),
         )
         .await
         .map(drop)
@@ -447,7 +453,10 @@ async fn a_failed_area_fetch_is_reported_to_the_tool() {
     let e = mcp
         .in_tool_scope(
             args.as_ref(),
-            mcp.compute_coverage(Parameters(SceneArg { scene })),
+            mcp.compute_coverage(Parameters(CoverageArgs {
+                scene,
+                verbosity: None,
+            })),
         )
         .await
         .map(drop)
@@ -540,10 +549,12 @@ async fn places_and_queries_work_on_the_users_real_area() {
             mcp.target_verdicts(Parameters(TargetVerdictsArgs {
                 scene: scene.clone(),
                 target_id: None,
+                verbosity: None,
             })),
         )
         .await
         .unwrap();
+    let verdicts = verdicts.full().unwrap();
     assert_eq!(verdicts.targets[0].cameras.len(), 3);
     assert!(verdicts.sources.osm_data_as_of.is_some());
     let Json(split) = mcp
@@ -554,10 +565,12 @@ async fn places_and_queries_work_on_the_users_real_area() {
                 camera_id: None,
                 level: None,
                 lighting: None,
+                verbosity: None,
             })),
         )
         .await
         .unwrap();
+    let split = split.full().unwrap();
     assert_eq!(split.cameras.len(), 3);
     assert_eq!(split.cameras[0].areas.len(), 1);
     let Json(point) = mcp
@@ -568,10 +581,12 @@ async fn places_and_queries_work_on_the_users_real_area() {
                 x: 0.0,
                 z: 10.0,
                 height_m: None,
+                verbosity: None,
             })),
         )
         .await
         .unwrap();
+    let point = point.full().unwrap();
     assert_eq!(point.cameras.len(), 3);
     let Json(gaps) = mcp
         .in_tool_scope(
@@ -582,10 +597,12 @@ async fn places_and_queries_work_on_the_users_real_area() {
                 lighting: None,
                 max_gaps: None,
                 min_area_m2: None,
+                verbosity: None,
             })),
         )
         .await
         .unwrap();
+    let gaps = gaps.full().unwrap();
     assert!(gaps.street_m2 > 1000.0 && !gaps.gaps.is_empty());
     assert!(mcp.link().areas().contains(&bbox));
 }
