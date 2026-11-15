@@ -44,14 +44,25 @@
 //! It stops when it is delivered, when the server answers 409 (decided
 //! already; after a retry that means an earlier try got through) or any
 //! other refusal, which the card then shows, or when the pairing ends.
+//!
+//! The agent's view commands (see [`crate::agent_view`]) arrive on the same
+//! stream and wait in a short queue until [`AgentLink::take_view_actions`]
+//! works them out against the document, after the frame's edits. Each one
+//! the app carries out raises a toast saying what the agent did. With
+//! [`AgentLink::allow_view`] off (the dialog's "Let the agent move the view
+//! and selection") they are dropped, and the user is told once per pairing;
+//! a request to load an area is shown either way, since it does nothing
+//! until the user clicks Load. Commands are not replayed after a reconnect:
+//! the server sends each one once.
 
+use crate::agent_view::{AgentMark, LoadRequest, Planned, ViewAction, plan};
 use crate::document::{Document, Models};
 use crate::platform::{Failure, Http, HttpRequest, Reply, StatusReply, StreamEvent, StreamStop};
 use crate::proposal::{Accepted, PendingProposal, stale_reason};
 use observation_agent_api::{
-    BrowserEvent, BrowserEventKind, CreatePairing, Decision, DecisionPost, PROTOCOL_VERSION,
-    PairingCreated, PairingPhase, PinnedPoint, Proposal, SharedState, StatePost, display_code,
-    paths, version_ok,
+    AgentCommand, BrowserEvent, BrowserEventKind, CreatePairing, Decision, DecisionPost,
+    PROTOCOL_VERSION, PairingCreated, PairingPhase, PinnedPoint, Proposal, SharedState, StatePost,
+    display_code, paths, version_ok,
 };
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -68,6 +79,9 @@ pub const DECISION_RETRY_FIRST: f32 = 1.0;
 pub const DECISION_RETRY_MAX: f32 = 30.0;
 /// The longest `Retry-After` honoured for a decision, seconds.
 const DECISION_RETRY_AFTER_MAX: f32 = 300.0;
+/// Most view commands waiting to be worked out; past it the oldest go (a
+/// frame takes them all, so only a stalled app ever gets there).
+pub const MAX_PENDING_COMMANDS: usize = 64;
 
 /// What the shared state is built from, cheap to compare:
 /// [`AgentLink::update`] builds the state, and its JSON, only when this or
@@ -182,6 +196,18 @@ pub struct AgentLink {
     pub card_open: bool,
     /// What to tell the user in a toast.
     notices: Vec<String>,
+    /// Let the agent move the view and selection (the dialog's checkbox,
+    /// remembered by the client); a request to load an area is shown
+    /// either way.
+    pub allow_view: bool,
+    /// View commands that arrived and are not worked out yet, oldest first.
+    commands: VecDeque<AgentCommand>,
+    /// The user was told in this pairing that view commands are off.
+    told_view_off: bool,
+    /// The agent's mark in the 3D view.
+    mark: Option<AgentMark>,
+    /// The agent's request to load an area, while the user has not decided.
+    pub load_request: Option<LoadRequest>,
 }
 
 impl Default for AgentLink {
@@ -209,6 +235,11 @@ impl Default for AgentLink {
             decided: Vec::new(),
             card_open: false,
             notices: Vec::new(),
+            allow_view: true,
+            commands: VecDeque::new(),
+            told_view_off: false,
+            mark: None,
+            load_request: None,
         }
     }
 }
@@ -291,6 +322,54 @@ impl AgentLink {
     /// The same, to edit the reason being typed.
     pub fn proposal_mut(&mut self) -> Option<&mut PendingProposal> {
         self.proposal.as_mut()
+    }
+
+    /// The agent's mark in the 3D view, if any.
+    pub fn mark(&self) -> Option<&AgentMark> {
+        self.mark.as_ref()
+    }
+
+    /// Removes the agent's mark (the user closed its note).
+    pub fn clear_mark(&mut self) {
+        self.mark = None;
+    }
+
+    /// Works out the view commands that arrived against `doc`, after the
+    /// frame's edits: marks and requests to load are taken here, and what
+    /// the client carries out is returned, in order. Each raises a toast;
+    /// one the app cannot use says why instead. With [`Self::allow_view`]
+    /// off, everything but a request to load is dropped.
+    pub fn take_view_actions(&mut self, doc: &Document) -> Vec<ViewAction> {
+        let mut actions = Vec::new();
+        while let Some(command) = self.commands.pop_front() {
+            if !self.allow_view && !matches!(command, AgentCommand::RequestLoadArea { .. }) {
+                if !self.told_view_off {
+                    self.told_view_off = true;
+                    self.notices.push(
+                        "The agent tried to change your view; that is turned off in Connect agent"
+                            .to_owned(),
+                    );
+                }
+                continue;
+            }
+            match plan(command, doc) {
+                Ok(Planned::Act(mut more, notice)) => {
+                    actions.append(&mut more);
+                    self.notices.push(notice);
+                }
+                Ok(Planned::Mark(mark, notice)) => {
+                    self.mark = mark;
+                    self.notices.push(notice);
+                }
+                Ok(Planned::AskToLoad(request)) => {
+                    self.notices
+                        .push("The agent asks you to load an area".to_owned());
+                    self.load_request = Some(request);
+                }
+                Err(why) => self.notices.push(why),
+            }
+        }
+        actions
     }
 
     /// What to tell the user in toasts since the last call.
@@ -546,6 +625,10 @@ impl AgentLink {
         self.arrived = None;
         self.newest_proposal = 0;
         self.decided.clear();
+        self.commands.clear();
+        self.told_view_off = false;
+        self.mark = None;
+        self.load_request = None;
         for undelivered in std::mem::take(&mut self.outbox) {
             if let Some(p) = self.proposal_with(undelivered.id) {
                 p.decision_retrying = false;
@@ -744,6 +827,12 @@ impl AgentLink {
                             self.notices
                                 .push("The agent withdrew its proposal".to_owned());
                         }
+                    }
+                    BrowserEventKind::Command { command, .. } => {
+                        if self.commands.len() >= MAX_PENDING_COMMANDS {
+                            self.commands.pop_front();
+                        }
+                        self.commands.push_back(command);
                     }
                     // A kind this build does not know (a later feature).
                     BrowserEventKind::Unknown => {}

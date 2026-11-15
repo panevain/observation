@@ -1,6 +1,8 @@
 //! Connect agent: the top bar's button and connected indicator, the dialog
-//! with the code to give the agent, the status and Disconnect, and the card
-//! that shows the agent's proposal for the user to accept or reject.
+//! with the code to give the agent, the status, the choice to let the agent
+//! move the view and Disconnect, the card that shows the agent's proposal
+//! for the user to accept or reject, the note by the agent's mark, and the
+//! card that asks the user to load an area for the agent.
 
 use super::UiData;
 use super::widgets::{hint, keycap, primary, secondary, section};
@@ -12,6 +14,7 @@ use bevy_egui::egui::{self, Align2, RichText, Vec2};
 use observation_agent_api::MAX_REASON_CHARS;
 use observation_client_model::agent::LinkPhase;
 use observation_client_model::proposal::{FiguresVm, ProposalCardVm};
+use observation_core::geo::BBox;
 
 /// The top bar's button: Connect agent, or the connected indicator; while
 /// a proposal waits with its card closed, a button that reopens the card.
@@ -73,9 +76,18 @@ pub fn window(ctx: &egui::Context, t: &Tokens, link: &mut AgentLinkRes, http: &d
                 t,
                 "An AI agent running on this computer (through the Observation MCP server) can read \
                  the open scene, its area, the selected camera and a point you share. It cannot \
-                 change the scene itself: it can propose a change, which you accept or reject. The \
-                 connection lasts until you disconnect, close this tab or leave it unused for 30 \
-                 minutes.",
+                 change the scene itself: it can propose a change, which you accept or reject. It \
+                 can ask you to load an area, which loads only if you click Load. The connection \
+                 lasts until you disconnect, close this tab or leave it unused for 30 minutes.",
+            );
+            ui.add_space(t.space.sm);
+            ui.checkbox(
+                &mut link.allow_view,
+                "Let the agent move the view and selection",
+            )
+            .on_hover_text(
+                "The agent can then look at a spot, select a camera, mark something with a note, \
+                 and switch day or night, the detail level and the overlay. A toast says each time.",
             );
             ui.add_space(t.space.md);
             match link.phase().clone() {
@@ -322,5 +334,95 @@ pub fn proposal_card(
     }
     if !open || close {
         d.agent.close_card();
+    }
+}
+
+/// The note by the agent's mark, at `at` in the 3D view: the agent's words
+/// as plain text, and a button that removes the mark. True when the user
+/// removed it.
+pub fn mark_note(
+    ctx: &egui::Context,
+    t: &Tokens,
+    viewport: egui::Rect,
+    at: egui::Pos2,
+    note: Option<&str>,
+) -> bool {
+    let mut close = false;
+    egui::Area::new(egui::Id::new("agent-mark-note"))
+        .order(egui::Order::Middle)
+        .pivot(Align2::LEFT_BOTTOM)
+        .fixed_pos(at + egui::vec2(t.space.sm, -t.space.sm))
+        .constrain_to(viewport.shrink(t.space.sm))
+        .show(ctx, |ui| {
+            t.card()
+                .inner_margin(egui::Margin::same(t.space.xs as i8))
+                .show(ui, |ui| {
+                    ui.set_max_width(260.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icons::ROBOT).color(t.accent));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(note.unwrap_or("The agent's mark"))
+                                    .size(t.font.caption)
+                                    .color(t.text),
+                            )
+                            .wrap(),
+                        );
+                        if ui
+                            .add(egui::Button::new(icons::X).frame(false))
+                            .on_hover_text("Remove the agent's mark")
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+        });
+    close
+}
+
+/// The agent's request to load an area, at the top of the 3D view: what
+/// and why, with Load and Dismiss. Nothing loads until the user clicks
+/// Load; returns the area then.
+pub fn load_request_card(
+    ctx: &egui::Context,
+    t: &Tokens,
+    link: &mut AgentLinkRes,
+    viewport: egui::Rect,
+) -> Option<BBox> {
+    let request = link.load_request.clone()?;
+    let mut choice = None;
+    egui::Window::new(RichText::new(format!("{} Load an area?", icons::ROBOT)))
+        .id(egui::Id::new("agent-load-request"))
+        .collapsible(false)
+        .resizable(false)
+        .title_bar(true)
+        .default_pos(viewport.center_top() + egui::vec2(-180.0, t.space.md))
+        .constrain_to(viewport)
+        .default_width(360.0)
+        .frame(t.card())
+        .show(ctx, |ui| {
+            ui.add(egui::Label::new(RichText::new(request.text()).color(t.text)).wrap());
+            hint(
+                ui,
+                t,
+                "Loading it replaces the area open now, as choosing it on the map does.",
+            );
+            ui.add_space(t.space.sm);
+            ui.horizontal(|ui| {
+                if ui.add(primary(t, "Load")).clicked() {
+                    choice = Some(true);
+                }
+                if ui.add(secondary(t, "Dismiss")).clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+    match choice {
+        Some(load) => {
+            link.load_request = None;
+            load.then_some(request.bbox)
+        }
+        None => None,
     }
 }

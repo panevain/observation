@@ -590,3 +590,112 @@ fn a_decision_still_trying_when_the_pairing_ends_says_so() {
     );
     assert_eq!(p.standing, crate::proposal::Standing::Accepted);
 }
+
+fn command(id: u64, command: AgentCommand) -> StreamEvent {
+    event(BrowserEventKind::Command { id, command })
+}
+
+/// A connected link over `http`.
+fn connected(http: &FakeHttp) -> AgentLink {
+    let mut link = waiting(http);
+    http.emit_follow(&events_url(), &claimed());
+    link.update(http, 0.0, StateKey::default(), |_| None);
+    assert!(link.is_connected());
+    link
+}
+
+fn load_request() -> AgentCommand {
+    AgentCommand::RequestLoadArea {
+        bbox: observation_core::geo::BBox::new(51.5, -0.13, 51.502, -0.127).unwrap(),
+        reason: "it is your street".into(),
+    }
+}
+
+#[test]
+fn view_commands_become_actions_marks_and_requests_with_toasts() {
+    let http = FakeHttp::default();
+    let mut link = connected(&http);
+    link.take_notices();
+    let focus = AgentCommand::FocusView {
+        at: [1.0, 2.0],
+        distance_m: None,
+    };
+    http.emit_follow(&events_url(), &command(1, focus));
+    http.emit_follow(
+        &events_url(),
+        &command(
+            2,
+            AgentCommand::Highlight {
+                what: observation_agent_api::Highlight::Point { at: [3.0, 4.0] },
+                note: Some("here".into()),
+            },
+        ),
+    );
+    http.emit_follow(&events_url(), &command(3, load_request()));
+    // A later kind is skipped.
+    http.emit_follow(
+        &events_url(),
+        &StreamEvent::Data(
+            br#"{"v":1,"type":"command","id":4,"command":{"kind":"orbit"}}"#.to_vec(),
+        ),
+    );
+    link.update(&http, 0.0, StateKey::default(), |_| None);
+    let doc = Document::default();
+    let actions = link.take_view_actions(&doc);
+    assert_eq!(
+        actions,
+        [ViewAction::Focus {
+            at: [1.0, 2.0],
+            distance_m: None
+        }]
+    );
+    assert_eq!(
+        link.mark().map(|m| (m.at, m.note.as_deref())),
+        Some((crate::agent_view::MarkAt::Point([3.0, 4.0]), Some("here")))
+    );
+    assert!(link.load_request.is_some());
+    let notices = link.take_notices();
+    assert_eq!(notices.len(), 4, "{notices:?}");
+    assert_eq!(notices[0], "Agent moved the view");
+    assert_eq!(notices[1], "Agent marked a spot");
+    assert_eq!(notices[2], "The agent asks you to load an area");
+    assert!(notices[3].contains("unknown kind"), "{notices:?}");
+    // Taken once.
+    assert!(link.take_view_actions(&doc).is_empty());
+    // The pairing ending takes the mark and the request with it.
+    link.disconnect(&http);
+    assert!(link.mark().is_none() && link.load_request.is_none());
+}
+
+#[test]
+fn with_view_commands_off_only_a_request_to_load_is_shown() {
+    let http = FakeHttp::default();
+    let mut link = connected(&http);
+    link.allow_view = false;
+    link.take_notices();
+    for id in 1..=3 {
+        let select = AgentCommand::SelectCameras { ids: vec![id] };
+        http.emit_follow(&events_url(), &command(id.into(), select));
+    }
+    http.emit_follow(&events_url(), &command(4, load_request()));
+    link.update(&http, 0.0, StateKey::default(), |_| None);
+    assert!(link.take_view_actions(&Document::default()).is_empty());
+    assert!(link.load_request.is_some());
+    let notices = link.take_notices();
+    // The user hears once that commands are off, and of the request.
+    assert_eq!(notices.len(), 2, "{notices:?}");
+    assert!(notices[0].contains("turned off"), "{notices:?}");
+}
+
+#[test]
+fn the_queue_of_commands_is_bounded() {
+    let http = FakeHttp::default();
+    let mut link = connected(&http);
+    for id in 0..(MAX_PENDING_COMMANDS as u64 + 10) {
+        let select = AgentCommand::SelectCameras { ids: vec![] };
+        http.emit_follow(&events_url(), &command(id, select));
+    }
+    link.update(&http, 0.0, StateKey::default(), |_| None);
+    let actions = link.take_view_actions(&Document::default());
+    assert_eq!(actions.len(), MAX_PENDING_COMMANDS);
+}

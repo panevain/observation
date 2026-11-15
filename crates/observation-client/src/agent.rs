@@ -1,7 +1,10 @@
 //! The link to a local agent (see [`observation_client_model::agent`]): the
 //! resource, keeping it up to date, Share with agent (the `S` key over the
-//! ground), and the ghost of the agent's proposal in the 3D view. The
-//! Connect agent dialog and the proposal card are `ui::agent`.
+//! ground), carrying out the agent's view commands (see
+//! [`observation_client_model::agent_view`]), and the ghost of the agent's
+//! proposal and the agent's mark in the 3D view. The Connect agent dialog,
+//! the proposal card, the mark's note and the request to load an area are
+//! `ui::agent`.
 //!
 //! The link's systems run in `Last`, after everything that edits the scene
 //! in the frame, so what is posted and checked is the frame's final state,
@@ -14,17 +17,26 @@ use crate::input::OrbitCamera;
 use crate::net::ServerConfig;
 use crate::persist::SceneSlots;
 use crate::platform::Platform;
-use crate::state::{Area, Editor, Models, Scene, Toasts, UiLayout, terrain_of};
+use crate::state::{Area, Editor, Models, Panels, Scene, Toasts, TrackScene, UiLayout, terrain_of};
 use crate::theme::{Tokens, to_bevy};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
 use observation_client_model::agent::{AgentLink, StateKey, shared_state};
+use observation_client_model::agent_view::{MarkAt, ViewAction};
+use observation_client_model::commands;
+use observation_client_model::editor::select;
 use observation_core::footage::TargetPlace;
 use observation_core::scene::changes::Change;
 
 /// Farthest a Share with agent ray looks for the ground, metres.
 const MAX_SHARE_RAY_M: f32 = 5_000.0;
+/// Where the dialog's "Let the agent move the view and selection" is kept
+/// in this browser: `on` or `off` (on when unset).
+pub const VIEW_COMMANDS_KEY: &str = "observation.agent_view";
+/// The distance the view keeps when the agent gives none, at most, metres
+/// (as framing a camera does).
+const FOCUS_KEEP_M: f32 = 60.0;
 
 /// The link to a local agent, as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
@@ -34,12 +46,21 @@ pub struct AgentPlugin;
 
 impl Plugin for AgentPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<AgentLinkRes>().add_systems(
+        let allow_view = Platform::of(app.world())
+            .local
+            .get(VIEW_COMMANDS_KEY)
+            .as_deref()
+            != Some("off");
+        let mut link = AgentLink::default();
+        link.allow_view = allow_view;
+        app.insert_resource(AgentLinkRes(link)).add_systems(
             Last,
             (
                 offer.run_if(resource_changed::<ServerConfig>),
                 share_pointed_ground,
                 keep_up,
+                follow_commands,
+                remember_view_choice,
             )
                 .chain(),
         );
@@ -65,7 +86,7 @@ impl Plugin for ProposalGhostPlugin {
                 ..default()
             },
         )
-        .add_systems(PostUpdate, draw_proposal);
+        .add_systems(PostUpdate, (draw_proposal, draw_mark));
     }
 }
 
@@ -108,6 +129,82 @@ fn keep_up(
     link.follow_proposal(http, &scene, &models);
     for notice in link.take_notices() {
         toasts.info(notice);
+    }
+}
+
+/// Carries out the agent's view commands that arrived this frame, after
+/// every edit of the frame: moves the 3D view, changes the selection, sets
+/// the analysis settings (as the Analysis tab does, so the history records
+/// them and the scene saves them) and the view toggles, and tells the user
+/// what the agent did.
+#[allow(clippy::too_many_arguments)]
+fn follow_commands(
+    mut link: ResMut<AgentLinkRes>,
+    mut scene: ResMut<Scene>,
+    mut editor: ResMut<Editor>,
+    mut panels: ResMut<Panels>,
+    mut orbit: Query<&mut OrbitCamera>,
+    mut toasts: ResMut<Toasts>,
+) {
+    if !link.is_open() {
+        return;
+    }
+    for action in link.take_view_actions(&scene) {
+        match action {
+            ViewAction::Focus { at, distance_m } => {
+                if let Ok(mut o) = orbit.single_mut() {
+                    // `focus_on_ground` puts it on the ground there.
+                    o.focus = Vec3::new(at[0], 0.0, at[1]);
+                    o.distance = distance_m.unwrap_or_else(|| o.distance.min(FOCUS_KEEP_M));
+                }
+            }
+            ViewAction::Select(Some(id)) => select(&mut editor, &mut panels, id),
+            ViewAction::Select(None) => editor.selected = None,
+            ViewAction::Params(params) => {
+                commands::set_params(&mut TrackScene(&mut scene), params);
+            }
+            ViewAction::Panels {
+                overlay,
+                cones,
+                walls,
+            } => {
+                if let Some(o) = overlay {
+                    panels.overlay = o;
+                }
+                if let Some(c) = cones {
+                    panels.show_frustums = c;
+                }
+                if let Some(w) = walls {
+                    panels.show_facades = w;
+                }
+            }
+        }
+    }
+    for notice in link.take_notices() {
+        toasts.info(notice);
+    }
+}
+
+/// Keeps the dialog's "Let the agent move the view and selection" in this
+/// browser when the user changes it.
+fn remember_view_choice(
+    link: Res<AgentLinkRes>,
+    platform: Res<Platform>,
+    mut last: Local<Option<bool>>,
+) {
+    let now = link.allow_view;
+    match *last {
+        Some(was) if was == now => {}
+        None => *last = Some(now),
+        Some(_) => {
+            *last = Some(now);
+            if let Err(why) = platform
+                .local
+                .set(VIEW_COMMANDS_KEY, if now { "on" } else { "off" })
+            {
+                bevy::log::warn!("could not store the agent view setting: {why:?}");
+            }
+        }
     }
 }
 
@@ -229,6 +326,65 @@ fn draw_proposal(
     }
 }
 
+/// Radius of the ring around the agent's mark, metres.
+const MARK_RING_M: f32 = 1.2;
+/// Height of the pin above the agent's mark, metres.
+const MARK_PIN_M: f32 = 6.0;
+
+/// The agent's mark: a ring and a pin over a camera or a spot, the outline
+/// of a target or an area, in the accent colour over a dark casing.
+fn draw_mark(
+    mut gizmos: Gizmos<ProposalGizmos>,
+    link: Res<AgentLinkRes>,
+    scene: Res<Scene>,
+    tokens: Res<Tokens>,
+    area: Option<Res<Area>>,
+) {
+    let Some(mark) = link.mark() else {
+        return;
+    };
+    let Some((at, height)) = mark.anchor(&scene) else {
+        return;
+    };
+    let terrain = terrain_of(area.as_deref());
+    let color = to_bevy(tokens.accent);
+    let halo = to_bevy(tokens.world.halo);
+    let ground = |p: [f32; 2]| {
+        let v = Vec2::from_array(p);
+        Vec3::new(v.x, terrain.height_at(v) + GHOST_Y_M, v.y)
+    };
+    let flat =
+        |centre: Vec3| Isometry3d::new(centre, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+    let outline = |gizmos: &mut Gizmos<ProposalGizmos>, points: &[[f32; 2]]| {
+        let ring: Vec<Vec3> = points
+            .iter()
+            .chain(points.first())
+            .map(|p| ground(*p))
+            .collect();
+        gizmos.linestrip(ring, color);
+    };
+    match mark.at {
+        MarkAt::Area(id) => {
+            if let Some(a) = scene.areas.iter().find(|a| a.id == id) {
+                outline(&mut gizmos, &a.points);
+            }
+        }
+        MarkAt::Target(id) => {
+            if let Some(observation_core::footage::TargetPlace::Ground { points }) =
+                scene.targets.iter().find(|t| t.id == id).map(|t| &t.at)
+            {
+                outline(&mut gizmos, points);
+            }
+        }
+        MarkAt::Camera(_) | MarkAt::Point(_) => {}
+    }
+    let foot = ground(at);
+    let centre = height.map_or(foot, |h| Vec3::new(at[0], h, at[1]));
+    gizmos.circle(flat(centre), MARK_RING_M + 0.08, halo);
+    gizmos.circle(flat(centre), MARK_RING_M, color);
+    gizmos.line(foot, centre.max(foot) + Vec3::Y * MARK_PIN_M, color);
+}
+
 /// Share with agent: `S` with the pointer over the ground of the loaded
 /// area shares that point, while a pairing is open.
 fn share_pointed_ground(
@@ -283,6 +439,7 @@ mod tests {
     use crate::platform::{Platform, PlatformPlugin};
     use observation_agent_api::paths;
     use observation_client_model::agent::LinkPhase;
+    use observation_client_model::platform::StreamEvent;
     use observation_client_model::testing::{
         FakeClock, FakeColorScheme, FakeFiles, FakeHttp, MemoryStore,
     };
@@ -309,6 +466,7 @@ mod tests {
             .init_resource::<Scene>()
             .insert_resource(Models::new(Default::default()))
             .init_resource::<Editor>()
+            .init_resource::<Panels>()
             .init_resource::<SceneSlots>()
             .init_resource::<ServerConfig>()
             .init_resource::<UiLayout>()
@@ -363,5 +521,110 @@ mod tests {
         assert_eq!(body["state"]["selection"], serde_json::json!([4]));
         assert_eq!(body["state"]["area"]["kind"], "demo");
         assert_eq!(put.bearer.as_deref(), Some("t"));
+    }
+
+    fn command(id: u64, command: serde_json::Value) -> StreamEvent {
+        let event = serde_json::json!({"v": 1, "type": "command", "id": id, "command": command});
+        StreamEvent::Data(event.to_string().into_bytes())
+    }
+
+    #[test]
+    fn the_agents_commands_move_the_view_and_selection_unless_turned_off() {
+        let http = Arc::new(FakeHttp::default());
+        let mut app = app(&http);
+        app.world_mut().resource_mut::<ServerConfig>().agent_bridge = true;
+        let orbit = app.world_mut().spawn(OrbitCamera::default()).id();
+        app.world_mut().resource_mut::<Scene>().cameras.push(
+            observation_core::camera::CameraPlacement {
+                id: 4,
+                label: "Porch".into(),
+                model_id: "m".into(),
+                position: [1.0, 3.0, 2.0],
+                yaw_deg: 0.0,
+                pitch_deg: 0.0,
+                roll_deg: 0.0,
+                color: None,
+                enabled: true,
+                group: None,
+            },
+        );
+        app.update();
+        assert!(
+            app.world().resource::<AgentLinkRes>().allow_view,
+            "on by default"
+        );
+        let platform = app.world().resource::<Platform>().clone();
+        app.world_mut()
+            .resource_mut::<AgentLinkRes>()
+            .connect(&*platform.http);
+        assert!(http.respond_to(
+            "POST",
+            paths::PAIRINGS,
+            Ok(br#"{"v":1,"code":"ABCDEFGH","browser_token":"t","code_expires_in_s":600,"idle_timeout_s":1800}"#.to_vec()),
+        ));
+        app.update();
+        let events = format!("{}?token=t", paths::EVENTS);
+        http.emit_follow(
+            &events,
+            &StreamEvent::Data(br#"{"v":1,"type":"status","phase":"claimed"}"#.to_vec()),
+        );
+        http.emit_follow(
+            &events,
+            &command(
+                1,
+                serde_json::json!({"kind": "focus_view", "at": [10.0, -20.0], "distance_m": 40.0}),
+            ),
+        );
+        http.emit_follow(
+            &events,
+            &command(2, serde_json::json!({"kind": "select_cameras", "ids": [4]})),
+        );
+        http.emit_follow(
+            &events,
+            &command(
+                3,
+                serde_json::json!({"kind": "set_view_options", "night": true, "walls": false}),
+            ),
+        );
+        app.update();
+        let o = app.world().get::<OrbitCamera>(orbit).unwrap();
+        assert_eq!((o.focus, o.distance), (Vec3::new(10.0, 0.0, -20.0), 40.0));
+        assert_eq!(app.world().resource::<Editor>().selected, Some(4));
+        let lighting = app.world().resource::<Scene>().params.lighting;
+        assert_eq!(lighting, observation_core::camera::Lighting::Night);
+        assert!(!app.world().resource::<Panels>().show_facades);
+        let toasts: Vec<String> = app
+            .world()
+            .resource::<Toasts>()
+            .iter()
+            .map(|t| t.text.clone())
+            .collect();
+        assert!(
+            toasts.iter().any(|t| t == "Agent moved the view"),
+            "{toasts:?}"
+        );
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t == "Agent selected camera 4 ‘Porch’"),
+            "{toasts:?}"
+        );
+
+        // Turned off: the view stays, and the choice is remembered.
+        app.world_mut().resource_mut::<AgentLinkRes>().allow_view = false;
+        http.emit_follow(
+            &events,
+            &command(
+                4,
+                serde_json::json!({"kind": "focus_view", "at": [0.0, 0.0]}),
+            ),
+        );
+        app.update();
+        let o = app.world().get::<OrbitCamera>(orbit).unwrap();
+        assert_eq!(o.focus, Vec3::new(10.0, 0.0, -20.0));
+        assert_eq!(
+            platform.local.get(VIEW_COMMANDS_KEY).as_deref(),
+            Some("off")
+        );
     }
 }

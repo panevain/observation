@@ -291,6 +291,27 @@ fn draw_ui(
     if d.agent.card_open {
         agent::proposal_card(&ctx, &t, &mut d, viewport_rect, &*platform.http, clock);
     }
+    if let Some(bbox) = agent::load_request_card(&ctx, &t, &mut d.agent, viewport_rect) {
+        load.write(LoadArea::osm(bbox));
+    }
+    // The note by the agent's mark, where the mark is in the view.
+    let mark = d.agent.mark().and_then(|m| {
+        let (at, height) = m.anchor(&d.scene)?;
+        let terrain = crate::state::terrain_of(d.area.as_deref());
+        let y = height.unwrap_or_else(|| terrain.height_at(Vec2::from_array(at)));
+        Some((Vec3::new(at[0], y, at[1]), m.note.clone()))
+    });
+    if let Some((world, note)) = mark
+        && let Some(p) = camera
+            .single()
+            .ok()
+            .and_then(|(cam, gt)| cam.world_to_viewport(gt, world).ok())
+            .map(|p| egui::pos2(p.x, p.y))
+            .filter(|p| viewport_rect.contains(*p))
+        && agent::mark_note(&ctx, &t, viewport_rect, p, note.as_deref())
+    {
+        d.agent.clear_mark();
+    }
     if d.panels.regions_open {
         regions::window(&ctx, &t, &mut d.regions, &mut d.panels.regions_open, clock);
     }
