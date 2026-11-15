@@ -18,6 +18,13 @@ observation-mapdata.workspace = true
 # (deny.toml allows reqwest nowhere else).
 observation-agent-api.workspace = true
 observation-upstream.workspace = true
+# The coverage ramp and map colours of render_map's picture, as the app and the evidence sheet
+# draw them.
+observation-tokens.workspace = true
+# render_map's picture: PNG encoding, and base64 for the MCP image block. Both versions were
+# already in the lock (png under the client's Bevy, base64 under rmcp and hyper-util).
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
+png = { version = "0.18", default-features = false }
 http = "1"
 # The server side of MCP over stdio and Streamable HTTP, for spec 2026-07-28. Never enable
 # `auth` or any `reqwest*` feature: they pull reqwest, which deny.toml allows only in

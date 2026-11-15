@@ -4953,13 +4953,16 @@ name = "observation-mcp"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "http",
  "http-body-util",
  "observation-agent-api",
  "observation-core",
  "observation-mapdata",
  "observation-server",
+ "observation-tokens",
  "observation-upstream",
+ "png",
  "rmcp",
  "schemars",
  "serde",
