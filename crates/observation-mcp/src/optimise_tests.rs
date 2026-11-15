@@ -627,3 +627,20 @@ fn the_searches_are_bounded() {
 fn demo_warm() -> Result<(), ToolError> {
     crate::area::demo_layers().map(|_| ())
 }
+
+/// Rounded figures read as the decimal they were rounded to, not as the
+/// digits of an `f32` a hair below it (`12.059999`, `1.1999999`).
+#[test]
+fn rounded_figures_serialise_as_written() {
+    for (v, two, one) in [
+        (12.0612_f32, "12.06", "12.1"),
+        (5.8199997, "5.82", "5.8"),
+        (1.1999999, "1.2", "1.2"),
+        (-60.719997, "-60.72", "-60.7"),
+        (1023.83, "1023.83", "1023.8"),
+    ] {
+        let json = |x: f32| serde_json::to_string(&crate::geometry::widened::widen(x)).unwrap();
+        assert_eq!(json(r2(v)), two, "{v}");
+        assert_eq!(json(r1(v)), one, "{v}");
+    }
+}
