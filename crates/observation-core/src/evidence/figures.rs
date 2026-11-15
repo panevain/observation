@@ -399,6 +399,7 @@ impl Figures {
                 layers.grid().cell_m,
                 inputs.facade_cell_m,
                 inputs.agent_log,
+                tier,
             ),
             osm_attribution: if osm.is_empty() {
                 "© OpenStreetMap contributors".to_owned()

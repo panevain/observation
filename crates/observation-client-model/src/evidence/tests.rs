@@ -1,7 +1,7 @@
 use super::*;
 use crate::coverage::backend::CoverageBackend;
 use crate::editor::Panels;
-use crate::testing::{FakeFiles, FakeSheetOutput};
+use crate::testing::{FakeClock, FakeFiles, FakeSheetOutput, ScriptedJobChannel};
 use observation_core::bundle::{OsmBuilding, OsmRoad, build_bundle};
 use observation_core::camera::{CameraKind, CameraModel, CameraPlacement, Catalog};
 use observation_core::geo::{BBox, LatLon};
@@ -119,17 +119,52 @@ impl Scene {
 fn a_sheet_waits_for_an_area_and_for_the_coverage() {
     let mut s = Scene::new();
     assert_eq!(
-        not_ready(&s.doc, &s.models, &s.coverage, false),
+        not_ready(&s.doc, &s.models, &s.coverage, false).as_deref(),
         Some("Load an area first.")
     );
     let waiting = not_ready(&s.doc, &s.models, &s.coverage, true).expect("not counted yet");
-    assert!(waiting.contains("still being worked out"));
-    assert_eq!(s.sheet(Tier::Aggregate), Err(waiting.to_owned()));
+    assert!(waiting.contains("still being worked out for camera 1"));
+    assert_eq!(s.sheet(Tier::Aggregate), Err(waiting));
     s.count();
     assert_eq!(not_ready(&s.doc, &s.models, &s.coverage, true), None);
     // A camera without a model is left out, as the coverage leaves it out.
     s.doc.cameras[0].model_id = "gone".into();
     assert_eq!(not_ready(&s.doc, &s.models, &s.coverage, true), None);
+}
+
+#[test]
+fn a_sheet_waits_while_a_moved_camera_is_worked_out_again() {
+    let mut s = Scene::new();
+    s.count();
+    assert!(s.sheet(Tier::Aggregate).is_ok());
+    // The coverage now goes to a worker that has not answered yet: the
+    // camera moves, and its sight lines are still those of where it was.
+    s.backend = CoverageBackend::new(
+        Some(Box::new(ScriptedJobChannel::default())),
+        Arc::new(FakeClock::at(0.0)),
+    );
+    s.doc.cameras[0].position[0] += 3.0;
+    s.count();
+    assert!(s.backend.busy(1), "the job is out");
+    assert!(
+        s.coverage.sight(1).is_some(),
+        "the old sight lines are kept"
+    );
+    let waiting = not_ready(&s.doc, &s.models, &s.coverage, true).expect("not current");
+    assert_eq!(
+        waiting,
+        "Coverage is still being worked out for camera 1; the sheet can be made once it is done."
+    );
+    assert_eq!(s.sheet(Tier::Exact), Err(waiting));
+    // Another model with other fields of view needs new sight lines too.
+    s.backend = CoverageBackend::default();
+    s.count();
+    assert_eq!(not_ready(&s.doc, &s.models, &s.coverage, true), None);
+    s.models.custom[0].hfov_deg = 60.0;
+    assert!(not_ready(&s.doc, &s.models, &s.coverage, true).is_some());
+    s.count();
+    assert_eq!(not_ready(&s.doc, &s.models, &s.coverage, true), None);
+    assert!(s.sheet(Tier::Exact).is_ok());
 }
 
 #[test]

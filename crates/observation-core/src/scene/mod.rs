@@ -10,6 +10,10 @@ pub use file::{
     SCENE_FORMAT, SCENE_VERSION, SceneError, SceneFile, lift_onto_terrain,
 };
 
+/// Defined beside [`crate::footage::fresh_id`], which hands out ids within it
+/// (the analysis layer may not use this one).
+pub use crate::footage::MAX_ITEM_ID;
+
 #[cfg(test)]
 mod tests {
     use super::*;

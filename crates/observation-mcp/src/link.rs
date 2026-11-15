@@ -315,11 +315,39 @@ impl AppLink {
     }
 
     /// Claims the pairing with `code` on the server at `url` (see
-    /// [`bridge_base`]), ending any connection already open. Returns what
-    /// the app shares now.
+    /// [`bridge_base`]) and switches to it. A connection already open is
+    /// ended (telling its server, best effort) only once the new pairing is
+    /// claimed and read; until then it stays as it was, and if the new code
+    /// does not work it is kept and the error says so. Returns what the app
+    /// shares now.
     pub async fn connect(self: &Arc<Self>, url: &str, code: &str) -> Result<Snapshot, ToolError> {
-        let base = bridge_base(url)?;
+        let base = bridge_base(url).map_err(|e| self.kept(e))?;
+        let (token, view) = self.claim(&base, code).await.map_err(|e| self.kept(e))?;
         self.disconnect().await;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let since = view.revision;
+        *lock(&self.conn) = Some(Conn {
+            id,
+            base: base.clone(),
+            token: token.clone(),
+            view,
+            watcher: None,
+        });
+        *lock(&self.ended) = None;
+        self.areas.clear();
+        let task = tokio::spawn(follow(Arc::downgrade(self), id, base, token, since));
+        if let Some(c) = lock(&self.conn).as_mut().filter(|c| c.id == id) {
+            c.watcher = Some(task.abort_handle());
+        }
+        self.changed();
+        Ok(self.snapshot())
+    }
+
+    /// Claims the pairing with `code` on the server at `base` and reads its
+    /// state: the agent token and the state. Touches no connection already
+    /// open. A pairing claimed but not read is ended again (best effort), so
+    /// that the app is not left waiting on an agent that is not there.
+    async fn claim(&self, base: &str, code: &str) -> Result<(String, StateView), ToolError> {
         let body = serde_json::to_vec(&ClaimRequest {
             v: PROTOCOL_VERSION,
             code: code.trim().to_owned(),
@@ -329,7 +357,7 @@ impl AppLink {
         let req = HttpRequest::post(format!("{base}{}", paths::CLAIM), 64 * 1024)
             .json(body)
             .timeout(REQUEST_TIMEOUT);
-        let claimed: Claimed = match self.send(&base, req).await? {
+        let claimed: Claimed = match self.send(base, req).await? {
             Ok(b) => Self::json(&b)?,
             Err(r) if r.status == 404 && !r.message.contains("OBS_AGENT_BRIDGE") => {
                 return Err(ToolError::Link(format!(
@@ -339,33 +367,47 @@ impl AppLink {
             }
             Err(r) => return Err(ToolError::Link(r.message)),
         };
-        let view = match self.read_state(&base, &claimed.agent_token, None).await? {
-            Ok(v) => v,
-            Err(r) => return Err(ToolError::Link(r.message)),
+        let read = match self.read_state(base, &claimed.agent_token, None).await {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(r)) => Err(ToolError::Link(r.message)),
+            Err(e) => Err(e),
         };
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let since = view.revision;
-        *lock(&self.conn) = Some(Conn {
-            id,
-            base: base.clone(),
-            token: claimed.agent_token.clone(),
-            view,
-            watcher: None,
-        });
-        *lock(&self.ended) = None;
-        self.areas.clear();
-        let task = tokio::spawn(follow(
-            Arc::downgrade(self),
-            id,
-            base,
-            claimed.agent_token,
-            since,
-        ));
-        if let Some(c) = lock(&self.conn).as_mut().filter(|c| c.id == id) {
-            c.watcher = Some(task.abort_handle());
+        if read.is_err() {
+            self.end_pairing(base, &claimed.agent_token).await;
         }
-        self.changed();
-        Ok(self.snapshot())
+        read.map(|v| (claimed.agent_token, v))
+    }
+
+    /// `e`, saying that the connection already open, if any, is kept.
+    fn kept(&self, e: ToolError) -> ToolError {
+        let Some(base) = lock(&self.conn).as_ref().map(|c| c.base.clone()) else {
+            return e;
+        };
+        let note = |why: String| {
+            format!(
+                "{}. The connection to the app at {base} is kept",
+                why.trim_end_matches('.')
+            )
+        };
+        match e {
+            ToolError::Link(why) => ToolError::Link(note(why)),
+            ToolError::Invalid(why) => ToolError::Invalid(note(why)),
+            other => other,
+        }
+    }
+
+    /// Tells the server at `base` that the pairing `token` names has ended
+    /// (best effort: one already ended there is as good as ended now).
+    async fn end_pairing(&self, base: &str, token: &str) {
+        if let Ok(req) = HttpRequest::new(
+            http::Method::DELETE,
+            format!("{base}{}", paths::PAIRING),
+            4096,
+        )
+        .bearer(token)
+        {
+            let _ = self.send(base, req.timeout(REQUEST_TIMEOUT)).await;
+        }
     }
 
     /// Ends the connection, telling the server (best effort). Returns
@@ -377,16 +419,7 @@ impl AppLink {
         if let Some(w) = c.watcher {
             w.abort();
         }
-        if let Ok(req) = HttpRequest::new(
-            http::Method::DELETE,
-            format!("{}{}", c.base, paths::PAIRING),
-            4096,
-        )
-        .bearer(&c.token)
-        {
-            // Already ended on the server is as good as ended now.
-            let _ = self.send(&c.base, req.timeout(REQUEST_TIMEOUT)).await;
-        }
+        self.end_pairing(&c.base, &c.token).await;
         *lock(&self.ended) = Some(EndReason::Agent.describe().to_owned());
         self.areas.clear();
         self.changed();

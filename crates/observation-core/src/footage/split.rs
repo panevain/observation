@@ -64,8 +64,9 @@ pub struct WallSeen {
 pub struct Split {
     /// All the ground the camera sees, m².
     pub ground_m2: f32,
-    /// The part of it on the street (the street mask: road surfaces as
-    /// mapped, whatever areas are drawn over them), m².
+    /// The part of it on the street (the street mask: roads, service ways
+    /// such as driveways, and footpaths as mapped, whatever areas are drawn
+    /// over them; driveways and footpaths are often private), m².
     pub street_m2: f32,
     /// The part neither on the street nor inside a labelled area.
     pub unlabelled: SeenRange,

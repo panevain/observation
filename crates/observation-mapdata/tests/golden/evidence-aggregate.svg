@@ -231,111 +231,112 @@
 <text x="40" y="1337" font-size="9">Each camera&#39;s visible ground at Detect (25 px/m) by day, split by the areas drawn and labelled in the scene. Areas and labels are as drawn by the user,</text>
 <text x="40" y="1349" font-size="9">not property boundaries. A label figure is given as drawn, with below it the range it takes when every outline is moved 1 m in and 1 m out. Areas may</text>
 <text x="40" y="1361" font-size="9">overlap, so the columns need not add up.</text>
-<rect x="40" y="1368" width="714" height="30" fill="#eceef1"/>
+<rect x="40" y="1368" width="714" height="41" fill="#eceef1"/>
 <text x="44" y="1380" font-size="8" font-weight="bold">Ground and walls each camera sees, m² (labels as drawn)</text>
 <text x="750" y="1380" font-size="8" font-weight="bold" fill="#c92a2a" text-anchor="end">ESTIMATE · modelled, not recorded footage</text>
 <text x="44" y="1391" font-size="8" font-weight="bold">Camera</text>
 <text x="246.7" y="1391" font-size="8" font-weight="bold" text-anchor="end">Ground seen</text>
-<text x="347.3" y="1391" font-size="8" font-weight="bold" text-anchor="end">On the street</text>
+<text x="347.3" y="1391" font-size="8" font-weight="bold" text-anchor="end">Street, driveways,</text>
+<text x="347.3" y="1402" font-size="8" font-weight="bold" text-anchor="end">footpaths</text>
 <text x="448" y="1391" font-size="8" font-weight="bold" text-anchor="end">Own</text>
 <text x="548.7" y="1391" font-size="8" font-weight="bold" text-anchor="end">Neighbour</text>
 <text x="649.3" y="1391" font-size="8" font-weight="bold" text-anchor="end">Unlabelled ground</text>
 <text x="750" y="1391" font-size="8" font-weight="bold" text-anchor="end">Walls seen</text>
-<line x1="40" y1="1398" x2="754" y2="1398" stroke="#8a919c" stroke-width="0.75"/>
-<text x="44" y="1410" font-size="8">Camera 1</text>
-<text x="246.7" y="1410" font-size="8" text-anchor="end">89</text>
-<text x="347.3" y="1410" font-size="8" text-anchor="end">73</text>
-<text x="448" y="1410" font-size="8" text-anchor="end">87</text>
-<text x="448" y="1421" font-size="8" text-anchor="end">76–89</text>
-<text x="548.7" y="1410" font-size="8" text-anchor="end">1</text>
-<text x="548.7" y="1421" font-size="8" text-anchor="end">0–4</text>
-<text x="649.3" y="1410" font-size="8" text-anchor="end">2</text>
-<text x="649.3" y="1421" font-size="8" text-anchor="end">0–8</text>
-<text x="750" y="1410" font-size="8" text-anchor="end">9</text>
-<line x1="40" y1="1428" x2="754" y2="1428" stroke="#d9dce1" stroke-width="0.75"/>
-<text x="44" y="1440" font-size="8">Camera 2</text>
-<text x="246.7" y="1440" font-size="8" text-anchor="end">568</text>
-<text x="347.3" y="1440" font-size="8" text-anchor="end">34</text>
-<text x="448" y="1440" font-size="8" text-anchor="end">0</text>
-<text x="548.7" y="1440" font-size="8" text-anchor="end">0</text>
-<text x="649.3" y="1440" font-size="8" text-anchor="end">535</text>
-<text x="750" y="1440" font-size="8" text-anchor="end">203</text>
-<line x1="40" y1="1447" x2="754" y2="1447" stroke="#d9dce1" stroke-width="0.75"/>
-<text x="44" y="1459" font-size="8">Camera 3</text>
-<text x="246.7" y="1459" font-size="8" text-anchor="end">149</text>
-<text x="347.3" y="1459" font-size="8" text-anchor="end">98</text>
-<text x="448" y="1459" font-size="8" text-anchor="end">0</text>
-<text x="548.7" y="1459" font-size="8" text-anchor="end">0</text>
-<text x="649.3" y="1459" font-size="8" text-anchor="end">51</text>
-<text x="750" y="1459" font-size="8" text-anchor="end">72</text>
-<line x1="40" y1="1466" x2="754" y2="1466" stroke="#d9dce1" stroke-width="0.75"/>
-<text x="44" y="1478" font-size="8">Camera 4</text>
-<text x="246.7" y="1478" font-size="8" text-anchor="end">88</text>
-<text x="347.3" y="1478" font-size="8" text-anchor="end">75</text>
-<text x="448" y="1478" font-size="8" text-anchor="end">0</text>
-<text x="548.7" y="1478" font-size="8" text-anchor="end">0</text>
-<text x="649.3" y="1478" font-size="8" text-anchor="end">14</text>
-<text x="750" y="1478" font-size="8" text-anchor="end">0</text>
-<line x1="40" y1="1485" x2="754" y2="1485" stroke="#d9dce1" stroke-width="0.75"/>
-<text x="40" y="1507" font-size="10" font-weight="bold">Areas as drawn (names as the user typed them)</text>
-<text x="44" y="1522" font-size="9">•</text>
-<text x="54" y="1522" font-size="9">Front garden: Own, outline 256 m² as drawn; ground seen by Camera 1: 87 m² (76–89).</text>
-<text x="44" y="1537" font-size="9">•</text>
-<text x="54" y="1537" font-size="9">Next door: Neighbour, outline 256 m² as drawn; ground seen by Camera 1: 1 m² (0–4).</text>
-<text x="40" y="1566" font-size="13" font-weight="bold">Targets</text>
-<line x1="40" y1="1571" x2="754" y2="1571" stroke="#d9dce1" stroke-width="0.75"/>
-<text x="40" y="1586" font-size="9">For each target, whether the model rules out that each camera sees it. ✓ not ruled out: some of the target is visible in the model. ✗ ruled out, for the</text>
-<text x="40" y="1598" font-size="9">reason given. The wording is one-sided because hedges, fences, trees and vehicles are not modelled and can only block more. Target names are as the user</text>
-<text x="40" y="1610" font-size="9">typed them.</text>
-<text x="40" y="1627" font-size="10" font-weight="bold">Path to the door (ground)</text>
-<text x="40" y="1642" font-size="9">At Detect (25 px/m) by day: not ruled out for Camera 1; ruled out for 3: outside the view (2), out of range (1).</text>
-<text x="44" y="1656" font-size="8">•</text>
-<text x="54" y="1656" font-size="8">Camera 1: by day Detect ✓, Observe ✓, Recognise ✗ (out of range), Identify ✗ (out of range); at night Detect ✓, Observe ✓, Recognise ✗ (out of range), Identify ✗ (out</text>
-<text x="54" y="1667" font-size="8">of range).</text>
-<text x="40" y="1696" font-size="13" font-weight="bold">Methodology</text>
-<line x1="40" y1="1701" x2="754" y2="1701" stroke="#d9dce1" stroke-width="0.75"/>
-<text x="40" y="1721" font-size="10" font-weight="bold">What “street” means</text>
-<text x="40" y="1736" font-size="9">Street is the ground on every road, path and service way mapped in OpenStreetMap whose highway type is one of these, each as a band of the width in</text>
-<text x="40" y="1748" font-size="9">brackets centred on the mapped line: motorway, trunk (14 m); primary (10 m); secondary (8 m); tertiary (7 m); residential, unclassified (6 m);</text>
-<text x="40" y="1760" font-size="9">living_street (5 m); service (4 m); footway, path, pedestrian, cycleway, steps (2 m); motorway_link, trunk_link, primary_link, secondary_link,</text>
-<text x="40" y="1772" font-size="9">tertiary_link (6 m). A way tagged with a width of at least 1 m and below 60 m uses that width; failing that, a lanes tag of at least 1 and below 12</text>
-<text x="40" y="1784" font-size="9">gives 3.25 m a lane. Ground under a building is never street.</text>
-<text x="40" y="1799" font-size="9">Carriageway is the street on every type above but service, footway, path, pedestrian, cycleway and steps. Footpath and service is the rest of the</text>
-<text x="40" y="1811" font-size="9">street: ground on one of those and on no carriageway. Driveways are usually mapped as service ways, so they count here.</text>
-<text x="40" y="1831" font-size="10" font-weight="bold">What “seen” means</text>
-<text x="40" y="1846" font-size="9">A spot counts as seen by a camera when a point 1.0 m above the ground there (the subject height) lies inside the camera&#39;s field of view and within its</text>
-<text x="40" y="1858" font-size="9">range, and the straight line from the camera to it passes through no building and stays clear of the ground. Ground is tested at the centre of every 0.5</text>
-<text x="40" y="1870" font-size="9">m square cell outside buildings, walls in patches of about 1 m. A figure is the area of the cells or patches seen.</text>
-<text x="40" y="1885" font-size="9">Range at a detail level of D pixels per metre is R = W ÷ (2 × D × tan(H ÷ 2)), where W is the camera&#39;s published horizontal resolution in pixels and H</text>
-<text x="40" y="1897" font-size="9">its horizontal field of view (taken as at most 170°), and never more than 100 m. At night R is also no more than the camera&#39;s published infrared range,</text>
-<text x="40" y="1909" font-size="9">or 7.5 m where none is published. The detail levels (DORI, after EN 62676-4) are Detect 25 px/m (can tell someone is there), Observe 62 px/m (can follow</text>
-<text x="40" y="1921" font-size="9">what someone does and wears), Recognise 125 px/m (can recognise someone already known) and Identify 250 px/m (can identify a stranger, beyond doubt);</text>
-<text x="40" y="1933" font-size="9">Custom is a density the user sets.</text>
-<text x="40" y="1953" font-size="10" font-weight="bold">Areas, targets and verdicts</text>
-<text x="40" y="1968" font-size="9">Areas and their labels (own, neighbour, public, other) are outlines the user drew, as drawn: they are not property boundaries, and no property data is</text>
-<text x="40" y="1980" font-size="9">used. Each area figure is given as drawn, with the range it takes when every outline is moved 1 m in and 1 m out, and each outline&#39;s own area is printed</text>
-<text x="40" y="1992" font-size="9">beside it. The scene, area and target names are printed as the user typed them.</text>
-<text x="40" y="2007" font-size="9">A verdict on a target is one-sided. Not ruled out: some of the target is visible in the model. Ruled out: the model rules it out, for the reason given.</text>
-<text x="40" y="2019" font-size="9">What the model leaves out can only block more, so it never says that a camera sees a place.</text>
-<text x="40" y="2039" font-size="10" font-weight="bold">What the figures leave out (caveats version 1)</text>
-<text x="44" y="2054" font-size="9">•</text>
-<text x="54" y="2054" font-size="9">Not modelled: trees, hedges, fences and walls, vehicles, poles, street furniture, awnings, bridges and tunnels. Cameras see straight through them, so</text>
-<text x="54" y="2066" font-size="9">the figures can only overstate what is visible past them.</text>
-<text x="44" y="2081" font-size="9">•</text>
-<text x="54" y="2081" font-size="9">Buildings come from OpenStreetMap. One missing from the map lets cameras see through the gap; one demolished but still mapped blocks a view that is</text>
-<text x="54" y="2093" font-size="9">open.</text>
-<text x="44" y="2108" font-size="9">•</text>
-<text x="54" y="2108" font-size="9">Building heights are inferred where they are not tagged, and roofs are flat, so views over and onto buildings can be wrong in either direction.</text>
-<text x="44" y="2123" font-size="9">•</text>
-<text x="54" y="2123" font-size="9">Terrain is approximate: ground heights come from a public elevation model sampled every 5 m, so small banks, retaining walls and cuttings are</text>
-<text x="54" y="2135" font-size="9">smoothed out.</text>
-<text x="44" y="2150" font-size="9">•</text>
-<text x="54" y="2150" font-size="9">&#39;Street&#39; includes driveways and footpaths: every mapped road, service road and footpath counts, as a band of estimated width.</text>
-<text x="44" y="2165" font-size="9">•</text>
-<text x="54" y="2165" font-size="9">Detail levels are pixel-density targets from the published resolution, not a test of what a camera records. Range is capped at 100 m, and floodlights</text>
-<text x="54" y="2177" font-size="9">and street lights are ignored at night.</text>
-<text x="44" y="2317" font-size="9">•</text>
-<text x="54" y="2317" font-size="9">Only the loaded area is analysed, at one subject height: views beyond its edge are cut off.</text>
-<text x="40" y="2332" font-size="9">Leaving these out can only overstate what a camera sees, so read the figures as &quot;up to&quot;. Inferred heights and missing or out-of-date buildings err in</text>
-<text x="40" y="2344" font-size="9">both directions, though, so they are not a strict upper bound.</text>
+<line x1="40" y1="1409" x2="754" y2="1409" stroke="#8a919c" stroke-width="0.75"/>
+<text x="44" y="1421" font-size="8">Camera 1</text>
+<text x="246.7" y="1421" font-size="8" text-anchor="end">89</text>
+<text x="347.3" y="1421" font-size="8" text-anchor="end">73</text>
+<text x="448" y="1421" font-size="8" text-anchor="end">87</text>
+<text x="448" y="1432" font-size="8" text-anchor="end">76–89</text>
+<text x="548.7" y="1421" font-size="8" text-anchor="end">1</text>
+<text x="548.7" y="1432" font-size="8" text-anchor="end">0–4</text>
+<text x="649.3" y="1421" font-size="8" text-anchor="end">2</text>
+<text x="649.3" y="1432" font-size="8" text-anchor="end">0–8</text>
+<text x="750" y="1421" font-size="8" text-anchor="end">9</text>
+<line x1="40" y1="1439" x2="754" y2="1439" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1451" font-size="8">Camera 2</text>
+<text x="246.7" y="1451" font-size="8" text-anchor="end">568</text>
+<text x="347.3" y="1451" font-size="8" text-anchor="end">34</text>
+<text x="448" y="1451" font-size="8" text-anchor="end">0</text>
+<text x="548.7" y="1451" font-size="8" text-anchor="end">0</text>
+<text x="649.3" y="1451" font-size="8" text-anchor="end">535</text>
+<text x="750" y="1451" font-size="8" text-anchor="end">203</text>
+<line x1="40" y1="1458" x2="754" y2="1458" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1470" font-size="8">Camera 3</text>
+<text x="246.7" y="1470" font-size="8" text-anchor="end">149</text>
+<text x="347.3" y="1470" font-size="8" text-anchor="end">98</text>
+<text x="448" y="1470" font-size="8" text-anchor="end">0</text>
+<text x="548.7" y="1470" font-size="8" text-anchor="end">0</text>
+<text x="649.3" y="1470" font-size="8" text-anchor="end">51</text>
+<text x="750" y="1470" font-size="8" text-anchor="end">72</text>
+<line x1="40" y1="1477" x2="754" y2="1477" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="44" y="1489" font-size="8">Camera 4</text>
+<text x="246.7" y="1489" font-size="8" text-anchor="end">88</text>
+<text x="347.3" y="1489" font-size="8" text-anchor="end">75</text>
+<text x="448" y="1489" font-size="8" text-anchor="end">0</text>
+<text x="548.7" y="1489" font-size="8" text-anchor="end">0</text>
+<text x="649.3" y="1489" font-size="8" text-anchor="end">14</text>
+<text x="750" y="1489" font-size="8" text-anchor="end">0</text>
+<line x1="40" y1="1496" x2="754" y2="1496" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1518" font-size="10" font-weight="bold">Areas as drawn (names as the user typed them)</text>
+<text x="44" y="1533" font-size="9">•</text>
+<text x="54" y="1533" font-size="9">Front garden: Own, outline 256 m² as drawn; ground seen by Camera 1: 87 m² (76–89).</text>
+<text x="44" y="1548" font-size="9">•</text>
+<text x="54" y="1548" font-size="9">Next door: Neighbour, outline 256 m² as drawn; ground seen by Camera 1: 1 m² (0–4).</text>
+<text x="40" y="1577" font-size="13" font-weight="bold">Targets</text>
+<line x1="40" y1="1582" x2="754" y2="1582" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1597" font-size="9">For each target, whether the model rules out that each camera sees it. ✓ not ruled out: some of the target is visible in the model. ✗ ruled out, for the</text>
+<text x="40" y="1609" font-size="9">reason given. The wording is one-sided because hedges, fences, trees and vehicles are not modelled and can only block more. Target names are as the user</text>
+<text x="40" y="1621" font-size="9">typed them.</text>
+<text x="40" y="1638" font-size="10" font-weight="bold">Path to the door (ground)</text>
+<text x="40" y="1653" font-size="9">At Detect (25 px/m) by day: not ruled out for Camera 1; ruled out for 3: outside the view (2), out of range (1).</text>
+<text x="44" y="1667" font-size="8">•</text>
+<text x="54" y="1667" font-size="8">Camera 1: by day Detect ✓, Observe ✓, Recognise ✗ (out of range), Identify ✗ (out of range); at night Detect ✓, Observe ✓, Recognise ✗ (out of range), Identify ✗ (out</text>
+<text x="54" y="1678" font-size="8">of range).</text>
+<text x="40" y="1707" font-size="13" font-weight="bold">Methodology</text>
+<line x1="40" y1="1712" x2="754" y2="1712" stroke="#d9dce1" stroke-width="0.75"/>
+<text x="40" y="1732" font-size="10" font-weight="bold">What “street” means</text>
+<text x="40" y="1747" font-size="9">Street is the ground on every road, path and service way mapped in OpenStreetMap whose highway type is one of these, each as a band of the width in</text>
+<text x="40" y="1759" font-size="9">brackets centred on the mapped line: motorway, trunk (14 m); primary (10 m); secondary (8 m); tertiary (7 m); residential, unclassified (6 m);</text>
+<text x="40" y="1771" font-size="9">living_street (5 m); service (4 m); footway, path, pedestrian, cycleway, steps (2 m); motorway_link, trunk_link, primary_link, secondary_link,</text>
+<text x="40" y="1783" font-size="9">tertiary_link (6 m). A way tagged with a width of at least 1 m and below 60 m uses that width; failing that, a lanes tag of at least 1 and below 12</text>
+<text x="40" y="1795" font-size="9">gives 3.25 m a lane. Ground under a building is never street.</text>
+<text x="40" y="1810" font-size="9">Carriageway is the street on every type above but service, footway, path, pedestrian, cycleway and steps. Footpath and service is the rest of the</text>
+<text x="40" y="1822" font-size="9">street: ground on one of those and on no carriageway. Driveways are usually mapped as service ways, so they count here.</text>
+<text x="40" y="1842" font-size="10" font-weight="bold">What “seen” means</text>
+<text x="40" y="1857" font-size="9">A spot counts as seen by a camera when a point 1.0 m above the ground there (the subject height) lies inside the camera&#39;s field of view and within its</text>
+<text x="40" y="1869" font-size="9">range, and the straight line from the camera to it passes through no building and stays clear of the ground. Ground is tested at the centre of every 0.5</text>
+<text x="40" y="1881" font-size="9">m square cell outside buildings, walls in patches of about 1 m. A figure is the area of the cells or patches seen.</text>
+<text x="40" y="1896" font-size="9">Range at a detail level of D pixels per metre is R = W ÷ (2 × D × tan(H ÷ 2)), where W is the camera&#39;s published horizontal resolution in pixels and H</text>
+<text x="40" y="1908" font-size="9">its horizontal field of view (taken as at most 170°), and never more than 100 m. At night R is also no more than the camera&#39;s published infrared range,</text>
+<text x="40" y="1920" font-size="9">or 7.5 m where none is published. The detail levels (DORI, after EN 62676-4) are Detect 25 px/m (can tell someone is there), Observe 62 px/m (can follow</text>
+<text x="40" y="1932" font-size="9">what someone does and wears), Recognise 125 px/m (can recognise someone already known) and Identify 250 px/m (can identify a stranger, beyond doubt);</text>
+<text x="40" y="1944" font-size="9">Custom is a density the user sets.</text>
+<text x="40" y="1964" font-size="10" font-weight="bold">Areas, targets and verdicts</text>
+<text x="40" y="1979" font-size="9">Areas and their labels (own, neighbour, public, other) are outlines the user drew, as drawn: they are not property boundaries, and no property data is</text>
+<text x="40" y="1991" font-size="9">used. Each area figure is given as drawn, with the range it takes when every outline is moved 1 m in and 1 m out, and each outline&#39;s own area is printed</text>
+<text x="40" y="2003" font-size="9">beside it. The scene, area and target names are printed as the user typed them.</text>
+<text x="40" y="2018" font-size="9">A verdict on a target is one-sided. Not ruled out: some of the target is visible in the model. Ruled out: the model rules it out, for the reason given.</text>
+<text x="40" y="2030" font-size="9">What the model leaves out can only block more, so it never says that a camera sees a place.</text>
+<text x="40" y="2050" font-size="10" font-weight="bold">What the figures leave out (caveats version 1)</text>
+<text x="44" y="2065" font-size="9">•</text>
+<text x="54" y="2065" font-size="9">Not modelled: trees, hedges, fences and walls, vehicles, poles, street furniture, awnings, bridges and tunnels. Cameras see straight through them, so</text>
+<text x="54" y="2077" font-size="9">the figures can only overstate what is visible past them.</text>
+<text x="44" y="2092" font-size="9">•</text>
+<text x="54" y="2092" font-size="9">Buildings come from OpenStreetMap. One missing from the map lets cameras see through the gap; one demolished but still mapped blocks a view that is</text>
+<text x="54" y="2104" font-size="9">open.</text>
+<text x="44" y="2119" font-size="9">•</text>
+<text x="54" y="2119" font-size="9">Building heights are inferred where they are not tagged, and roofs are flat, so views over and onto buildings can be wrong in either direction.</text>
+<text x="44" y="2134" font-size="9">•</text>
+<text x="54" y="2134" font-size="9">Terrain is approximate: ground heights come from a public elevation model sampled every 5 m, so small banks, retaining walls and cuttings are</text>
+<text x="54" y="2146" font-size="9">smoothed out.</text>
+<text x="44" y="2161" font-size="9">•</text>
+<text x="54" y="2161" font-size="9">&#39;Street&#39; includes driveways and footpaths: every mapped road, service road and footpath counts, as a band of estimated width.</text>
+<text x="44" y="2176" font-size="9">•</text>
+<text x="54" y="2176" font-size="9">Detail levels are pixel-density targets from the published resolution, not a test of what a camera records. Range is capped at 100 m, and floodlights</text>
+<text x="54" y="2317" font-size="9">and street lights are ignored at night.</text>
+<text x="44" y="2332" font-size="9">•</text>
+<text x="54" y="2332" font-size="9">Only the loaded area is analysed, at one subject height: views beyond its edge are cut off.</text>
+<text x="40" y="2347" font-size="9">Leaving these out can only overstate what a camera sees, so read the figures as &quot;up to&quot;. Inferred heights and missing or out-of-date buildings err in</text>
+<text x="40" y="2359" font-size="9">both directions, though, so they are not a strict upper bound.</text>
 </svg>
