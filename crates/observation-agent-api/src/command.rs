@@ -8,19 +8,25 @@
 //!   event. Commands are not stored: a stream opened later does not get
 //!   them, and with no stream open the post is refused (`409`).
 //! - The browser applies one as the user would: it moves the 3D view,
-//!   changes the selection, marks something, or changes the view settings.
-//!   A [`AgentCommand::RequestLoadArea`] never loads anything by itself: the
+//!   changes the selection, marks something, or changes a view setting (the
+//!   overlay colours, the cones, the walls). No command changes the scene:
+//!   an agent that wants another lighting or detail level proposes it as a
+//!   scene change. A [`AgentCommand::RequestLoadArea`] never loads anything
+//!   by itself: the
 //!   app asks the user, who loads the area or not. With the user's "Let the
 //!   agent move the view and selection" off, every other command is ignored.
 //! - A pairing may send [`COMMANDS_PER_SECOND`] commands a second, in bursts
 //!   of up to [`COMMAND_BURST`].
 //!
 //! Notes and reasons are untrusted text: tidied here, drawn as text, never
-//! as markup. A kind of command, of highlight or of detail level this build
-//! does not know reads as `Unknown`, so a later kind is skipped by an older
+//! as markup. A kind of command, of highlight or of overlay this build does
+//! not know reads as `Unknown`, so a later kind is skipped by an older
 //! browser rather than breaking its event stream.
+//!
+//! With the `schema` feature, [`ItemRef`] and [`OverlayColours`] derive
+//! `schemars::JsonSchema` (without `Unknown`), so the MCP tools take them
+//! as they are.
 
-use observation_core::camera::DoriLevel;
 use observation_core::footage::MAX_NAME_CHARS;
 use observation_core::geo::BBox;
 use serde::{Deserialize, Serialize};
@@ -112,12 +118,22 @@ pub enum Highlight {
 }
 
 /// An area or target named by its id, or by its name (matched without
-/// regard to case or surrounding spaces).
+/// regard to case or to how the spaces in it run).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum ItemRef {
     Id(u32),
     Name(String),
+}
+
+/// `name` as names are compared: its spaces made single, trimmed, in lower
+/// case.
+fn comparable(name: &str) -> String {
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 impl ItemRef {
@@ -125,23 +141,37 @@ impl ItemRef {
     pub fn matches(&self, id: u32, name: Option<&str>) -> bool {
         match self {
             Self::Id(i) => *i == id,
-            Self::Name(n) => name.is_some_and(|name| name.trim().eq_ignore_ascii_case(n.trim())),
+            Self::Name(n) => name.is_some_and(|name| comparable(name) == comparable(n)),
         }
     }
 }
 
+/// An item in words, as the app and the agent name it: "target 3 ‘Front
+/// door’", or "target 3" without a name. The name is quoted as it is.
+pub fn item_words(what: &str, id: u32, name: Option<&str>) -> String {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => format!("{what} {id} ‘{n}’"),
+        None => format!("{what} {id}"),
+    }
+}
+
+/// The item `r` names among `items` (`(id, name)`), with its words (see
+/// [`item_words`]), if there is one.
+pub fn find_item<'a>(
+    mut items: impl Iterator<Item = (u32, Option<&'a str>)>,
+    r: &ItemRef,
+    what: &str,
+) -> Option<(u32, String)> {
+    items
+        .find(|(id, name)| r.matches(*id, *name))
+        .map(|(id, name)| (id, item_words(what, id, name)))
+}
+
 /// The view settings a [`AgentCommand::SetViewOptions`] changes; `None`
-/// leaves one as it is.
+/// leaves one as it is. Only settings of the view, never of the scene: the
+/// lighting and the detail level are the scene's, changed by a proposal.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewOptions {
-    /// Night (infrared) rather than day. A scene setting: the scene file
-    /// saves it, and the app records the change as an edit the user can undo.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub night: Option<bool>,
-    /// The detail level the coverage is figured at. A scene setting, as
-    /// `night` is.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail_level: Option<DetailLevel>,
     /// How the coverage overlay colours the ground.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<OverlayColours>,
@@ -160,40 +190,9 @@ impl ViewOptions {
     }
 }
 
-/// A DORI detail level (EN 62676-4), as the agent names it. The user's own
-/// pixel density (the app's Custom level) is theirs to set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DetailLevel {
-    /// 25 px/m: can tell someone is there.
-    Detect,
-    /// 62 px/m: clothing and activity.
-    Observe,
-    /// 125 px/m: a person you know.
-    #[serde(alias = "recognize")]
-    Recognise,
-    /// 250 px/m: a stranger, beyond doubt.
-    Identify,
-    /// A level this build does not know.
-    #[serde(other)]
-    Unknown,
-}
-
-impl DetailLevel {
-    /// The scene's level, unless this build does not know it.
-    pub fn dori(self) -> Option<DoriLevel> {
-        match self {
-            Self::Detect => Some(DoriLevel::Detect),
-            Self::Observe => Some(DoriLevel::Observe),
-            Self::Recognise => Some(DoriLevel::Recognise),
-            Self::Identify => Some(DoriLevel::Identify),
-            Self::Unknown => None,
-        }
-    }
-}
-
 /// How the coverage overlay colours the ground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum OverlayColours {
     /// By how many cameras see each spot.
@@ -202,6 +201,7 @@ pub enum OverlayColours {
     PerCamera,
     /// A colouring this build does not know.
     #[serde(other)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
     Unknown,
 }
 
@@ -275,11 +275,6 @@ impl AgentCommand {
             Self::SetViewOptions(o) => {
                 if o.is_empty() {
                     return Err("say which view setting to change".into());
-                }
-                if o.detail_level == Some(DetailLevel::Unknown) {
-                    return Err(
-                        "`detail_level` is one of detect, observe, recognise or identify".into(),
-                    );
                 }
                 if o.overlay == Some(OverlayColours::Unknown) {
                     return Err("`overlay` is overlap or per_camera".into());
@@ -363,11 +358,8 @@ mod tests {
                 },
             ),
             (
-                json!({"kind": "set_view_options", "night": true, "detail_level": "recognise",
-                       "overlay": "per_camera", "cones": false}),
+                json!({"kind": "set_view_options", "overlay": "per_camera", "cones": false}),
                 AgentCommand::SetViewOptions(ViewOptions {
-                    night: Some(true),
-                    detail_level: Some(DetailLevel::Recognise),
                     overlay: Some(OverlayColours::PerCamera),
                     cones: Some(false),
                     walls: None,
@@ -386,9 +378,11 @@ mod tests {
             assert_eq!(read(text.clone()), command, "{text}");
             assert_eq!(serde_json::to_value(&command).unwrap(), text);
         }
-        // American spelling reads too.
-        let level: DetailLevel = serde_json::from_value(json!("recognize")).unwrap();
-        assert_eq!(level, DetailLevel::Recognise);
+        // Scene settings are not view options: a `night` field is
+        // ignored, which leaves nothing to change.
+        let night = read(json!({"kind": "set_view_options", "night": true}));
+        assert_eq!(night, AgentCommand::SetViewOptions(ViewOptions::default()));
+        assert!(night.checked().is_err());
     }
 
     #[test]
@@ -404,14 +398,10 @@ mod tests {
                 note: None
             }
         );
-        let o = read(
-            json!({"kind": "set_view_options", "detail_level": "count_hairs",
-                            "overlay": "rainbow"}),
-        );
+        let o = read(json!({"kind": "set_view_options", "overlay": "rainbow"}));
         assert_eq!(
             o,
             AgentCommand::SetViewOptions(ViewOptions {
-                detail_level: Some(DetailLevel::Unknown),
                 overlay: Some(OverlayColours::Unknown),
                 ..ViewOptions::default()
             })
@@ -579,13 +569,11 @@ mod tests {
                 .checked()
                 .is_err()
         );
-        let night = AgentCommand::SetViewOptions(ViewOptions {
-            night: Some(true),
+        let walls = AgentCommand::SetViewOptions(ViewOptions {
+            walls: Some(true),
             ..ViewOptions::default()
         });
-        assert!(night.checked().is_ok());
-        assert_eq!(DetailLevel::Identify.dori(), Some(DoriLevel::Identify));
-        assert_eq!(DetailLevel::Unknown.dori(), None);
+        assert!(walls.checked().is_ok());
     }
 
     #[test]
@@ -596,5 +584,29 @@ mod tests {
         assert!(door.matches(9, Some("Front Door ")));
         assert!(!door.matches(9, None));
         assert!(!door.matches(9, Some("Back door")));
+        // Spaces run as they may, on either side; a checked name still matches.
+        let spaced = ItemRef::Name("Front  door".into()).checked().unwrap();
+        assert!(spaced.matches(9, Some("Front  door")));
+        assert!(spaced.matches(9, Some(" front\tdoor")));
+        assert!(ItemRef::Name("front door".into()).matches(9, Some("Front   Door")));
+    }
+
+    #[test]
+    fn items_are_found_and_put_in_words() {
+        let items = [(1, Some("Front door")), (2, None), (3, Some("  "))];
+        assert_eq!(
+            find_item(
+                items.into_iter(),
+                &ItemRef::Name("FRONT door".into()),
+                "target"
+            ),
+            Some((1, "target 1 ‘Front door’".to_owned()))
+        );
+        assert_eq!(
+            find_item(items.into_iter(), &ItemRef::Id(2), "area"),
+            Some((2, "area 2".to_owned()))
+        );
+        assert_eq!(item_words("camera", 3, Some("  ")), "camera 3");
+        assert_eq!(find_item(items.into_iter(), &ItemRef::Id(9), "area"), None);
     }
 }

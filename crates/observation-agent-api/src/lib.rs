@@ -61,9 +61,9 @@ pub mod command;
 pub mod proposal;
 
 pub use command::{
-    AgentCommand, COMMAND_BURST, COMMANDS_PER_SECOND, CommandPost, CommandSent, DetailLevel,
-    Highlight, ItemRef, MAX_COMMAND_BYTES, MAX_COORD_M, MAX_FOCUS_DISTANCE_M,
-    MAX_LOAD_REASON_CHARS, MAX_NOTE_CHARS, MIN_FOCUS_DISTANCE_M, OverlayColours, ViewOptions,
+    AgentCommand, COMMAND_BURST, COMMANDS_PER_SECOND, CommandPost, CommandSent, Highlight, ItemRef,
+    MAX_COMMAND_BYTES, MAX_COORD_M, MAX_FOCUS_DISTANCE_M, MAX_LOAD_REASON_CHARS, MAX_NOTE_CHARS,
+    MIN_FOCUS_DISTANCE_M, OverlayColours, ViewOptions, find_item, item_words,
 };
 pub use proposal::{
     Decision, DecisionPost, MAX_OUTCOMES, MAX_PROPOSAL_BYTES, MAX_REASON_CHARS, MAX_SUMMARY_CHARS,
