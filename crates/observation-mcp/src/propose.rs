@@ -14,6 +14,7 @@ use crate::ObservationMcp;
 use crate::ToolError;
 use crate::catalog::{catalog, model};
 use crate::edit;
+use crate::schema::JsonObject;
 use observation_agent_api::{MAX_SUMMARY_CHARS, ProposalOutcome, ProposalStatus, tidy_line};
 use observation_core::scene::SceneFile;
 use observation_core::scene::changes::{ChangeError, ChangeSet};
@@ -27,6 +28,7 @@ use serde_json::Value;
 pub struct ProposeArgs {
     /// The scene as you propose it: the app's scene (from get_app_state)
     /// edited with the scene tools.
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// What the change does and why, in one sentence the user reads first
     /// (at most 200 characters).

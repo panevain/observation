@@ -12,6 +12,7 @@ use crate::catalog::{catalog, is_custom, model};
 use crate::edit::{self, CameraUpdate, Kind, ModelUpdate, NewModel, ParamsUpdate, Place, Target};
 use crate::figures::scene_figures;
 use crate::link::{AppLink, STATE_URI};
+use crate::schema::JsonObject;
 use observation_core::address::ON_OUTLINE_M;
 use observation_core::camera::{ASSUMED_IR_RANGE_M, CameraKind, CameraModel, DoriLevel, Lighting};
 use observation_core::provenance::{CAVEATS_SUMMARY, caveats_text, format_date};
@@ -147,6 +148,7 @@ fn fail(e: ToolError) -> String {
 pub struct SceneArg {
     /// A scene file: the `scene` returned by the last scene tool, or a file
     /// saved from the app (as a JSON object or a string).
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
 }
 
@@ -157,6 +159,7 @@ pub struct ListModelsArgs {
     /// Only models by this manufacturer (case-insensitive).
     pub vendor: Option<String>,
     /// A scene whose custom models to list as well.
+    #[schemars(with = "Option<JsonObject>")]
     pub scene: Option<Value>,
 }
 
@@ -165,11 +168,13 @@ pub struct GetModelArgs {
     /// Catalogue or custom model id.
     pub id: String,
     /// The scene that holds the model, for a custom one.
+    #[schemars(with = "Option<JsonObject>")]
     pub scene: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CameraArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The camera's id in the scene.
     pub id: u32,
@@ -177,6 +182,7 @@ pub struct CameraArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PlaceArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     #[serde(flatten)]
     pub camera: Place,
@@ -184,6 +190,7 @@ pub struct PlaceArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MoveArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The camera's id in the scene.
     pub id: u32,
@@ -197,6 +204,7 @@ pub struct MoveArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AimArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The camera's id in the scene.
     pub id: u32,
@@ -210,6 +218,7 @@ pub struct AimArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PointArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The camera's id in the scene.
     pub id: u32,
@@ -219,6 +228,7 @@ pub struct PointArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateCameraArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The camera's id in the scene.
     pub id: u32,
@@ -228,6 +238,7 @@ pub struct UpdateCameraArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExampleArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// How many cameras to add (1 to 20).
     pub count: usize,
@@ -239,12 +250,14 @@ pub struct ExampleArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct NewModelArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     pub model: NewModel,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateModelArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The custom model's id (`custom-...`).
     pub id: String,
@@ -253,6 +266,7 @@ pub struct UpdateModelArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ModelIdArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The custom model's id (`custom-...`).
     pub id: String,
@@ -260,6 +274,7 @@ pub struct ModelIdArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ParamsArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     #[serde(flatten)]
     pub params: ParamsUpdate,
@@ -267,6 +282,7 @@ pub struct ParamsArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PointQueryArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// Metres east of the origin.
     pub x: f32,
@@ -289,6 +305,7 @@ pub struct Edited {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     /// The edited scene: pass it to the next scene tool.
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
 }
 
@@ -401,6 +418,7 @@ pub struct AreaInfo {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Validated {
     /// The scene as the app would load it (tidied where it can be).
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     pub cameras: usize,
     pub custom_models: usize,
@@ -1196,6 +1214,98 @@ mod tests {
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }
+    }
+
+    /// Collects the paths of boolean subschemas (`true` or `false`) in a
+    /// JSON Schema. They are valid JSON Schema, but some clients that compile
+    /// tool schemas into grammars, llama.cpp's server among them, reject the
+    /// tools when one appears.
+    fn boolean_subschemas(schema: &Value, path: &str, found: &mut Vec<String>) {
+        const ONE: [&str; 12] = [
+            "items",
+            "additionalItems",
+            "additionalProperties",
+            "unevaluatedItems",
+            "unevaluatedProperties",
+            "propertyNames",
+            "contains",
+            "not",
+            "if",
+            "then",
+            "else",
+            "contentSchema",
+        ];
+        const MAPS: [&str; 5] = [
+            "properties",
+            "patternProperties",
+            "dependentSchemas",
+            "$defs",
+            "definitions",
+        ];
+        const LISTS: [&str; 4] = ["allOf", "anyOf", "oneOf", "prefixItems"];
+        match schema {
+            Value::Bool(_) => found.push(path.to_owned()),
+            Value::Object(map) => {
+                for (key, sub) in map {
+                    let here = format!("{path}/{key}");
+                    if ONE.contains(&key.as_str()) {
+                        boolean_subschemas(sub, &here, found);
+                    } else if MAPS.contains(&key.as_str()) {
+                        for (name, s) in sub.as_object().into_iter().flatten() {
+                            boolean_subschemas(s, &format!("{here}/{name}"), found);
+                        }
+                    } else if LISTS.contains(&key.as_str()) {
+                        for (i, s) in sub.as_array().into_iter().flatten().enumerate() {
+                            boolean_subschemas(s, &format!("{here}/{i}"), found);
+                        }
+                    }
+                }
+            }
+            _ => found.push(format!("{path} (neither an object nor a boolean)")),
+        }
+    }
+
+    #[test]
+    fn no_tool_schema_holds_a_boolean_subschema() {
+        let mut found = Vec::new();
+        for tool in ObservationMcp::all_tools().list_all() {
+            let input = Value::Object((*tool.input_schema).clone());
+            boolean_subschemas(&input, &format!("{} input #", tool.name), &mut found);
+            if let Some(output) = &tool.output_schema {
+                let output = Value::Object((**output).clone());
+                boolean_subschemas(&output, &format!("{} output #", tool.name), &mut found);
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "boolean subschemas:\n{}",
+            found.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_walk_finds_boolean_subschemas() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "scene": true,
+                "list": {"type": "array", "items": false},
+                "either": {"anyOf": [{"type": "string"}, true]},
+            },
+            "$defs": {"Thing": {"additionalProperties": true}},
+        });
+        let mut found = Vec::new();
+        boolean_subschemas(&schema, "#", &mut found);
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                "#/$defs/Thing/additionalProperties",
+                "#/properties/either/anyOf/1",
+                "#/properties/list/items",
+                "#/properties/scene",
+            ]
+        );
     }
 
     #[tokio::test]

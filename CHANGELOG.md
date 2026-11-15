@@ -105,6 +105,7 @@ the Unreleased entries under the new version (see CONTRIBUTING.md).
 
 ### Fixed
 
+- The MCP server's tool schemas now work with clients that require every property schema to be an object, such as llama.cpp's server, which refused all the tools with *schema must be an object*. The `scene` arguments, and the `scene` and `area` that `get_app_state` returns, were declared with the boolean schema `true` (any value); they are now declared as JSON objects. The tools accept the same arguments as before.
 - A scene can no longer take more cameras or areas than a scene file holds (256 and 64). Placing or duplicating a camera in a full scene, and **Draw area to limit to…** in a scene that already has 64 areas, now say why they cannot, as drawing a new area did; such a scene used to be autosaved and exported, and then could not be restored or imported.
 - A scene file with two cameras of the same id, or a camera, area or target id above 2,147,483,647, now loads with a new id for each such item (the first in range keeps its id), so the app can tell its cameras apart. New ids never repeat, even after the largest id.
 - A camera group name longer than 80 characters whose 80th character is a space (or other whitespace) now loads the same every time. The space was kept at the end of the cut name on the first load and dropped on the next, so the same group could show under two slightly different names; it is now dropped on the first load.

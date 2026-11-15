@@ -25,6 +25,7 @@
 //! | [`figures`] | coverage figures for a whole scene |
 //! | [`places`] | labelled areas and targets, and the tools that edit them |
 //! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
+//! | [`schema`] | the schema of tool fields held as untyped JSON objects |
 //! | [`server`] | the MCP tools, resources and prompts |
 //! | [`http`] | the Streamable HTTP transport and its bearer-token authentication |
 //!
@@ -42,6 +43,7 @@ pub mod link;
 pub mod places;
 pub mod propose;
 pub mod queries;
+pub mod schema;
 pub mod server;
 
 pub use error::ToolError;

@@ -10,6 +10,7 @@
 use crate::ToolError;
 use crate::area::{bundle_for, check_inside, ground_y};
 use crate::edit;
+use crate::schema::JsonObject;
 use crate::server::ObservationMcp;
 use observation_core::bundle::AreaBundle;
 use observation_core::coverage::{MAX_REGION_POINTS, RegionProblem, outline_problem};
@@ -145,6 +146,7 @@ pub struct PlaceEdited {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wall: Option<WallOut>,
     /// The edited scene: pass it to the next scene tool.
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
 }
 
@@ -520,6 +522,7 @@ pub fn remove_target(scene: &mut SceneFile, id: u32) -> Result<(), ToolError> {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LabelAreaArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     #[serde(flatten)]
     pub area: AreaEdit,
@@ -527,6 +530,7 @@ pub struct LabelAreaArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AreaIdArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The area's id in the scene.
     pub area_id: u32,
@@ -534,6 +538,7 @@ pub struct AreaIdArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LimitArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The area to limit the coverage figures to; omit or null to stop
     /// limiting them (the area stays).
@@ -542,6 +547,7 @@ pub struct LimitArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddTargetArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// What the user calls the place, such as "front door" (at most 60
     /// characters).
@@ -552,6 +558,7 @@ pub struct AddTargetArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateTargetArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The target's id in the scene.
     pub target_id: u32,
@@ -563,6 +570,7 @@ pub struct UpdateTargetArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TargetIdArgs {
+    #[schemars(with = "JsonObject")]
     pub scene: Value,
     /// The target's id in the scene.
     pub target_id: u32,
