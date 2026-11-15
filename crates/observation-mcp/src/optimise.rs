@@ -18,20 +18,21 @@
 //! one-sided wording as the queries.
 
 use crate::ToolError;
-use crate::area::{self, bundle_for, layers_for};
+use crate::area::{bundle_for, layers_for};
 use crate::catalog::{catalog, model};
-use crate::edit::{self, Dori};
-use crate::queries::{ONE_SIDED, Settings, Sources};
+use crate::edit::{self, Dori, Light};
+use crate::queries::{ONE_SIDED, Settings, Sources, lighting_words, off_runtime, with_overrides};
 use crate::schema::JsonObject;
 use crate::server::ObservationMcp;
+use observation_core::building::Footprint;
 use observation_core::bundle::AreaBundle;
 use observation_core::camera::{
     CameraModel, CameraPlacement, Catalog, Lighting, yaw_pitch_from_forward,
 };
-use observation_core::coverage::{CoverageParams, RegionMask, StaticLayers};
-use observation_core::example::{EXAMPLE_MODELS, WallMount, wall_mounts};
+use observation_core::coverage::{CoverageParams, GroundGrid, RegionMask, StaticLayers};
+use observation_core::example::{EXAMPLE_MODELS, WallMount, wall_mounts_of};
 use observation_core::footage::{
-    FootageCamera, Probe, Reach, Target, TargetPlace, Verdict, fresh_id, seen_ground, street_gaps,
+    FootageCamera, Probe, Reach, Target, TargetPlace, Verdict, seen_ground, street_gaps,
 };
 use observation_core::frustum::ViewCone;
 use observation_core::glam::{Vec2, Vec3};
@@ -41,6 +42,8 @@ use rmcp::{tool, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Most cameras `suggest_placement` suggests in one call.
@@ -140,47 +143,9 @@ fn turn(a: f32, b: f32) -> f32 {
     (a - b + 180.0).rem_euclid(360.0) - 180.0
 }
 
-fn lighting_name(l: Lighting) -> &'static str {
-    match l {
-        Lighting::Day => "Day",
-        Lighting::Night => "Night",
-    }
-}
-
-fn lighting_words(l: Lighting) -> &'static str {
-    match l {
-        Lighting::Day => "by day",
-        Lighting::Night => "at night",
-    }
-}
-
-fn settings_of(p: &CoverageParams) -> Settings {
-    Settings {
-        level: p.dori.label().to_owned(),
-        ppm: p.pixels_per_metre(),
-        lighting: lighting_name(p.lighting).to_owned(),
-        subject_height_m: p.subject_height_m,
-    }
-}
-
 /// "at Detect by day".
 fn at_words(p: &CoverageParams) -> String {
     format!("at {} {}", p.dori.label(), lighting_words(p.lighting))
-}
-
-/// Runs `f` off the async runtime, with the connection's real areas in
-/// view, as the queries do.
-async fn off_runtime<T: Send + 'static>(
-    f: impl FnOnce() -> Result<T, ToolError> + Send + 'static,
-) -> Result<T, String> {
-    let areas = area::current_areas();
-    tokio::task::spawn_blocking(move || match areas {
-        Some(areas) => area::with_areas(areas, f),
-        None => f(),
-    })
-    .await
-    .map_err(|e| format!("the search failed: {e}"))?
-    .map_err(|e| e.to_string())
 }
 
 /// A camera's aim.
@@ -539,6 +504,15 @@ impl Field {
         Self { cells, pts }
     }
 
+    /// A field of the given grid cells.
+    fn from_cells(layers: &StaticLayers, cells: Vec<u32>, h: f32) -> Self {
+        let pts = cells
+            .iter()
+            .map(|&i| layers.ground_subject(i as usize, h))
+            .collect();
+        Self { cells, pts }
+    }
+
     /// The cells (as positions in the field) with a clear line from `eye`
     /// within `range`, only those in front of `front` (a wall's normal) when
     /// given. Cells behind the wall a camera is on are behind its building.
@@ -575,13 +549,21 @@ struct Score {
     cells: u32,
 }
 
+/// What a camera at one eye has a clear line to, whichever way it faces:
+/// the lines of sight an eye needs, tested once for all its aims.
+struct Lines {
+    /// Field positions.
+    cells: Vec<u32>,
+    /// For each of the goal's targets, its points ([`Probe::clear_from`]).
+    targets: Vec<Vec<Vec3>>,
+}
+
 /// One camera, at one eye, being scored.
 struct Shot<'a> {
     eye: Vec3,
     roll: f32,
     model: &'a CameraModel,
-    /// Field positions with a clear line from the eye.
-    clear: &'a [u32],
+    lines: &'a Lines,
 }
 
 /// What is already covered: field cells and targets.
@@ -595,9 +577,37 @@ struct Search<'a> {
     params: CoverageParams,
     goal: &'a Goal,
     field: Field,
+    /// How many aims have been scored.
+    tried: Cell<usize>,
 }
 
-impl Search<'_> {
+impl<'a> Search<'a> {
+    fn new(layers: &'a StaticLayers, params: CoverageParams, goal: &'a Goal, field: Field) -> Self {
+        Self {
+            layers,
+            params,
+            goal,
+            field,
+            tried: Cell::new(0),
+        }
+    }
+
+    /// The lines of sight from `eye` out to `range`: to the field's cells
+    /// (only those in front of `front`, a wall's normal, when given: cells
+    /// behind the wall a camera is on are behind its building) and to the
+    /// goal's targets.
+    fn lines(&self, eye: Vec3, range: f32, front: Option<Vec2>) -> Lines {
+        Lines {
+            cells: self.field.clear_from(self.layers, eye, range, front),
+            targets: self
+                .goal
+                .probes
+                .iter()
+                .map(|p| p.clear_from(self.layers, eye, range))
+                .collect(),
+        }
+    }
+
     fn range(&self, m: &CameraModel) -> f32 {
         m.effective_range_m(self.params.pixels_per_metre(), self.params.lighting)
     }
@@ -616,26 +626,22 @@ impl Search<'_> {
     }
 
     fn score(&self, shot: &Shot, aim: Aim, covered: &Covered) -> Score {
+        self.tried.set(self.tried.get() + 1);
         let cone = self.cone(shot, aim);
         let cells = shot
-            .clear
+            .lines
+            .cells
             .iter()
             .filter(|&&k| !covered.cells[k as usize] && cone.contains(self.field.pts[k as usize]))
             .count() as u32;
-        let targets = if self.goal.is_targets() {
-            self.goal
-                .probes
-                .iter()
-                .zip(&covered.targets)
-                .filter(|(p, done)| {
-                    !**done
-                        && Reach::of(self.layers, &cone, p).verdict(cone.range)
-                            == Verdict::NotRuledOut
-                })
-                .count() as u32
-        } else {
-            0
-        };
+        // "Not ruled out" as `Reach::verdict` finds it, from the cached lines.
+        let targets = shot
+            .lines
+            .targets
+            .iter()
+            .zip(&covered.targets)
+            .filter(|(pts, done)| !**done && pts.iter().any(|p| cone.contains(*p)))
+            .count() as u32;
         if self.goal.is_targets() {
             Score {
                 primary: targets,
@@ -651,13 +657,13 @@ impl Search<'_> {
 
     fn cover(&self, shot: &Shot, aim: Aim, covered: &mut Covered) {
         let cone = self.cone(shot, aim);
-        for &k in shot.clear {
+        for &k in &shot.lines.cells {
             if cone.contains(self.field.pts[k as usize]) {
                 covered.cells[k as usize] = true;
             }
         }
-        for (p, done) in self.goal.probes.iter().zip(&mut covered.targets) {
-            if Reach::of(self.layers, &cone, p).verdict(cone.range) == Verdict::NotRuledOut {
+        for (pts, done) in shot.lines.targets.iter().zip(&mut covered.targets) {
+            if pts.iter().any(|p| cone.contains(*p)) {
                 *done = true;
             }
         }
@@ -680,9 +686,9 @@ impl Search<'_> {
         best
     }
 
-    /// A finer search round `start`: yaw within ±`yaw_span` and pitch
-    /// within ±`pitch_span` in `steps` steps each way, repeated while it
-    /// improves (at most three times).
+    /// A finer search round `start`: yaw and pitch `steps` steps of
+    /// `yaw_step` and `pitch_step` each way, repeated round the new best
+    /// while it improves (at most three times).
     fn refine(
         &self,
         shot: &Shot,
@@ -829,13 +835,8 @@ fn prepare(scene: &Value, level: Option<Dori>, night: Option<bool>) -> Result<Pr
     let s = edit::parse(scene)?;
     let bundle = bundle_for(&s)?;
     let layers = layers_for(&s)?;
-    let mut params = s.params;
-    if let Some(d) = level {
-        params.dori = d.into();
-    }
-    if let Some(n) = night {
-        params.lighting = if n { Lighting::Night } else { Lighting::Day };
-    }
+    let light = night.map(|n| if n { Light::Night } else { Light::Day });
+    let params = with_overrides(s.params, level, light);
     Ok(Prepared {
         scene: s,
         bundle,
@@ -954,7 +955,7 @@ struct Mount {
     /// The models that go at this height, by index in the models list.
     models: Vec<usize>,
     /// Field positions with a clear line from the eye.
-    clear: Vec<u32>,
+    lines: Lines,
 }
 
 /// The aims tried from a house front: across the wall's outward bearing,
@@ -1003,23 +1004,28 @@ pub fn suggest(
             "count must be 1 to {MAX_SUGGESTIONS}"
         )));
     }
+    // Before the search: no more suggestions than the scene has room for.
+    let room = edit::camera_room(&p.scene);
+    if room == 0 {
+        return Err(ToolError::invalid(format!(
+            "the scene already holds the most cameras it can ({MAX_CAMERAS}): remove one first"
+        )));
+    }
     let models = choose_models(cat, &p.scene, models)?;
-    let found = search_placements(&p, spec, &models, count)?;
+    let found = search_placements(&p, spec, &models, count.min(room))?;
     let mut out = found.out;
+    if count > room {
+        out.summary.push_str(&format!(
+            " The scene has room for only {room} more camera(s)."
+        ));
+    }
     if apply {
         let mut s = p.scene.clone();
-        if s.cameras.len() + found.placements.len() > MAX_CAMERAS {
-            return Err(ToolError::invalid(format!(
-                "a scene holds at most {MAX_CAMERAS} cameras"
-            )));
-        }
         let mut ids = Vec::new();
-        for (mut c, sug) in found.placements.into_iter().zip(&mut out.suggestions) {
-            c.id = fresh_id(s.cameras.iter().map(|c| c.id));
-            c.label = format!("Camera {}", c.id);
-            sug.camera_id = Some(c.id);
-            ids.push(c.id);
-            s.cameras.push(c);
+        for (c, sug) in found.placements.into_iter().zip(&mut out.suggestions) {
+            let id = edit::add_camera(&mut s, c)?;
+            sug.camera_id = Some(id);
+            ids.push(id);
         }
         let (_, value) = edit::finish(&s)?;
         if !ids.is_empty() {
@@ -1056,12 +1062,7 @@ fn search_placements(
     let cams = p.scene.footage_cameras(cat);
     let goal = resolve_goal(spec, &p.scene, layers, &params, &cams)?;
     let seen = seen_ground(layers, &params, &cams);
-    let search = Search {
-        layers,
-        params,
-        goal: &goal,
-        field: Field::new(layers, &goal, &seen, h),
-    };
+    let search = Search::new(layers, params, &goal, Field::new(layers, &goal, &seen, h));
     let open = targets_open(layers, &params, &goal, &cams);
     let before = tally(layers, &goal, &seen, &open);
     let mut covered = Covered {
@@ -1084,7 +1085,13 @@ fn search_placements(
         Some((lo, hi)) => (w.at.clamp(lo, hi) - w.at).length(),
         None => f32::INFINITY,
     };
-    let mut walls: Vec<(f32, WallMount)> = wall_mounts(&p.bundle)
+    // Only the buildings that could reach the goal: a wall lies inside its
+    // footprint's box, so the box is at least as near the goal as the wall.
+    let reachable = |_: usize, fp: &Footprint| {
+        goal.bounds
+            .is_some_and(|b| box_gap(footprint_box(fp), b) <= max_range)
+    };
+    let mut walls: Vec<(f32, WallMount)> = wall_mounts_of(&p.bundle, reachable)
         .into_iter()
         .filter(WallMount::faces_street)
         .filter(|w| taken.iter().all(|t| t.distance(w.at) > APART_M))
@@ -1122,13 +1129,13 @@ fn search_placements(
                 .iter()
                 .map(|&k| search.range(models[k]))
                 .fold(0.0, f32::max);
-            let clear = search.field.clear_from(layers, eye, range, Some(w.normal));
+            let lines = search.lines(eye, range, Some(w.normal));
             mounts.push(Mount {
                 wall: *w,
                 eye,
                 height: hm,
                 models: ms,
-                clear,
+                lines,
             });
         }
     }
@@ -1143,7 +1150,6 @@ fn search_placements(
                 .collect()
         })
         .collect();
-    let aim_count: usize = aims.iter().flatten().map(Vec::len).sum();
     let mut picked: Vec<(usize, usize, Aim)> = Vec::new();
     for _ in 0..count {
         let mut best: Option<(usize, usize, Aim, Score)> = None;
@@ -1159,7 +1165,7 @@ fn search_placements(
                     eye: mt.eye,
                     roll: 0.0,
                     model: models[k],
-                    clear: &mt.clear,
+                    lines: &mt.lines,
                 };
                 if let Some((aim, s)) =
                     search.best_of(&shot, aims[i][slot].iter().copied(), &covered)
@@ -1174,7 +1180,7 @@ fn search_placements(
             eye: mounts[i].eye,
             roll: 0.0,
             model: models[k],
-            clear: &mounts[i].clear,
+            lines: &mounts[i].lines,
         };
         let (aim, s) = search.refine(&shot, (aim, s), &covered, 5.0, 5.0, 1);
         let cell_m2 = layers.grid().cell_area_m2();
@@ -1239,15 +1245,16 @@ fn search_placements(
     let after = last;
     let summary = suggest_summary(&goal, &params, before, after, &suggestions);
     let searched = format!(
-        "{} mount point(s) on {wall_count} house front(s) facing a street, {} model(s), {aim_count} aim(s) in all",
+        "{} mount point(s) on {wall_count} house front(s) facing a street, {} model(s), {} aim(s) scored in all",
         mounts.len(),
-        models.len()
+        models.len(),
+        search.tried.get()
     );
     Ok(Placements {
         out: SuggestOut {
             summary,
             goal: goal.words(),
-            settings: settings_of(&params),
+            settings: Settings::of(&params),
             unit: goal.unit().to_owned(),
             before: r1(before.value(&goal)),
             after: r1(after.value(&goal)),
@@ -1393,8 +1400,13 @@ pub struct OptimiseOut {
     pub gain: f32,
     /// How far the camera moved along its wall, metres.
     pub moved_m: f32,
-    /// Whether the search found anything better than the current pose.
+    /// Whether the search found a pose better for the goal than the current
+    /// one; when false, the current pose is kept and nothing is applied.
     pub changed: bool,
+    /// For `targets`: the change in street not ruled out for the whole
+    /// scene, m² (the tie-break between aims that open the same targets).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub street_change_m2: Option<f32>,
     /// What was searched.
     pub searched: String,
     /// The edited scene, when applied: pass it to the next scene tool.
@@ -1407,18 +1419,39 @@ pub struct OptimiseOut {
     pub sources: Sources,
 }
 
-/// The wall a camera at `xz` is mounted on (within [`ON_WALL_M`] of its
-/// line, and alongside it), if any.
-fn wall_of(bundle: &AreaBundle, xz: Vec2) -> Option<WallMount> {
-    wall_mounts(bundle)
-        .into_iter()
-        .filter_map(|w| {
-            let along_dir = Vec2::new(-w.normal.y, w.normal.x);
-            let d = xz - w.at;
-            let off = d.dot(w.normal);
-            let along = d.dot(along_dir).abs();
-            ((0.0..=ON_WALL_M).contains(&off) && along <= w.length_m / 2.0).then_some((off, w))
+/// The bounding box of a footprint's outline, `(min, max)`.
+fn footprint_box(fp: &Footprint) -> (Vec2, Vec2) {
+    fp.outer
+        .iter()
+        .fold((Vec2::INFINITY, Vec2::NEG_INFINITY), |(lo, hi), q| {
+            let q = Vec2::from_array(*q);
+            (lo.min(q), hi.max(q))
         })
+}
+
+/// The gap between two boxes `(min, max)`, metres (0 where they overlap).
+fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
+    (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
+}
+
+/// How far in front of `w`'s line a camera at `xz` sits, if it counts as
+/// mounted on it: within [`ON_WALL_M`] in front, and alongside the wall.
+fn on_wall(w: &WallMount, xz: Vec2) -> Option<f32> {
+    let along_dir = Vec2::new(-w.normal.y, w.normal.x);
+    let d = xz - w.at;
+    let off = d.dot(w.normal);
+    let along = d.dot(along_dir).abs();
+    ((0.0..=ON_WALL_M).contains(&off) && along <= w.length_m / 2.0).then_some(off)
+}
+
+/// The wall a camera at `xz` is mounted on, if any: the nearest wall it
+/// counts as mounted on ([`on_wall`]), among the walls of the buildings
+/// next to it only.
+fn wall_of(bundle: &AreaBundle, xz: Vec2) -> Option<WallMount> {
+    let near = |_: usize, fp: &Footprint| box_gap(footprint_box(fp), (xz, xz)) <= ON_WALL_M;
+    wall_mounts_of(bundle, near)
+        .into_iter()
+        .filter_map(|w| on_wall(&w, xz).map(|off| (off, w)))
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, w)| w)
 }
@@ -1480,12 +1513,7 @@ pub fn optimise(
     // The gaps the other cameras leave, so the camera's own share counts.
     let goal = resolve_goal(spec, &p.scene, layers, &params, &others)?;
     let seen = seen_ground(layers, &params, &others);
-    let search = Search {
-        layers,
-        params,
-        goal: &goal,
-        field: Field::new(layers, &goal, &seen, h),
-    };
+    let search = Search::new(layers, params, &goal, Field::new(layers, &goal, &seen, h));
     let open = targets_open(layers, &params, &goal, &others);
     let covered = Covered {
         cells: vec![false; search.field.cells.len()],
@@ -1498,16 +1526,15 @@ pub fn optimise(
     let height = (cam.position[1] - terrain.height_at(xz0)).max(0.0);
 
     // At the camera's own spot: coarse, then fine.
-    let clear0 = search.field.clear_from(layers, cam.eye(), range, None);
+    let lines0 = search.lines(cam.eye(), range, None);
     let shot0 = Shot {
         eye: cam.eye(),
         roll: cam.roll_deg,
         model: m,
-        clear: &clear0,
+        lines: &lines0,
     };
     let now = search.score(&shot0, current, &covered);
     let coarse = coarse_aims(current);
-    let mut aims_tried = coarse.len();
     let start = search
         .best_of(&shot0, coarse, &covered)
         .unwrap_or((current, now));
@@ -1516,7 +1543,6 @@ pub fn optimise(
         cam.eye(),
         search.refine(&shot0, start, &covered, 2.0, 1.0, 2),
     );
-    aims_tried += 25;
 
     // Along the same wall: the best aim so far and a coarse ring round it at
     // each spot, then fine at the best spot.
@@ -1541,12 +1567,12 @@ pub fn optimise(
                         continue;
                     }
                     spots += 1;
-                    let clear = search.field.clear_from(layers, eye, range, None);
+                    let lines = search.lines(eye, range, None);
                     let shot = Shot {
                         eye,
                         roll: cam.roll_deg,
                         model: m,
-                        clear: &clear,
+                        lines: &lines,
                     };
                     let c = best.2.0;
                     let ring = (-2..=2).flat_map(|i| {
@@ -1554,10 +1580,8 @@ pub fn optimise(
                             Aim::new(c.yaw + i as f32 * 10.0, c.pitch + j as f32 * 5.0)
                         })
                     });
-                    aims_tried += 15;
                     if let Some(found) = search.best_of(&shot, ring, &covered) {
                         let found = search.refine(&shot, found, &covered, 2.0, 1.0, 1);
-                        aims_tried += 9;
                         if found.1 > best.2.1 {
                             best = (xz, eye, found);
                         }
@@ -1571,7 +1595,9 @@ pub fn optimise(
     }
 
     let (xz1, eye1, (aim1, score1)) = best;
-    let changed = score1 > now;
+    // Only a gain on the goal itself counts: for targets, more street alone
+    // (the tie-break) is no reason to move the camera.
+    let changed = score1.primary > now.primary;
     let (xz1, eye1, aim1) = if changed {
         (xz1, eye1, aim1)
     } else {
@@ -1600,6 +1626,11 @@ pub fn optimise(
         None => before_m,
     };
     let gain = after_m.value(&goal) - before_m.value(&goal);
+    // For targets the goal's cells are the street.
+    let street_change = goal.is_targets().then_some(after_m.m2 - before_m.m2);
+    let street_words = street_change
+        .map(|d| format!(" Street not ruled out changes by {d:+.0} m²."))
+        .unwrap_or_default();
     let moved_m = xz1.distance(xz0);
     let pose = |xz: Vec2, aim: Aim, total: f32| PoseOut {
         at: [r2(xz.x), r2(xz.y)],
@@ -1616,7 +1647,7 @@ pub fn optimise(
             String::new()
         };
         format!(
-            "Camera {camera_id}: facing {} ({:.0}°) tilted {:.0}°{mv} gives {} ({:.0} → {:.0} {unit}).{wall_note} Estimates; check on site.",
+            "Camera {camera_id}: facing {} ({:.0}°) tilted {:.0}°{mv} gives {} ({:.0} → {:.0} {unit}).{street_words}{wall_note} Estimates; check on site.",
             compass(aim1.yaw),
             aim1.yaw,
             aim1.pitch,
@@ -1645,15 +1676,17 @@ pub fn optimise(
         summary,
         camera_id,
         goal: goal.words(),
-        settings: settings_of(&params),
+        settings: Settings::of(&params),
         unit: unit.to_owned(),
         before: pose(xz0, current, before_m.value(&goal)),
         after: pose(xz1, aim1, after_m.value(&goal)),
         gain: r1(gain),
         moved_m: r2(moved_m),
         changed,
+        street_change_m2: street_change.map(r1),
         searched: format!(
-            "{aims_tried} aim(s) at {} spot(s) (yaw all round in 10° steps, tilt -50° to 10° in 5° steps, then finer)",
+            "{} aim(s) scored at {} spot(s) (yaw all round in 10° steps, tilt -50° to 10° in 5° steps, then finer)",
+            search.tried.get(),
             spots + 1
         ),
         scene: scene_out,
@@ -1688,6 +1721,11 @@ pub struct CoverOut {
     /// scene at the level by day, m² (negative: the re-aim gives some up).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub street_change_m2: Option<f32>,
+    /// For `re_aim`: other targets that only this camera leaves not ruled
+    /// out and the new aim would rule out. A re-aim that loses any is never
+    /// applied; it is offered only when nothing else works.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets_lost: Vec<u32>,
     /// For `new_camera`: where it would go.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<SuggestionOut>,
@@ -1731,12 +1769,13 @@ pub fn cover(scene: &Value, target: &TargetRef, apply: bool) -> Result<CoverOut,
         summary,
         target_id: t.id,
         target_name: t.name.clone(),
-        settings: settings_of(&params),
+        settings: Settings::of(&params),
         outcome: outcome.to_owned(),
         camera_id: None,
         aim_before: None,
         aim_after: None,
         street_change_m2: None,
+        targets_lost: Vec::new(),
         suggestion: None,
         at_night,
         new_camera_id: None,
@@ -1773,196 +1812,371 @@ pub fn cover(scene: &Value, target: &TargetRef, apply: bool) -> Result<CoverOut,
         return Ok(out);
     }
 
-    // Re-aim an existing camera: aims round the one straight at the target
-    // that leave it not ruled out, keeping the most street for the scene.
-    let street_goal = Goal {
+    // Re-aim an existing camera within reach of the target, by aims round
+    // the one straight at it that leave it not ruled out.
+    let street = street_cells(&p.scene, layers);
+    let cell_m2 = layers.grid().cell_area_m2();
+    let ppm = params.pixels_per_metre();
+    let centre = layers.subject_at(target_centre(&t), h);
+    // The scene's other targets, and which cameras leave each not ruled out
+    // now: a re-aim must not lose one that only the re-aimed camera reaches.
+    let other_targets: Vec<(&Target, Probe)> = p
+        .scene
+        .targets
+        .iter()
+        .filter(|o| o.id != t.id)
+        .map(|o| (o, Probe::target(layers, o, h)))
+        .collect();
+    let open_by: Vec<Vec<u32>> = other_targets
+        .iter()
+        .map(|(_, pr)| {
+            cams.iter()
+                .filter(|c| {
+                    verdict_of(layers, &params, c.placement, c.model, pr, Lighting::Day)
+                        == Verdict::NotRuledOut
+                })
+                .map(|c| c.placement.id)
+                .collect()
+        })
+        .collect();
+    // Each camera's visible cells, worked out only when needed.
+    let mut vis: Vec<Option<Vec<u32>>> = vec![None; cams.len()];
+    let mut cells_of = |k: usize| -> Vec<u32> {
+        vis[k]
+            .get_or_insert_with(|| ground_cells(layers, &params, cams[k].placement, cams[k].model))
+            .clone()
+    };
+    let no_goal = Goal {
         kind: GoalKind::Street,
-        cells: street_cells(&p.scene, layers),
+        cells: Vec::new(),
         total_m2: 0.0,
         probes: Vec::new(),
         focus: None,
         bounds: None,
     };
-    // Each camera's cells, once, and how many cameras see each cell, so that
-    // what the others see is a subtraction.
-    let vis: Vec<Vec<u32>> = cams
-        .iter()
-        .map(|c| ground_cells(layers, &params, c.placement, c.model))
-        .collect();
-    let mut seers = vec![0u16; layers.grid().len()];
-    for v in &vis {
-        for &i in v {
-            seers[i as usize] = seers[i as usize].saturating_add(1);
-        }
-    }
-    let seen_all: Vec<bool> = seers.iter().map(|&n| n > 0).collect();
-    let street_now = tally(layers, &street_goal, &seen_all, &[]).m2;
-    let centre = layers.subject_at(target_centre(&t), h);
-    let mut best: Option<(f32, f32, u32, Aim)> = None; // (street after, -turn, id, aim)
-    for (c, own) in cams.iter().zip(&vis) {
+    let mut best: Option<ReAim> = None;
+    for (k, c) in cams.iter().enumerate() {
         let (pl, m) = (c.placement, c.model);
-        let range = m.effective_range_m(params.pixels_per_metre(), Lighting::Day);
-        if pl.eye().distance(centre) > range + 30.0 {
+        let eye = pl.eye();
+        let range = m.effective_range_m(ppm, Lighting::Day);
+        // Out of reach: no aim can help, so nothing is computed for it.
+        if eye.distance(centre) > range + 30.0 {
             continue;
         }
-        let Some(straight) = Aim::at(pl.eye(), centre) else {
+        let Some(straight) = Aim::at(eye, centre) else {
             continue;
         };
-        let mut aims = Vec::new();
-        for i in -3..=3 {
-            for j in -2..=2 {
-                aims.push(Aim::new(
-                    straight.yaw + i as f32 * 10.0,
-                    straight.pitch + j as f32 * 5.0,
-                ));
-            }
-        }
-        let ok: Vec<Aim> = aims
-            .into_iter()
-            .filter(|a| {
-                let cone = ViewCone::from_angles(
-                    pl.eye(),
-                    a.yaw,
-                    a.pitch,
-                    pl.roll_deg,
-                    m.hfov_clamped(),
-                    m.vfov_clamped(),
-                    range,
-                );
-                Reach::of(layers, &cone, &probe).verdict(range) == Verdict::NotRuledOut
+        let cone = |a: Aim| {
+            ViewCone::from_angles(
+                eye,
+                a.yaw,
+                a.pitch,
+                pl.roll_deg,
+                m.hfov_clamped(),
+                m.vfov_clamped(),
+                range,
+            )
+        };
+        let reaches = |pts: &[Vec3], a: Aim| {
+            let cone = cone(a);
+            pts.iter().any(|p| cone.contains(*p))
+        };
+        let clear = probe.clear_from(layers, eye, range);
+        let ok: Vec<Aim> = (-3..=3)
+            .flat_map(|i| {
+                (-2..=2).map(move |j| {
+                    Aim::new(
+                        straight.yaw + i as f32 * 10.0,
+                        straight.pitch + j as f32 * 5.0,
+                    )
+                })
             })
+            .filter(|a| reaches(&clear, *a))
             .collect();
         if ok.is_empty() {
             continue;
         }
-        // The aim keeping the most street, given the other cameras.
-        let mut mine = vec![false; seers.len()];
-        mark(&mut mine, own);
-        let seen: Vec<bool> = seers
+        // The targets only this camera leaves not ruled out.
+        let mine: Vec<(u32, Vec<Vec3>)> = other_targets
             .iter()
-            .zip(&mine)
-            .map(|(&n, &me)| n > u16::from(me))
+            .zip(&open_by)
+            .filter(|(_, by)| by.as_slice() == [pl.id])
+            .map(|((o, pr), _)| (o.id, pr.clear_from(layers, eye, range)))
             .collect();
-        let search = Search {
+        // What the cameras whose views could overlap this one's see, near it.
+        let mut others: HashSet<u32> = HashSet::new();
+        for (j, o) in cams.iter().enumerate() {
+            let reach = o.model.effective_range_m(ppm, Lighting::Day);
+            if j != k && o.placement.eye().distance(eye) <= range + reach {
+                others.extend(cells_of(j));
+            }
+        }
+        // The street near the camera that no other camera sees.
+        let local: Vec<u32> = cells_near(layers.grid(), Vec2::new(eye.x, eye.z), range)
+            .into_iter()
+            .filter(|&i| street[i as usize] && !others.contains(&i))
+            .collect();
+        let search = Search::new(
             layers,
             params,
-            goal: &street_goal,
-            field: Field::new(layers, &street_goal, &seen, h),
-        };
-        let clear = search.field.clear_from(layers, pl.eye(), range, None);
+            &no_goal,
+            Field::from_cells(layers, local, h),
+        );
+        let lines = search.lines(eye, range, None);
         let shot = Shot {
-            eye: pl.eye(),
+            eye,
             roll: pl.roll_deg,
             model: m,
-            clear: &clear,
+            lines: &lines,
         };
         let covered = Covered {
             cells: vec![false; search.field.cells.len()],
             targets: Vec::new(),
         };
-        let Some((aim, _)) = search.best_of(&shot, ok, &covered) else {
+        // The aim losing the fewest targets, then keeping the most street
+        // (the first on a tie: nearest the straight aim).
+        let mut pick: Option<(Vec<u32>, Score, Aim)> = None;
+        for a in ok {
+            let lost: Vec<u32> = mine
+                .iter()
+                .filter(|(_, pts)| !reaches(pts, a))
+                .map(|(id, _)| *id)
+                .collect();
+            let score = search.score(&shot, a, &covered);
+            let better = match &pick {
+                None => true,
+                Some((l, s, _)) => lost.len() < l.len() || (lost.len() == l.len() && score > *s),
+            };
+            if better {
+                pick = Some((lost, score, a));
+            }
+        }
+        let Some((lost, _, aim)) = pick else {
             continue;
         };
+        // The exact change in street for the scene: the camera's own cells
+        // now and after, outside what the others see.
         let mut moved = pl.clone();
         moved.yaw_deg = aim.yaw;
         moved.pitch_deg = aim.pitch;
-        let mut with = seen;
-        mark(&mut with, &ground_cells(layers, &params, &moved, m));
-        let street = tally(layers, &street_goal, &with, &[]).m2;
-        let key = (street, -turn(aim.yaw, pl.yaw_deg).abs(), pl.id, aim);
-        let better = match &best {
-            None => true,
-            Some(b) => key.0 > b.0 || (key.0 == b.0 && key.1 > b.1),
+        let own = |cells: &[u32]| {
+            cells
+                .iter()
+                .filter(|&&i| street[i as usize] && !others.contains(&i))
+                .count() as f32
+                * cell_m2
         };
-        if better {
-            best = Some(key);
+        let change = own(&ground_cells(layers, &params, &moved, m)) - own(&cells_of(k));
+        let candidate = ReAim {
+            camera: pl.id,
+            aim,
+            lost,
+            change,
+            turn: turn(aim.yaw, pl.yaw_deg).abs(),
+        };
+        if best.as_ref().is_none_or(|b| candidate.beats(b)) {
+            best = Some(candidate);
         }
     }
-    if let Some((street, _, id, aim)) = best
-        && let Some(pl) = p.scene.cameras.iter().find(|c| c.id == id)
+
+    let lossless = best.as_ref().filter(|b| b.lost.is_empty());
+    if let Some(b) = lossless
+        && let Some(pl) = p.scene.cameras.iter().find(|c| c.id == b.camera)
         && let Some(m) = model(cat, Some(&p.scene), &pl.model_id)
     {
-        let mut moved = pl.clone();
-        moved.yaw_deg = aim.yaw;
-        moved.pitch_deg = aim.pitch;
-        let night = verdict_of(layers, &params, &moved, m, &probe, Lighting::Night);
-        let change = street - street_now;
-        let mut out = base(
-            "re_aim",
-            format!(
-                "Re-aim camera {id} to face {} ({:.0}°) tilted {:.0}° (now {:.0}°, {:.0}°): {name} is then not ruled out {at}; {}. Street not ruled out changes by {change:+.0} m². Estimates; check on site.",
-                compass(aim.yaw),
-                aim.yaw,
-                aim.pitch,
-                pl.yaw_deg,
-                pl.pitch_deg,
-                night_words(night)
-            ),
-            night_words(night),
-        );
-        out.camera_id = Some(id);
-        out.aim_before = Some(AimOut::of(pl.yaw_deg, pl.pitch_deg));
-        out.aim_after = Some(AimOut::of(aim.yaw, aim.pitch));
-        out.street_change_m2 = Some(r1(change));
+        let mut out = re_aim_out(&base, &name, &at, pl, m, b, layers, &params, &probe);
         if apply {
             let mut s = p.scene.clone();
-            edit::aim_camera(&mut s, id, Some(aim.yaw), Some(aim.pitch), None)?;
+            edit::aim_camera(&mut s, b.camera, Some(b.aim.yaw), Some(b.aim.pitch), None)?;
             out.scene = Some(edit::finish(&s)?.1);
         }
         return Ok(out);
     }
+    // Every re-aim found loses another target: say so with whatever is
+    // offered instead.
+    let lossy_words = |b: &ReAim| {
+        format!(
+            "Re-aiming camera {} would also do it, but would rule out {}.",
+            b.camera,
+            lost_names(&p.scene, &b.lost)
+        )
+    };
 
-    // A new camera, by the same search as suggest_placement.
-    let spec = GoalSpec {
-        goal: GoalArg::Targets,
-        targets: Some(vec![TargetRef::Id(t.id)]),
-        area_id: None,
+    // A new camera, by the same search as suggest_placement, if there is
+    // room for one.
+    let room = edit::camera_room(&p.scene);
+    let found = if room > 0 {
+        let spec = GoalSpec {
+            goal: GoalArg::Targets,
+            targets: Some(vec![TargetRef::Id(t.id)]),
+            area_id: None,
+        };
+        let models = choose_models(cat, &p.scene, None)?;
+        Some(search_placements(&p, &spec, &models, 1)?)
+    } else {
+        None
     };
-    let models = choose_models(cat, &p.scene, None)?;
-    let found = search_placements(&p, &spec, &models, 1)?;
-    let Some(mut sug) = found.out.suggestions.into_iter().next() else {
-        return Ok(base(
-            "none_found",
-            format!(
-                "No camera in the scene can be re-aimed so that {name} is not ruled out {at}, and no house front facing a street nearby gives a clear line to it. Try a different level, or place a camera by hand nearer the target."
-            ),
-            "at night: no camera found".to_owned(),
-        ));
-    };
-    let Some(mut cam) = found.placements.into_iter().next() else {
-        return Err(ToolError::invalid("the search lost its suggestion"));
-    };
-    let m = model(cat, Some(&p.scene), &cam.model_id)
-        .ok_or_else(|| ToolError::NoModel(cam.model_id.clone()))?;
-    let night = verdict_of(layers, &params, &cam, m, &probe, Lighting::Night);
-    let summary = format!(
-        "No camera in the scene can be re-aimed to cover {name} {at}. A new {} at [{:.0}, {:.0}], {:.1} m up, facing {} ({:.0}°), tilted {:.0}°, leaves it not ruled out; {}. Estimates; check on site.",
-        sug.model,
-        sug.at[0],
-        sug.at[1],
-        sug.height_m,
-        sug.aim.facing,
-        sug.aim.yaw_deg,
-        sug.aim.pitch_deg,
-        night_words(night)
-    );
-    let mut out = base("new_camera", summary, night_words(night));
-    if apply {
-        let mut s = p.scene.clone();
-        if s.cameras.len() >= MAX_CAMERAS {
-            return Err(ToolError::invalid(format!(
-                "a scene holds at most {MAX_CAMERAS} cameras"
-            )));
+    let suggested = found.and_then(|f| {
+        let sug = f.out.suggestions.into_iter().next()?;
+        let cam = f.placements.into_iter().next()?;
+        Some((sug, cam))
+    });
+    if let Some((mut sug, cam)) = suggested {
+        let m = model(cat, Some(&p.scene), &cam.model_id)
+            .ok_or_else(|| ToolError::NoModel(cam.model_id.clone()))?;
+        let night = verdict_of(layers, &params, &cam, m, &probe, Lighting::Night);
+        let mut summary = format!(
+            "No camera in the scene can be re-aimed to cover {name} {at} without losing another target. A new {} at [{:.0}, {:.0}], {:.1} m up, facing {} ({:.0}°), tilted {:.0}°, leaves it not ruled out; {}.",
+            sug.model,
+            sug.at[0],
+            sug.at[1],
+            sug.height_m,
+            sug.aim.facing,
+            sug.aim.yaw_deg,
+            sug.aim.pitch_deg,
+            night_words(night)
+        );
+        if let Some(b) = &best {
+            summary.push(' ');
+            summary.push_str(&lossy_words(b));
         }
-        cam.id = fresh_id(s.cameras.iter().map(|c| c.id));
-        cam.label = format!("Camera {}", cam.id);
-        sug.camera_id = Some(cam.id);
-        out.new_camera_id = Some(cam.id);
-        s.cameras.push(cam);
-        out.scene = Some(edit::finish(&s)?.1);
+        summary.push_str(" Estimates; check on site.");
+        let mut out = base("new_camera", summary, night_words(night));
+        if apply {
+            let mut s = p.scene.clone();
+            let id = edit::add_camera(&mut s, cam)?;
+            sug.camera_id = Some(id);
+            out.new_camera_id = Some(id);
+            out.scene = Some(edit::finish(&s)?.1);
+        }
+        out.suggestion = Some(sug);
+        return Ok(out);
     }
-    out.suggestion = Some(sug);
-    Ok(out)
+
+    // Only a re-aim that loses another target: offered, never applied.
+    if let Some(b) = &best
+        && let Some(pl) = p.scene.cameras.iter().find(|c| c.id == b.camera)
+        && let Some(m) = model(cat, Some(&p.scene), &pl.model_id)
+    {
+        let mut out = re_aim_out(&base, &name, &at, pl, m, b, layers, &params, &probe);
+        out.summary = format!(
+            "{} {} Not applied: it would rule out {}; to accept that, aim camera {} with aim_camera (yaw {:.0}, pitch {:.0}). {}",
+            lossy_words(b),
+            if room == 0 {
+                "The scene has no room for a new camera."
+            } else {
+                "No house front facing a street gives a new camera a clear line to it."
+            },
+            lost_names(&p.scene, &b.lost),
+            b.camera,
+            b.aim.yaw,
+            b.aim.pitch,
+            out.summary
+        );
+        return Ok(out);
+    }
+
+    let why = if room == 0 {
+        "the scene has no room for a new camera"
+    } else {
+        "no house front facing a street nearby gives a clear line to it"
+    };
+    Ok(base(
+        "none_found",
+        format!(
+            "No camera in the scene can be re-aimed so that {name} is not ruled out {at}, and {why}. Try a different level, or place a camera by hand nearer the target."
+        ),
+        "at night: no camera found".to_owned(),
+    ))
+}
+
+/// A re-aim `cover_target` found for one camera.
+#[derive(Debug, Clone)]
+struct ReAim {
+    camera: u32,
+    aim: Aim,
+    /// Other targets it would rule out, by id.
+    lost: Vec<u32>,
+    /// The change in street not ruled out for the scene, m².
+    change: f32,
+    /// How far the camera turns, degrees.
+    turn: f32,
+}
+
+impl ReAim {
+    /// Fewer targets lost, then more street, then a smaller turn; the first
+    /// camera on a tie.
+    fn beats(&self, other: &Self) -> bool {
+        (self.lost.len(), -self.change, self.turn) < (other.lost.len(), -other.change, other.turn)
+    }
+}
+
+/// "Path (target 2), Gate (target 3)".
+fn lost_names(scene: &SceneFile, ids: &[u32]) -> String {
+    ids.iter()
+        .map(|id| match scene.targets.iter().find(|t| t.id == *id) {
+            Some(t) => target_words(t),
+            None => format!("target {id}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The `re_aim` result for `b`, on camera `pl` of model `m`.
+#[allow(clippy::too_many_arguments)]
+fn re_aim_out(
+    base: &dyn Fn(&str, String, String) -> CoverOut,
+    name: &str,
+    at: &str,
+    pl: &CameraPlacement,
+    m: &CameraModel,
+    b: &ReAim,
+    layers: &StaticLayers,
+    params: &CoverageParams,
+    probe: &Probe,
+) -> CoverOut {
+    let mut moved = pl.clone();
+    moved.yaw_deg = b.aim.yaw;
+    moved.pitch_deg = b.aim.pitch;
+    let night = verdict_of(layers, params, &moved, m, probe, Lighting::Night);
+    let mut out = base(
+        "re_aim",
+        format!(
+            "Re-aim camera {} to face {} ({:.0}°) tilted {:.0}° (now {:.0}°, {:.0}°): {name} is then not ruled out {at}; {}. Street not ruled out changes by {:+.0} m². Estimates; check on site.",
+            b.camera,
+            compass(b.aim.yaw),
+            b.aim.yaw,
+            b.aim.pitch,
+            pl.yaw_deg,
+            pl.pitch_deg,
+            night_words(night),
+            b.change
+        ),
+        night_words(night),
+    );
+    out.camera_id = Some(b.camera);
+    out.aim_before = Some(AimOut::of(pl.yaw_deg, pl.pitch_deg));
+    out.aim_after = Some(AimOut::of(b.aim.yaw, b.aim.pitch));
+    out.street_change_m2 = Some(r1(b.change));
+    out.targets_lost = b.lost.clone();
+    out
+}
+
+/// The ground cells whose centres lie in the square of half-side `r` round
+/// world `[x, z]` `c`.
+fn cells_near(grid: &GroundGrid, c: Vec2, r: f32) -> Vec<u32> {
+    let lo = ((c - Vec2::splat(r) - grid.min) / grid.cell_m)
+        .floor()
+        .max(Vec2::ZERO);
+    let hi = ((c + Vec2::splat(r) - grid.min) / grid.cell_m).floor();
+    let (x1, z1) = (hi.x.min(grid.w as f32 - 1.0), hi.y.min(grid.h as f32 - 1.0));
+    if grid.is_empty() || x1 < lo.x || z1 < lo.y {
+        return Vec::new();
+    }
+    let (x0, z0, x1, z1) = (lo.x as u32, lo.y as u32, x1 as u32, z1 as u32);
+    (z0..=z1)
+        .flat_map(|z| (x0..=x1).map(move |x| z * grid.w + x))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

@@ -449,6 +449,135 @@ fn cover_target_suggests_a_new_camera_when_none_can_reach() {
     assert!(out.summary.contains("at night"), "{}", out.summary);
 }
 
+/// Camera 1, an 87° bullet camera on a house front, aimed at target B 8 m
+/// along its wall one way; target A lies 8 m the other way. No aim of
+/// camera 1 leaves both not ruled out. Returns the scene and A's and B's
+/// ids.
+fn two_targets_one_camera() -> (SceneFile, u32, u32) {
+    let mut s = with_examples(1);
+    s.cameras[0].model_id = "reolink-rlc-810a".into();
+    let cam = s.cameras[0].clone();
+    let at = Vec2::new(cam.position[0], cam.position[2]);
+    let fwd = Vec2::new(cam.forward().x, cam.forward().z).normalize();
+    let along = Vec2::new(-fwd.y, fwd.x);
+    let (s, b) = with_target(s, "B", (at + along * 8.0 + fwd * 3.0).to_array());
+    let (mut s, a) = with_target(s, "A", (at - along * 8.0 + fwd * 3.0).to_array());
+    let b_at = at + along * 8.0 + fwd * 3.0;
+    let b_point = Vec3::new(
+        b_at.x,
+        demo().unwrap().terrain.height_at(b_at) + 1.0,
+        b_at.y,
+    );
+    s.cameras[0].look_at(b_point);
+    (s, a, b)
+}
+
+#[test]
+fn cover_target_never_silently_loses_another_target() {
+    let (s, a, b) = two_targets_one_camera();
+    let v = value(&s);
+    assert!(not_ruled_out(&v, b), "camera 1 is aimed at B");
+    assert!(!not_ruled_out(&v, a));
+    let out = cover(&v, &TargetRef::Id(a), true).unwrap();
+    // Re-aiming camera 1 at A would lose B, so a new camera is offered, and
+    // the summary says why camera 1 was not re-aimed.
+    assert_eq!(out.outcome, "new_camera", "{}", out.summary);
+    assert!(out.summary.contains("would rule out B"), "{}", out.summary);
+    let edited = out.scene.as_ref().unwrap();
+    assert!(not_ruled_out(edited, a) && not_ruled_out(edited, b));
+
+    // With no room for a new camera, only the lossy re-aim is left: it is
+    // offered with what it loses, and not applied.
+    let mut full = s.clone();
+    let mut spare = full.cameras[0].clone();
+    spare.enabled = false;
+    spare.label = String::new();
+    while edit::camera_room(&full) > 0 {
+        edit::add_camera(&mut full, spare.clone()).unwrap();
+    }
+    let out = cover(&value(&full), &TargetRef::Id(a), true).unwrap();
+    assert_eq!(out.outcome, "re_aim", "{}", out.summary);
+    assert_eq!(out.targets_lost, vec![b]);
+    assert!(
+        out.scene.is_none(),
+        "a re-aim that loses a target is not applied"
+    );
+    assert!(out.summary.contains("Not applied"), "{}", out.summary);
+    assert!(out.summary.contains("no room"), "{}", out.summary);
+}
+
+#[test]
+fn optimise_aim_keeps_a_pose_that_already_reaches_the_targets() {
+    // Camera 1 already leaves B not ruled out: another aim with more street
+    // but the same targets is no change for the targets goal.
+    let (s, _, b) = two_targets_one_camera();
+    let spec = GoalSpec {
+        goal: GoalArg::Targets,
+        targets: Some(vec![TargetRef::Id(b)]),
+        area_id: None,
+    };
+    let v = value(&s);
+    let out = optimise(&v, 1, &spec, false, None, None, true).unwrap();
+    assert!(!out.changed, "{}", out.summary);
+    assert_eq!(
+        (out.before.total, out.after.total, out.gain),
+        (1.0, 1.0, 0.0)
+    );
+    assert_eq!(out.street_change_m2, Some(0.0));
+    let kept = edit::parse(out.scene.as_ref().unwrap()).unwrap();
+    assert_eq!(kept.cameras[0].yaw_deg, s.cameras[0].yaw_deg);
+    assert_eq!(kept.cameras[0].pitch_deg, s.cameras[0].pitch_deg);
+    // Every aim scored is counted: the coarse sweep alone is 469.
+    let tried: usize = out
+        .searched
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap();
+    assert!(tried > 469 + 25, "{}", out.searched);
+}
+
+#[test]
+fn the_wall_under_a_camera_is_found_among_its_neighbours_walls() {
+    let s = with_examples(3);
+    let b = demo().unwrap();
+    for c in &s.cameras {
+        let xz = Vec2::new(c.position[0], c.position[2]);
+        // As a search over every wall of the area finds it.
+        let every = observation_core::example::wall_mounts(b)
+            .into_iter()
+            .filter_map(|w| on_wall(&w, xz).map(|off| (off, w)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, w)| w);
+        let found = wall_of(b, xz);
+        assert!(found.is_some(), "camera {} is on a house front", c.id);
+        assert_eq!(found, every);
+    }
+    // Out on the street, no wall.
+    assert_eq!(wall_of(b, Vec2::from_array(on_street(&s))), None);
+}
+
+#[test]
+fn a_full_scene_is_refused_before_the_search() {
+    let mut s = with_examples(1);
+    let mut spare = s.cameras[0].clone();
+    spare.enabled = false;
+    spare.label = String::new();
+    while edit::camera_room(&s) > 1 {
+        edit::add_camera(&mut s, spare.clone()).unwrap();
+    }
+    // Room for one: three asked for, one suggested and added.
+    let out = suggest(&value(&s), &street(), Some(3), None, None, None, true).unwrap();
+    assert_eq!(out.suggestions.len(), 1, "{}", out.summary);
+    assert!(out.summary.contains("room for only 1"), "{}", out.summary);
+    let full = out.scene.unwrap();
+    let err = suggest(&full, &street(), None, None, None, None, false)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("remove one first"), "{err}");
+}
+
 /// How long each tool takes on the demo street, and a generous bound. In a
 /// release build each call is well under the 3 s aimed for (see
 /// docs/design.md); a debug build is several times slower.

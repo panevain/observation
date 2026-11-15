@@ -583,8 +583,7 @@ pub fn add_example_cameras(
     count: usize,
     model_ids: &[String],
 ) -> Result<Vec<u32>, ToolError> {
-    let room = MAX_CAMERAS.saturating_sub(scene.cameras.len());
-    let count = count.min(room);
+    let count = count.min(camera_room(scene));
     let models: Vec<CameraModel> = if model_ids.is_empty() {
         EXAMPLE_MODELS
             .iter()
@@ -608,14 +607,29 @@ pub fn add_example_cameras(
         .map(|c| [c.position[0], c.position[2]])
         .collect();
     let placed = example_cameras_around(&*bundle_for(scene)?, &refs, count, &taken);
-    let mut ids = Vec::with_capacity(placed.len());
-    for mut c in placed {
-        c.id = next_camera_id(scene);
-        c.label = format!("Camera {}", c.id);
-        ids.push(c.id);
-        scene.cameras.push(c);
+    placed.into_iter().map(|c| add_camera(scene, c)).collect()
+}
+
+/// How many more cameras the scene holds.
+pub fn camera_room(scene: &SceneFile) -> usize {
+    MAX_CAMERAS.saturating_sub(scene.cameras.len())
+}
+
+/// Adds `camera` with a fresh id, labelled "Camera `<id>`" unless it has a
+/// label; returns the id. Refused when the scene holds [`MAX_CAMERAS`].
+pub fn add_camera(scene: &mut SceneFile, mut camera: CameraPlacement) -> Result<u32, ToolError> {
+    if camera_room(scene) == 0 {
+        return Err(ToolError::invalid(format!(
+            "a scene holds at most {MAX_CAMERAS} cameras"
+        )));
     }
-    Ok(ids)
+    let id = next_camera_id(scene);
+    camera.id = id;
+    if camera.label.trim().is_empty() {
+        camera.label = format!("Camera {id}");
+    }
+    scene.cameras.push(camera);
+    Ok(id)
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
