@@ -91,7 +91,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    fn of(p: &CoverageParams) -> Self {
+    pub(crate) fn of(p: &CoverageParams) -> Self {
         Self {
             level: p.dori.label().to_owned(),
             ppm: p.pixels_per_metre(),
@@ -116,7 +116,7 @@ fn lighting_words(l: Lighting) -> &'static str {
 }
 
 /// The scene's settings with a level and lighting chosen for one query.
-fn with_overrides(
+pub(crate) fn with_overrides(
     mut p: CoverageParams,
     dori: Option<Dori>,
     light: Option<Light>,
@@ -146,7 +146,7 @@ pub(crate) async fn off_runtime<T: Send + 'static>(
 }
 
 /// The cameras the queries leave out, and why.
-fn skipped(scene: &SceneFile, cat: &Catalog) -> Vec<SkippedOut> {
+pub(crate) fn skipped(scene: &SceneFile, cat: &Catalog) -> Vec<SkippedOut> {
     scene
         .cameras
         .iter()

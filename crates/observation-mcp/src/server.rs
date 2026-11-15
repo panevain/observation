@@ -67,6 +67,8 @@ something. Name buildings by index and distance, never by a neighbour's address.
 To get a sense of the scene without guessing coordinates, call scene_summary, \
 describe_surroundings, list_buildings, list_streets and camera_view, and suggest_mount_points \
 for wall mounts to pass to place_camera. \
+To see the scene, call render_map: a north-up character map with a legend (format \"image\" \
+adds a picture), zoomed with center [x, z] and radius_m. \
 Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
 the data date and the caveats the tools return.";
 
@@ -119,10 +121,7 @@ impl ObservationMcp {
         area::scope_areas(self.link.areas(), tool).await
     }
 
-    /// Every tool: the scene tools, the app tools, the place and query
-    /// tools, the proposal tools, the working-scene tools and the scene
-    /// description tools, with
-    /// `scene_id` documented on each that takes a scene
+    /// Every tool, with `scene_id` documented on each that takes a scene
     /// ([`crate::store::document_scene_ids`]). Built once, on first use.
     pub fn all_tools() -> &'static ToolRouter<Self> {
         static TOOLS: OnceLock<ToolRouter<ObservationMcp>> = OnceLock::new();
@@ -133,7 +132,8 @@ impl ObservationMcp {
                 + Self::query_tool_router()
                 + Self::proposal_tool_router()
                 + Self::store_tool_router()
-                + Self::describe_tool_router();
+                + Self::describe_tool_router()
+                + Self::render_tool_router();
             crate::store::document_scene_ids(tools)
         })
     }

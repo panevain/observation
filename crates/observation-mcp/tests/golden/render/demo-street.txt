@@ -1,0 +1,56 @@
+Map from above, north up: x grows east (right), z grows south (down), in metres.
+One character is one 7.5 m x 7.5 m cell. Shown: x -150 to 150, z -135 to 135 (40 columns x 36 rows).
+Scale: 10 characters = 75 m. The ruler labels the column (top, v) or row (left, >) whose cells start at that value.
+Coverage at Detect by day (25 px/m), for people tested 1 m above the ground.
+
+  x  -150      -75       0         75
+     v         v         v         v
+     =       ## ##    #  ==###    ##  == ###
+     =       #### ##  ## ==##     ### == ###
+     ==   #      ##    # =    #       =  ##
+     ==    ## ==    ## ==    ##    ## =
+     ===   #  =======#==     ##    #  =
+     ============= ====     ###       =
+     ===                              =  ####
+      ==    # #### ### ###            =     #
+-75 > ==  ###  ##  ### ###   ##       ===
+      ==  ##    ## # #      ##          =====
+      ==    ==============# #  =
+      ==  #==     =      #=#  =#        # #
+     =======# ### =  ### #====#       ### ##
+     ====    ###  =# ## ## ==
+      =                    =
+      =  = #   #  =###  ## =
+      = #= #   # #=###  ## =#       #
+      =  = #   # #= ##  ## =#       ####  ###
+  0 > =  = #   # #= #===oo==
+     ==  =     # =======o1=       #
+      ============= === ,,    ##  #  ========
+      = =  #    # = ===,,,,   ##
+      = =# #    # = =## ### #     ##
+      = =  ##     =#=##     #         ## #
+      = =# #   #  =#=## ###    =      ## ##
+      = =  #  ### = =   ###    =  ##
+     ==            ==== ##     =  ##
+     ==  ## == ### =    ### #  =  #
+ 75 >==  ## == ### = ##     ====  ##
+     ==  ## ===##=== ## ###    =          #
+     ==  ## == ### = #  ##   ##=  ### ## ##
+     ==     ==     =           =
+     ============================
+     ========================================
+     ==      =     ==                  =
+     == ## ##=     ==               #  =
+
+Legend:
+  #       building
+  =       street, driveway or footpath as mapped, that no enabled camera sees at Detect by day
+  ,       other ground some enabled camera is not ruled out from seeing at Detect by day
+  (space) other ground, no camera reaches it
+  o       outline of an area labelled own: area 1 "Front garden"
+  T       target: 1 "Gate" at [0, 12] (under the glyph 1)
+  1       camera 1 "Porch" at [0, 8], faces south (180°)
+  2       camera 2 "Side" at [6, 8], faces west (270°); disabled, so not counted; in the same cell as 1
+
+OpenStreetMap data as of 2026-10-31.
+Estimate. Up to: trees, hedges, fences and vehicles are not counted. 'Street' includes driveways and footpaths.
