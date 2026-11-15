@@ -471,8 +471,10 @@ pub struct CameraKeyOut {
     pub camera_id: u32,
     pub camera_label: String,
     /// `[x, z]`, metres.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub at: [f32; 2],
     /// Compass bearing it faces, degrees clockwise from north.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub bearing_deg: f32,
     /// The bearing as a compass point, such as "north-east".
     pub faces: String,
@@ -489,20 +491,25 @@ pub struct CameraKeyOut {
 pub struct ImageOut {
     pub width_px: u32,
     pub height_px: u32,
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub metres_per_px: f32,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RenderOut {
     /// The side of one square cell (one character), metres.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub cell_m: f32,
     /// The map's north-west corner `[x, z]`, metres.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub min: [f32; 2],
     /// Its south-east corner `[x, z]`, metres.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub max: [f32; 2],
     pub columns: usize,
     pub rows: usize,
     /// Metres between ruler ticks.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub tick_m: f32,
     /// Every glyph on the map and what it stands for.
     pub legend: Vec<LegendOut>,

@@ -121,13 +121,17 @@ pub struct WallOut {
     /// How far the target was moved from the point given onto the wall,
     /// metres.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "crate::geometry::widened::option")]
     pub moved_m: Option<f32>,
     /// The square's centre, `[x, y, z]` (y over the terrain, as camera
     /// positions are).
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub point: [f32; 3],
     /// The direction the wall faces, `[x, z]`.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub normal: [f32; 2],
     /// Height of the centre above the ground in front of the wall, metres.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub height_m: f32,
 }
 

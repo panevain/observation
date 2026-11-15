@@ -26,8 +26,10 @@ pub struct ConnectArgs {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PinnedOut {
     /// Metres east of the area's origin.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub x: f32,
     /// Metres south of the area's origin.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub z: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,

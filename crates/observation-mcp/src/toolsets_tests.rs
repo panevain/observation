@@ -337,6 +337,14 @@ async fn analysis_results_are_brief_in_the_small_profiles() {
     let summary = coverage["summary"].as_str().unwrap();
     assert!(summary.contains("of the mapped street"), "{summary}");
     assert!(!summary.contains(" sees"), "{summary}");
+    // The goal tools and the map print their numbers short too.
+    for (tool, args) in [
+        ("suggest_placement", json!({"scene_id": "s1"})),
+        ("render_map", json!({"scene_id": "s1", "radius_m": 30})),
+    ] {
+        let out = ok(&call(&app, tool, args).await);
+        assert!(short_numbers(&out), "{tool}: {out}");
+    }
 
     // The full profile answers in full unless asked.
     let app = app_with(ToolSelection::default());

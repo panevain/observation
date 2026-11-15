@@ -102,8 +102,8 @@ fn compass_words() {
     assert_eq!(compass(200.0), "south");
     assert_eq!(compass(-90.0), "west");
     assert_eq!(compass(337.6), "north");
-    assert_eq!(turn(10.0, 350.0), 20.0);
-    assert_eq!(turn(350.0, 10.0), -20.0);
+    assert_eq!(angle_between(10.0, 350.0), 20.0);
+    assert_eq!(angle_between(350.0, 10.0), 20.0);
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn a_camera_turned_to_its_wall_is_turned_back() {
     assert!(out.after.total > 10.0, "{}", out.summary);
     assert_eq!(out.gain, r1(out.after.total - out.before.total));
     assert_eq!(out.moved_m, 0.0);
-    assert!(turn(out.after.aim.yaw_deg, good.yaw_deg).abs() <= 95.0);
+    assert!(angle_between(out.after.aim.yaw_deg, good.yaw_deg) <= 95.0);
     let edited = edit::parse(out.scene.as_ref().unwrap()).unwrap();
     assert!((edited.cameras[0].yaw_deg - out.after.aim.yaw_deg).abs() < 0.06);
     no_addresses(&out);

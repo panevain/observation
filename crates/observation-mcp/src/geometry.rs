@@ -46,6 +46,41 @@ pub fn m0(v: f32) -> f64 {
     f64::from(v).round()
 }
 
+/// Serialisers for `f32` fields of tool results. rmcp turns a result into
+/// JSON with `serde_json::to_value`, which widens an `f32` to the `f64`
+/// nearest it, so 8.2 would read 8.199999809265137; these write the `f64`
+/// that the `f32`'s shortest decimal form names instead, so it reads 8.2.
+pub mod widened {
+    use serde::{Serialize, Serializer};
+
+    /// The `f64` that `v`'s shortest decimal form names.
+    pub fn widen(v: f32) -> f64 {
+        v.to_string().parse().unwrap_or_else(|_| f64::from(v))
+    }
+
+    pub fn one<S: Serializer>(v: &f32, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_f64(widen(*v))
+    }
+
+    pub fn option<S: Serializer>(v: &Option<f32>, s: S) -> Result<S::Ok, S::Error> {
+        v.map(widen).serialize(s)
+    }
+
+    pub fn array<S: Serializer, const N: usize>(v: &[f32; N], s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(v.iter().map(|x| widen(*x)))
+    }
+
+    pub fn option_array<S: Serializer, const N: usize>(
+        v: &Option<[f32; N]>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(a) => array(a, s),
+            None => s.serialize_none(),
+        }
+    }
+}
+
 /// The compass bearing of the direction `v` (`[x, z]`), degrees clockwise
 /// from north in `[0, 360)`; 0 for a zero vector.
 pub fn direction_deg(v: [f32; 2]) -> f32 {
@@ -409,6 +444,38 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&xz1([2.04, -7.96])).unwrap(),
             "[2.0,-8.0]"
+        );
+        assert_eq!(serde_json::to_string(&r3(0.41234)).unwrap(), "0.412");
+    }
+
+    #[test]
+    fn widened_floats_read_as_written() {
+        #[derive(serde::Serialize)]
+        struct Out {
+            #[serde(serialize_with = "widened::one")]
+            gain: f32,
+            #[serde(serialize_with = "widened::array")]
+            at: [f32; 2],
+            #[serde(serialize_with = "widened::option")]
+            change: Option<f32>,
+            #[serde(serialize_with = "widened::option_array")]
+            none: Option<[f32; 2]>,
+        }
+        let out = Out {
+            gain: 8.2,
+            at: [2.15, -7.3],
+            change: Some(-0.1),
+            none: None,
+        };
+        // As rmcp builds a result: through a Value, which widens a plain f32.
+        let value = serde_json::to_value(&out).unwrap();
+        assert_eq!(
+            value.to_string(),
+            r#"{"at":[2.15,-7.3],"change":-0.1,"gain":8.2,"none":null}"#
+        );
+        assert_eq!(
+            serde_json::to_value(8.2f32).unwrap().to_string(),
+            "8.199999809265137"
         );
     }
 
