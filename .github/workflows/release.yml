@@ -63,7 +63,7 @@ jobs:
           cache: false
       - uses: $/.github/actions/setup-rust
       - name: No unaccepted advisory
-        run: mise run deny advisories
+        run: mise run deny --root advisories
 
   image:
     name: image (${{ matrix.image }})

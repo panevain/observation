@@ -139,10 +139,25 @@ run = [
 ]
 
 [tasks.deny]
-description = "cargo-deny: advisories, bans, licences and sources (deny.toml); `mise run deny advisories` runs one check"
+description = "cargo-deny: advisories, bans, licences and sources (deny.toml) in all three workspaces; `mise run deny advisories` runs one check, `--root` checks only the root workspace"
 # deny.toml controls the feature graph; cargo-deny's own default elsewhere is --all-features,
 # which is wrong for Bevy's feature set.
-run = "cargo-deny --locked check"
+# One deny.toml for all three workspaces, run from the repository root as shear is: the fuzz
+# workspace's `cargo metadata` then runs on the root toolchain, so no nightly is needed. A rule
+# that only one workspace can meet would warn as not encountered in the others, so each run
+# allows only the warnings that cannot apply to it: the libfuzzer-sys licence exception is
+# fuzz/'s, and the reqwest wrapper (observation-upstream) is the root workspace's. A stale entry
+# still warns in the workspace it belongs to.
+usage = '''
+flag "--root" help="Only the root workspace, whose Cargo.lock ships (Release's tag gate)"
+arg "[which]..." help="Checks to run: advisories, bans, licenses, sources (default: all four)"
+'''
+run = '''
+cargo-deny --locked check -A license-exception-not-encountered ${usage_which:-}
+[ "${usage_root:-false}" = true ] && exit 0
+cargo-deny --locked --manifest-path fuzz/Cargo.toml check -A unused-wrapper ${usage_which:-}
+cargo-deny --locked --manifest-path xtask/Cargo.toml check -A unused-wrapper -A license-exception-not-encountered ${usage_which:-}
+'''
 
 # Tasks that run an xtask command pass every argument, `--help` included, to xtask's own
 # parser (raw_args), and keep a one-line `run`, which is where mise appends them.
