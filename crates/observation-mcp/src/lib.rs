@@ -22,6 +22,7 @@
 //! | [`link`] | the connection to the user's open app, through the server's agent bridge |
 //! | [`app`] | the tools that connect to the app and read its state |
 //! | [`propose`] | the tools that propose a change to the app's scene and follow the user's decision |
+//! | [`view`] | the tools that move the app's view, select and mark things, change view settings, find places and ask to load an area |
 //! | [`edit`] | the scene edits, as plain functions on a [`SceneFile`](observation_core::scene::SceneFile) |
 //! | [`figures`] | coverage figures for a whole scene |
 //! | [`places`] | labelled areas and targets, and the tools that edit them |
@@ -55,6 +56,7 @@ pub mod render;
 pub mod schema;
 pub mod server;
 pub mod store;
+pub mod view;
 
 pub use error::ToolError;
 pub use server::ObservationMcp;

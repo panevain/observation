@@ -57,6 +57,9 @@ a one-sentence summary: the user reviews it in the app and accepts or rejects it
 is only a proposal until get_proposal (or observation://app/state) says accepted, so never say \
 it has been applied before then; if it comes back stale, read the state again and propose \
 afresh. Without a connection, give the user the scene to import. \
+To show the user something, use focus_view, select_cameras, highlight and set_view_options, \
+which change only their view, never the scene; search_places then request_load_area asks them \
+to load an area, which loads only if they click Load. \
 Places have names the user and you share: label_area marks ground the user drew as their own, \
 a neighbour's, public or other (as drawn, never property records), and add_target marks a \
 named target such as a front door. camera_split says where each camera's footage lands, \
@@ -137,7 +140,8 @@ impl ObservationMcp {
                 + Self::store_tool_router()
                 + Self::describe_tool_router()
                 + Self::render_tool_router()
-                + Self::goal_tool_router();
+                + Self::goal_tool_router()
+                + Self::view_tool_router();
             crate::store::document_scene_ids(tools)
         })
     }
