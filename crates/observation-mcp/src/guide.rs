@@ -232,13 +232,13 @@ const INSTRUCTIONS: [Line; 15] = [
         ".",
     ),
     Line::list(
-        "To find and load an area: ",
+        "To find an area and ask the user to load it: ",
         &[
-            ("request_load_area", "request_load_area"),
             ("search_places", "search_places"),
+            ("request_load_area", "request_load_area"),
         ],
-        ", ",
-        ".",
+        ", then ",
+        " (it loads only when they click Load).",
     ),
     Line::whole(
         &[],
