@@ -599,7 +599,8 @@ mod tests {
     use super::*;
 
     fn ok(s: &str) -> (f64, f64) {
-        let ll = parse_lat_lon(s).unwrap_or_else(|e| panic!("{s:?}: {e}"));
+        // The error is not printed: its text can carry the coordinates.
+        let ll = parse_lat_lon(s).unwrap_or_else(|_| panic!("{s:?} was refused"));
         (ll.lat, ll.lon)
     }
 
