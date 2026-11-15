@@ -32,16 +32,18 @@ impl Prism {
 
     /// Whether segment `a → b` passes through the solid.
     fn blocks(&self, a: Vec3, b: Vec3) -> bool {
-        self.first_hit(a, b).is_some()
+        self.first_hit(a, b, &mut Vec::new()).is_some()
     }
 
     /// The parameter `t ∈ [0,1]` along `a → b` where the segment first
-    /// enters the solid, if it does.
-    fn first_hit(&self, a: Vec3, b: Vec3) -> Option<f32> {
+    /// enters the solid, if it does. `ts` is scratch space, reused between
+    /// calls.
+    fn first_hit(&self, a: Vec3, b: Vec3, ts: &mut Vec<f32>) -> Option<f32> {
         let (a2, b2) = (Vec2::new(a.x, a.z), Vec2::new(b.x, b.z));
         let d = b2 - a2;
         // Parameter values where the 2D segment crosses a ring edge.
-        let mut ts: Vec<f32> = vec![0.0, 1.0];
+        ts.clear();
+        ts.extend([0.0, 1.0]);
         for ring in &self.rings {
             for i in 0..ring.len() {
                 let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
@@ -212,11 +214,24 @@ impl Occluders {
     /// given (for an area's layers, its index in the bundle), and the
     /// fraction of the way from `a` to `b` where the line enters it.
     pub fn first_blocker(&self, a: Vec3, b: Vec3) -> Option<(usize, f32)> {
+        let (a2, b2) = (Vec2::new(a.x, a.z), Vec2::new(b.x, b.z));
         let mut best: Option<(u32, f32)> = None;
-        self.walk_cells(Vec2::new(a.x, a.z), Vec2::new(b.x, b.z), |cell| {
+        let mut tested: Vec<u32> = Vec::new();
+        let mut ts: Vec<f32> = Vec::new();
+        self.walk_cells(a2, b2, |cell| {
+            // Cells come in order along the line, and a prism is listed in
+            // every cell its outline's box touches, so once a cell starts
+            // past the best hit, nothing further can be nearer.
+            if best.is_some_and(|(_, bt)| self.cell_entry_t(cell, a2, b2 - a2) > bt + 1e-6) {
+                return false;
+            }
             for &i in &self.cells[cell] {
+                if tested.contains(&i) {
+                    continue;
+                }
+                tested.push(i);
                 let prism = &self.prisms[i as usize];
-                if let Some(t) = prism.first_hit(a, b)
+                if let Some(t) = prism.first_hit(a, b, &mut ts)
                     && best.is_none_or(|(s, bt)| t < bt || (t == bt && prism.source < s))
                 {
                     best = Some((prism.source, t));
@@ -225,6 +240,21 @@ impl Occluders {
             true
         });
         best.map(|(s, t)| (s as usize, t))
+    }
+
+    /// The parameter along `a + t·d` where the line enters grid cell `cell`
+    /// (0 if it starts inside).
+    fn cell_entry_t(&self, cell: usize, a: Vec2, d: Vec2) -> f32 {
+        let w = self.w as usize;
+        let lo = self.origin + Vec2::new((cell % w) as f32, (cell / w) as f32) * self.cell;
+        let hi = lo + Vec2::splat(self.cell);
+        let mut enter = 0.0f32;
+        for (p, dd, l, h) in [(a.x, d.x, lo.x, hi.x), (a.y, d.y, lo.y, hi.y)] {
+            if dd.abs() > 1e-12 {
+                enter = enter.max(((l - p) / dd).min((h - p) / dd));
+            }
+        }
+        enter
     }
 
     /// Amanatides–Woo traversal of grid cells touched by segment `a → b`.
@@ -411,6 +441,37 @@ mod tests {
             .first_blocker(Vec3::new(0.0, 14.0, 0.0), Vec3::new(20.0, 4.0, 0.0))
             .unwrap();
         assert!((t * 20.0 - 16.0).abs() < 1e-3, "{t}");
+    }
+
+    #[test]
+    fn the_first_blocker_agrees_with_the_segment_test_across_the_grid() {
+        // A row of houses many cells long: the nearest is found, the far
+        // ones are not needed, and every line that is blocked has a blocker.
+        let fps: Vec<Footprint> = (0..20)
+            .map(|i| {
+                let x = i as f32 * 15.0;
+                boxfp(x, -5.0, x + 10.0, 5.0, 6.0)
+            })
+            .collect();
+        let occ = Occluders::new(&fps);
+        let eye = Vec3::new(-20.0, 2.0, 0.0);
+        let (i, t) = occ.first_blocker(eye, Vec3::new(400.0, 2.0, 0.0)).unwrap();
+        assert_eq!(i, 0);
+        assert!((t * 420.0 - 20.0).abs() < 1e-2, "{t}");
+        let (i, _) = occ
+            .first_blocker(Vec3::new(12.0, 2.0, 0.0), Vec3::new(-30.0, 2.0, 0.0))
+            .unwrap();
+        assert_eq!(i, 0, "walking west from the gap");
+        for k in 0..200 {
+            let z = -30.0 + k as f32 * 0.3;
+            let a = Vec3::new(-25.0, 1.0 + (k % 7) as f32, z);
+            let b = Vec3::new(320.0, 1.0, -z * 0.5);
+            assert_eq!(
+                occ.first_blocker(a, b).is_some(),
+                occ.segment_blocked(a, b),
+                "{a} -> {b}"
+            );
+        }
     }
 
     #[test]

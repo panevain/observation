@@ -5,6 +5,7 @@ use crate::address::{
     Address, AddressPoint, AddressSource, MAX_ADDRESS_DISTANCE_M, distance_to_footprint,
     near_bounds,
 };
+use crate::osm::tags::{FOOT_WAYS, is_carriageway};
 use crate::road::Road;
 use crate::util::planar::{closest_on_segment, dist};
 use glam::Vec2;
@@ -121,6 +122,23 @@ impl AreaBundle {
             }
         }
         best
+    }
+
+    /// The street a building at world `[x, z]` `p` fronts: the nearest
+    /// carriageway ([`is_carriageway`]: not a service road or a footpath),
+    /// or, in an area without one, the nearest way that is not a footpath
+    /// ([`FOOT_WAYS`]). The example cameras face it, and the MCP server names
+    /// it as the street a building or a camera is on, so they agree.
+    pub fn nearest_street(&self, p: [f32; 2]) -> Option<RoadNear> {
+        let has_carriageway = self
+            .roads
+            .iter()
+            .any(|r| r.points.len() >= 2 && is_carriageway(&r.highway));
+        if has_carriageway {
+            self.nearest_road(p, |r| is_carriageway(&r.highway))
+        } else {
+            self.nearest_road(p, |r| !FOOT_WAYS.contains(&r.highway.as_str()))
+        }
     }
 
     /// Indices of the buildings at an address `is` accepts: those tagged with
@@ -241,5 +259,30 @@ mod tests {
             .expect("a named road");
         assert_eq!(named.index, 1);
         assert!((named.distance_m - 12.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_street_a_building_fronts_is_a_carriageway_where_there_is_one() {
+        let mut b = neighbours();
+        assert_eq!(b.nearest_street([0.0, 0.0]), None);
+        let road = |highway: &str, z: f32| Road {
+            osm_id: 1,
+            highway: highway.into(),
+            name: None,
+            width_m: 6.0,
+            points: vec![[-50.0, z], [50.0, z]],
+        };
+        b.roads = vec![
+            road("footway", -2.0),
+            road("service", -4.0),
+            road("residential", -20.0),
+        ];
+        // Past the nearer footpath and driveway to the street.
+        assert_eq!(b.nearest_street([0.0, 0.0]).map(|n| n.index), Some(2));
+        // Without a carriageway, the driveway; never the footpath.
+        b.roads.pop();
+        assert_eq!(b.nearest_street([0.0, 0.0]).map(|n| n.index), Some(1));
+        b.roads.pop();
+        assert_eq!(b.nearest_street([0.0, 0.0]), None);
     }
 }

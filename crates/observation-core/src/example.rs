@@ -1,14 +1,13 @@
 //! Example cameras for a freshly loaded area: a handful of plausible
 //! installations on house fronts, each facing the nearest street. The walls
-//! they go on ([`wall_mounts`], [`WallMount`]) are public for other callers
-//! that suggest where a camera could go.
+//! they go on ([`wall_mounts`], [`wall_mounts_of`], [`WallMount`]) are
+//! public for other callers that suggest where a camera could go.
 
+use crate::building::Footprint;
 use crate::bundle::AreaBundle;
 use crate::camera::{CameraModel, CameraPlacement, yaw_pitch_from_forward};
 use crate::occlusion::Occluders;
-use crate::osm::tags::{FOOT_WAYS, is_carriageway};
 use crate::terrain::Terrain;
-use crate::util::planar::closest_on_segment;
 use crate::util::planar::{clean_ring, signed_area2};
 use glam::{Vec2, Vec3};
 
@@ -53,11 +52,12 @@ pub struct WallMount {
     pub normal: Vec2,
     /// The wall's length, metres.
     pub length_m: f32,
-    /// The point of a street nearest the midpoint, world `[x, z]`, with
-    /// streets chosen as the example cameras choose them (carriageways, or
-    /// failing those any way but a footpath); `None` in an area without
+    /// The point of the street nearest the midpoint, world `[x, z]`, as
+    /// [`AreaBundle::nearest_street`] chooses it; `None` in an area without
     /// streets.
     pub street: Option<Vec2>,
+    /// That street's index in [`AreaBundle::roads`].
+    pub road: Option<usize>,
     /// World `y` of the building's roof.
     pub roof_y: f32,
 }
@@ -126,27 +126,19 @@ impl WallMount {
 /// (a raised part has no wall to mount on at head height), in bundle order
 /// and around each footprint, with the street nearest each.
 pub fn wall_mounts(bundle: &AreaBundle) -> Vec<WallMount> {
-    // Houses face proper streets; fall back to driveways and service roads
-    // only where there are none.
-    let segments = |keep: &dyn Fn(&str) -> bool| -> Vec<(Vec2, Vec2)> {
-        bundle
-            .roads
-            .iter()
-            .filter(|r| keep(r.highway.as_str()))
-            .flat_map(|r| {
-                r.points
-                    .windows(2)
-                    .map(|w| (Vec2::from_array(w[0]), Vec2::from_array(w[1])))
-            })
-            .collect()
-    };
-    let mut streets = segments(&is_carriageway);
-    if streets.is_empty() {
-        streets = segments(&|h| !FOOT_WAYS.contains(&h));
-    }
+    wall_mounts_of(bundle, |_, _| true)
+}
+
+/// [`wall_mounts`] of only the buildings `keep` accepts (given each
+/// building's index and footprint), so a caller that wants one building or
+/// a neighbourhood looks for streets from those walls alone.
+pub fn wall_mounts_of(
+    bundle: &AreaBundle,
+    keep: impl Fn(usize, &Footprint) -> bool,
+) -> Vec<WallMount> {
     let mut walls = Vec::new();
     for (building, fp) in bundle.footprints().enumerate() {
-        if fp.min_height_m > 0.5 {
+        if fp.min_height_m > 0.5 || !keep(building, fp) {
             continue;
         }
         let ring = clean_ring(&fp.outer);
@@ -165,16 +157,14 @@ pub fn wall_mounts(bundle: &AreaBundle) -> Vec<WallMount> {
                 continue;
             }
             let at = (a + b) * 0.5;
-            let street = streets
-                .iter()
-                .map(|&(p, q)| closest_on_segment(at, p, q))
-                .min_by(|p, q| p.distance_squared(at).total_cmp(&q.distance_squared(at)));
+            let street = bundle.nearest_street(at.to_array());
             walls.push(WallMount {
                 building,
                 at,
                 normal: Vec2::new(d.y, -d.x) * (sign / len),
                 length_m: len,
-                street,
+                street: street.map(|s| Vec2::from_array(s.point)),
+                road: street.map(|s| s.index),
                 roof_y: fp.roof_y(),
             });
         }
@@ -455,6 +445,19 @@ mod tests {
             let occ = Occluders::new(b.footprints());
             assert!(w.sees_street(eye, &occ, &b.terrain, b.terrain.top()));
         }
+        assert!(fronts.iter().all(|w| w.road == Some(0)));
+        // Only the walls of the buildings kept.
+        let one = wall_mounts_of(&b, |i, _| i == 3);
+        assert_eq!(one.len(), 4);
+        assert!(one.iter().all(|w| w.building == 3));
+        assert_eq!(
+            one,
+            walls
+                .iter()
+                .filter(|w| w.building == 3)
+                .copied()
+                .collect::<Vec<_>>()
+        );
         // A back wall faces away from the street.
         assert!(
             walls
