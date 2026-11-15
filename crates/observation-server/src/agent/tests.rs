@@ -539,11 +539,22 @@ async fn a_command_reaches_the_open_streams_once_and_is_not_kept() {
 
 #[tokio::test(start_paused = true)]
 async fn a_command_with_no_stream_to_hear_it_is_refused() {
-    let (bridge, _browser, agent, stream) = claimed();
+    let (bridge, browser, agent, stream) = claimed();
     drop(stream);
+    // Refusals cost nothing: more than a burst of them leaves the burst whole.
+    for _ in 0..2 * COMMAND_BURST {
+        assert_eq!(
+            bridge.command(&agent, focus(1.0)),
+            Err(BridgeError::NotListening)
+        );
+    }
+    let _back = bridge.open_stream(&browser).unwrap();
+    for _ in 0..COMMAND_BURST {
+        bridge.command(&agent, focus(1.0)).unwrap();
+    }
     assert_eq!(
         bridge.command(&agent, focus(1.0)),
-        Err(BridgeError::NotListening)
+        Err(BridgeError::TooMany(1))
     );
 }
 

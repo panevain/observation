@@ -739,11 +739,13 @@ impl AgentBridge {
         let i = find(&reg.pairings, agent_token, |p| p.agent_token.as_deref())
             .ok_or(BridgeError::Unauthorized)?;
         let p = &mut reg.pairings[i];
-        p.take_command(now)?;
         p.last_used = now;
+        // Only a command something hears is charged for: while the app is
+        // reconnecting, the agent's tries do not use up its burst.
         if p.commands.receiver_count() == 0 {
             return Err(BridgeError::NotListening);
         }
+        p.take_command(now)?;
         p.commands_sent += 1;
         let id = p.commands_sent;
         p.commands
