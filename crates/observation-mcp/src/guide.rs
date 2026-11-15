@@ -209,7 +209,8 @@ const INSTRUCTIONS: [Line; 15] = [
     Line::whole(
         &["connect_app", "open_scene"],
         "When the user connects their open app (connect_app, with its address and the code \
-         from its Connect agent dialog), open_scene with from \"app\" opens their scene.",
+         from its Connect agent dialog), connect_app opens their scene and returns its \
+         scene_id; open_scene with from \"app\" opens it again after they change it.",
     ),
     Line::whole(
         &["propose_changes", "wait_for_decision"],

@@ -63,6 +63,10 @@ pub struct AppStateOut {
     /// Why the shared scene could not be read, if it could not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_problem: Option<String>,
+    /// From connect_app: the working scene it opened from the app's scene.
+    /// Scene tools called without a scene_id use it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_id: Option<String>,
     /// The scene's name in the app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_name: Option<String>,
@@ -353,7 +357,7 @@ pub struct Disconnected {
 #[tool_router(router = app_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Connect to the Observation app open on this computer, with its address and the code from its Connect agent dialog. Then every tool works on the user's real area.",
+        description = "Connect to the Observation app open on this computer, with its address and the code from its Connect agent dialog. Opens the app's scene as a working scene and returns its scene_id; scene tools called without one use it.",
         annotations(
             read_only_hint = false,
             idempotent_hint = false,
@@ -364,11 +368,22 @@ impl ObservationMcp {
         &self,
         Parameters(a): Parameters<ConnectArgs>,
     ) -> Result<Json<AppStateOut>, String> {
-        self.link
+        let snapshot = self
+            .link
             .connect(&a.url, &a.code)
             .await
-            .map(|s| Json(AppStateOut::of(s).for_profile(self)))
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        let mut out = AppStateOut::of(snapshot);
+        // Opened now, so that the agent can edit the user's scene straight
+        // away. An app still loading its area has shared no scene yet; the
+        // agent opens it later with open_scene.
+        if out.scene.is_some()
+            && let Ok(handle) = self.open_app_scene(&out)
+        {
+            out.scene_summary = Some(handle.summary);
+            out.scene_id = Some(handle.scene_id);
+        }
+        Ok(Json(out.for_profile(self)))
     }
 
     #[tool(

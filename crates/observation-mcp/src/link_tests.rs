@@ -288,13 +288,22 @@ async fn connecting_is_refused_with_reasons() {
 
     let app = bridge_app(FakeHttp::new());
     let base = serve(&app).await;
-    let _browser = Browser::open(&base).await;
+    let browser = Browser::open(&base).await;
     let e = connect(&mcp, &base, "0000-0000")
         .await
         .map(drop)
         .expect_err("an error");
     assert!(e.contains("no pairing has that code"), "{e}");
     assert!(!mcp.link().is_connected());
+    // A code already used says that each works once, and where a new one is.
+    connect(&mcp, &base, &browser.code).await.unwrap();
+    mcp.disconnect_app().await;
+    let e = connect(&mcp, &base, &browser.code)
+        .await
+        .map(drop)
+        .expect_err("an error");
+    assert!(e.contains("Each code works once"), "{e}");
+    assert!(e.contains("Connect agent dialog shows now"), "{e}");
 
     // A server without the bridge says so.
     let plain = TestApp::builder().build();
@@ -826,6 +835,91 @@ async fn a_working_scene_is_proposed_by_id() {
     let unknown = json!({"scene_id": "s4", "summary": "x"});
     let e = failed(&call(&mcp, "propose_changes", unknown).await);
     assert!(e.contains("no scene s4"), "{e}");
+}
+
+/// connect_app opens the app's scene as a working scene, and a scene tool
+/// called without a scene works on it: a small model that forgets the id
+/// still edits, and proposes, the user's scene.
+#[tokio::test(flavor = "multi_thread")]
+async fn connecting_opens_the_apps_scene_for_tools_without_an_id() {
+    use crate::store::tests::{call, failed, http_app, ok};
+    let app = bridge_app(FakeHttp::new());
+    let base = serve(&app).await;
+    let browser = Browser::open(&base).await;
+    let Json(placed) = ObservationMcp::new()
+        .add_example_cameras(Parameters(ExampleArgs {
+            scene: demo_scene(),
+            count: 3,
+            model_ids: Vec::new(),
+        }))
+        .unwrap();
+    let ids = placed.camera_ids.unwrap();
+    browser
+        .share(json!({"scene": placed.scene, "area": {"kind": "demo"}}))
+        .await;
+    let mcp = http_app();
+
+    // Before any app is connected, the error says how to get a scene.
+    let e = failed(&call(&mcp, "scene_summary", json!({})).await);
+    assert!(e.contains("call open_scene first"), "{e}");
+
+    let connected = ok(&call(
+        &mcp,
+        "connect_app",
+        json!({"url": base, "code": browser.code}),
+    )
+    .await);
+    assert_eq!(connected["scene_id"], "s1", "{connected}");
+    assert!(
+        connected["scene_summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("s1 version 1: 3 cameras"),
+        "{connected}"
+    );
+
+    // Another working scene opened later does not take the app's place.
+    let other = ok(&call(&mcp, "open_scene", json!({"from": "new"})).await);
+    assert_eq!(other["scene_id"], "s2");
+    let removed = ok(&call(&mcp, "remove_camera", json!({"id": ids[2]})).await);
+    assert_eq!(
+        (&removed["scene_id"], &removed["version"]),
+        (&json!("s1"), &json!(2))
+    );
+    let applied = ok(&call(
+        &mcp,
+        "apply_edits",
+        json!({"edits": [{"tool": "remove_camera", "args": {"id": ids[1]}}]}),
+    )
+    .await);
+    assert_eq!(
+        (&applied["scene_id"], &applied["version"]),
+        (&json!("s1"), &json!(3))
+    );
+    let proposed = ok(&call(
+        &mcp,
+        "propose_changes",
+        json!({"summary": "Remove two cameras"}),
+    )
+    .await);
+    assert_eq!(
+        proposed["changes"].as_array().unwrap().len(),
+        2,
+        "{proposed}"
+    );
+
+    // Opening the app's scene again makes the new copy the app's scene.
+    let again = ok(&call(&mcp, "open_scene", json!({"from": "app"})).await);
+    assert_eq!(again["scene_id"], "s3");
+    let removed = ok(&call(&mcp, "remove_camera", json!({"id": ids[0]})).await);
+    assert_eq!(removed["scene_id"], "s3");
+
+    // With the app's scene closed, the error names the way to open it again.
+    ok(&call(&mcp, "close_scene", json!({"scene_id": "s3"})).await);
+    let e = failed(&call(&mcp, "scene_summary", json!({})).await);
+    assert!(e.contains("open_scene with from \"app\""), "{e}");
+    let e = failed(&call(&mcp, "apply_edits", json!({"edits": []})).await);
+    assert!(e.contains("open_scene with from \"app\""), "{e}");
 }
 
 async fn wait_change(
