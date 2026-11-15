@@ -42,45 +42,24 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 const INSTRUCTIONS: &str = "\
-Observation estimates how much of a street home security cameras can see. \
-Start with open_scene: it gives a scene_id such as \"s1\", which you pass as scene_id to every \
-scene tool, while the server keeps each edited version (undo, diff_scenes, apply_edits for \
-several edits at once, export_scene for the file). Without an id, pass the value of the `scene` \
-field of one tool's result as `scene` to the next. The result is a scene file the \
-Observation app can import. Positions are metres from the area's origin: x east, z south \
-(north is negative z); heights are metres above the ground. Bearings are degrees clockwise \
-from north. Offline only the demo street is available, so load_demo_area gives the area's \
-extent. If the user has the Observation app open on this computer, they can connect it: ask \
-for the code in its Connect agent dialog and call connect_app with the app's address (such as \
-http://127.0.0.1:8080). Then get_app_state returns their open scene (pass it to the scene \
-tools), its area, the selected cameras and a point they shared, the resource \
-observation://app/state follows it, and every tool works on their real area. Edits \
-made here do not change the app by themselves. To suggest a change to the open scene, edit a \
-copy of get_app_state's scene with the scene tools and call propose_changes with the result and \
-a one-sentence summary: the user reviews it in the app and accepts or rejects it as a whole. It \
-is only a proposal until get_proposal (or observation://app/state) says accepted, so never say \
-it has been applied before then; if it comes back stale, read the state again and propose \
-afresh. Without a connection, give the user the scene to import. \
-To show the user something, use focus_view, select_cameras, highlight and set_view_options, \
-which change only their view, never the scene; search_places then request_load_area asks them \
-to load an area, which loads only if they click Load. \
-Places have names the user and you share: label_area marks ground the user drew as their own, \
-a neighbour's, public or other (as drawn, never property records), and add_target marks a \
-named target such as a front door. camera_split says where each camera's footage lands, \
-target_verdicts and check_point say whether the model rules out that a camera sees a place \
-and why, and find_gaps lists the largest stretches of street no camera sees. Verdicts are \
-one-sided: say \"not ruled out\" or \"ruled out: <reason>\", never that a camera sees \
-something. Name buildings by index and distance, never by a neighbour's address. \
-To get a sense of the scene without guessing coordinates, call scene_summary, \
-describe_surroundings, list_buildings, list_streets and camera_view, and suggest_mount_points \
-for wall mounts to pass to place_camera. \
-To see the scene, call render_map: a north-up character map with a legend (format \"image\" \
-adds a picture), zoomed with center [x, z] and radius_m. \
-To choose where a camera goes or how to aim it, call suggest_placement, optimise_aim or \
-cover_target instead of trying positions yourself: they search on the server and return the \
-model's estimates. \
-Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
-the data date and the caveats the tools return.";
+Observation estimates which parts of a street home security cameras could see, from map data. \
+Call get_started first: it gives the workflow, the conventions and the wording rules in a few \
+lines. open_scene returns a scene_id such as \"s1\": pass it as scene_id to every scene tool. \
+The server keeps each version (undo, diff_scenes; apply_edits runs several edits as one; \
+export_scene gives the file). Positions are [x, z] metres from the area's centre, x east and z \
+south; yaw_deg is a compass bearing (0 north, 90 east, 180 south). To look, use scene_summary, \
+describe_surroundings and render_map; to choose mounts and aims, suggest_mount_points, \
+suggest_placement, optimise_aim and cover_target. Offline, only the demo street is available. \
+When the user connects their open app (connect_app, with its address and the code from its \
+Connect agent dialog), open_scene with from \"app\" opens their scene, and propose_changes with \
+that scene_id and a one-sentence summary asks them to accept your edits: nothing changes until \
+wait_for_decision says accepted. wait_for_app_change hears what they change. focus_view, \
+select_cameras, highlight and set_view_options show them a place, cameras or layers, and \
+request_load_area and search_places find and load an area; these change the view, never the \
+scene. Verdicts are one-sided: say \"not ruled out\" or \"ruled out: <reason>\", never that a \
+camera sees something. Name buildings by index and distance, never by address. Always pass on \
+the data date and caveats_summary: the figures are estimates that leave out trees, fences and \
+vehicles.";
 
 const USAGE_MD: &str = include_str!("../../../docs/usage.md");
 const CAMERA_CATALOG_MD: &str = include_str!("../../../docs/camera-catalog.md");
@@ -1135,20 +1114,21 @@ pub struct CompareArgs {
 impl ObservationMcp {
     #[prompt(
         name = "assess_street_coverage",
-        description = "Set up cameras on the demo street and report what they see, with the caveats"
+        description = "Set up cameras on the demo street and report how much of the street they cover, with the caveats"
     )]
     fn assess_street_coverage(&self) -> Vec<PromptMessage> {
         vec![PromptMessage::new_text(
             Role::User,
-            "Using the Observation tools: create a scene with create_scene, call load_demo_area \
-             for the street's extent, then add cameras (add_example_cameras, or place_camera \
-             where I describe). Run compute_coverage by day and again at night \
-             (set_coverage_params). Report the share of street seen at each detail level, \
-             by day and at night, in a short table, then quote the caveats_summary and \
-             explain that the figures are estimates, read as \"up to\". Then run find_gaps \
-             and describe the largest stretches of street no camera sees, by street name and \
-             position (never by a neighbour's address). Finally give me the scene JSON so I can \
-             import it into the Observation app.",
+            "Using the Observation tools: call get_started, then open_scene and keep the \
+             scene_id it returns (such as \"s1\") for every scene tool. Look at the street with \
+             render_map, then add cameras (add_example_cameras, or place_camera where I \
+             describe). Run compute_coverage by day and again at night (set_coverage_params). \
+             Report the share of street not ruled out by day and at night in a short table, \
+             then quote the data date and the caveats_summary and explain that the figures are \
+             estimates, read as \"up to\". Then run find_gaps and describe the largest \
+             stretches of street ruled out for every camera, by street name and position \
+             (never by a neighbour's address). Finally call export_scene and give me the scene \
+             so I can import it into the Observation app.",
         )]
     }
 
@@ -1160,20 +1140,51 @@ impl ObservationMcp {
         vec![PromptMessage::new_text(
             Role::User,
             "Using the Observation tools, help me see where my cameras' footage lands. Work on \
-             my open scene if the app is connected (get_app_state), otherwise on a scene on the \
-             demo street. Ask me which ground is mine and which is my neighbours', and mark \
+             my open scene if the app is connected (open_scene with from \"app\"), otherwise on \
+             a new scene on the demo street (open_scene), and pass its scene_id to every tool. Ask me which ground is mine and which is my neighbours', and mark \
              each with label_area (label own, neighbour or public, with a short name); the \
              outlines are as I describe them, not property records. Ask which places matter to \
              me, such as my front door, a side gate or a path, and mark each with add_target. \
              Then run camera_split and report for each camera, in a short table, the m² of \
              visible ground on my land, on each neighbour's, on the street, driveways and \
              footpaths as mapped (not all of it public) and elsewhere, as the low to high range beside each outline's own area. Run \
-             target_verdicts and report each target camera by camera: say \"not ruled out\" \
+             target_verdicts with verbosity \"full\" and report each target camera by camera: say \"not ruled out\" \
              or \"ruled out\" with the reason, at each detail level by day and at night, and \
              never that a camera \"sees\" a place. Name buildings by index and distance, \
              never by address. Quote the data date and the caveats_summary, and explain that \
              hedges, fences, trees and vehicles are not modelled and can only block more. \
-             Finally give me the scene JSON so I can import it into the Observation app.",
+             Finally give me the scene from export_scene, or, if the app is connected, propose \
+             the areas and targets with propose_changes.",
+        )]
+    }
+
+    #[prompt(
+        name = "drive_the_app",
+        description = "Work in my open Observation app step by step: connect, look, edit a working scene, propose the change and show me the result"
+    )]
+    fn drive_the_app(&self) -> Vec<PromptMessage> {
+        vec![PromptMessage::new_text(
+            Role::User,
+            "Using the Observation tools, work with my open Observation app, one step at a \
+             time:\n\
+             1. Ask me for the app's address and the code from its Connect agent dialog, then \
+             call connect_app.\n\
+             2. Call get_started.\n\
+             3. Call open_scene with from \"app\" and keep the scene_id it returns, such as \
+             \"s1\".\n\
+             4. Look before you change anything: scene_summary, then render_map.\n\
+             5. Make the change I ask for, passing that scene_id to every scene tool. For a new \
+             camera, call suggest_mount_points or suggest_placement first, then place_camera. \
+             Check the result with compute_coverage or check_point.\n\
+             6. Call propose_changes with the scene_id and a one-sentence summary, tell me it is \
+             waiting for my decision, then call wait_for_decision with its id until it is no \
+             longer pending.\n\
+             7. If I accept, show me the result with focus_view and highlight, or select_cameras \
+             for the cameras you changed. If I reject it, read my reason and ask me what to \
+             change.\n\
+             Say \"not ruled out\" or \"ruled out\" with the reason, never that a camera sees \
+             something; name buildings by index and distance, never by address; and quote the \
+             data date and the caveats_summary.",
         )]
     }
 
@@ -1449,6 +1460,42 @@ mod link_tests;
 mod tests {
     use super::*;
 
+    /// The instructions lead with get_started and scene_id, name every tool
+    /// they mention correctly, and stay short.
+    #[test]
+    fn the_instructions_are_short_and_lead_with_get_started() {
+        assert!(INSTRUCTIONS.len() < 1_800, "{} bytes", INSTRUCTIONS.len());
+        let lead = &INSTRUCTIONS[..300];
+        assert!(lead.contains("get_started") && lead.contains("scene_id"));
+        for rule in ["not ruled out", "never by address", "caveats_summary"] {
+            assert!(INSTRUCTIONS.contains(rule), "{rule}");
+        }
+        let names: Vec<String> = ObservationMcp::all_tools()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        let view = [
+            "focus_view",
+            "select_cameras",
+            "highlight",
+            "set_view_options",
+            "request_load_area",
+            "search_places",
+        ];
+        for word in INSTRUCTIONS.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
+            if word.contains('_') && !matches!(word, "scene_id" | "yaw_deg" | "caveats_summary") {
+                assert!(
+                    names.iter().any(|n| n == word) || view.contains(&word),
+                    "{word} is no tool"
+                );
+            }
+        }
+        for tool in view {
+            assert!(INSTRUCTIONS.contains(tool), "{tool}");
+        }
+    }
+
     #[test]
     fn every_resource_reads() {
         for (uri, ..) in RESOURCES {
@@ -1653,6 +1700,7 @@ mod tests {
         for n in [
             "assess_street_coverage",
             "compare_cameras",
+            "drive_the_app",
             "where_footage_lands",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
