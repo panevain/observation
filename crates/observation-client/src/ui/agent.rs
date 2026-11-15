@@ -87,7 +87,7 @@ pub fn window(ctx: &egui::Context, t: &Tokens, link: &mut AgentLinkRes, http: &d
             )
             .on_hover_text(
                 "The agent can then look at a spot, select a camera, mark something with a note, \
-                 and switch day or night, the detail level and the overlay. A toast says each time.",
+                 and change the overlay colours, cones and walls. A toast says each time.",
             );
             ui.add_space(t.space.md);
             match link.phase().clone() {

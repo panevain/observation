@@ -13,18 +13,17 @@
 //! collected at the end of the frame.
 
 use crate::coverage::cone_for;
-use crate::input::OrbitCamera;
+use crate::input::{OrbitCamera, look_at};
 use crate::net::ServerConfig;
 use crate::persist::SceneSlots;
 use crate::platform::Platform;
-use crate::state::{Area, Editor, Models, Panels, Scene, Toasts, TrackScene, UiLayout, terrain_of};
+use crate::state::{Area, Editor, Models, Panels, Scene, Toasts, UiLayout, terrain_of};
 use crate::theme::{Tokens, to_bevy};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
-use observation_client_model::agent::{AgentLink, StateKey, shared_state};
+use observation_client_model::agent::{AgentLink, SceneKey, StateKey, shared_state};
 use observation_client_model::agent_view::{MarkAt, ViewAction};
-use observation_client_model::commands;
 use observation_client_model::editor::select;
 use observation_core::footage::TargetPlace;
 use observation_core::scene::changes::Change;
@@ -34,9 +33,6 @@ const MAX_SHARE_RAY_M: f32 = 5_000.0;
 /// Where the dialog's "Let the agent move the view and selection" is kept
 /// in this browser: `on` or `off` (on when unset).
 pub const VIEW_COMMANDS_KEY: &str = "observation.agent_view";
-/// The distance the view keeps when the agent gives none, at most, metres
-/// (as framing a camera does).
-const FOCUS_KEEP_M: f32 = 60.0;
 
 /// The link to a local agent, as a resource.
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
@@ -133,41 +129,42 @@ fn keep_up(
 }
 
 /// Carries out the agent's view commands that arrived this frame, after
-/// every edit of the frame: moves the 3D view, changes the selection, sets
-/// the analysis settings (as the Analysis tab does, so the history records
-/// them and the scene saves them) and the view toggles, and tells the user
-/// what the agent did.
-#[allow(clippy::too_many_arguments)]
+/// every edit of the frame, one at a time in the order the agent sent them:
+/// moves the 3D view (as framing a camera does), changes the selection and
+/// the view toggles, and tells the user what the agent did. None of them
+/// changes the scene. First the mark and a request to load an area are
+/// dropped if another scene was opened or another area loaded.
 fn follow_commands(
     mut link: ResMut<AgentLinkRes>,
-    mut scene: ResMut<Scene>,
+    scene: Res<Scene>,
+    slots: Res<SceneSlots>,
     mut editor: ResMut<Editor>,
     mut panels: ResMut<Panels>,
     mut orbit: Query<&mut OrbitCamera>,
     mut toasts: ResMut<Toasts>,
 ) {
+    link.follow_scene(SceneKey {
+        slot: slots.index.active,
+        area: scene.area,
+    });
     if !link.is_open() {
         return;
     }
-    for action in link.take_view_actions(&scene) {
+    while let Some(action) = link.next_view_action(&scene) {
         match action {
-            ViewAction::Focus { at, distance_m } => {
+            None => {}
+            Some(ViewAction::Focus { at, distance_m }) => {
                 if let Ok(mut o) = orbit.single_mut() {
-                    // `focus_on_ground` puts it on the ground there.
-                    o.focus = Vec3::new(at[0], 0.0, at[1]);
-                    o.distance = distance_m.unwrap_or_else(|| o.distance.min(FOCUS_KEEP_M));
+                    look_at(&mut o, Vec2::from_array(at), distance_m);
                 }
             }
-            ViewAction::Select(Some(id)) => select(&mut editor, &mut panels, id),
-            ViewAction::Select(None) => editor.selected = None,
-            ViewAction::Params(params) => {
-                commands::set_params(&mut TrackScene(&mut scene), params);
-            }
-            ViewAction::Panels {
+            Some(ViewAction::Select(Some(id))) => select(&mut editor, &mut panels, id),
+            Some(ViewAction::Select(None)) => editor.selected = None,
+            Some(ViewAction::Panels {
                 overlay,
                 cones,
                 walls,
-            } => {
+            }) => {
                 if let Some(o) = overlay {
                     panels.overlay = o;
                 }
@@ -583,16 +580,22 @@ mod tests {
             &events,
             &command(
                 3,
-                serde_json::json!({"kind": "set_view_options", "night": true, "walls": false}),
+                serde_json::json!({"kind": "set_view_options", "overlay": "per_camera", "walls": false}),
             ),
         );
+        let revision = app.world().resource::<Scene>().revision;
         app.update();
         let o = app.world().get::<OrbitCamera>(orbit).unwrap();
         assert_eq!((o.focus, o.distance), (Vec3::new(10.0, 0.0, -20.0), 40.0));
         assert_eq!(app.world().resource::<Editor>().selected, Some(4));
-        let lighting = app.world().resource::<Scene>().params.lighting;
-        assert_eq!(lighting, observation_core::camera::Lighting::Night);
-        assert!(!app.world().resource::<Panels>().show_facades);
+        let panels = app.world().resource::<Panels>();
+        assert!(!panels.show_facades);
+        assert_eq!(
+            panels.overlay,
+            observation_client_model::editor::OverlayMode::PerCamera
+        );
+        // The scene is untouched.
+        assert_eq!(app.world().resource::<Scene>().revision, revision);
         let toasts: Vec<String> = app
             .world()
             .resource::<Toasts>()

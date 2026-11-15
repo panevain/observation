@@ -604,6 +604,23 @@ fn connected(http: &FakeHttp) -> AgentLink {
     link
 }
 
+/// Takes every waiting view command, carrying out each with `apply` before
+/// the next is worked out; returns what was carried out.
+fn drain(
+    link: &mut AgentLink,
+    doc: &mut Document,
+    mut apply: impl FnMut(&ViewAction, &mut Document),
+) -> Vec<ViewAction> {
+    let mut done = Vec::new();
+    while let Some(action) = link.next_view_action(doc) {
+        if let Some(a) = action {
+            apply(&a, doc);
+            done.push(a);
+        }
+    }
+    done
+}
+
 fn load_request() -> AgentCommand {
     AgentCommand::RequestLoadArea {
         bbox: observation_core::geo::BBox::new(51.5, -0.13, 51.502, -0.127).unwrap(),
@@ -640,8 +657,8 @@ fn view_commands_become_actions_marks_and_requests_with_toasts() {
         ),
     );
     link.update(&http, 0.0, StateKey::default(), |_| None);
-    let doc = Document::default();
-    let actions = link.take_view_actions(&doc);
+    let mut doc = Document::default();
+    let actions = drain(&mut link, &mut doc, |_, _| {});
     assert_eq!(
         actions,
         [ViewAction::Focus {
@@ -659,9 +676,18 @@ fn view_commands_become_actions_marks_and_requests_with_toasts() {
     assert_eq!(notices[0], "Agent moved the view");
     assert_eq!(notices[1], "Agent marked a spot");
     assert_eq!(notices[2], "The agent asks you to load an area");
-    assert!(notices[3].contains("unknown kind"), "{notices:?}");
+    // A kind from a newer agent is skipped, and said once only.
+    assert!(notices[3].contains("does not know"), "{notices:?}");
+    http.emit_follow(
+        &events_url(),
+        &StreamEvent::Data(
+            br#"{"v":1,"type":"command","id":5,"command":{"kind":"orbit"}}"#.to_vec(),
+        ),
+    );
+    link.update(&http, 0.0, StateKey::default(), |_| None);
     // Taken once.
-    assert!(link.take_view_actions(&doc).is_empty());
+    assert!(drain(&mut link, &mut doc, |_, _| {}).is_empty());
+    assert!(link.take_notices().is_empty());
     // The pairing ending takes the mark and the request with it.
     link.disconnect(&http);
     assert!(link.mark().is_none() && link.load_request.is_none());
@@ -679,7 +705,7 @@ fn with_view_commands_off_only_a_request_to_load_is_shown() {
     }
     http.emit_follow(&events_url(), &command(4, load_request()));
     link.update(&http, 0.0, StateKey::default(), |_| None);
-    assert!(link.take_view_actions(&Document::default()).is_empty());
+    assert!(drain(&mut link, &mut Document::default(), |_, _| {}).is_empty());
     assert!(link.load_request.is_some());
     let notices = link.take_notices();
     // The user hears once that commands are off, and of the request.
@@ -696,6 +722,96 @@ fn the_queue_of_commands_is_bounded() {
         http.emit_follow(&events_url(), &command(id, select));
     }
     link.update(&http, 0.0, StateKey::default(), |_| None);
-    let actions = link.take_view_actions(&Document::default());
+    let actions = drain(&mut link, &mut Document::default(), |_, _| {});
     assert_eq!(actions.len(), MAX_PENDING_COMMANDS);
+}
+
+#[test]
+fn commands_in_one_frame_are_each_worked_out_after_the_last_took_effect() {
+    let http = FakeHttp::default();
+    let mut link = connected(&http);
+    let mut doc = Document::default();
+    // The first command's effect (here a camera the client adds while
+    // carrying it out) is there when the second is worked out.
+    http.emit_follow(
+        &events_url(),
+        &command(1, AgentCommand::SelectCameras { ids: vec![] }),
+    );
+    http.emit_follow(
+        &events_url(),
+        &command(2, AgentCommand::SelectCameras { ids: vec![7] }),
+    );
+    link.update(&http, 0.0, StateKey::default(), |_| None);
+    link.take_notices();
+    let done = drain(&mut link, &mut doc, |action, doc| {
+        if *action == ViewAction::Select(None) {
+            doc.cameras.push(observation_core::camera::CameraPlacement {
+                id: 7,
+                label: "Gate".into(),
+                model_id: "m".into(),
+                position: [0.0, 2.0, 0.0],
+                yaw_deg: 0.0,
+                pitch_deg: 0.0,
+                roll_deg: 0.0,
+                color: None,
+                enabled: true,
+                group: None,
+            });
+        }
+    });
+    assert_eq!(
+        done,
+        [ViewAction::Select(None), ViewAction::Select(Some(7))]
+    );
+    assert_eq!(
+        link.take_notices(),
+        [
+            "Agent cleared the selection",
+            "Agent selected camera 7 ‘Gate’"
+        ]
+    );
+}
+
+#[test]
+fn the_mark_and_a_request_to_load_go_with_the_scene() {
+    let http = FakeHttp::default();
+    let mut link = connected(&http);
+    let scene = |slot, area| SceneKey { slot, area };
+    link.follow_scene(scene(1, Some(AreaRef::Demo)));
+    http.emit_follow(
+        &events_url(),
+        &command(
+            1,
+            AgentCommand::Highlight {
+                what: observation_agent_api::Highlight::Point { at: [1.0, 1.0] },
+                note: None,
+            },
+        ),
+    );
+    http.emit_follow(&events_url(), &command(2, load_request()));
+    link.update(&http, 0.0, StateKey::default(), |_| None);
+    drain(&mut link, &mut Document::default(), |_, _| {});
+    // The same scene keeps them.
+    link.follow_scene(scene(1, Some(AreaRef::Demo)));
+    assert!(link.mark().is_some() && link.load_request.is_some());
+    // Another area loads: they go.
+    let bbox = observation_core::geo::BBox::new(51.5, -0.13, 51.502, -0.127).unwrap();
+    link.follow_scene(scene(1, Some(AreaRef::Osm { bbox })));
+    assert!(link.mark().is_none() && link.load_request.is_none());
+    // So does a mark when another scene is opened.
+    http.emit_follow(
+        &events_url(),
+        &command(
+            3,
+            AgentCommand::Highlight {
+                what: observation_agent_api::Highlight::Point { at: [1.0, 1.0] },
+                note: None,
+            },
+        ),
+    );
+    link.update(&http, 0.0, StateKey::default(), |_| None);
+    drain(&mut link, &mut Document::default(), |_, _| {});
+    assert!(link.mark().is_some());
+    link.follow_scene(scene(2, Some(AreaRef::Osm { bbox })));
+    assert!(link.mark().is_none());
 }

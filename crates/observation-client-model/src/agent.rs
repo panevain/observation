@@ -46,9 +46,15 @@
 //! other refusal, which the card then shows, or when the pairing ends.
 //!
 //! The agent's view commands (see [`crate::agent_view`]) arrive on the same
-//! stream and wait in a short queue until [`AgentLink::take_view_actions`]
-//! works them out against the document, after the frame's edits. Each one
-//! the app carries out raises a toast saying what the agent did. With
+//! stream and wait in a short queue. After the frame's edits the client
+//! takes them one at a time with [`AgentLink::next_view_action`], each
+//! worked out against the document and carried out before the next is, so
+//! they act in the order the agent sent them. Each one the app carries out
+//! raises a toast saying what the agent did; a kind this build does not know
+//! is skipped, and the user is told once per pairing. The agent's mark and
+//! a request to load an area belong to the scene open when they came: when
+//! another scene is opened or another area loads
+//! ([`AgentLink::follow_scene`]) they go. With
 //! [`AgentLink::allow_view`] off (the dialog's "Let the agent move the view
 //! and selection") they are dropped, and the user is told once per pairing;
 //! a request to load an area is shown either way, since it does nothing
@@ -64,6 +70,7 @@ use observation_agent_api::{
     PROTOCOL_VERSION, PairingCreated, PairingPhase, PinnedPoint, Proposal, SharedState, StatePost,
     display_code, paths, version_ok,
 };
+use observation_core::scene::AreaRef;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -82,6 +89,16 @@ const DECISION_RETRY_AFTER_MAX: f32 = 300.0;
 /// Most view commands waiting to be worked out; past it the oldest go (a
 /// frame takes them all, so only a stalled app ever gets there).
 pub const MAX_PENDING_COMMANDS: usize = 64;
+
+/// Which scene is open: the agent's mark and its request to load an area
+/// are about this scene, and go when it changes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SceneKey {
+    /// The scene's slot in this browser.
+    pub slot: u32,
+    /// The loaded area.
+    pub area: Option<AreaRef>,
+}
 
 /// What the shared state is built from, cheap to compare:
 /// [`AgentLink::update`] builds the state, and its JSON, only when this or
@@ -204,6 +221,11 @@ pub struct AgentLink {
     commands: VecDeque<AgentCommand>,
     /// The user was told in this pairing that view commands are off.
     told_view_off: bool,
+    /// The user was told in this pairing that the agent sent a command this
+    /// build does not know.
+    told_unknown: bool,
+    /// The scene the mark and the request to load are about.
+    scene: Option<SceneKey>,
     /// The agent's mark in the 3D view.
     mark: Option<AgentMark>,
     /// The agent's request to load an area, while the user has not decided.
@@ -238,6 +260,8 @@ impl Default for AgentLink {
             allow_view: true,
             commands: VecDeque::new(),
             told_view_off: false,
+            told_unknown: false,
+            scene: None,
             mark: None,
             load_request: None,
         }
@@ -334,42 +358,71 @@ impl AgentLink {
         self.mark = None;
     }
 
-    /// Works out the view commands that arrived against `doc`, after the
-    /// frame's edits: marks and requests to load are taken here, and what
-    /// the client carries out is returned, in order. Each raises a toast;
-    /// one the app cannot use says why instead. With [`Self::allow_view`]
-    /// off, everything but a request to load is dropped.
-    pub fn take_view_actions(&mut self, doc: &Document) -> Vec<ViewAction> {
-        let mut actions = Vec::new();
-        while let Some(command) = self.commands.pop_front() {
-            if !self.allow_view && !matches!(command, AgentCommand::RequestLoadArea { .. }) {
-                if !self.told_view_off {
-                    self.told_view_off = true;
+    /// Forgets the agent's mark and its request to load an area when the
+    /// open scene is no longer the one they came with: another scene was
+    /// opened, or another area loaded. Run every frame before
+    /// [`Self::next_view_action`].
+    pub fn follow_scene(&mut self, key: SceneKey) {
+        if self.scene.as_ref() != Some(&key) {
+            if self.scene.is_some() {
+                self.mark = None;
+                self.load_request = None;
+            }
+            self.scene = Some(key);
+        }
+    }
+
+    /// The next view command that arrived, worked out against `doc`, for
+    /// the client to carry out before it asks for the next one, so each is
+    /// worked out after the ones before it took effect. Marks and requests
+    /// to load are taken here and give nothing to carry out; every command
+    /// raises a toast, or says why it does nothing. With
+    /// [`Self::allow_view`] off, everything but a request to load is
+    /// dropped. `None` once the queue is empty.
+    pub fn next_view_action(&mut self, doc: &Document) -> Option<Option<ViewAction>> {
+        let command = self.commands.pop_front()?;
+        if !self.allow_view && !matches!(command, AgentCommand::RequestLoadArea { .. }) {
+            if !self.told_view_off {
+                self.told_view_off = true;
+                self.notices.push(
+                    "The agent tried to change your view; that is turned off in Connect agent"
+                        .to_owned(),
+                );
+            }
+            return Some(None);
+        }
+        Some(match plan(command, doc) {
+            Ok(Planned::Act(action, notice)) => {
+                self.notices.push(notice);
+                Some(action)
+            }
+            Ok(Planned::Mark(mark, notice)) => {
+                self.mark = mark;
+                self.notices.push(notice);
+                None
+            }
+            Ok(Planned::AskToLoad(request)) => {
+                self.notices
+                    .push("The agent asks you to load an area".to_owned());
+                self.load_request = Some(request);
+                None
+            }
+            Ok(Planned::Unknown) => {
+                if !self.told_unknown {
+                    self.told_unknown = true;
                     self.notices.push(
-                        "The agent tried to change your view; that is turned off in Connect agent"
+                        "The agent sent a request this version of the app does not know, so it \
+                         was skipped"
                             .to_owned(),
                     );
                 }
-                continue;
+                None
             }
-            match plan(command, doc) {
-                Ok(Planned::Act(mut more, notice)) => {
-                    actions.append(&mut more);
-                    self.notices.push(notice);
-                }
-                Ok(Planned::Mark(mark, notice)) => {
-                    self.mark = mark;
-                    self.notices.push(notice);
-                }
-                Ok(Planned::AskToLoad(request)) => {
-                    self.notices
-                        .push("The agent asks you to load an area".to_owned());
-                    self.load_request = Some(request);
-                }
-                Err(why) => self.notices.push(why),
+            Err(why) => {
+                self.notices.push(why);
+                None
             }
-        }
-        actions
+        })
     }
 
     /// What to tell the user in toasts since the last call.
@@ -627,6 +680,7 @@ impl AgentLink {
         self.decided.clear();
         self.commands.clear();
         self.told_view_off = false;
+        self.told_unknown = false;
         self.mark = None;
         self.load_request = None;
         for undelivered in std::mem::take(&mut self.outbox) {

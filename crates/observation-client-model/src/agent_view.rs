@@ -3,22 +3,21 @@
 //!
 //! [`plan`] checks a command again (the server did, but the browser trusts
 //! nothing that came over the wire) and finds what it names in the
-//! document: a camera, a target or an area by id or name. It never changes
-//! the document. What it returns is either a [`ViewAction`] for the client
-//! to carry out (move the 3D view, change the selection, the analysis
-//! settings or the view toggles), a mark to draw, or a request to load an
-//! area for the user to decide on. Each comes with the words of a toast, so
-//! the user always hears what the agent did.
+//! document: a camera, a target or an area by id or name. What it returns
+//! is either a [`ViewAction`] for the client to carry out (move the 3D
+//! view, change the selection or the view toggles), a mark to draw, or a
+//! request to load an area for the user to decide on. Each comes with the
+//! words of a toast, so the user always hears what the agent did.
 //!
-//! Night and the detail level are analysis settings saved in the scene: the
-//! client applies them as the Analysis tab does, so they are an undoable
-//! edit like any other.
+//! No command changes the document: the lighting and the detail level are
+//! the scene's, and an agent changes them only by a proposal the user
+//! accepts.
 
 use crate::document::Document;
 use crate::editor::OverlayMode;
-use observation_agent_api::{AgentCommand, Highlight, ItemRef, OverlayColours};
-use observation_core::camera::Lighting;
-use observation_core::coverage::CoverageParams;
+use observation_agent_api::{
+    AgentCommand, Highlight, ItemRef, OverlayColours, find_item, item_words,
+};
 use observation_core::footage::TargetPlace;
 use observation_core::geo::BBox;
 
@@ -116,15 +115,13 @@ impl LoadRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ViewAction {
     /// Look at world `[x, z]` from `distance_m` away (else from as far as
-    /// now, at most 60 m).
+    /// now, at most as far as framing a camera does).
     Focus {
         at: [f32; 2],
         distance_m: Option<f32>,
     },
     /// Select this camera, or nothing.
     Select(Option<u32>),
-    /// The analysis settings to set (as the Analysis tab does).
-    Params(CoverageParams),
     /// The view toggles to change; `None` leaves one as it is.
     Panels {
         overlay: Option<OverlayMode>,
@@ -136,64 +133,65 @@ pub enum ViewAction {
 /// What a command comes to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Planned {
-    /// What the client carries out, in order, and the toast that says so.
-    Act(Vec<ViewAction>, String),
+    /// What the client carries out, and the toast that says so.
+    Act(ViewAction, String),
     /// The mark to draw (`None`: remove it), and the toast.
     Mark(Option<AgentMark>, String),
     /// A request for the user to decide on.
     AskToLoad(LoadRequest),
+    /// A kind of command this build does not know (from a newer agent):
+    /// skipped.
+    Unknown,
 }
 
-/// A camera's words: "camera 3 ‘Porch’".
+/// A camera of the document in words: "camera 3 ‘Porch’".
 fn camera_words(doc: &Document, id: u32) -> String {
-    match doc
-        .camera(id)
-        .map(|c| c.label.trim())
-        .filter(|l| !l.is_empty())
-    {
-        Some(label) => format!("camera {id} ‘{label}’"),
-        None => format!("camera {id}"),
-    }
+    item_words("camera", id, doc.camera(id).map(|c| c.label.as_str()))
 }
 
-/// The id and words of the item `r` names among `(id, name)`.
+/// The id and words of the item `r` names among `items`, or why not.
 fn find<'a>(
-    mut items: impl Iterator<Item = (u32, Option<&'a str>)>,
+    items: impl Iterator<Item = (u32, Option<&'a str>)>,
     r: &ItemRef,
     what: &str,
 ) -> Result<(u32, String), String> {
-    items
-        .find(|(id, name)| r.matches(*id, *name))
-        .map(
-            |(id, name)| match name.map(str::trim).filter(|n| !n.is_empty()) {
-                Some(n) => (id, format!("{what} ‘{n}’")),
-                None => (id, format!("{what} {id}")),
-            },
-        )
-        .ok_or_else(|| {
-            let named = match r {
-                ItemRef::Id(id) => id.to_string(),
-                ItemRef::Name(n) => format!("‘{n}’"),
-            };
-            format!("The agent asked to mark {what} {named}, which is not in the scene.")
-        })
+    find_item(items, r, what).ok_or_else(|| {
+        let named = match r {
+            ItemRef::Id(id) => id.to_string(),
+            ItemRef::Name(n) => format!("‘{n}’"),
+        };
+        format!("The agent asked to mark {what} {named}, which is not in the scene.")
+    })
+}
+
+/// Whether `command` holds a kind this build does not know.
+fn unknown(command: &AgentCommand) -> bool {
+    match command {
+        AgentCommand::Unknown => true,
+        AgentCommand::Highlight { what, .. } => *what == Highlight::Unknown,
+        AgentCommand::SetViewOptions(o) => o.overlay == Some(OverlayColours::Unknown),
+        _ => false,
+    }
 }
 
 /// What `command` does in the app with document `doc`, or why it does
 /// nothing (worded for a toast).
 pub fn plan(command: AgentCommand, doc: &Document) -> Result<Planned, String> {
+    if unknown(&command) {
+        return Ok(Planned::Unknown);
+    }
     let command = command
         .checked()
         .map_err(|why| format!("The agent sent a command the app could not use: {why}."))?;
     Ok(match command {
         AgentCommand::FocusView { at, distance_m } => Planned::Act(
-            vec![ViewAction::Focus { at, distance_m }],
+            ViewAction::Focus { at, distance_m },
             "Agent moved the view".to_owned(),
         ),
         AgentCommand::SelectCameras { ids } => {
             if ids.is_empty() {
                 Planned::Act(
-                    vec![ViewAction::Select(None)],
+                    ViewAction::Select(None),
                     "Agent cleared the selection".to_owned(),
                 )
             } else {
@@ -209,7 +207,7 @@ pub fn plan(command: AgentCommand, doc: &Document) -> Result<Planned, String> {
                         )
                     })?;
                 Planned::Act(
-                    vec![ViewAction::Select(Some(id))],
+                    ViewAction::Select(Some(id)),
                     format!("Agent selected {}", camera_words(doc, id)),
                 )
             }
@@ -238,8 +236,8 @@ pub fn plan(command: AgentCommand, doc: &Document) -> Result<Planned, String> {
                     (MarkAt::Area(id), words)
                 }
                 Highlight::Point { at } => (MarkAt::Point(at), "a spot".to_owned()),
-                // `checked` refuses it.
-                Highlight::Unknown => return Err("The agent sent an unknown mark.".into()),
+                // Taken as unknown above.
+                Highlight::Unknown => return Ok(Planned::Unknown),
             };
             Planned::Mark(
                 Some(AgentMark { at, note }),
@@ -247,83 +245,53 @@ pub fn plan(command: AgentCommand, doc: &Document) -> Result<Planned, String> {
             )
         }
         AgentCommand::SetViewOptions(o) => {
-            let mut params = doc.params;
-            let mut said = Vec::new();
-            if let Some(night) = o.night {
-                params.lighting = if night {
-                    Lighting::Night
-                } else {
-                    Lighting::Day
-                };
-                said.push(if night { "night" } else { "day" }.to_owned());
-            }
-            if let Some(level) = o.detail_level.and_then(|l| l.dori()) {
-                params.dori = level;
-                said.push(format!("{} detail", level.label()));
-            }
             let overlay = o.overlay.and_then(|c| match c {
                 OverlayColours::Overlap => Some(OverlayMode::Overlap),
                 OverlayColours::PerCamera => Some(OverlayMode::PerCamera),
                 OverlayColours::Unknown => None,
             });
-            if let Some(mode) = overlay {
-                said.push(
-                    match mode {
-                        OverlayMode::Overlap => "overlap colours",
-                        OverlayMode::PerCamera => "a colour per camera",
-                    }
-                    .to_owned(),
-                );
+            let mut said = Vec::new();
+            match overlay {
+                Some(OverlayMode::Overlap) => said.push("overlap colours"),
+                Some(OverlayMode::PerCamera) => said.push("a colour per camera"),
+                None => {}
             }
             if let Some(c) = o.cones {
-                said.push(
-                    if c {
-                        "every cone"
-                    } else {
-                        "only the selected cone"
-                    }
-                    .to_owned(),
-                );
+                said.push(if c {
+                    "every cone"
+                } else {
+                    "only the selected cone"
+                });
             }
             if let Some(w) = o.walls {
-                said.push(
-                    if w {
-                        "coverage on walls"
-                    } else {
-                        "no coverage on walls"
-                    }
-                    .to_owned(),
-                );
-            }
-            let mut actions = Vec::new();
-            if o.night.is_some() || o.detail_level.is_some() {
-                actions.push(ViewAction::Params(params));
-            }
-            if overlay.is_some() || o.cones.is_some() || o.walls.is_some() {
-                actions.push(ViewAction::Panels {
-                    overlay,
-                    cones: o.cones,
-                    walls: o.walls,
+                said.push(if w {
+                    "coverage on walls"
+                } else {
+                    "no coverage on walls"
                 });
             }
             Planned::Act(
-                actions,
+                ViewAction::Panels {
+                    overlay,
+                    cones: o.cones,
+                    walls: o.walls,
+                },
                 format!("Agent set the view to {}", said.join(", ")),
             )
         }
         AgentCommand::RequestLoadArea { bbox, reason } => {
             Planned::AskToLoad(LoadRequest { bbox, reason })
         }
-        // `checked` refuses it.
-        AgentCommand::Unknown => return Err("The agent sent an unknown command.".into()),
+        // Taken as unknown above.
+        AgentCommand::Unknown => Planned::Unknown,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use observation_agent_api::{DetailLevel, ViewOptions};
-    use observation_core::camera::{CameraPlacement, DoriLevel};
+    use observation_agent_api::ViewOptions;
+    use observation_core::camera::CameraPlacement;
     use observation_core::footage::{LabelledArea, Target};
 
     /// A document with cameras 1 ‘Porch’ and 2, target 5 ‘Front door’ on a
@@ -379,10 +347,10 @@ mod tests {
         assert_eq!(
             plan(focus, &doc),
             Ok(Planned::Act(
-                vec![ViewAction::Focus {
+                ViewAction::Focus {
                     at: [3.0, -4.0],
                     distance_m: Some(40.0)
-                }],
+                },
                 "Agent moved the view".into()
             ))
         );
@@ -391,14 +359,14 @@ mod tests {
         assert_eq!(
             plan(select, &doc),
             Ok(Planned::Act(
-                vec![ViewAction::Select(Some(1))],
+                ViewAction::Select(Some(1)),
                 "Agent selected camera 1 ‘Porch’".into()
             ))
         );
         let none = AgentCommand::SelectCameras { ids: vec![] };
         assert!(matches!(
             plan(none, &doc),
-            Ok(Planned::Act(a, _)) if a == [ViewAction::Select(None)]
+            Ok(Planned::Act(ViewAction::Select(None), _))
         ));
         let missing = AgentCommand::SelectCameras { ids: vec![9] };
         assert!(plan(missing, &doc).unwrap_err().contains("camera 9"));
@@ -417,7 +385,7 @@ mod tests {
         };
         assert_eq!(m.at, MarkAt::Target(5));
         assert_eq!(m.note.as_deref(), Some("seen by nobody"));
-        assert_eq!(notice, "Agent marked target ‘Front door’");
+        assert_eq!(notice, "Agent marked target 5 ‘Front door’");
         assert_eq!(m.anchor(&doc), Some(([4.0, 2.0], Some(1.5))));
 
         let Ok(Planned::Mark(Some(m), _)) = plan(
@@ -458,44 +426,24 @@ mod tests {
     }
 
     #[test]
-    fn view_options_set_the_analysis_settings_and_the_toggles() {
+    fn view_options_set_only_the_view_toggles() {
         let doc = doc();
-        let both = AgentCommand::SetViewOptions(ViewOptions {
-            night: Some(true),
-            detail_level: Some(DetailLevel::Recognise),
+        let options = AgentCommand::SetViewOptions(ViewOptions {
             overlay: Some(OverlayColours::PerCamera),
             cones: Some(true),
             walls: None,
         });
-        let Ok(Planned::Act(actions, notice)) = plan(both, &doc) else {
-            panic!("actions");
-        };
-        let mut params = doc.params;
-        params.lighting = Lighting::Night;
-        params.dori = DoriLevel::Recognise;
         assert_eq!(
-            actions,
-            [
-                ViewAction::Params(params),
+            plan(options, &doc),
+            Ok(Planned::Act(
                 ViewAction::Panels {
                     overlay: Some(OverlayMode::PerCamera),
                     cones: Some(true),
                     walls: None
-                }
-            ]
+                },
+                "Agent set the view to a colour per camera, every cone".into()
+            ))
         );
-        assert_eq!(
-            notice,
-            "Agent set the view to night, Recognise detail, a colour per camera, every cone"
-        );
-        let walls = AgentCommand::SetViewOptions(ViewOptions {
-            walls: Some(false),
-            ..ViewOptions::default()
-        });
-        assert!(matches!(
-            plan(walls, &doc),
-            Ok(Planned::Act(a, _)) if a.len() == 1 && matches!(a[0], ViewAction::Panels { .. })
-        ));
     }
 
     #[test]
@@ -529,6 +477,13 @@ mod tests {
             distance_m: None,
         };
         assert!(plan(far, &doc).unwrap_err().contains("could not use"));
-        assert!(plan(AgentCommand::Unknown, &doc).is_err());
+        // Kinds from a newer agent are skipped, not refused.
+        assert_eq!(plan(AgentCommand::Unknown, &doc), Ok(Planned::Unknown));
+        assert_eq!(plan(mark(Highlight::Unknown), &doc), Ok(Planned::Unknown));
+        let rainbow = AgentCommand::SetViewOptions(ViewOptions {
+            overlay: Some(OverlayColours::Unknown),
+            ..ViewOptions::default()
+        });
+        assert_eq!(plan(rainbow, &doc), Ok(Planned::Unknown));
     }
 }
