@@ -291,11 +291,11 @@ While connected, the agent can point you at what it is talking about. It never c
 - **move the view** to look at a spot or a camera (`focus_view`);
 - **select a camera** (`select_cameras`; the app selects one camera at a time);
 - **mark** a camera, a target, an area or a spot, with a short note beside the mark (`highlight`). A new mark replaces the last; the **×** on the note removes it;
-- **change the view settings** (`set_view_options`): day or night, the detail level (Detect, Observe, Recognise or Identify), the overlay colours, and the **Cones** and **Walls** toggles. Night and the detail level are part of the scene, so they are saved with it, and **Undo** (Ctrl+Z) takes them back like any change of yours.
+- **change how coverage is shown** (`set_view_options`): the overlay colours, and the **Cones** and **Walls** toggles. Day or night and the detail level are part of your scene, so the agent cannot switch them this way: it proposes them, as any other change to the scene.
 
 Untick **Let the agent move the view and selection** in the Connect agent dialog to stop all of these; the app then tells you once that the agent tried. The choice is remembered in this browser.
 
-The agent can also **ask you to load an area**, for example after searching for your street (`search_places`, which works only when the server's operator has turned on place search). A card says "The agent asks to load an area … because …", with **Load** and **Dismiss**. Nothing loads unless you click **Load**, and loading it replaces the area open now, as choosing it on the map does. The card appears even with the box above unticked.
+The mark, and a request to load an area you have not answered, go when you open another scene or load another area. The agent can also **ask you to load an area**, for example after searching for your street (`search_places`, which works only when the server's operator has turned on place search). A card says "The agent asks to load an area … because …", with **Load** and **Dismiss**. Nothing loads unless you click **Load**, and loading it replaces the area open now, as choosing it on the map does. The card appears even with the box above unticked.
 
 ## Keyboard, mouse and touch
 
