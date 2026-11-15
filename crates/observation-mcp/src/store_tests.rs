@@ -299,7 +299,7 @@ fn every_scene_tool_takes_a_scene_id() {
         assert!(!required(input, "scene"), "{} requires scene", tool.name);
         let output = tool.output_schema.as_ref();
         let returns = output
-            .and_then(|o| o["properties"].as_object())
+            .and_then(|o| o.get("properties").and_then(Value::as_object))
             .is_some_and(|p| p.contains_key("scene"));
         if !returns {
             assert!(!props.contains_key(RETURN_SCENE), "{}", tool.name);
@@ -565,6 +565,122 @@ async fn apply_edits_is_all_or_nothing() {
     assert_eq!(undone["undone"].as_array().unwrap().len(), 4, "{undone}");
 }
 
+/// An edit can use what an earlier edit in the batch returned, such as the
+/// id of the camera it placed.
+#[tokio::test]
+async fn apply_edits_refers_to_earlier_edits() {
+    let app = http_app();
+    ok(&call(&app, "open_scene", json!({})).await);
+    ok(&call(
+        &app,
+        "add_example_cameras",
+        json!({"scene_id": "s1", "count": 1}),
+    )
+    .await);
+    let applied = ok(&call(
+        &app,
+        "apply_edits",
+        json!({"scene_id": "s1", "edits": [
+            {"tool": "place_camera", "args": {"model_id": model_id(), "x": 0.0, "z": 15.0}},
+            {"tool": "aim_camera", "args": {"id": "$1.camera_id", "yaw_deg": 90.0}},
+            {"tool": "add_example_cameras", "args": {"count": 2}},
+            {"tool": "update_camera", "args": {"id": "$3.camera_ids.1", "label": "Side"}},
+        ]}),
+    )
+    .await);
+    let steps = applied["steps"].as_array().unwrap();
+    let placed = steps[0]["result"]["camera_id"].as_u64().unwrap();
+    assert_eq!(placed, 2, "{applied}");
+    assert_eq!(steps[1]["result"]["camera_id"], placed);
+    let second = steps[2]["result"]["camera_ids"][1].clone();
+    assert_eq!(steps[3]["result"]["camera_id"], second);
+    let scene = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await)["scene"].clone();
+    let cams = scene["cameras"].as_array().unwrap();
+    let aimed = cams.iter().find(|c| c["id"] == placed).unwrap();
+    assert_eq!(aimed["yaw_deg"], 90.0);
+    assert!(
+        cams.iter()
+            .any(|c| c["id"] == second && c["label"] == "Side")
+    );
+
+    // A reference to this edit or a later one, or to a field the edit did not
+    // return, fails the batch and says what a reference is.
+    for (args, why) in [
+        (
+            json!({"id": "$2.camera_id", "yaw_deg": 0}),
+            "only edits 1 to 1 come before it",
+        ),
+        (
+            json!({"id": "$1.model_id", "yaw_deg": 0}),
+            "names nothing edit 1 (place_camera) returned",
+        ),
+    ] {
+        let e = failed(
+            &call(
+                &app,
+                "apply_edits",
+                json!({"scene_id": "s1", "edits": [
+                    {"tool": "place_camera", "args": {"x": 0.0, "z": 15.0}},
+                    {"tool": "aim_camera", "args": args},
+                ]}),
+            )
+            .await,
+        );
+        assert!(e.contains(why) && e.contains("\"$1.camera_id\""), "{e}");
+    }
+    let now = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await);
+    assert_eq!(now["version"], 3, "the failed batches kept nothing");
+
+    // Only a whole string of that form is a reference: a label with a
+    // dollar amount, or "$1" alone, is a label.
+    let labelled = ok(&call(
+        &app,
+        "apply_edits",
+        json!({"scene_id": "s1", "edits": [
+            {"tool": "place_camera", "args": {"x": 0.0, "z": 15.0, "label": "$1.50 doorbell"}},
+            {"tool": "update_camera", "args": {"id": "$1.camera_id", "label": "$1"}},
+            {"tool": "place_camera", "args": {"x": 2.0, "z": 15.0, "label": "$1.camera_id!"}},
+        ]}),
+    )
+    .await);
+    let steps = labelled["steps"].as_array().unwrap();
+    let scene = ok(&call(&app, "export_scene", json!({"scene_id": "s1"})).await)["scene"].clone();
+    let label_of = |id: &Value| {
+        scene["cameras"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == *id)
+            .map(|c| c["label"].clone())
+    };
+    assert_eq!(
+        label_of(&steps[0]["result"]["camera_id"]),
+        Some(json!("$1"))
+    );
+    assert_eq!(
+        label_of(&steps[2]["result"]["camera_id"]),
+        Some(json!("$1.camera_id!"))
+    );
+}
+
+#[test]
+fn only_a_whole_reference_is_a_reference() {
+    for (text, form) in [
+        ("$1.camera_id", Some(("1", vec!["camera_id"]))),
+        ("$12.camera_ids.0", Some(("12", vec!["camera_ids", "0"]))),
+        ("$1.50", Some(("1", vec!["50"]))),
+        ("$1.50 doorbell", None),
+        ("$1", None),
+        ("$1.", None),
+        ("$x.camera_id", None),
+        (" $1.camera_id", None),
+        ("$1.2nd", None),
+        ("costs $1.camera_id", None),
+    ] {
+        assert_eq!(super::reference_form(text), form, "{text}");
+    }
+}
+
 #[test]
 fn a_whole_tool_result_reads_as_its_scene() {
     let result = json!({"summary": "created", "scene_id": "s1", "scene": empty()});
@@ -687,4 +803,70 @@ async fn analysis_settings_read_in_any_case() {
     );
     let kind: edit::Kind = serde_json::from_value(json!(" doorbell ")).unwrap();
     assert_eq!(kind, edit::Kind::Doorbell);
+}
+
+/// A writer that keeps what the log wrote, for the test below.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        lock(&self.0).extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_tool_call_is_logged_without_its_values() {
+    let args = json!({"scene_id": "s1", "label": "Mrs Smith's gate", "x": 4.5});
+    let (keys, bytes) = argument_shape(args.as_object());
+    assert_eq!(keys, "label,scene_id,x");
+    assert_eq!(bytes, args.to_string().len());
+    assert_eq!(argument_shape(None), (String::new(), 0));
+
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let result: CallToolResponse =
+        CallToolResult::structured(json!({"summary": "placed camera 1 at 12 Elm Road"})).into();
+    tracing::subscriber::with_default(subscriber, || {
+        log_call(
+            "place_camera",
+            &keys,
+            bytes,
+            std::time::Duration::from_millis(7),
+            &Ok(result),
+        );
+    });
+    let line = String::from_utf8(lock(&captured.0).clone()).unwrap();
+    for part in [
+        "tool call",
+        "tool=\"place_camera\"",
+        "arguments=\"label,scene_id,x\"",
+        "ms=7",
+        "outcome=\"ok\"",
+        "result_bytes=",
+    ] {
+        assert!(line.contains(part), "{part} in {line}");
+    }
+    for value in ["Smith", "Elm Road", "s1", "4.5"] {
+        assert!(!line.contains(value), "{value} logged in {line}");
+    }
+}
+
+#[test]
+fn logged_sizes_are_counted_without_a_buffer() {
+    let args = json!({"scene_id": "s1", "label": "Porch ✓", "x": 1.5, "edits": [1, 2]});
+    let compact = serde_json::to_vec(&args).unwrap().len();
+    assert_eq!(super::json_bytes(&args), compact);
+    let (keys, bytes) = super::argument_shape(args.as_object());
+    assert_eq!(keys, "edits,label,scene_id,x");
+    assert_eq!(bytes, compact);
 }

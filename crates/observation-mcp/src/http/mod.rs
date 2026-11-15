@@ -31,6 +31,7 @@ pub mod auth;
 pub mod config;
 
 use crate::ObservationMcp;
+use crate::toolsets::{ToolSelection, Toolbox};
 use auth::Tokens;
 use axum::Router;
 use axum::extract::{Request, State};
@@ -80,9 +81,19 @@ enum Clients {
     Anyone(McpService),
 }
 
-/// The HTTP application. Cancelling `shutdown` stops the MCP services
-/// accepting requests and ends their streams.
+/// The HTTP application, offering every tool. Cancelling `shutdown` stops
+/// the MCP services accepting requests and ends their streams.
 pub fn router(config: &HttpConfig, shutdown: &CancellationToken) -> Router {
+    router_for(config, &ToolSelection::default(), shutdown)
+}
+
+/// The HTTP application, offering the tools `tools` selects
+/// ([`crate::toolsets`]).
+pub fn router_for(
+    config: &HttpConfig,
+    tools: &ToolSelection,
+    shutdown: &CancellationToken,
+) -> Router {
     let mcp_config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
         .with_json_response(true)
@@ -92,9 +103,10 @@ pub fn router(config: &HttpConfig, shutdown: &CancellationToken) -> Router {
         .with_max_request_body_bytes(MAX_BODY_BYTES)
         .with_cancellation_token(shutdown.clone());
     // Every request of one client is served by clones of one server, which
-    // share its connection to the app.
+    // share its connection to the app; every client shares the tools.
+    let toolbox = Toolbox::shared(tools.clone());
     let service = || {
-        let mcp = ObservationMcp::sessionless();
+        let mcp = ObservationMcp::sessionless().with_toolbox(Arc::clone(&toolbox));
         StreamableHttpService::new(
             move || Ok(mcp.clone()),
             Arc::new(NeverSessionManager::default()),
@@ -163,7 +175,7 @@ async fn mcp(State(clients): State<Arc<Clients>>, req: Request) -> Response {
 
 /// Serves `config` until SIGINT or SIGTERM, then lets requests in flight
 /// finish.
-pub async fn serve(config: HttpConfig) -> std::io::Result<()> {
+pub async fn serve(config: HttpConfig, tools: ToolSelection) -> std::io::Result<()> {
     match &config.auth {
         Auth::Tokens(tokens) => {
             let names: Vec<_> = tokens.iter().map(|t| t.name.as_str()).collect();
@@ -180,7 +192,7 @@ pub async fn serve(config: HttpConfig) -> std::io::Result<()> {
         );
     }
     let shutdown = CancellationToken::new();
-    let app = router(&config, &shutdown);
+    let app = router_for(&config, &tools, &shutdown);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),

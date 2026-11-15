@@ -168,9 +168,9 @@ fn lighting_name(l: Lighting) -> &'static str {
 fn settings_of(p: &CoverageParams) -> Settings {
     Settings {
         level: p.dori.label().to_owned(),
-        ppm: p.pixels_per_metre(),
+        ppm: m1(p.pixels_per_metre()),
         lighting: lighting_name(p.lighting).to_owned(),
-        subject_height_m: p.subject_height_m,
+        subject_height_m: m1(p.subject_height_m),
     }
 }
 
@@ -1891,7 +1891,7 @@ pub fn view(scene: &Value, id: u32) -> Result<CameraViewOut, ToolError> {
         .cameras
         .iter()
         .find(|c| c.id == id)
-        .ok_or(ToolError::NoCamera(id))?;
+        .ok_or_else(|| ToolError::no_camera(&s, id))?;
     let m =
         model(cat, Some(&s), &c.model_id).ok_or_else(|| ToolError::NoModel(c.model_id.clone()))?;
     let bundle = bundle_for(&s)?;
@@ -2023,9 +2023,9 @@ pub fn view(scene: &Value, id: u32) -> Result<CameraViewOut, ToolError> {
             let ppm = l.pixels_per_metre()?;
             Some(RangeRow {
                 level: l.label().to_owned(),
-                ppm,
-                day_m: m.effective_range_m(ppm, Lighting::Day),
-                night_m: m.effective_range_m(ppm, Lighting::Night),
+                ppm: m1(ppm),
+                day_m: m1(m.effective_range_m(ppm, Lighting::Day)),
+                night_m: m1(m.effective_range_m(ppm, Lighting::Night)),
             })
         })
         .collect();
@@ -2319,7 +2319,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Suggest wall mounts for a new camera, facing the street by default: each gives at [x, z], height_m, yaw_deg and pitch_deg to pass straight to place_camera. Optionally one building, near a point, or facing a compass direction.",
+        description = "Suggest wall mounts for a new camera, facing the street by default: each gives at [x, z], height_m, yaw_deg and pitch_deg for place_camera. Optionally one building, near a point, or facing a compass direction.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn suggest_mount_points(
@@ -2351,7 +2351,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "What lies in one camera's view: its field of view and ranges, where the middle of the view meets the ground, and the buildings, streets, targets and areas in view, each \"not ruled out\" or \"ruled out: blocked by building N\" (or the terrain). Never say the camera sees them.",
+        description = "What lies in one camera's view: its field of view and ranges, where the middle of the view meets the ground, and the buildings, streets, targets and areas in view, each \"not ruled out\" or \"ruled out\" with what blocks it.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn camera_view(

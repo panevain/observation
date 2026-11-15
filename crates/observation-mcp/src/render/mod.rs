@@ -471,8 +471,10 @@ pub struct CameraKeyOut {
     pub camera_id: u32,
     pub camera_label: String,
     /// `[x, z]`, metres.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub at: [f32; 2],
     /// Compass bearing it faces, degrees clockwise from north.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub bearing_deg: f32,
     /// The bearing as a compass point, such as "north-east".
     pub faces: String,
@@ -489,20 +491,25 @@ pub struct CameraKeyOut {
 pub struct ImageOut {
     pub width_px: u32,
     pub height_px: u32,
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub metres_per_px: f32,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RenderOut {
     /// The side of one square cell (one character), metres.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub cell_m: f32,
     /// The map's north-west corner `[x, z]`, metres.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub min: [f32; 2],
     /// Its south-east corner `[x, z]`, metres.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub max: [f32; 2],
     pub columns: usize,
     pub rows: usize,
     /// Metres between ruler ticks.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub tick_m: f32,
     /// Every glyph on the map and what it stands for.
     pub legend: Vec<LegendOut>,
@@ -548,8 +555,10 @@ pub struct RenderMapArgs {
     /// Shade the ground some enabled camera is not ruled out from seeing
     /// (default true).
     pub coverage: Option<bool>,
-    /// The detail level for the coverage; omit for the scene's.
-    pub dori: Option<Dori>,
+    /// Detail level for the coverage (detect, observe, recognise or
+    /// identify); omit for the scene's.
+    #[serde(alias = "dori")]
+    pub level: Option<Dori>,
     /// Day or night for the coverage; omit for the scene's.
     pub lighting: Option<Light>,
     /// "text" (default): a character grid; "image": a PNG and the legend;
@@ -572,7 +581,7 @@ pub fn render(
     }
     let view = choose_view(area::extent(&bundle), a.center, a.radius_m)?;
     let layers = layers_for(&s)?;
-    let params = with_overrides(s.params, a.dori, a.lighting);
+    let params = with_overrides(s.params, a.level, a.lighting);
     let coverage = a.coverage.unwrap_or(true);
     let seen = coverage.then(|| seen_counts(&layers, &params, &s.footage_cameras(cat), &view));
     let show = a.layers.clone().unwrap_or_else(|| Layer::ALL.to_vec());
@@ -630,7 +639,7 @@ pub fn render(
 #[tool_router(router = render_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Draw the scene from above, north up, as a character grid (at most 80 x 40) with a legend: # buildings, = street, . street and , other ground some camera is not ruled out from seeing, camera glyphs 1-9 then A-Z, T targets, area outlines. format \"image\" or \"both\" adds a PNG. Give center [x, z] and radius_m to zoom in. Pass on the data date and caveats.",
+        description = "Draw the scene from above, north up, as a character grid with a legend: # buildings, = street, . and , ground not ruled out for some camera, camera glyphs 1-9 then A-Z, T targets. Zoom with center [x, z] and radius_m. format \"image\" adds a PNG.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         output_schema = schema_for_output::<RenderOut>()
     )]

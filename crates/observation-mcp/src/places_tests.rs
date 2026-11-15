@@ -4,9 +4,7 @@ use super::*;
 use crate::area::demo;
 use crate::catalog::catalog;
 use crate::edit::{Light, Place};
-use crate::queries::{
-    CameraSplitArgs, FindGapsArgs, GapsOut, SplitOut, TargetVerdictsArgs, WhoSeesArgs,
-};
+use crate::queries::{CameraSplitArgs, CheckPointArgs, FindGapsArgs, GapsOut, TargetVerdictsArgs};
 use observation_core::footage::{AreaLabel, MAX_AREAS};
 
 fn mcp() -> ObservationMcp {
@@ -407,9 +405,11 @@ async fn target_verdicts_give_reasons_and_one_sided_wording() {
         .target_verdicts(Parameters(TargetVerdictsArgs {
             scene: with_targets(),
             target_id: None,
+            verbosity: None,
         }))
         .await
         .unwrap();
+    let out = out.full().unwrap();
     assert_eq!(out.targets.len(), 4);
     assert_eq!(out.settings.level, "Detect");
     assert!(out.sources.osm_data_as_of.is_some());
@@ -448,9 +448,11 @@ async fn target_verdicts_give_reasons_and_one_sided_wording() {
         .target_verdicts(Parameters(TargetVerdictsArgs {
             scene: off,
             target_id: Some(3),
+            verbosity: None,
         }))
         .await
         .unwrap();
+    let one = one.full().unwrap();
     assert_eq!(one.targets.len(), 1);
     assert!(one.targets[0].cameras.is_empty());
     assert!(one.targets[0].summary.contains("no enabled cameras"));
@@ -461,6 +463,7 @@ async fn target_verdicts_give_reasons_and_one_sided_wording() {
         .target_verdicts(Parameters(TargetVerdictsArgs {
             scene: with_camera(),
             target_id: None,
+            verbosity: None,
         }))
         .await
         .map(drop)
@@ -470,6 +473,7 @@ async fn target_verdicts_give_reasons_and_one_sided_wording() {
         .target_verdicts(Parameters(TargetVerdictsArgs {
             scene: with_targets(),
             target_id: Some(9),
+            verbosity: None,
         }))
         .await
         .map(drop)
@@ -481,14 +485,16 @@ async fn target_verdicts_give_reasons_and_one_sided_wording() {
 async fn who_sees_a_point() {
     let server = mcp();
     let ask = |x: f32, z: f32, height_m: Option<f32>| {
-        server.who_sees_point(Parameters(WhoSeesArgs {
+        server.check_point(Parameters(CheckPointArgs {
             scene: with_camera(),
             x,
             z,
             height_m,
+            verbosity: None,
         }))
     };
     let Json(front) = ask(0.0, 10.0, None).await.unwrap();
+    let front = front.full().unwrap();
     assert_eq!(front.cameras[0].selected, "not ruled out");
     assert!(!front.inside_building);
     assert!(
@@ -498,12 +504,14 @@ async fn who_sees_a_point() {
     );
     assert!(front.sources.osm_data_as_of.is_some());
     let Json(behind) = ask(0.0, -23.5, Some(0.5)).await.unwrap();
+    let behind = behind.full().unwrap();
     assert_eq!(behind.settings.subject_height_m, 0.5);
     assert_eq!(
         behind.cameras[0].verdicts[0].reason.as_deref(),
         Some("blocked_by_building")
     );
     let Json(inside) = ask(0.0, -10.0, None).await.unwrap();
+    let inside = inside.full().unwrap();
     assert!(inside.inside_building);
     assert!(inside.summary.contains("inside a building"));
     assert!(
@@ -562,11 +570,13 @@ async fn camera_split_counts_areas_street_and_walls_without_addresses() {
         server.camera_split(Parameters(CameraSplitArgs {
             scene: s.clone(),
             camera_id,
-            dori: None,
+            level: None,
             lighting,
+            verbosity: None,
         }))
     };
-    let Json(out): Json<SplitOut> = run(None, None).await.unwrap();
+    let Json(out) = run(None, None).await.unwrap();
+    let out = out.full().unwrap();
     assert_eq!(out.offset_m, 1.0);
     assert!(out.notes.contains("as the user drew them"));
     assert!(out.sources.osm_data_as_of.is_some());
@@ -608,6 +618,7 @@ async fn camera_split_counts_areas_street_and_walls_without_addresses() {
 
     // At night, one camera: less or the same.
     let Json(night) = run(Some(1), Some(Light::Night)).await.unwrap();
+    let night = night.full().unwrap();
     assert_eq!(night.settings.lighting, "Night");
     assert!(night.cameras[0].ground_m2 <= c.ground_m2);
     // Errors: no such camera, a disabled one.
@@ -623,8 +634,9 @@ async fn camera_split_counts_areas_street_and_walls_without_addresses() {
         .camera_split(Parameters(CameraSplitArgs {
             scene: off,
             camera_id: Some(1),
-            dori: None,
+            level: None,
             lighting: None,
+            verbosity: None,
         }))
         .await
         .map(drop)
@@ -636,13 +648,14 @@ async fn find_gaps(scene: Value, max_gaps: Option<usize>) -> Result<GapsOut, Str
     mcp()
         .find_gaps(Parameters(FindGapsArgs {
             scene,
-            dori: None,
+            level: None,
             lighting: None,
             max_gaps,
             min_area_m2: None,
+            verbosity: None,
         }))
         .await
-        .map(|Json(o)| o)
+        .map(|Json(o)| o.full().unwrap())
 }
 
 #[tokio::test]
@@ -701,10 +714,11 @@ async fn gaps_on_the_demo_street() {
     let e = mcp()
         .find_gaps(Parameters(FindGapsArgs {
             scene: empty(),
-            dori: None,
+            level: None,
             lighting: None,
             max_gaps: None,
             min_area_m2: Some(-1.0),
+            verbosity: None,
         }))
         .await
         .map(drop)

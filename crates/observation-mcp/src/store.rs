@@ -537,6 +537,16 @@ impl SceneStore {
 const SCENE_ID: &str = "scene_id";
 const RETURN_SCENE: &str = "return_scene";
 
+/// What every `scene_id` argument says, so that a small model reads one
+/// wording everywhere.
+pub const SCENE_ID_WORDS: &str = "The id from open_scene, such as \"s1\".";
+/// What every `scene` argument says.
+pub const SCENE_WORDS: &str = "A scene file; prefer scene_id.";
+/// The same for a tool whose scene is optional (it only adds custom models).
+const OPTIONAL_SCENE_ID_WORDS: &str =
+    "Omit unless the scene has custom models; then the id from open_scene, such as \"s1\".";
+const OPTIONAL_SCENE_WORDS: &str = "Omit unless the scene has custom models; prefer scene_id.";
+
 fn properties(schema: &Map<String, Value>) -> Option<&Map<String, Value>> {
     schema.get("properties")?.as_object()
 }
@@ -583,16 +593,26 @@ pub fn document_scene_ids(mut router: ToolRouter<ObservationMcp>) -> ToolRouter<
         }
         let edits = edits_scene(tool);
         let input = Arc::make_mut(&mut tool.input_schema);
+        let required = input
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|r| r.iter().any(|n| n == "scene"));
         not_required(input, "scene");
+        let (id_words, scene_words) = if required {
+            (SCENE_ID_WORDS, SCENE_WORDS)
+        } else {
+            (OPTIONAL_SCENE_ID_WORDS, OPTIONAL_SCENE_WORDS)
+        };
         add_property(
             input,
             SCENE_ID,
-            json!({
-                "type": "string",
-                "description": "The id open_scene gave, such as \"s1\". Pass it instead of \
-                                `scene`."
-            }),
+            json!({"type": "string", "description": id_words}),
         );
+        if let Some(Value::Object(scene)) =
+            input.get_mut("properties").and_then(|p| p.get_mut("scene"))
+        {
+            scene.insert("description".to_owned(), Value::from(scene_words));
+        }
         if !edits {
             continue;
         }
@@ -601,8 +621,7 @@ pub fn document_scene_ids(mut router: ToolRouter<ObservationMcp>) -> ToolRouter<
             RETURN_SCENE,
             json!({
                 "type": "boolean",
-                "description": "With scene_id: also return the whole edited scene. Default \
-                                false: the result has scene_id and version instead."
+                "description": "true to also return the whole scene file (default false)."
             }),
         );
         if let Some(output) = tool.output_schema.as_mut() {
@@ -678,7 +697,15 @@ pub fn prepare(
         args.insert(SCENE_ID.to_owned(), Value::String(id.to_string()));
         args.remove("scene");
     }
+    let no_scene = args.get("scene").is_none_or(Value::is_null);
     let id = match args.remove(SCENE_ID) {
+        None | Some(Value::Null) if no_scene && ObservationMcp::scene_required(&tool.name) => {
+            return Err(ToolError::invalid(format!(
+                "{} needs a scene: call open_scene first, then pass the scene_id it gives, \
+                 such as \"s1\"",
+                tool.name
+            )));
+        }
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(text)) => SceneId::parse(&text).ok_or_else(|| {
             ToolError::invalid(format!(
@@ -765,17 +792,107 @@ pub fn finish(
     result.into()
 }
 
+/// A writer that only counts the bytes written to it.
+#[derive(Default)]
+struct ByteCount(usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The bytes of `value` as compact JSON, counted as it is written, so
+/// nothing is allocated.
+fn json_bytes(value: &impl Serialize) -> usize {
+    let mut count = ByteCount::default();
+    match serde_json::to_writer(&mut count, value) {
+        Ok(()) => count.0,
+        Err(_) => 0,
+    }
+}
+
+/// A call's argument names, sorted, and the bytes of its arguments as
+/// compact JSON: what [`log_call`] records instead of the values.
+fn argument_shape(arguments: Option<&Map<String, Value>>) -> (String, usize) {
+    let Some(args) = arguments else {
+        return (String::new(), 0);
+    };
+    let mut keys: Vec<&str> = args.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    (keys.join(","), json_bytes(args))
+}
+
+/// Logs one line per tool call: the tool, its argument names and size, how
+/// long it took, whether it failed and the size of its result. Argument
+/// values and results are never logged: a scene may hold the user's places.
+fn log_call(
+    tool: &str,
+    keys: &str,
+    argument_bytes: usize,
+    took: std::time::Duration,
+    response: &Result<CallToolResponse, ErrorData>,
+) {
+    let (outcome, result_bytes) = match response {
+        Ok(CallToolResponse::Complete(result)) => (
+            if result.is_error == Some(true) {
+                "error"
+            } else {
+                "ok"
+            },
+            json_bytes(result),
+        ),
+        Ok(_) => ("ok", 0),
+        Err(_) => ("refused", 0),
+    };
+    tracing::info!(
+        tool,
+        arguments = keys,
+        argument_bytes,
+        ms = u64::try_from(took.as_millis()).unwrap_or(u64::MAX),
+        outcome,
+        result_bytes,
+        "tool call"
+    );
+}
+
 impl ObservationMcp {
     /// Runs a tool call as [`ServerHandler::call_tool`](rmcp::ServerHandler::call_tool)
     /// does: with a `scene_id` read from and written back to the store (see
     /// the module documentation), and in the scope of the scene's area
-    /// ([`Self::in_tool_scope`]).
+    /// ([`Self::in_tool_scope`]), and logs it ([`log_call`]).
     pub async fn call_with_scenes(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        if !tracing::enabled!(tracing::Level::INFO) {
+            return self.run_call(request, context).await;
+        }
+        let started = std::time::Instant::now();
+        let tool = request.name.to_string();
+        let (keys, argument_bytes) = argument_shape(request.arguments.as_ref());
+        let response = self.run_call(request, context).await;
+        log_call(&tool, &keys, argument_bytes, started.elapsed(), &response);
+        response
+    }
+
+    async fn run_call(
         &self,
         mut request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let tools = Self::all_tools();
+        if !self.tools.offers(&request.name) {
+            return Ok(tool_error(&ToolError::invalid(
+                self.tools.refusal(&request.name),
+            )));
+        }
         let call = match prepare(
             &self.scenes,
             tools.get(&request.name),
@@ -856,7 +973,7 @@ fn line(id: SceneId, version: u32, scene: &Value) -> String {
 
 /// The changes from `from` to `to`, in plain lines (at most [`MAX_LINES`]),
 /// and how many there are; `None` if they are on different areas.
-fn change_lines(from: &SceneFile, to: &SceneFile) -> Option<(Vec<String>, usize)> {
+pub(crate) fn change_lines(from: &SceneFile, to: &SceneFile) -> Option<(Vec<String>, usize)> {
     let changes = ChangeSet::between(from, to).ok()?;
     let mut lines = changes.lines(&|id| model_name(from, to, id));
     let total = lines.len();
@@ -892,19 +1009,19 @@ pub struct OpenArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SceneIdArgs {
-    /// The id open_scene gave, such as "s1".
+    /// The id from open_scene, such as "s1".
     pub scene_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExportArgs {
-    /// The id open_scene gave, such as "s1", or "s1@3" for its version 3.
+    /// The id from open_scene, such as "s1", or "s1@3" for its version 3.
     pub scene_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UndoArgs {
-    /// The id open_scene gave, such as "s1".
+    /// The id from open_scene, such as "s1".
     pub scene_id: String,
     /// How many versions to go back (default 1).
     pub steps: Option<usize>,
@@ -946,7 +1063,8 @@ pub struct DiffArgs {
 pub struct EditStep {
     /// A scene-editing tool, such as place_camera, aim_camera or add_target.
     pub tool: String,
-    /// Its arguments, without scene or scene_id.
+    /// Its arguments, without scene or scene_id. "$1.camera_id" stands for
+    /// the camera_id edit 1 returned (any field of an earlier edit's result).
     #[serde(default)]
     #[schemars(with = "Option<JsonObject>")]
     pub args: Option<Value>,
@@ -954,7 +1072,7 @@ pub struct EditStep {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyArgs {
-    /// The id open_scene gave, such as "s1".
+    /// The id from open_scene, such as "s1".
     pub scene_id: String,
     /// The edits, run in order (at most 50). If one fails, none is kept.
     pub edits: Vec<EditStep>,
@@ -1097,6 +1215,97 @@ fn step_args(n: usize, name: &str, args: Option<Value>) -> Result<Map<String, Va
             "edit {n} ({name}): args is an object of the tool's arguments"
         ))),
     }
+}
+
+/// Replaces each string in `value` that is a reference to an earlier
+/// edit's result, such as `"$1.camera_id"` (edit 1's `camera_id`) or
+/// `"$2.camera_ids.0"` (the first of edit 2's), with that value; `n` is the
+/// edit whose arguments these are.
+fn resolve_refs(value: &mut Value, n: usize, steps: &[StepOut]) -> Result<(), ToolError> {
+    match value {
+        Value::String(text) => {
+            if let Some(found) = step_ref(text, n, steps)? {
+                *value = found;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                resolve_refs(item, n, steps)?;
+            }
+        }
+        Value::Object(map) => {
+            for v in map.values_mut() {
+                resolve_refs(v, n, steps)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// The edit and the path of `text`, if the whole of it is a reference:
+/// `$`, the edit's number, then one or more fields, each a name
+/// (`[A-Za-z_][A-Za-z0-9_]*`) or an index (digits), after a dot. Any other
+/// string, such as a label "$1.50 doorbell", is left as it is.
+fn reference_form(text: &str) -> Option<(&str, Vec<&str>)> {
+    let rest = text.strip_prefix('$')?;
+    let mut parts = rest.split('.');
+    let edit = parts.next()?;
+    let path: Vec<&str> = parts.collect();
+    let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    let name = |p: &str| {
+        let mut bytes = p.bytes();
+        bytes
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+            && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    };
+    (digits(edit) && !path.is_empty() && path.iter().all(|p| digits(p) || name(p)))
+        .then_some((edit, path))
+}
+
+/// The value `text` refers to, if it is a reference (`$<edit>.<field>`).
+fn step_ref(text: &str, n: usize, steps: &[StepOut]) -> Result<Option<Value>, ToolError> {
+    let Some((edit, path)) = reference_form(text) else {
+        return Ok(None);
+    };
+    let Ok(k) = edit.parse::<usize>() else {
+        return Ok(None);
+    };
+    let bad = |why: String| {
+        ToolError::invalid(format!(
+            "edit {n}: `{text}` {why}; a reference is \"$<edit>.<field>\", such as \
+             \"$1.camera_id\" for the camera_id edit 1 returned"
+        ))
+    };
+    if k == 0 || k >= n {
+        return Err(bad(format!(
+            "refers to edit {k}, but only edits 1 to {} come before it",
+            n - 1
+        )));
+    }
+    let mut at = &steps[k - 1].result;
+    for part in path {
+        let next = match at {
+            Value::Object(m) => m.get(part),
+            Value::Array(items) => part.parse::<usize>().ok().and_then(|i| items.get(i)),
+            _ => None,
+        };
+        at = match next {
+            Some(v) => v,
+            None => {
+                let fields = match &steps[k - 1].result {
+                    Value::Object(m) => m.keys().cloned().collect::<Vec<_>>().join(", "),
+                    _ => String::new(),
+                };
+                return Err(bad(format!(
+                    "names nothing edit {k} ({}) returned; it returned {fields}",
+                    steps[k - 1].tool
+                )));
+            }
+        };
+    }
+    Ok(Some(at.clone()))
 }
 
 impl ObservationMcp {
@@ -1282,7 +1491,7 @@ impl ObservationMcp {
             let names: Vec<String> = tools
                 .list_all()
                 .iter()
-                .filter(|t| edits_scene(t))
+                .filter(|t| edits_scene(t) && self.tools.offers(&t.name))
                 .map(|t| t.name.to_string())
                 .collect();
             names.join(", ")
@@ -1309,11 +1518,21 @@ impl ObservationMcp {
                         allowed()
                     )));
                 }
+                Some(_) if !self.tools.offers(&name) => {
+                    return Err(ToolError::invalid(format!(
+                        "edit {n}: {name} is not offered by {}; apply_edits runs these: {}",
+                        self.tools.selection().describe(),
+                        allowed()
+                    )));
+                }
                 Some(_) => {}
             }
             let mut args = step_args(n, &name, step.args)?;
             for key in ["scene", SCENE_ID, RETURN_SCENE] {
                 args.remove(key);
+            }
+            for v in args.values_mut() {
+                resolve_refs(v, n, &steps)?;
             }
             args.insert("scene".to_owned(), scene);
             let request = CallToolRequestParams::new(name.clone()).with_arguments(args);
@@ -1349,7 +1568,7 @@ impl ObservationMcp {
 #[tool_router(router = store_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Open a working scene the server keeps for you, and get its id (such as s1) to pass as scene_id to the scene tools instead of the whole scene. from: new (an empty demo scene, the default), app (the connected app's open scene) or json (a scene file given in json).",
+        description = "Open a working scene and get its id (such as \"s1\") to pass as scene_id to the scene tools. from: new (an empty demo scene, the default), app (the connected app's scene) or json (a scene file in json).",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1365,7 +1584,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Get a working scene's file (scene_id such as s1, or s1@3 for version 3), ready to import in the app or to pass to propose_changes.",
+        description = "Get a working scene's file (scene_id such as \"s1\", or \"s1@3\" for version 3), to import in the app.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) fn export_scene(
@@ -1474,7 +1693,7 @@ impl ObservationMcp {
     }
 
     #[tool(
-        description = "Run several scene edits on a working scene in order, as one new version, all or nothing. Each edit is {tool, args}: a scene-editing tool (place_camera, aim_camera, add_target, ...) and its arguments without scene. Returns each edit's result, such as the camera ids.",
+        description = "Run several scene edits on a working scene in order, as one version, all or nothing. Each edit is {tool, args}: a scene-editing tool and its arguments without scene_id. \"$1.camera_id\" in args stands for the camera_id edit 1 returned.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

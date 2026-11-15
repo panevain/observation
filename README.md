@@ -35,7 +35,7 @@ MCP clients that connect over HTTP rather than starting a process can use the sa
 OBS_MCP_TOKENS="laptop:$(openssl rand -base64 32)" cargo run --release -p observation-mcp -- --http 127.0.0.1:8090
 ```
 
-The client then sends `Authorization: Bearer <secret>` to `http://127.0.0.1:8090/mcp`. `docker compose --profile mcp-http up -d mcp-http` runs the image that way, with the tokens from `OBS_MCP_TOKENS`. It speaks plain HTTP, so keep it on loopback or put a TLS-terminating proxy in front. A client in a browser page, such as llama.cpp's chat page, also needs its page's origin allowed, for which the server answers CORS: `OBS_MCP_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080` for `llama-server`'s default port.
+The client then sends `Authorization: Bearer <secret>` to `http://127.0.0.1:8090/mcp`. `docker compose --profile mcp-http up -d mcp-http` runs the image that way, with the tokens from `OBS_MCP_TOKENS`. It speaks plain HTTP, so keep it on loopback or put a TLS-terminating proxy in front. A client in a browser page, such as llama.cpp's chat page, also needs its page's origin allowed, for which the server answers CORS: `OBS_MCP_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080` for `llama-server`'s default port. For a small local model, add `OBS_MCP_PROFILE=small-app` (or `small` offline): it offers the few tools such a model needs, with plainer schemas and shorter answers (see [Small models and tool profiles](docs/design.md#small-models-and-tool-profiles)).
 
 #### AI agents
 

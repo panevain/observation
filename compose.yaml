@@ -122,7 +122,9 @@ services:
   # OBS_MCP_ALLOWED_ORIGINS, which the server then answers CORS for (for llama.cpp's chat page
   # on llama-server's default port: http://localhost:8080,http://127.0.0.1:8080). It reaches
   # nothing, but has a network for its port, so the agent bridge (connect_app) is out of reach
-  # here as in the `mcp` service. See docs/design.md.
+  # here as in the `mcp` service. It offers every tool; for a small local model, add
+  # OBS_MCP_PROFILE: small to the environment below for a short tool list and brief answers
+  # (OBS_MCP_TOOLSETS picks groups instead). See docs/design.md.
   mcp-http:
     image: ${OBS_MCP_IMAGE:-ghcr.io/panevain/observation-mcp:${OBS_VERSION:-latest}}
     build:

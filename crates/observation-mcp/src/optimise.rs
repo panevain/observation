@@ -21,6 +21,7 @@ use crate::ToolError;
 use crate::area::{bundle_for, layers_for};
 use crate::catalog::{catalog, model};
 use crate::edit::{self, Dori, Light};
+use crate::geometry::{angle_between, compass, direction_deg};
 use crate::queries::{ONE_SIDED, Settings, Sources, lighting_words, off_runtime, with_overrides};
 use crate::schema::JsonObject;
 use crate::server::ObservationMcp;
@@ -106,21 +107,6 @@ pub enum TargetRef {
 // Small helpers
 // ---------------------------------------------------------------------------
 
-/// The 8-point compass word for a bearing, degrees clockwise from north.
-pub fn compass(yaw_deg: f32) -> &'static str {
-    const NAMES: [&str; 8] = [
-        "north",
-        "north-east",
-        "east",
-        "south-east",
-        "south",
-        "south-west",
-        "west",
-        "north-west",
-    ];
-    NAMES[((yaw_deg.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
-}
-
 fn round_to(v: f32, step: f32) -> f32 {
     (v / step).round() * step
 }
@@ -131,16 +117,6 @@ fn r1(v: f32) -> f32 {
 
 fn r2(v: f32) -> f32 {
     round_to(v, 0.01)
-}
-
-/// The bearing of `v` (`[x, z]`), degrees clockwise from north.
-fn bearing(v: Vec2) -> f32 {
-    yaw_pitch_from_forward(Vec3::new(v.x, 0.0, v.y)).map_or(0.0, |(y, _)| y)
-}
-
-/// The signed difference `a - b` between two bearings, in `[-180, 180)`.
-fn turn(a: f32, b: f32) -> f32 {
-    (a - b + 180.0).rem_euclid(360.0) - 180.0
 }
 
 /// "at Detect by day".
@@ -174,10 +150,12 @@ impl Aim {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AimOut {
     /// Compass bearing, degrees clockwise from north.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub yaw_deg: f32,
     /// The bearing as an 8-point compass word, such as "south-east".
     pub facing: String,
     /// Tilt, degrees (negative looks down).
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub pitch_deg: f32,
 }
 
@@ -898,15 +876,19 @@ pub struct SuggestionOut {
     pub model: String,
     /// Where it goes, `[x, z]` metres (x east, z south of the origin): in
     /// front of a house front.
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub at: [f32; 2],
     /// Mount height above the ground, metres.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub height_m: f32,
     pub aim: AimOut,
     /// The building whose wall it goes on, by index (never an address).
     pub building: u32,
     /// What it adds: m² of the goal, or targets newly not ruled out.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub gain: f32,
     /// The goal's total with it and the ones before it.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub total_after: f32,
     /// Its id in the returned scene, when applied.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -925,10 +907,13 @@ pub struct SuggestOut {
     /// "m²" or "targets".
     pub unit: String,
     /// The goal's total with the cameras already in the scene.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub before: f32,
     /// ... and with the suggestions added.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub after: f32,
     /// The most there is: m² of the goal's ground, or the number of targets.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub out_of: f32,
     /// Best first; empty when nothing found adds anything.
     pub suggestions: Vec<SuggestionOut>,
@@ -962,7 +947,7 @@ struct Mount {
 /// with the model's typical tilt and 10° either side, and at the goal's
 /// focus when it lies in front of the wall.
 fn wall_aims(wall: &WallMount, eye: Vec3, m: &CameraModel, focus: Option<Vec3>) -> Vec<Aim> {
-    let out = bearing(wall.normal);
+    let out = direction_deg(wall.normal.to_array());
     let p0 = m.kind.default_pitch_deg();
     let pitches = [p0 - 10.0, p0, (p0 + 10.0).min(0.0)];
     let mut aims = Vec::new();
@@ -978,7 +963,7 @@ fn wall_aims(wall: &WallMount, eye: Vec3, m: &CameraModel, focus: Option<Vec3>) 
     let street_yaw = wall.street_yaw_deg().round();
     aims.push(Aim::new(street_yaw, p0));
     if let Some(a) = focus.and_then(|f| Aim::at(eye, f))
-        && turn(a.yaw, out).abs() < 85.0
+        && angle_between(a.yaw, out) < 85.0
     {
         aims.push(a);
     }
@@ -1376,12 +1361,15 @@ fn capitalise(s: &str) -> String {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PoseOut {
     /// `[x, z]` metres (x east, z south of the origin).
+    #[serde(serialize_with = "crate::geometry::widened::array")]
     pub at: [f32; 2],
     /// Mount height above the ground, metres.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub height_m: f32,
     pub aim: AimOut,
     /// The goal's total for the whole scene with the camera so: m² or
     /// targets not ruled out.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub total: f32,
 }
 
@@ -1397,8 +1385,10 @@ pub struct OptimiseOut {
     pub before: PoseOut,
     pub after: PoseOut,
     /// `after.total - before.total`.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub gain: f32,
     /// How far the camera moved along its wall, metres.
+    #[serde(serialize_with = "crate::geometry::widened::one")]
     pub moved_m: f32,
     /// Whether the search found a pose better for the goal than the current
     /// one; when false, the current pose is kept and nothing is applied.
@@ -1406,6 +1396,7 @@ pub struct OptimiseOut {
     /// For `targets`: the change in street not ruled out for the whole
     /// scene, m² (the tie-break between aims that open the same targets).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "crate::geometry::widened::option")]
     pub street_change_m2: Option<f32>,
     /// What was searched.
     pub searched: String,
@@ -1496,7 +1487,7 @@ pub fn optimise(
         .cameras
         .iter()
         .find(|c| c.id == camera_id)
-        .ok_or(ToolError::NoCamera(camera_id))?;
+        .ok_or_else(|| ToolError::no_camera(&p.scene, camera_id))?;
     if !cam.enabled {
         return Err(ToolError::invalid(format!(
             "camera {camera_id} is disabled: enable it with update_camera first"
@@ -1720,6 +1711,7 @@ pub struct CoverOut {
     /// For `re_aim`: the change in street not ruled out for the whole
     /// scene at the level by day, m² (negative: the re-aim gives some up).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "crate::geometry::widened::option")]
     pub street_change_m2: Option<f32>,
     /// For `re_aim`: other targets that only this camera leaves not ruled
     /// out and the new aim would rule out. A re-aim that loses any is never
@@ -1972,7 +1964,7 @@ pub fn cover(scene: &Value, target: &TargetRef, apply: bool) -> Result<CoverOut,
             aim,
             lost,
             change,
-            turn: turn(aim.yaw, pl.yaw_deg).abs(),
+            turn: angle_between(aim.yaw, pl.yaw_deg),
         };
         if best.as_ref().is_none_or(|b| candidate.beats(b)) {
             best = Some(candidate);
@@ -2248,7 +2240,7 @@ pub struct CoverArgs {
 #[tool_router(router = goal_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Suggest where to mount new cameras (1 to 4) on house fronts for a goal: street (most extra street not ruled out), targets, area or gaps. Returns each camera's model, [x, z], height, aim and gain, best first; apply=true adds them and returns the scene. Estimates: pass on the notes and caveats.",
+        description = "Suggest where to mount 1 to 4 new cameras on house fronts for a goal: street (the default), targets, area or gaps. Returns each camera's model, position, height, aim and gain, best first; apply=true adds them.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub(crate) async fn suggest_placement(

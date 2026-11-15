@@ -45,7 +45,8 @@ fn rect(c: [f32; 2], half: f32) -> Vec<[f32; 2]> {
 
 /// The point inside the largest gap in `s`'s street: a spot on the street.
 fn on_street(s: &SceneFile) -> [f32; 2] {
-    gaps(&value(s), None, None, Some(1), None).unwrap().gaps[0].inside
+    let [x, z] = gaps(&value(s), None, None, Some(1), None).unwrap().gaps[0].inside;
+    [x as f32, z as f32]
 }
 
 fn with_target(mut s: SceneFile, name: &str, at: [f32; 2]) -> (SceneFile, u32) {
@@ -101,8 +102,8 @@ fn compass_words() {
     assert_eq!(compass(200.0), "south");
     assert_eq!(compass(-90.0), "west");
     assert_eq!(compass(337.6), "north");
-    assert_eq!(turn(10.0, 350.0), 20.0);
-    assert_eq!(turn(350.0, 10.0), -20.0);
+    assert_eq!(angle_between(10.0, 350.0), 20.0);
+    assert_eq!(angle_between(350.0, 10.0), 20.0);
 }
 
 #[test]
@@ -166,7 +167,10 @@ fn applied_suggestions_are_the_cameras_suggested() {
     let before = gaps(&s, None, None, None, None).unwrap();
     let after = gaps(out.scene.as_ref().unwrap(), None, None, None, None).unwrap();
     let gained = before.unseen_street_m2 - after.unseen_street_m2;
-    assert!((gained - (out.after - out.before)).abs() < 0.5, "{gained}");
+    assert!(
+        (gained - f64::from(out.after - out.before)).abs() < 0.5,
+        "{gained}"
+    );
     assert!(out.summary.contains("Added as camera(s) 2, 3"));
 }
 
@@ -311,7 +315,7 @@ fn a_camera_turned_to_its_wall_is_turned_back() {
     assert!(out.after.total > 10.0, "{}", out.summary);
     assert_eq!(out.gain, r1(out.after.total - out.before.total));
     assert_eq!(out.moved_m, 0.0);
-    assert!(turn(out.after.aim.yaw_deg, good.yaw_deg).abs() <= 95.0);
+    assert!(angle_between(out.after.aim.yaw_deg, good.yaw_deg) <= 95.0);
     let edited = edit::parse(out.scene.as_ref().unwrap()).unwrap();
     assert!((edited.cameras[0].yaw_deg - out.after.aim.yaw_deg).abs() < 0.06);
     no_addresses(&out);

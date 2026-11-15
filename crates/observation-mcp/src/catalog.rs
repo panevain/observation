@@ -48,5 +48,6 @@ mod tests {
         let cat = catalog().unwrap();
         assert!(cat.models.len() > 10, "{} models", cat.models.len());
         assert!(cat.models.iter().all(|m| !is_custom(&m.id)));
+        assert!(cat.get(crate::edit::DEFAULT_MODEL).is_some());
     }
 }

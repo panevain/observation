@@ -483,8 +483,8 @@ pub fn document(m: &MapModel, g: &Grid, out: &RenderOut, with_grid: bool) -> Str
             s,
             "Coverage {} ({} px/m), for people tested {} m above the ground.",
             settings_words(m),
-            short_metres(c.ppm.round()),
-            short_metres(c.subject_height_m)
+            short_metres(c.ppm.round() as f32),
+            short_metres(c.subject_height_m as f32)
         );
     }
     if with_grid {
