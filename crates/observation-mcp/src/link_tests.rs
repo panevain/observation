@@ -810,3 +810,130 @@ async fn a_working_scene_is_proposed_by_id() {
     let e = failed(&call(&mcp, "propose_changes", unknown).await);
     assert!(e.contains("no scene s4"), "{e}");
 }
+
+async fn wait_change(
+    mcp: &ObservationMcp,
+    since: Option<u64>,
+    timeout_s: u64,
+) -> crate::app::AppChange {
+    mcp.wait_for_app_change(Parameters(crate::app::WaitChangeArgs {
+        since,
+        timeout_s: Some(timeout_s),
+    }))
+    .await
+    .map(|Json(out)| out)
+    .unwrap()
+}
+
+async fn wait_decision(
+    mcp: &ObservationMcp,
+    id: u64,
+    timeout_s: u64,
+) -> crate::propose::ProposalStatusOut {
+    mcp.wait_for_decision(Parameters(crate::propose::WaitDecisionArgs {
+        id,
+        timeout_s: Some(timeout_s),
+    }))
+    .await
+    .map(|Json(out)| out)
+    .unwrap()
+}
+
+/// The wait tools follow the link's long poll: one hears what the user
+/// changes, the other the user's decision on a proposal.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_waits_for_the_user() {
+    let app = bridge_app(FakeHttp::new());
+    let base = serve(&app).await;
+    let browser = Arc::new(Browser::open(&base).await);
+    let mcp = ObservationMcp::new();
+    let e = mcp
+        .wait_for_app_change(Parameters(crate::app::WaitChangeArgs {
+            since: None,
+            timeout_s: None,
+        }))
+        .await
+        .map(drop)
+        .unwrap_err();
+    assert!(e.contains("connect_app"), "{e}");
+    connect(&mcp, &base, &browser.code).await.unwrap();
+    let Json(placed) = mcp
+        .add_example_cameras(Parameters(ExampleArgs {
+            scene: demo_scene(),
+            count: 2,
+            model_ids: Vec::new(),
+        }))
+        .unwrap();
+    let ids = placed.camera_ids.unwrap();
+    let shared = json!({"scene": placed.scene, "area": {"kind": "demo"}, "selection": []});
+    let first = browser.share(shared.clone()).await;
+
+    // Nothing more happens: the wait ends at its timeout.
+    let quiet = wait_change(&mcp, Some(first), 1).await;
+    assert!(!quiet.changed, "{quiet:?}");
+    assert_eq!(quiet.revision, first);
+
+    // The user selects a camera and shares a point while the agent waits.
+    let user = Arc::clone(&browser);
+    let mut later = shared.clone();
+    later["selection"] = json!([ids[0]]);
+    later["pinned"] = json!({"x": 4.25, "z": -6.0, "seq": 1});
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        user.share(later).await;
+    });
+    let heard = wait_change(&mcp, Some(first), 10).await;
+    assert!(heard.changed, "{heard:?}");
+    assert_eq!(heard.revision, first + 1);
+    assert!(
+        heard
+            .changes
+            .contains(&format!("the user selected camera {}", ids[0])),
+        "{heard:?}"
+    );
+    assert!(
+        heard
+            .changes
+            .contains(&"the user shared the point [4.3, -6]".to_owned())
+            || heard
+                .changes
+                .contains(&"the user shared the point [4.2, -6]".to_owned()),
+        "{heard:?}"
+    );
+    // Asked about a revision already past, it answers at once with the state.
+    let past = wait_change(&mcp, Some(first), 10).await;
+    assert!(
+        past.changed && past.summary.contains("after revision"),
+        "{past:?}"
+    );
+
+    // A proposal: still pending at the deadline, then the user's decision.
+    let Json(edited) = mcp
+        .remove_camera(Parameters(CameraArgs {
+            scene: shared["scene"].clone(),
+            id: ids[1],
+        }))
+        .unwrap();
+    let proposed = propose(&mcp, &edited.scene, "Remove the second camera")
+        .await
+        .unwrap();
+    let pending = wait_decision(&mcp, proposed.id, 1).await;
+    assert_eq!(pending.status, "pending");
+    assert!(
+        pending.meaning.contains("Still pending after 1 s"),
+        "{pending:?}"
+    );
+    let user = Arc::clone(&browser);
+    let id = proposed.id;
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        user.decide(id, "accepted", None).await;
+    });
+    let decided = wait_decision(&mcp, proposed.id, 10).await;
+    assert_eq!(decided.status, "accepted", "{decided:?}");
+    // Decided already: it answers at once.
+    assert_eq!(
+        wait_decision(&mcp, proposed.id, 10).await.status,
+        "accepted"
+    );
+}

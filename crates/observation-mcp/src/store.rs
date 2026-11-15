@@ -914,7 +914,7 @@ fn line(id: SceneId, version: u32, scene: &Value) -> String {
 
 /// The changes from `from` to `to`, in plain lines (at most [`MAX_LINES`]),
 /// and how many there are; `None` if they are on different areas.
-fn change_lines(from: &SceneFile, to: &SceneFile) -> Option<(Vec<String>, usize)> {
+pub(crate) fn change_lines(from: &SceneFile, to: &SceneFile) -> Option<(Vec<String>, usize)> {
     let changes = ChangeSet::between(from, to).ok()?;
     let mut lines = changes.lines(&|id| model_name(from, to, id));
     let total = lines.len();

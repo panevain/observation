@@ -41,10 +41,18 @@ pub struct ProposalIdArgs {
     pub id: u64,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WaitDecisionArgs {
+    /// The proposal's id, as propose_changes returned it.
+    pub id: u64,
+    /// Seconds to wait, 1 to 25 (default 20).
+    pub timeout_s: Option<u64>,
+}
+
 /// A proposal just sent.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Proposed {
-    /// The proposal's id, for get_proposal and withdraw_proposal.
+    /// The proposal's id, for wait_for_decision.
     pub id: u64,
     /// "pending": the user has not decided yet.
     pub status: String,
@@ -186,6 +194,24 @@ impl ObservationMcp {
     }
 
     #[tool(
+        description = "Wait up to timeout_s seconds (at most 25) for the user to accept or reject a proposal. Returns its status once the user decides, or still pending.",
+        annotations(
+            read_only_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub(crate) async fn wait_for_decision(
+        &self,
+        Parameters(a): Parameters<WaitDecisionArgs>,
+    ) -> Result<Json<ProposalStatusOut>, String> {
+        wait_decision(self, a)
+            .await
+            .map(Json)
+            .map_err(|e| e.to_string())
+    }
+
+    #[tool(
         description = "Withdraw a proposal the user has not decided yet; the app stops offering it.",
         annotations(
             read_only_hint = false,
@@ -238,6 +264,53 @@ async fn propose(mcp: &ObservationMcp, a: ProposeArgs) -> Result<Proposed, ToolE
                check with get_proposal (or the observation://app/state resource)."
             .to_owned(),
     })
+}
+
+/// Waits for proposal `id` to leave pending, through the link's long poll
+/// on the app's state; its status then, or still pending at the deadline.
+async fn wait_decision(
+    mcp: &ObservationMcp,
+    a: WaitDecisionArgs,
+) -> Result<ProposalStatusOut, ToolError> {
+    let mut changes = mcp.link.subscribe();
+    changes.borrow_and_update();
+    let first = status(mcp, a.id).await?;
+    if first.status != "pending" {
+        return Ok(first);
+    }
+    let wait = crate::app::wait_for(a.timeout_s);
+    let found = |s: &crate::link::Snapshot| {
+        s.view
+            .iter()
+            .flat_map(|v| &v.proposals)
+            .find(|o| o.id == a.id)
+            .map(ProposalStatusOut::of)
+    };
+    let decided = tokio::time::timeout(wait, async {
+        loop {
+            if changes.changed().await.is_err() {
+                return None;
+            }
+            let s = mcp.link.snapshot();
+            s.server.as_ref()?;
+            if let Some(out) = found(&s).filter(|o| o.status != "pending") {
+                return Some(out);
+            }
+        }
+    })
+    .await;
+    match decided {
+        Ok(Some(out)) => Ok(out),
+        Ok(None) if !mcp.link.is_connected() => Err(ToolError::NotConnected),
+        _ => Ok(ProposalStatusOut {
+            meaning: format!(
+                "Still pending after {} s: the user has not decided, and nothing has changed in \
+                 their scene. Call wait_for_decision again, or tell the user it is waiting.",
+                wait.as_secs()
+            ),
+            ..first
+        }),
+    }
 }
 
 async fn status(mcp: &ObservationMcp, id: u64) -> Result<ProposalStatusOut, ToolError> {
