@@ -49,6 +49,10 @@ criteria = "safe-to-deploy"
 version = "0.4.51"
 criteria = "safe-to-deploy"
 
+[[exemptions.async-trait]]
+version = "0.1.92"
+criteria = "safe-to-deploy"
+
 [[exemptions.autocfg]]
 version = "1.5.1"
 criteria = "safe-to-deploy"
@@ -671,6 +675,10 @@ criteria = "safe-to-deploy"
 version = "0.6.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.sse-stream]]
+version = "0.2.6"
+criteria = "safe-to-deploy"
+
 [[exemptions.stable_deref_trait]]
 version = "1.2.1"
 criteria = "safe-to-deploy"
@@ -713,6 +721,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tokio-rustls]]
 version = "0.26.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.tokio-stream]]
+version = "0.1.19"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio-util]]

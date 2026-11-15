@@ -53,7 +53,8 @@ In scope:
 - The optional `observation-regions` agent and its image, including region
   imports, the admin token on region management and the agent token.
 - The `observation-mcp` server and its image: its handling of the messages and
-  scene files an MCP client sends.
+  scene files an MCP client sends, and over HTTP its bearer-token
+  authentication and `Host` and `Origin` checks.
 - The WebAssembly client served by that server.
 - The container image and the build and release pipeline in this repository.
 

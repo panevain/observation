@@ -1,4 +1,5 @@
-//! An MCP server for Observation (spec 2026-07-28, through `rmcp`).
+//! An MCP server for Observation (spec 2026-07-28, through `rmcp`), over
+//! stdio or Streamable HTTP.
 //!
 //! It gives an AI agent the camera catalogue, editing of scene files, and
 //! coverage figures, all computed in process with `observation-core` and
@@ -25,6 +26,10 @@
 //! | [`places`] | labelled areas and targets, and the tools that edit them |
 //! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
 //! | [`server`] | the MCP tools, resources and prompts |
+//! | [`http`] | the Streamable HTTP transport and its bearer-token authentication |
+//!
+//! The binary serves over stdio, or over HTTP when `OBS_MCP_LISTEN` or
+//! `--http` gives an address.
 
 pub mod app;
 pub mod area;
@@ -32,6 +37,7 @@ pub mod catalog;
 pub mod edit;
 pub mod error;
 pub mod figures;
+pub mod http;
 pub mod link;
 pub mod places;
 pub mod propose;

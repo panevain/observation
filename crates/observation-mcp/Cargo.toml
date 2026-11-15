@@ -19,9 +19,10 @@ observation-mapdata.workspace = true
 observation-agent-api.workspace = true
 observation-upstream.workspace = true
 http = "1"
-# The server side of MCP over stdio, for spec 2026-07-28. Never enable `auth` or any `reqwest*`
-# feature: they pull reqwest, which deny.toml allows only in observation-upstream.
-rmcp = { version = "3.9", default-features = false, features = ["server", "macros", "transport-io"] }
+# The server side of MCP over stdio and Streamable HTTP, for spec 2026-07-28. Never enable
+# `auth` or any `reqwest*` feature: they pull reqwest, which deny.toml allows only in
+# observation-upstream. Bearer tokens are checked here (`http::auth`) instead.
+rmcp = { version = "3.9", default-features = false, features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
@@ -29,12 +30,20 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# HTTP transport.
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+# `cors` answers browsers' preflights for OBS_MCP_ALLOWED_ORIGINS.
+tower-http = { workspace = true, features = ["cors"] }
+tokio-util = "0.7"
+# Constant-time comparison of bearer tokens.
+subtle = "2.6"
 
 [dev-dependencies]
+http-body-util = "0.1"
 # The connection tests run against the real server's agent bridge, on loopback.
 observation-server = { path = "../observation-server", features = ["testing"] }
 observation-upstream = { workspace = true, features = ["testing"] }
-axum.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
