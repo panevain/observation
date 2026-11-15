@@ -210,6 +210,32 @@ impl Probe {
         Self { samples }
     }
 
+    /// The points a camera at `eye` has a clear line to within `range`,
+    /// whichever way it faces: not under a building, not on the far side of
+    /// their wall, and clear of buildings and of the ground. A view cone from
+    /// `eye` that reaches no further than `range` leaves the place not ruled
+    /// out exactly when it contains one of them (as [`Reach::verdict`] at the
+    /// cone's range finds), so a caller trying many aims from one eye tests
+    /// each line of sight once.
+    pub fn clear_from(&self, layers: &StaticLayers, eye: Vec3, range: f32) -> Vec<Vec3> {
+        let r2 = range * range;
+        self.samples
+            .iter()
+            .filter(|s| {
+                // As `ViewCone::contains` and `Reach::of` compute it.
+                let behind_wall = s
+                    .normal
+                    .is_some_and(|n| (eye - (s.p - n * FACADE_OFFSET_M)).dot(n) <= 0.0);
+                (s.p - eye).length_squared() <= r2
+                    && !s.buried
+                    && !behind_wall
+                    && !layers.blocked_by_building(eye, s.p)
+                    && !layers.blocked_by_terrain(eye, s.p)
+            })
+            .map(|s| s.p)
+            .collect()
+    }
+
     /// How many points the place is tested at.
     pub fn len(&self) -> usize {
         self.samples.len()
