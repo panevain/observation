@@ -179,10 +179,185 @@ fn compass_words_round_to_the_nearest_point() {
     assert_eq!(compass_word(-90.0), "west");
     assert_eq!(compass_word(180.0), "south");
     assert_eq!(metres(-0.2), "0");
-    assert_eq!(camera_glyph(0), '1');
-    assert_eq!(camera_glyph(9), 'A');
-    assert!((0..40).map(camera_glyph).all(|g| g != TARGET));
-    assert_eq!(camera_glyph(100), '+');
+    assert_eq!(short_metres(-0.0), "0");
+    assert_eq!(short_metres(-25.5), "-25.5");
+    assert_eq!(short_metres(150.0), "150");
+}
+
+#[test]
+fn a_camera_glyph_is_its_id_where_it_can_be() {
+    assert_eq!(id_glyph(1), Some('1'));
+    assert_eq!(id_glyph(10), Some('A'));
+    assert_eq!(id_glyph(29), Some('U'), "T is left out");
+    assert_eq!(id_glyph(34), Some('Z'));
+    assert_eq!((id_glyph(0), id_glyph(35)), (None, None));
+    assert!((1..=40).filter_map(id_glyph).all(|g| g != TARGET));
+    // After a deletion the ids keep their glyphs.
+    assert_eq!(camera_glyphs(&[1, 3, 4]), ['1', '3', '4']);
+    // An id without a glyph takes the first one no id names.
+    assert_eq!(camera_glyphs(&[40, 1, 3]), ['2', '1', '3']);
+    // Repeated ids (which a checked scene never has) both fall back.
+    assert_eq!(camera_glyphs(&[2, 2]), ['1', '3']);
+    let many: Vec<u32> = (100..140).collect();
+    let g = camera_glyphs(&many);
+    assert_eq!((g[0], g[33], g[34]), ('1', 'Z', '+'));
+}
+
+#[test]
+fn after_a_deletion_each_camera_keeps_its_id_as_glyph() {
+    let mut s = edit::new_demo_scene().unwrap();
+    let m = fixed_model(&mut s);
+    for (k, x) in [-20.0, 0.0, 20.0].into_iter().enumerate() {
+        place(&mut s, &m, x, 8.0, 180.0, &format!("Cam {k}"));
+    }
+    edit::remove_camera(&mut s, 2).unwrap();
+    let mut a = args(edit::finish(&s).unwrap().1);
+    a.center = Some([0.0, 10.0]);
+    a.radius_m = Some(30.0);
+    let r = render(&a, None).unwrap();
+    let v = choose_view(area::extent(demo().unwrap()), a.center, a.radius_m).unwrap();
+    let (c, row) = v.cell_of([20.0, 8.0]).unwrap();
+    assert_eq!(glyph_at(&r.text, &r.out, c, row), Some('3'));
+    let all = grid_rows(&r.text, &r.out).concat();
+    assert!(all.contains('1') && !all.contains('2'));
+    let keys: Vec<(&str, u32)> = r
+        .out
+        .cameras
+        .iter()
+        .map(|k| (k.glyph.as_str(), k.camera_id))
+        .collect();
+    assert_eq!(keys, [("1", 1), ("3", 3)]);
+    assert!(
+        r.out
+            .legend
+            .iter()
+            .any(|e| e.glyph == "3" && e.meaning.starts_with("camera 3 "))
+    );
+}
+
+/// A model of `scene` on the demo street, drawn over `view`, with coverage.
+fn model_of<'a>(
+    scene: &'a SceneFile,
+    view: View,
+    show: Vec<Layer>,
+    layers: &'a StaticLayers,
+) -> MapModel<'a> {
+    let (cameras, areas, targets) = marks(scene, &[]);
+    MapModel {
+        view,
+        bundle: demo().unwrap(),
+        layers,
+        show,
+        seen: Some(vec![0; layers.grid().len()]),
+        params: scene.params,
+        cameras,
+        areas,
+        targets,
+        pinned: None,
+    }
+}
+
+#[test]
+fn far_off_huge_outlines_cost_only_what_is_shown() {
+    // 64 areas of 256 corners zigzagging 20 km either side of a 20 m view:
+    // sampled whole, that would be some 2e9 steps.
+    let mut s = edit::new_demo_scene().unwrap();
+    s.areas = (0..64)
+        .map(|id| LabelledArea {
+            id: id + 1,
+            label: None,
+            name: None,
+            points: (0..256)
+                .map(|k| {
+                    let side = if k % 2 == 0 { -2.0e4 } else { 2.0e4 };
+                    [side, -5.0e3 + k as f32 * 40.0 + id as f32]
+                })
+                .collect(),
+            enabled: true,
+        })
+        .collect();
+    let layers = crate::area::demo_layers().unwrap();
+    let view = choose_view(area::extent(demo().unwrap()), Some([0.0, 0.0]), Some(10.0)).unwrap();
+    let m = model_of(&s, view, Layer::ALL.to_vec(), layers);
+    let t = std::time::Instant::now();
+    let g = text::grid(&m);
+    let (canvas, _) = image::draw(&m);
+    assert!(t.elapsed().as_secs_f32() < 5.0, "{:?}", t.elapsed());
+    assert!(g.cells.iter().flatten().any(|&c| c == 'u'));
+    assert!(canvas.width > 0);
+}
+
+#[test]
+fn cells_without_map_data_have_their_own_glyph() {
+    let s = edit::new_demo_scene().unwrap();
+    let layers = crate::area::demo_layers().unwrap();
+    let (_, amax) = area::extent(demo().unwrap());
+    // A view straddling the area's east edge.
+    let view = View {
+        min: [amax[0] - 20.0, 0.0],
+        cell_m: 2.0,
+        columns: 40,
+        rows: 10,
+    };
+    let m = model_of(&s, view, Layer::ALL.to_vec(), layers);
+    let g = text::grid(&m);
+    assert_eq!(g.cells[0][39], NO_DATA);
+    assert_ne!(g.cells[0][0], NO_DATA);
+    let legend = text::legend(&m, &g);
+    assert!(
+        legend
+            .iter()
+            .any(|e| e.glyph == "~" && e.meaning.contains("outside the area's map data"))
+    );
+}
+
+#[test]
+fn a_ground_target_sits_inside_its_outline_and_an_empty_one_is_skipped() {
+    let mut s = edit::new_demo_scene().unwrap();
+    // A U whose vertex mean and area centroid both fall in its notch.
+    let u = vec![
+        [0.0, 0.0],
+        [10.0, 0.0],
+        [10.0, 10.0],
+        [7.0, 10.0],
+        [7.0, 2.0],
+        [3.0, 2.0],
+        [3.0, 10.0],
+        [0.0, 10.0],
+    ];
+    s.targets = vec![
+        Target {
+            id: 1,
+            name: "U".into(),
+            at: TargetPlace::Ground { points: u.clone() },
+        },
+        Target {
+            id: 2,
+            name: "Nothing".into(),
+            at: TargetPlace::Ground { points: vec![] },
+        },
+    ];
+    let (_, _, targets) = marks(&s, &[]);
+    assert_eq!(targets.len(), 1);
+    let p = targets[0].at;
+    let in_arm = (0.0..=3.0).contains(&p[0]) || (7.0..=10.0).contains(&p[0]);
+    assert!(in_arm && (0.0..=10.0).contains(&p[1]), "{p:?}");
+}
+
+#[test]
+fn with_streets_hidden_the_ground_glyphs_say_the_street_is_included() {
+    let mut a = args(street_scene());
+    a.center = Some([0.0, 10.0]);
+    a.radius_m = Some(30.0);
+    a.layers = Some(vec![Layer::Buildings, Layer::Cameras]);
+    let r = render(&a, None).unwrap();
+    let seen = r.out.legend.iter().find(|e| e.glyph == ",").unwrap();
+    assert!(seen.meaning.contains("streets hidden"), "{}", seen.meaning);
+    let open = r.out.legend.iter().find(|e| e.glyph == "(space)").unwrap();
+    assert!(
+        open.meaning
+            .contains("mostly ruled out for every enabled camera")
+    );
 }
 
 #[test]

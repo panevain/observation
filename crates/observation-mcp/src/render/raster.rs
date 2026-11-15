@@ -3,6 +3,7 @@
 //! font, and PNG encoding. Hand-written so that the server needs no 2D
 //! graphics library for one picture of flat shapes.
 
+use super::geom::clip_segment;
 use observation_tokens::Rgba;
 
 /// An RGB image, row by row from the top left.
@@ -84,10 +85,23 @@ impl Canvas {
         }
     }
 
+    /// The part of `a`–`b` within `margin` pixels of the canvas, if any:
+    /// what is drawn costs no more for a segment that runs far off it.
+    fn clip(&self, a: [f32; 2], b: [f32; 2], margin: f32) -> Option<([f32; 2], [f32; 2])> {
+        let lo = [-margin, -margin];
+        let hi = [self.width as f32 + margin, self.height as f32 + margin];
+        clip_segment(a, b, lo, hi)
+    }
+
     /// A line `width` pixels wide from `a` to `b` (pixel coordinates), with
     /// round ends: every pixel whose centre lies within `width / 2` of it.
+    /// Only the part on the canvas is visited, and on each row only the
+    /// pixels near the line.
     pub fn line(&mut self, a: [f32; 2], b: [f32; 2], width: f32, c: Rgba) {
         let r = width / 2.0;
+        let Some((a, b)) = self.clip(a, b, r + 1.0) else {
+            return;
+        };
         let x0 = (a[0].min(b[0]) - r).floor().max(0.0) as i64;
         let x1 = ((a[0].max(b[0]) + r).ceil() as i64).min(i64::from(self.width) - 1);
         let y0 = (a[1].min(b[1]) - r).floor().max(0.0) as i64;
@@ -95,8 +109,18 @@ impl Canvas {
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
         let len2 = dx * dx + dy * dy;
         for y in y0..=y1 {
-            for x in x0..=x1 {
-                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let py = y as f32 + 0.5;
+            let (mut xa, mut xb) = (x0, x1);
+            if dy.abs() > 1e-3 {
+                // A pixel within r of the segment is within r * len / |dy|
+                // of the centre line along the row.
+                let xc = a[0] + (py - a[1]) * dx / dy;
+                let half = r * len2.sqrt() / dy.abs() + 1.0;
+                xa = xa.max((xc - half).floor() as i64);
+                xb = xb.min((xc + half).ceil() as i64);
+            }
+            for x in xa..=xb {
+                let px = x as f32 + 0.5;
                 let t = if len2 > 0.0 {
                     (((px - a[0]) * dx + (py - a[1]) * dy) / len2).clamp(0.0, 1.0)
                 } else {
@@ -110,8 +134,12 @@ impl Canvas {
         }
     }
 
-    /// A dashed line: `dash` pixels drawn, then `dash` left out.
+    /// A dashed line: `dash` pixels drawn, then `dash` left out, over the
+    /// part of it on the canvas.
     pub fn dashed_line(&mut self, a: [f32; 2], b: [f32; 2], width: f32, dash: f32, c: Rgba) {
+        let Some((a, b)) = self.clip(a, b, width + 1.0) else {
+            return;
+        };
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
         let len = (dx * dx + dy * dy).sqrt();
         if len <= 0.0 || dash <= 0.0 {
@@ -173,8 +201,7 @@ impl Canvas {
             enc.set_depth(png::BitDepth::Eight);
             enc.set_compression(png::Compression::Balanced);
             let mut writer = enc.write_header()?;
-            let data: Vec<u8> = self.px.iter().flatten().copied().collect();
-            writer.write_image_data(&data)?;
+            writer.write_image_data(self.px.as_flattened())?;
             writer.finish()?;
         }
         Ok(out)

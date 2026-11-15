@@ -6,11 +6,13 @@
 //! of a round size, at most [`MAX_COLUMNS`] × [`MAX_ROWS`]), the area's
 //! ground raster (buildings and the mapped street, as the coverage figures
 //! count them), how many enabled cameras do not rule out each ground cell
-//! (from [`seen_ground`], the line-of-sight pass `find_gaps` uses), and the
+//! (the line-of-sight pass of `footage::seen_ground`, which `find_gaps`
+//! uses, counted per camera), and the
 //! scene's cameras, labelled areas, targets and the point the user shared.
 //! Buildings are drawn without a name or number: they are never named by
 //! address.
 
+mod geom;
 mod image;
 mod raster;
 mod text;
@@ -20,7 +22,7 @@ mod tests;
 
 use crate::ToolError;
 use crate::area::{self, bundle_for, check_inside, layers_for};
-use crate::catalog::{catalog, model};
+use crate::catalog::catalog;
 use crate::edit::{self, Dori, Light};
 use crate::queries::{Settings, off_runtime, skipped, with_overrides};
 use crate::schema::JsonObject;
@@ -28,7 +30,8 @@ use crate::server::{ObservationMcp, SkippedOut};
 use base64::Engine as _;
 use observation_core::bundle::AreaBundle;
 use observation_core::coverage::{CoverageParams, StaticLayers};
-use observation_core::footage::{AreaLabel, FootageCamera, TargetPlace, seen_ground};
+use observation_core::footage::{AreaLabel, FootageCamera, TargetPlace};
+use observation_core::frustum::ViewCone;
 use observation_core::provenance::{CAVEATS_SUMMARY, format_date};
 use observation_core::scene::{AreaRef, SceneFile};
 use rmcp::handler::server::common::schema_for_output;
@@ -61,9 +64,10 @@ const CELL_SIZES_M: [f32; 25] = [
 pub const TICK_CELLS: usize = 10;
 /// The picture's longer side, pixels.
 pub const IMAGE_LONG_SIDE_PX: u32 = 1024;
-/// Camera glyphs in camera order. `T` is left out: it marks targets.
+/// Camera glyphs: camera id 1 is `1`, id 10 is `A`, and so on to id 34,
+/// `Z`. `T` is left out: it marks targets.
 const CAMERA_GLYPHS: &[u8] = b"123456789ABCDEFGHIJKLMNOPQRSUVWXYZ";
-/// The glyph of every camera after the first [`CAMERA_GLYPHS`]`.len()`.
+/// The glyph of every camera once the glyphs run out.
 const MORE_CAMERAS_GLYPH: char = '+';
 
 pub const BUILDING: char = '#';
@@ -72,6 +76,8 @@ pub const STREET_SEEN: char = '.';
 pub const GROUND_SEEN: char = ',';
 pub const TARGET: char = 'T';
 pub const PINNED: char = '@';
+/// A cell with no map data: beyond the area's ground raster.
+pub const NO_DATA: char = '~';
 
 /// The grid a map is drawn on: `columns` × `rows` square cells of `cell_m`
 /// metres, the first with its north-west corner at `min`. Columns run east
@@ -224,7 +230,7 @@ pub struct CameraMark {
     pub at: [f32; 2],
     pub yaw_deg: f32,
     /// Why coverage leaves it out, if it does.
-    pub not_counted: Option<&'static str>,
+    pub not_counted: Option<String>,
 }
 
 /// A labelled area as the map outlines it.
@@ -272,11 +278,30 @@ impl MapModel<'_> {
     }
 }
 
-/// The glyph of the camera at `index` in the scene's order.
-pub fn camera_glyph(index: usize) -> char {
-    CAMERA_GLYPHS
-        .get(index)
-        .map_or(MORE_CAMERAS_GLYPH, |&b| char::from(b))
+/// The glyph that is camera id `id` itself: `1` to `9`, then `A` (10) to
+/// `Z` (34) without `T`.
+pub fn id_glyph(id: u32) -> Option<char> {
+    let k = usize::try_from(id.checked_sub(1)?).ok()?;
+    CAMERA_GLYPHS.get(k).map(|&b| char::from(b))
+}
+
+/// The glyphs of cameras with ids `ids`, in order. A camera whose id has a
+/// glyph of its own ([`id_glyph`]) and is not repeated gets that glyph, so
+/// after a deletion (ids 1, 3, 4) camera 3 is still `3`; any other camera
+/// takes the first glyph no camera's id names, and `+` once they run out.
+pub fn camera_glyphs(ids: &[u32]) -> Vec<char> {
+    let unique = |id: u32| ids.iter().filter(|&&o| o == id).count() == 1;
+    let own: Vec<Option<char>> = ids
+        .iter()
+        .map(|&id| id_glyph(id).filter(|_| unique(id)))
+        .collect();
+    let mut free = CAMERA_GLYPHS
+        .iter()
+        .map(|&b| char::from(b))
+        .filter(|g| !ids.iter().any(|&id| id_glyph(id) == Some(*g)));
+    own.into_iter()
+        .map(|g| g.unwrap_or_else(|| free.next().unwrap_or(MORE_CAMERAS_GLYPH)))
+        .collect()
 }
 
 /// The outline glyph of an area with `label`: lower case, apart from the
@@ -328,9 +353,12 @@ pub fn metres(v: f32) -> String {
     }
 }
 
-/// A cell size or other short length, as "4" or "2.5".
+/// A length or coordinate as short as it is exact, as "4" or "-2.5",
+/// without a "-0".
 pub fn short_metres(v: f32) -> String {
-    if v.fract() == 0.0 {
+    if v == 0.0 {
+        "0".to_owned()
+    } else if v.fract() == 0.0 {
         format!("{v:.0}")
     } else {
         format!("{v}")
@@ -338,13 +366,31 @@ pub fn short_metres(v: f32) -> String {
 }
 
 /// How many cameras in `cams` do not rule out each ground cell, at the level
-/// and lighting `params` select: one [`seen_ground`] pass per camera.
-fn seen_counts(layers: &StaticLayers, params: &CoverageParams, cams: &[FootageCamera]) -> Vec<u8> {
+/// and lighting `params` select: the visibility pass of
+/// `footage::seen_ground` (so the map agrees with `find_gaps`), counted
+/// straight from each camera's visible cells. A camera whose range cannot
+/// reach `view` is skipped, since none of what it sees would be drawn.
+fn seen_counts(
+    layers: &StaticLayers,
+    params: &CoverageParams,
+    cams: &[FootageCamera],
+    view: &View,
+) -> Vec<u8> {
     let mut counts = vec![0u8; layers.grid().len()];
-    for c in cams {
-        let seen = seen_ground(layers, params, std::slice::from_ref(c));
-        for (n, s) in counts.iter_mut().zip(seen) {
-            if s {
+    let (lo, hi) = (view.min, view.max());
+    for c in cams.iter().filter(|c| c.placement.enabled) {
+        let range = c
+            .model
+            .effective_range_m(params.pixels_per_metre(), params.lighting);
+        let p = c.placement.position;
+        let dx = (lo[0] - p[0]).max(p[0] - hi[0]).max(0.0);
+        let dz = (lo[1] - p[2]).max(p[2] - hi[1]).max(0.0);
+        if dx.hypot(dz) > range {
+            continue;
+        }
+        let cone = ViewCone::new(c.placement, c.model, range);
+        for &i in &layers.visibility(&cone, params.subject_height_m).ground {
+            if let Some(n) = counts.get_mut(i as usize) {
                 *n = n.saturating_add(1);
             }
         }
@@ -352,25 +398,27 @@ fn seen_counts(layers: &StaticLayers, params: &CoverageParams, cams: &[FootageCa
     counts
 }
 
-fn marks(scene: &SceneFile) -> (Vec<CameraMark>, Vec<AreaMark>, Vec<TargetMark>) {
-    let cat = catalog().ok();
+/// The scene's cameras, areas and targets as the map marks them. `skipped`
+/// says which cameras coverage leaves out, and why.
+fn marks(
+    scene: &SceneFile,
+    skipped: &[SkippedOut],
+) -> (Vec<CameraMark>, Vec<AreaMark>, Vec<TargetMark>) {
+    let ids: Vec<u32> = scene.cameras.iter().map(|c| c.id).collect();
     let cameras = scene
         .cameras
         .iter()
-        .enumerate()
-        .map(|(k, c)| CameraMark {
-            glyph: camera_glyph(k),
+        .zip(camera_glyphs(&ids))
+        .map(|(c, glyph)| CameraMark {
+            glyph,
             id: c.id,
             label: c.label.clone(),
             at: [c.position[0], c.position[2]],
             yaw_deg: c.yaw_deg,
-            not_counted: if !c.enabled {
-                Some("disabled")
-            } else if cat.is_none_or(|cat| model(cat, Some(scene), &c.model_id).is_none()) {
-                Some("unknown model")
-            } else {
-                None
-            },
+            not_counted: skipped
+                .iter()
+                .find(|s| s.id == c.id)
+                .map(|s| s.reason.clone()),
         })
         .collect();
     let areas = scene
@@ -390,19 +438,16 @@ fn marks(scene: &SceneFile) -> (Vec<CameraMark>, Vec<AreaMark>, Vec<TargetMark>)
     let targets = scene
         .targets
         .iter()
-        .map(|t| TargetMark {
-            id: t.id,
-            name: t.name.clone(),
-            at: match &t.at {
-                TargetPlace::Ground { points } => {
-                    let n = points.len().max(1) as f32;
-                    let (sx, sz) = points
-                        .iter()
-                        .fold((0.0, 0.0), |(x, z), p| (x + p[0], z + p[1]));
-                    [sx / n, sz / n]
-                }
+        .filter_map(|t| {
+            let at = match &t.at {
+                TargetPlace::Ground { points } => geom::inside_point(points)?,
                 TargetPlace::Wall { point, .. } => [point[0], point[2]],
-            },
+            };
+            Some(TargetMark {
+                id: t.id,
+                name: t.name.clone(),
+                at,
+            })
         })
         .collect();
     (cameras, areas, targets)
@@ -529,9 +574,10 @@ pub fn render(
     let layers = layers_for(&s)?;
     let params = with_overrides(s.params, a.dori, a.lighting);
     let coverage = a.coverage.unwrap_or(true);
-    let seen = coverage.then(|| seen_counts(&layers, &params, &s.footage_cameras(cat)));
+    let seen = coverage.then(|| seen_counts(&layers, &params, &s.footage_cameras(cat), &view));
     let show = a.layers.clone().unwrap_or_else(|| Layer::ALL.to_vec());
-    let (cameras, areas, targets) = marks(&s);
+    let not_counted = skipped(&s, cat);
+    let (cameras, areas, targets) = marks(&s, &not_counted);
     let model = MapModel {
         view,
         bundle: &bundle,
@@ -556,11 +602,7 @@ pub fn render(
         legend: text::legend(&model, &grid),
         cameras: text::camera_keys(&model, &grid),
         coverage: coverage.then(|| Settings::of(&params)),
-        cameras_skipped: if coverage {
-            skipped(&s, cat)
-        } else {
-            Vec::new()
-        },
+        cameras_skipped: if coverage { not_counted } else { Vec::new() },
         osm_data_as_of: bundle.osm_base_unix.map(format_date),
         caveats_summary: coverage.then(|| CAVEATS_SUMMARY.to_owned()),
         image: None,

@@ -1,6 +1,7 @@
 Map from above, north up: x grows east (right), z grows south (down), in metres.
-One character is one 1.5 m x 1.5 m cell. Shown: x -26 to 26, z -15 to 36 (34 columns x 34 rows).
+One character is one 1.5 m x 1.5 m cell. Shown: x -25.5 to 25.5, z -15 to 36 (34 columns x 34 rows).
 Scale: 10 characters = 15 m. The ruler labels the column (top, v) or row (left, >) whose cells start at that value.
+A camera's glyph is its id where it can be (1-9, then A=10 to Z=34, no T); the legend names each camera's id.
 Coverage at Detect by day (25 px/m), for people tested 1 m above the ground.
 
   x         -15       0         15
@@ -42,10 +43,10 @@ Coverage at Detect by day (25 px/m), for people tested 1 m above the ground.
 
 Legend:
   #       building
-  =       street, driveway or footpath as mapped, that no enabled camera sees at Detect by day
-  .       street, driveway or footpath that some enabled camera is not ruled out from seeing at Detect by day
-  ,       other ground some enabled camera is not ruled out from seeing at Detect by day
-  (space) other ground, no camera reaches it
+  =       street, driveway or footpath as mapped, mostly ruled out for every enabled camera at Detect by day
+  .       street, driveway or footpath, mostly not ruled out for some enabled camera at Detect by day
+  ,       other ground, mostly not ruled out for some enabled camera at Detect by day
+  (space) other ground, mostly ruled out for every enabled camera at Detect by day
   o       outline of an area labelled own: area 1 "Front garden"
   T       target: 1 "Gate" at [0, 12]
   @       the point the user shared, at [-4, 16]

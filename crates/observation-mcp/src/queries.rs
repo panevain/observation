@@ -108,7 +108,7 @@ fn lighting_name(l: Lighting) -> &'static str {
     }
 }
 
-fn lighting_words(l: Lighting) -> &'static str {
+pub(crate) fn lighting_words(l: Lighting) -> &'static str {
     match l {
         Lighting::Day => "by day",
         Lighting::Night => "at night",

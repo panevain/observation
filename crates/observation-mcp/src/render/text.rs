@@ -1,15 +1,17 @@
 //! The character map: a north-up grid with a coordinate ruler, and its
 //! legend, worded for small models (every glyph spelt out, no addresses).
 
+use super::geom::clip_segment;
 use super::{
-    BUILDING, CameraKeyOut, GROUND_SEEN, Layer, LegendOut, MapModel, PINNED, RenderOut, STREET,
-    STREET_SEEN, TARGET, compass_word, label_word, metres, short_metres,
+    BUILDING, CameraKeyOut, GROUND_SEEN, Layer, LegendOut, MapModel, NO_DATA, PINNED, RenderOut,
+    STREET, STREET_SEEN, TARGET, compass_word, label_word, metres, short_metres,
 };
-use observation_core::camera::Lighting;
+use crate::queries::lighting_words;
 use observation_core::footage::AreaLabel;
 use std::fmt::Write as _;
 
-/// The glyph of open ground no camera reaches (or with coverage off).
+/// The glyph of other ground: mostly ruled out for every camera, or any
+/// ground with coverage off.
 const OPEN: char = ' ';
 
 /// The grid's cells, row by row from the north, and whether each camera's
@@ -81,7 +83,7 @@ fn tallies(m: &MapModel) -> Vec<Tally> {
 /// at least half of that street, or of the open ground, is not ruled out.
 fn ground_glyph(m: &MapModel, t: &Tally) -> char {
     if t.n == 0 {
-        return OPEN;
+        return NO_DATA;
     }
     if m.shows(Layer::Buildings) && t.building * 2 >= t.n {
         return BUILDING;
@@ -122,7 +124,12 @@ pub fn grid(m: &MapModel) -> Grid {
             let n = a.points.len();
             let edges = if n >= 3 { n } else { n - 1 };
             for k in 0..edges {
-                let (p, q) = (a.points[k], a.points[(k + 1) % n]);
+                // Only the part on the map is sampled, however long the
+                // edge.
+                let Some((p, q)) = clip_segment(a.points[k], a.points[(k + 1) % n], v.min, v.max())
+                else {
+                    continue;
+                };
                 let len = ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2)).sqrt();
                 let steps = ((len / (v.cell_m / 3.0)).ceil() as usize).max(1);
                 for s in 0..=steps {
@@ -170,13 +177,6 @@ fn at(p: [f32; 2]) -> String {
     format!("[{}, {}]", metres(p[0]), metres(p[1]))
 }
 
-fn lighting_words(l: Lighting) -> &'static str {
-    match l {
-        Lighting::Day => "by day",
-        Lighting::Night => "at night",
-    }
-}
-
 /// "at Detect by day".
 fn settings_words(m: &MapModel) -> String {
     format!(
@@ -217,7 +217,7 @@ pub fn camera_keys(m: &MapModel, g: &Grid) -> Vec<CameraKeyOut> {
             bearing_deg: c.yaw_deg.rem_euclid(360.0),
             faces: compass_word(c.yaw_deg).to_owned(),
             on_map,
-            not_counted: c.not_counted.map(str::to_owned),
+            not_counted: c.not_counted.clone(),
         })
         .collect()
 }
@@ -232,7 +232,7 @@ fn camera_meaning(m: &MapModel, g: &Grid, k: usize) -> String {
         compass_word(c.yaw_deg),
         c.yaw_deg.rem_euclid(360.0)
     );
-    if let Some(why) = c.not_counted {
+    if let Some(why) = &c.not_counted {
         let _ = write!(s, "; {why}, so not counted");
     }
     if m.view.cell_of(c.at).is_none() {
@@ -292,7 +292,7 @@ pub fn legend(m: &MapModel, g: &Grid) -> Vec<LegendOut> {
         add(
             STREET.into(),
             if covered {
-                format!("{what}, that no enabled camera sees {at_settings}")
+                format!("{what}, mostly ruled out for every enabled camera {at_settings}")
             } else {
                 what.to_owned()
             },
@@ -302,24 +302,36 @@ pub fn legend(m: &MapModel, g: &Grid) -> Vec<LegendOut> {
         add(
             STREET_SEEN.into(),
             format!(
-                "street, driveway or footpath that some enabled camera is not ruled out from seeing {at_settings}"
+                "street, driveway or footpath, mostly not ruled out for some enabled camera {at_settings}"
             ),
         );
     }
+    // With the streets layer hidden, street cells are drawn as ground.
+    let ground = if m.shows(Layer::Streets) {
+        "other ground"
+    } else {
+        "ground (streets hidden, so street included)"
+    };
     if g.has(GROUND_SEEN) {
         add(
             GROUND_SEEN.into(),
-            format!("other ground some enabled camera is not ruled out from seeing {at_settings}"),
+            format!("{ground}, mostly not ruled out for some enabled camera {at_settings}"),
         );
     }
     if g.has(OPEN) {
         add(
             "(space)".into(),
             if covered {
-                "other ground, no camera reaches it".into()
+                format!("{ground}, mostly ruled out for every enabled camera {at_settings}")
             } else {
-                "other ground".into()
+                ground.to_owned()
             },
+        );
+    }
+    if g.has(NO_DATA) {
+        add(
+            NO_DATA.into(),
+            "outside the area's map data: nothing is known there".into(),
         );
     }
     for label in [
@@ -373,7 +385,7 @@ pub fn legend(m: &MapModel, g: &Grid) -> Vec<LegendOut> {
 /// Whether a legend entry is about the ground (the grid's own glyphs), not
 /// a mark the picture shares.
 fn ground_entry(e: &LegendOut) -> bool {
-    [BUILDING, STREET, STREET_SEEN, GROUND_SEEN]
+    [BUILDING, STREET, STREET_SEEN, GROUND_SEEN, NO_DATA]
         .iter()
         .any(|c| e.glyph == c.to_string())
         || e.glyph == "(space)"
@@ -426,6 +438,7 @@ fn ruled(m: &MapModel, g: &Grid) -> String {
 const PICTURE_KEY: &str = "Picture: north up, same area as the grid. Dark grey: buildings. \
     Light grey: street, driveways and footpaths as mapped. Yellow, orange, red and purple \
     shading: ground 1, 2, 3, and 4 or more enabled cameras are not ruled out from seeing. \
+    Pale grey beyond the area: no map data. \
     Blue dots: cameras, labelled with their glyphs, with a line the way each faces (grey: \
     not counted). White \
     diamonds: targets (T and the target id). Dashed outlines: areas as drawn (green own, \
@@ -446,10 +459,10 @@ pub fn document(m: &MapModel, g: &Grid, out: &RenderOut, with_grid: bool) -> Str
     let _ = writeln!(
         s,
         "One character is one {cell} m x {cell} m cell. Shown: x {} to {}, z {} to {} ({} columns x {} rows).",
-        metres(v.min[0]),
-        metres(max[0]),
-        metres(v.min[1]),
-        metres(max[1]),
+        short_metres(v.min[0]),
+        short_metres(max[0]),
+        short_metres(v.min[1]),
+        short_metres(max[1]),
         v.columns,
         v.rows
     );
@@ -459,6 +472,12 @@ pub fn document(m: &MapModel, g: &Grid, out: &RenderOut, with_grid: bool) -> Str
         super::TICK_CELLS,
         short_metres(v.tick_m())
     );
+    if m.shows(Layer::Cameras) && !m.cameras.is_empty() {
+        let _ = writeln!(
+            s,
+            "A camera's glyph is its id where it can be (1-9, then A=10 to Z=34, no T); the legend names each camera's id."
+        );
+    }
     if let Some(c) = &out.coverage {
         let _ = writeln!(
             s,
