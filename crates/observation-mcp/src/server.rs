@@ -64,6 +64,9 @@ target_verdicts and who_sees_point say whether the model rules out that a camera
 and why, and find_gaps lists the largest stretches of street no camera sees. Verdicts are \
 one-sided: say \"not ruled out\" or \"ruled out: <reason>\", never that a camera sees \
 something. Name buildings by index and distance, never by a neighbour's address. \
+To get a sense of the scene without guessing coordinates, call scene_summary, \
+describe_surroundings, list_buildings, list_streets and camera_view, and suggest_mount_points \
+for wall mounts to pass to place_camera. \
 Coverage figures are estimates that leave out trees, fences and vehicles: always pass on \
 the data date and the caveats the tools return.";
 
@@ -117,7 +120,8 @@ impl ObservationMcp {
     }
 
     /// Every tool: the scene tools, the app tools, the place and query
-    /// tools, the proposal tools and the working-scene tools, with
+    /// tools, the proposal tools, the working-scene tools and the scene
+    /// description tools, with
     /// `scene_id` documented on each that takes a scene
     /// ([`crate::store::document_scene_ids`]). Built once, on first use.
     pub fn all_tools() -> &'static ToolRouter<Self> {
@@ -128,7 +132,8 @@ impl ObservationMcp {
                 + Self::places_tool_router()
                 + Self::query_tool_router()
                 + Self::proposal_tool_router()
-                + Self::store_tool_router();
+                + Self::store_tool_router()
+                + Self::describe_tool_router();
             crate::store::document_scene_ids(tools)
         })
     }
@@ -1230,6 +1235,13 @@ mod tests {
             "undo",
             "diff_scenes",
             "apply_edits",
+            "describe_surroundings",
+            "list_buildings",
+            "list_streets",
+            "suggest_mount_points",
+            "scene_summary",
+            "camera_view",
+            "convert_position",
         ] {
             assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
         }

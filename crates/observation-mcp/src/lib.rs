@@ -26,6 +26,7 @@
 //! | [`figures`] | coverage figures for a whole scene |
 //! | [`places`] | labelled areas and targets, and the tools that edit them |
 //! | [`queries`] | verdicts, per-camera splits and street gaps, and their tools |
+//! | [`describe`] | the scene in words (surroundings, buildings, streets, mount points, a camera's view), and [`geometry`], its bearings, compass words and street helpers |
 //! | [`schema`] | the schema of tool fields held as untyped JSON objects |
 //! | [`server`] | the MCP tools, resources and prompts |
 //! | [`store`] | working scenes held by id (`s1`), `scene_id` on every scene tool, and the tools that open, export, undo, compare and batch-edit them |
@@ -37,9 +38,11 @@
 pub mod app;
 pub mod area;
 pub mod catalog;
+pub mod describe;
 pub mod edit;
 pub mod error;
 pub mod figures;
+pub mod geometry;
 pub mod http;
 pub mod link;
 pub mod places;

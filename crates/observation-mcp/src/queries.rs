@@ -132,7 +132,7 @@ fn with_overrides(
 
 /// Runs `f` off the async runtime (line of sight is CPU work), with the
 /// connection's real areas in view, as `compute_coverage` does.
-async fn off_runtime<T: Send + 'static>(
+pub(crate) async fn off_runtime<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, ToolError> + Send + 'static,
 ) -> Result<T, String> {
     let areas = area::current_areas();
