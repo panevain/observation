@@ -52,12 +52,24 @@ pub(super) fn esc(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
-            // Control characters are not allowed in XML.
-            c if (c as u32) < 0x20 => out.push(' '),
+            // Tab and line breaks are allowed, but read as a space anyway.
+            c if c < ' ' || !xml_char(c) => out.push(' '),
             c => out.push(c),
         }
     }
     out
+}
+
+/// Whether XML 1.0 allows `c` in a document (its `Char` production): tab,
+/// line feed, carriage return, and everything from U+0020 on but the
+/// surrogates (which a Rust `char` never is) and U+FFFE and U+FFFF. No
+/// character reference can stand for the others either, so they are
+/// replaced.
+pub(super) fn xml_char(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..
+    )
 }
 
 /// `v` with at most `decimals` decimals and no trailing zeros (`-0` as `0`).
@@ -283,6 +295,10 @@ mod tests {
             esc("<a href=\"x\">&'\u{7}"),
             "&lt;a href=&quot;x&quot;&gt;&amp;&#39; "
         );
+        // Every character XML 1.0 does not allow, and the controls it does.
+        assert_eq!(esc("a\u{FFFE}b\u{FFFF}c\u{0}\t\n\r"), "a b c    ");
+        assert_eq!(esc("é\u{FFFD}\u{10FFFF}"), "é\u{FFFD}\u{10FFFF}");
+        assert!(!xml_char('\u{FFFE}') && !xml_char('\u{1F}') && xml_char('\u{E000}'));
         let lines = wrap("one two three four five six seven", 60.0, 10.0);
         assert!(lines.len() > 1);
         assert!(

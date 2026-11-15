@@ -701,3 +701,22 @@ fn a_camera_splits_the_unseen_street_in_two() {
     // The same inputs give the same gaps.
     assert_eq!(street_gaps(&l, &params, &fc, None), gaps);
 }
+
+#[test]
+fn fresh_ids_stay_in_range_and_never_collide() {
+    assert_eq!(fresh_id([]), 1);
+    assert_eq!(fresh_id([4, 2]), 5, "one above the highest");
+    assert_eq!(fresh_id([MAX_ITEM_ID - 1]), MAX_ITEM_ID);
+    // Past the largest id, the lowest free one, so that ids handed out one
+    // after another never repeat (they used to stick at `u32::MAX`).
+    assert_eq!(fresh_id([MAX_ITEM_ID, 1, 3]), 2);
+    let mut ids = vec![u32::MAX, MAX_ITEM_ID];
+    for _ in 0..MAX_TARGETS {
+        let id = fresh_id(ids.iter().copied());
+        assert!(
+            (1..=MAX_ITEM_ID).contains(&id) && !ids.contains(&id),
+            "{id}"
+        );
+        ids.push(id);
+    }
+}

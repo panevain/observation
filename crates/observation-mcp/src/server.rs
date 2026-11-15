@@ -856,8 +856,8 @@ impl ObservationMcp {
              outlines are as I describe them, not property records. Ask which places matter to \
              me, such as my front door, a side gate or a path, and mark each with add_target. \
              Then run camera_split and report for each camera, in a short table, the m² of \
-             visible ground on my land, on each neighbour's, on the public street and \
-             elsewhere, as the low to high range beside each outline's own area. Run \
+             visible ground on my land, on each neighbour's, on the street, driveways and \
+             footpaths as mapped (not all of it public) and elsewhere, as the low to high range beside each outline's own area. Run \
              target_verdicts and report each target camera by camera: say \"not ruled out\" \
              or \"ruled out\" with the reason, at each detail level by day and at night, and \
              never that a camera \"sees\" a place. Name buildings by index and distance, \

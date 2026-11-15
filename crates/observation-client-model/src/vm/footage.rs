@@ -26,6 +26,11 @@ pub const ONE_SIDED_NOTE: &str = "Not ruled out: some of the target is visible i
     Hedges, fences, trees and vehicles are not modelled and can only block more, \
     so this never says the camera sees it. Ruled out: the model rules it out, for the reason given.";
 
+/// The split's row for the street mask. It holds service ways (driveways)
+/// and footpaths as well as roads, and those are often private, so it is
+/// not called public.
+pub const STREET_ROW: &str = "Street, driveways and footpaths (as mapped)";
+
 /// `412 m²`.
 pub fn m2(v: f32) -> String {
     format!("{v:.0} m²")
@@ -49,7 +54,7 @@ pub enum SplitRowKind {
     Label(AreaLabel),
     /// One area, with its label.
     Area(Option<AreaLabel>),
-    /// The street as mapped.
+    /// The street as mapped: roads, driveways and footpaths.
     Street,
     /// Ground neither on the street nor inside a labelled area.
     Unlabelled,
@@ -133,17 +138,19 @@ impl SplitVm {
         );
         rows.push(SplitRow {
             kind: SplitRowKind::Street,
-            what: "Public street (as mapped)".to_owned(),
+            what: STREET_ROW.to_owned(),
             value: m2(split.street_m2),
-            tip: "Road surfaces, driveways and footpaths as mapped in OpenStreetMap, \
-                  whatever areas are drawn over them"
+            tip: "Roads, driveways (service ways) and footpaths as mapped in OpenStreetMap, \
+                  whatever areas are drawn over them. Driveways and footpaths are often \
+                  private, so this is not all public ground"
                 .to_owned(),
         });
         rows.push(SplitRow {
             kind: SplitRowKind::Unlabelled,
             what: "Unlabelled ground".to_owned(),
             value: range_text(&split.unlabelled),
-            tip: "Ground seen that is neither street nor inside a labelled area \
+            tip: "Ground seen that is neither on the mapped street, driveways and footpaths \
+                  nor inside a labelled area \
                   (moving the outlines out leaves less of it)"
                 .to_owned(),
         });
@@ -583,7 +590,7 @@ mod tests {
                     "Drive · outline 50 m²",
                     "5–7 m² (as drawn 6)"
                 ),
-                (SplitRowKind::Street, "Public street (as mapped)", "120 m²"),
+                (SplitRowKind::Street, STREET_ROW, "120 m²"),
                 (
                     SplitRowKind::Unlabelled,
                     "Unlabelled ground",

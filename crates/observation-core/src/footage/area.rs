@@ -3,7 +3,12 @@
 use crate::coverage::{Region, RegionProblem, outline_area_m2, outline_problem};
 use crate::util::planar::ring_bounds;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
+/// The largest camera, area or target id a scene may hold. The client's
+/// proposal preview marks its own camera ids with bit 31, so scene ids stay
+/// below it; the counters that hand out new ids never reach it.
+pub const MAX_ITEM_ID: u32 = (1 << 31) - 1;
 /// Most labelled areas a scene may have.
 pub const MAX_AREAS: usize = 64;
 /// Most targets a scene may have.
@@ -119,9 +124,22 @@ pub fn area_by_id_mut(areas: &mut [LabelledArea], id: Option<u32>) -> Option<&mu
     areas.iter_mut().find(|a| a.id == id)
 }
 
-/// An id one above the highest in `ids` (1 when there are none).
+/// An id that is not in `ids`, within 1 to [`MAX_ITEM_ID`]: one above the
+/// highest (1 when there are none) while that is within range, otherwise the
+/// lowest free one. A scene holds a few hundred items at most, so a free id
+/// always exists; should every id be taken, the result is [`MAX_ITEM_ID`].
 pub fn fresh_id(ids: impl IntoIterator<Item = u32>) -> u32 {
-    ids.into_iter().max().map_or(1, |m| m.saturating_add(1))
+    let taken: Vec<u32> = ids.into_iter().collect();
+    match taken.iter().max() {
+        None => 1,
+        Some(&m) if m < MAX_ITEM_ID => m + 1,
+        Some(_) => {
+            let taken: HashSet<u32> = taken.into_iter().collect();
+            (1..=MAX_ITEM_ID)
+                .find(|id| !taken.contains(id))
+                .unwrap_or(MAX_ITEM_ID)
+        }
+    }
 }
 
 /// Sets the area the figures are limited to (`limit`, an id in `areas`) to

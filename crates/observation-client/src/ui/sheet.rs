@@ -68,7 +68,7 @@ pub fn window(
             hint(ui, t, TIER_NOTE);
             section(ui, t, "Save");
             let ready = not_ready(&d.scene, &d.models, &d.coverage, d.area.is_some());
-            if let Some(why) = ready {
+            if let Some(why) = &ready {
                 ui.label(RichText::new(why).color(t.text_muted));
             }
             ui.horizontal_wrapped(|ui| {
@@ -81,7 +81,7 @@ pub fn window(
                     if ui
                         .add_enabled(ready.is_none(), button)
                         .on_hover_text(format.tip())
-                        .on_disabled_hover_text(ready.unwrap_or_default())
+                        .on_disabled_hover_text(ready.as_deref().unwrap_or_default())
                         .clicked()
                     {
                         asked = Some(format);

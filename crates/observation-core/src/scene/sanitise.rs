@@ -1,8 +1,8 @@
 //! Reading a scene file: the single validation point for untrusted files.
 
 use super::{
-    MAX_AREAS, MAX_CAMERAS, MAX_CUSTOM_MODELS, MAX_TARGETS, SCENE_FORMAT, SCENE_VERSION,
-    SceneError, SceneFile,
+    MAX_AREAS, MAX_CAMERAS, MAX_CUSTOM_MODELS, MAX_ITEM_ID, MAX_TARGETS, SCENE_FORMAT,
+    SCENE_VERSION, SceneError, SceneFile,
 };
 use crate::camera::{
     CUSTOM_ID_PREFIX, MAX_CUSTOM_PPM, MAX_GROUP_CHARS, MIN_CUSTOM_PPM, fresh_custom_id,
@@ -19,6 +19,7 @@ impl SceneFile {
         let mut scene: Self = serde_json::from_str(s)?;
         scene.check_header()?;
         scene.check_counts()?;
+        scene.tidy_camera_ids();
         scene.tidy_groups();
         scene.check_camera_poses()?;
         scene.tidy_areas();
@@ -76,6 +77,13 @@ impl SceneFile {
         Ok(())
     }
 
+    /// A repeated camera id, or one above [`MAX_ITEM_ID`], is replaced by a
+    /// fresh one; the first camera with an id in range keeps it. Nothing in
+    /// the scene refers to a camera by id, so nothing else follows.
+    fn tidy_camera_ids(&mut self) {
+        make_ids_unique(self.cameras.iter_mut().map(|c| &mut c.id).collect());
+    }
+
     /// A blank group means "by address"; an overlong one is cut short, and
     /// whitespace the cut leaves at its end is trimmed too, so the group
     /// loads the same the next time.
@@ -111,9 +119,11 @@ impl SceneFile {
     /// Drops each unusable area rather than the whole scene, as with the
     /// single region before: one with more than [`MAX_REGION_POINTS`] corners
     /// or a corner that is not a number within 10 000 m. Names are trimmed
-    /// and cut to [`MAX_NAME_CHARS`] (blank means none), a repeated id is
-    /// replaced by a fresh one (the first area with an id keeps it), and
-    /// `limit_figures_to` is cleared if it names no area. An outline that
+    /// and cut to [`MAX_NAME_CHARS`] (blank means none), a repeated id or
+    /// one above [`MAX_ITEM_ID`] is replaced by a fresh one (the first area
+    /// with an id in range keeps it, and `limit_figures_to` follows an area
+    /// whose id was out of range), and `limit_figures_to` is cleared if it
+    /// names no area. An outline that
     /// encloses no area is kept, as the region's was: it just does not count.
     fn tidy_areas(&mut self) {
         self.areas
@@ -125,13 +135,11 @@ impl SceneFile {
                 .map(|n| tidy_text(n, MAX_NAME_CHARS))
                 .filter(|n| !n.is_empty());
         }
-        let mut next = fresh_id(self.areas.iter().map(|a| a.id));
-        let mut seen = HashSet::new();
-        for a in &mut self.areas {
-            if !seen.insert(a.id) {
-                a.id = next;
-                next = next.saturating_add(1);
-            }
+        let moved = make_ids_unique(self.areas.iter_mut().map(|a| &mut a.id).collect());
+        if let Some(id) = self.limit_figures_to
+            && let Some(&new) = moved.get(&id)
+        {
+            self.limit_figures_to = Some(new);
         }
         if let Some(id) = self.limit_figures_to
             && !self.areas.iter().any(|a| a.id == id)
@@ -144,7 +152,7 @@ impl SceneFile {
     /// within 10 000 m, or a [`TargetPlace::problem`] (too many corners, more
     /// than 30 m across, an outline that encloses no area, or a wall without
     /// a direction). Names are trimmed and cut to [`MAX_NAME_CHARS`], and a
-    /// repeated id is replaced by a fresh one.
+    /// repeated id or one above [`MAX_ITEM_ID`] is replaced by a fresh one.
     fn tidy_targets(&mut self) {
         self.targets.retain(|t| {
             let in_range = match &t.at {
@@ -158,14 +166,7 @@ impl SceneFile {
         for t in &mut self.targets {
             t.name = tidy_text(&t.name, MAX_NAME_CHARS);
         }
-        let mut next = fresh_id(self.targets.iter().map(|t| t.id));
-        let mut seen = HashSet::new();
-        for t in &mut self.targets {
-            if !seen.insert(t.id) {
-                t.id = next;
-                next = next.saturating_add(1);
-            }
-        }
+        make_ids_unique(self.targets.iter_mut().map(|t| &mut t.id).collect());
     }
 
     /// The subject height and the custom pixel density are in range.
@@ -239,6 +240,31 @@ impl SceneFile {
     }
 }
 
+/// Gives each id that repeats an earlier one, or lies above [`MAX_ITEM_ID`],
+/// a fresh one ([`fresh_id`]): the first id within range keeps its value.
+/// Returns, for each out-of-range id, the id its first holder now has, so
+/// that what referred to it can follow.
+fn make_ids_unique(mut ids: Vec<&mut u32>) -> HashMap<u32, u32> {
+    let mut taken = HashSet::new();
+    let keep: Vec<bool> = ids
+        .iter()
+        .map(|id| **id <= MAX_ITEM_ID && taken.insert(**id))
+        .collect();
+    let mut moved = HashMap::new();
+    for (id, keep) in ids.iter_mut().zip(keep) {
+        if keep {
+            continue;
+        }
+        let new = fresh_id(taken.iter().copied());
+        taken.insert(new);
+        if **id > MAX_ITEM_ID {
+            moved.entry(**id).or_insert(new);
+        }
+        **id = new;
+    }
+    moved
+}
+
 /// `s` trimmed and cut to `max` characters, then trimmed again, so that it
 /// loads the same the next time.
 fn tidy_text(s: &str, max: usize) -> String {
@@ -255,7 +281,7 @@ fn finite(v: &[f32]) -> bool {
 mod tests {
     use super::super::tests::scene;
     use super::*;
-    use crate::camera::{CameraKind, CameraModel, DoriLevel};
+    use crate::camera::{CameraKind, CameraModel, CameraPlacement, DoriLevel};
     use crate::coverage::CoverageParams;
     use crate::footage::{AreaLabel, LabelledArea, Target};
     use crate::provenance::Provenance;
@@ -446,6 +472,42 @@ mod tests {
         let before = s.clone();
         s.tidy_targets();
         assert_eq!(s, before, "a second pass changes nothing");
+    }
+
+    #[test]
+    fn ids_above_the_largest_are_replaced_like_repeated_ones() {
+        let mut s = scene();
+        let cam = s.cameras[0].clone();
+        s.cameras = [u32::MAX, 7, MAX_ITEM_ID + 1, 7, MAX_ITEM_ID]
+            .into_iter()
+            .map(|id| CameraPlacement { id, ..cam.clone() })
+            .collect();
+        s.areas = vec![
+            area(u32::MAX, square(0.0, 1.0)),
+            area(u32::MAX, square(2.0, 1.0)),
+            area(3, square(4.0, 1.0)),
+        ];
+        s.limit_figures_to = Some(u32::MAX);
+        s.targets = vec![Target {
+            id: u32::MAX,
+            name: "Gate".into(),
+            at: TargetPlace::Ground {
+                points: square(0.0, 1.0),
+            },
+        }];
+        let loaded = SceneFile::from_json(&s.to_json()).unwrap();
+        let cameras: Vec<u32> = loaded.cameras.iter().map(|c| c.id).collect();
+        // Past `MAX_ITEM_ID`, fresh ids are the lowest free ones.
+        assert_eq!(cameras, [1, 7, 2, 3, MAX_ITEM_ID]);
+        let areas: Vec<u32> = loaded.areas.iter().map(|a| a.id).collect();
+        assert_eq!(areas, [4, 5, 3]);
+        assert_eq!(
+            loaded.figures_area().map(|a| a.points[0]),
+            Some([0.0, 0.0]),
+            "the limit follows the first area that had the id"
+        );
+        assert_eq!(loaded.targets[0].id, 1);
+        assert_eq!(SceneFile::from_json(&loaded.to_json()).unwrap(), loaded);
     }
 
     #[test]

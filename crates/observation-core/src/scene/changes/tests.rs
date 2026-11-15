@@ -202,6 +202,37 @@ fn malformed_sets_are_refused() {
         base: Some(1),
         new: Some(1)
     })));
+    // Ids above `MAX_ITEM_ID`, which no scene may hold.
+    let big = MAX_ITEM_ID + 1;
+    assert!(malformed(&set(Change::Camera(ItemChange {
+        id: big,
+        base: None,
+        new: Some(camera(big, 0.0))
+    }))));
+    assert!(malformed(&set(Change::Area(ItemChange {
+        id: u32::MAX,
+        base: None,
+        new: Some(area(u32::MAX))
+    }))));
+    assert!(malformed(&set(Change::Target(ItemChange {
+        id: big,
+        base: Some(target(big, "a")),
+        new: None
+    }))));
+    assert!(malformed(&set(Change::LimitFiguresTo {
+        base: None,
+        new: Some(big)
+    })));
+    assert!(
+        set(Change::Camera(ItemChange {
+            id: MAX_ITEM_ID,
+            base: None,
+            new: Some(camera(MAX_ITEM_ID, 0.0))
+        }))
+        .check()
+        .is_ok(),
+        "the largest id itself is allowed"
+    );
     let twice = ChangeSet {
         changes: vec![
             Change::Target(ItemChange {

@@ -5,7 +5,9 @@ use crate::camera::{ASSUMED_IR_RANGE_M, DoriLevel, MAX_FOV_DEG, MAX_RANGE_M};
 use crate::coverage::CoverageParams;
 use crate::footage::DEFAULT_OFFSET_M;
 use crate::osm::tags::{FOOT_WAYS, LANE_WIDTH_M, LANES_TAG, ROAD_WIDTHS, SERVICE_WAY, WIDTH_TAG_M};
-use crate::provenance::{CAVEATS, CAVEATS_BOUND, CAVEATS_VERSION};
+use crate::provenance::{CAVEATS, CAVEATS_BOUND, CAVEATS_VERSION, format_utc_minute};
+
+use super::Tier;
 
 /// One part of the methodology: a heading and its paragraphs (a paragraph
 /// starting with "• " is a list item).
@@ -24,12 +26,13 @@ pub use crate::scene::agent_log::AgentLogEntry as AgentChange;
 
 /// The methodology for figures computed with `params` on ground cells of
 /// `ground_cell_m` and wall patches of about `facade_cell_m`, followed by
-/// the agent log when there is one.
+/// the agent log when there is one, as a sheet at `tier` may print it.
 pub fn methodology(
     params: &CoverageParams,
     ground_cell_m: f32,
     facade_cell_m: f32,
     agent_log: &[AgentChange],
+    tier: Tier,
 ) -> Vec<Section> {
     let mut out = vec![
         street(),
@@ -37,27 +40,53 @@ pub fn methodology(
         places(),
         caveats(),
     ];
-    // ----- Agent log (#259) ----------------------------------------------
-    // Changes an AI agent proposed and the user accepted are listed here,
-    // under AGENT_LOG_HEADING, one line per change with the time it was
-    // accepted, from the scene's `agent_log` (#259 part 3). A scene without
-    // one prints no section.
+    // A scene without an agent log prints no section.
     if !agent_log.is_empty() {
-        out.push(Section {
-            heading: AGENT_LOG_HEADING.to_owned(),
-            paragraphs: agent_log
-                .iter()
-                .map(|c| {
-                    format!(
-                        "• {}: {}",
-                        crate::provenance::format_utc_minute(c.accepted_unix),
-                        c.summary.trim()
-                    )
-                })
-                .collect(),
-        });
+        out.push(agent_changes(agent_log, tier));
     }
     out
+}
+
+/// The changes an AI agent proposed and the user accepted (#259), from the
+/// scene's `agent_log`, under [`AGENT_LOG_HEADING`]. The Exact sheet lists
+/// each with the time it was accepted and the agent's summary. The summaries
+/// are free text from the agent and may name camera positions, labels or
+/// addresses, which the Aggregate sheet leaves out; so it lists only how
+/// many there are and when each was accepted.
+fn agent_changes(log: &[AgentChange], tier: Tier) -> Section {
+    let paragraphs = if tier.shows_positions() {
+        log.iter()
+            .map(|c| {
+                format!(
+                    "• {}: {}",
+                    format_utc_minute(c.accepted_unix),
+                    c.summary.trim()
+                )
+            })
+            .collect()
+    } else {
+        let n = log.len();
+        let changes = if n == 1 {
+            "1 change".to_owned()
+        } else {
+            format!("{n} changes")
+        };
+        std::iter::once(format!(
+            "An AI agent proposed {changes} to this scene that the user accepted, at the \
+             times below. What each change did is left out of this sheet: the agent \
+             describes it in its own words, which may name camera positions, labels or \
+             addresses. The descriptions appear on the Exact sheet."
+        ))
+        .chain(
+            log.iter()
+                .map(|c| format!("• Accepted {}", format_utc_minute(c.accepted_unix))),
+        )
+        .collect()
+    };
+    Section {
+        heading: AGENT_LOG_HEADING.to_owned(),
+        paragraphs,
+    }
 }
 
 /// "a, b and c".

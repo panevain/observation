@@ -11,6 +11,7 @@ use observation_core::camera::{
     CameraKind, CameraModel, CameraPlacement, Catalog, DoriLevel, Lighting, MAX_GROUP_CHARS,
 };
 use observation_core::example::{EXAMPLE_MODELS, example_cameras_around};
+use observation_core::footage::fresh_id;
 use observation_core::glam::Vec3;
 use observation_core::scene::{
     AreaRef, MAX_CAMERAS, MAX_CUSTOM_MODELS, SCENE_VERSION, SceneFile, lift_onto_terrain,
@@ -159,18 +160,11 @@ pub struct Place {
     pub label: Option<String>,
 }
 
-/// An id no camera in the scene has: one above the highest, or the lowest
-/// free one once the highest is `u32::MAX` (a scene holds at most
-/// [`MAX_CAMERAS`], so there is always one).
+/// An id no camera in the scene has, by the scene's rule
+/// ([`fresh_id`]): one above the highest, or the lowest free one once the
+/// highest is `MAX_ITEM_ID`.
 fn next_camera_id(scene: &SceneFile) -> u32 {
-    let taken = |id| scene.cameras.iter().any(|c| c.id == id);
-    match scene.cameras.iter().map(|c| c.id).max() {
-        None => 1,
-        Some(m) => m
-            .checked_add(1)
-            .or_else(|| (1..u32::MAX).find(|&id| !taken(id)))
-            .unwrap_or(0),
-    }
+    fresh_id(scene.cameras.iter().map(|c| c.id))
 }
 
 fn camera_mut(scene: &mut SceneFile, id: u32) -> Result<&mut CameraPlacement, ToolError> {
@@ -805,6 +799,9 @@ mod tests {
         assert_eq!(a, 1);
         assert_eq!(s.cameras[1].id, 1, "the lowest free id");
         assert_eq!(place_at(&mut s, 2.0, 0.0), 2);
+        // Ids stay within the scene's range: past `MAX_ITEM_ID` too.
+        s.cameras[0].id = observation_core::scene::MAX_ITEM_ID;
+        assert_eq!(place_at(&mut s, 3.0, 0.0), 3);
     }
 
     #[test]

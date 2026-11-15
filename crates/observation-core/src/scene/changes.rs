@@ -21,7 +21,7 @@
 //! malformed set before anything else reads it, and the lines that describe
 //! it ([`ChangeSet::lines`]) are plain text with names quoted and cut short.
 
-use super::{SceneError, SceneFile};
+use super::{MAX_ITEM_ID, SceneError, SceneFile};
 use crate::camera::{CameraModel, CameraPlacement};
 use crate::coverage::CoverageParams;
 use crate::footage::{LabelledArea, Target, TargetPlace};
@@ -225,6 +225,19 @@ fn check_item<T: Item>(c: &ItemChange<T::Id, T>) -> Result<(), ChangeError> {
     Ok(())
 }
 
+/// [`check_item`] for an item numbered by a `u32` id, which must also be at
+/// most [`MAX_ITEM_ID`], as in a scene file.
+fn check_numbered<T: Item<Id = u32>>(c: &ItemChange<u32, T>) -> Result<(), ChangeError> {
+    if c.id > MAX_ITEM_ID {
+        return Err(ChangeError::Malformed(format!(
+            "{} {}: the id is above the largest, {MAX_ITEM_ID}",
+            T::NOUN,
+            c.id
+        )));
+    }
+    check_item(c)
+}
+
 impl Change {
     /// What the change touches, unique within a set: kind and id.
     fn key(&self) -> String {
@@ -240,16 +253,26 @@ impl Change {
 
     fn check(&self) -> Result<(), ChangeError> {
         match self {
-            Self::Camera(c) => check_item(c),
+            Self::Camera(c) => check_numbered(c),
             Self::CustomModel(c) => check_item(c),
-            Self::Area(c) => check_item(c),
-            Self::Target(c) => check_item(c),
+            Self::Area(c) => check_numbered(c),
+            Self::Target(c) => check_numbered(c),
             Self::Params { base, new } if base == new => Err(ChangeError::Malformed(
                 "analysis settings: the new value is the base value".into(),
             )),
             Self::LimitFiguresTo { base, new } if base == new => Err(ChangeError::Malformed(
                 "figures limit: the new value is the base value".into(),
             )),
+            Self::LimitFiguresTo { base, new } => match [base, new]
+                .into_iter()
+                .flatten()
+                .find(|&&id| id > MAX_ITEM_ID)
+            {
+                Some(id) => Err(ChangeError::Malformed(format!(
+                    "figures limit: area {id} is above the largest id, {MAX_ITEM_ID}"
+                ))),
+                None => Ok(()),
+            },
             _ => Ok(()),
         }
     }
@@ -345,8 +368,8 @@ impl ChangeSet {
     }
 
     /// Refuses a set that is empty, too long or malformed: a change that
-    /// changes nothing, a value whose id is not the change's, or two changes
-    /// to the same item. Run on every set read from elsewhere.
+    /// changes nothing, a value whose id is not the change's, an id above
+    /// [`MAX_ITEM_ID`], or two changes to the same item. Run on every set read from elsewhere.
     pub fn check(&self) -> Result<(), ChangeError> {
         if self.changes.is_empty() {
             return Err(ChangeError::Empty);
