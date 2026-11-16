@@ -40,7 +40,7 @@ runs:
   steps:
     - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
       with:
-        version: 2026.10.25
+        version: 2026.11.5
         install: ${{ inputs.tools != '' }}
         # Only the locked release assets (mise.lock, mise.ci.lock). The action would add
         # --locked itself on seeing a lockfile; written out, the strict install does not depend

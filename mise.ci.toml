@@ -34,10 +34,10 @@ gh-actions-lock = "github:github/gh-actions-lock"
 # Security checks (security.yml, release.yml, release-watch.yml, hotfix.yml). Trivy comes
 # from its release, not aquasecurity/trivy-action, whose tags were compromised in March 2026
 # (CVE-2026-33634).
-trivy = "0.76.1"
+trivy = "0.76.2"
 cosign = "3.1.4"
 cargo-audit = { version = "0.22.2", version_prefix = "cargo-audit/v" }
-zizmor = "1.31.1"
+zizmor = "1.32.0"
 # The workflows' action lockfile (.github/workflows/actions.lock; ci.yml's actions-lock job):
 # the release binary of GitHub's `gh actions-lock` extension, run on its own, so no gh
 # extension is installed. Its assets are bare binaries named for the platform (linux-amd64);
