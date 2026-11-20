@@ -107,16 +107,20 @@ pub enum TargetRef {
 // Small helpers
 // ---------------------------------------------------------------------------
 
-fn round_to(v: f32, step: f32) -> f32 {
-    (v / step).round() * step
+/// `v` rounded to `1 / per` (`per` 10 for tenths). Dividing by `per`
+/// rather than multiplying by `1 / per`, which no `f32` holds exactly, gives
+/// the `f32` nearest the rounded decimal, so it serialises as `12.06`, not
+/// `12.059999`.
+fn round_to(v: f32, per: f32) -> f32 {
+    (v * per).round() / per
 }
 
 fn r1(v: f32) -> f32 {
-    round_to(v, 0.1)
+    round_to(v, 10.0)
 }
 
 fn r2(v: f32) -> f32 {
-    round_to(v, 0.01)
+    round_to(v, 100.0)
 }
 
 /// "at Detect by day".
