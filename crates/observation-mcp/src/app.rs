@@ -344,6 +344,21 @@ impl ObservationMcp {
     }
 }
 
+/// What connect_app returns: the app's state and the working scene it
+/// opened from the app's scene.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Connected {
+    #[serde(flatten)]
+    pub state: AppStateOut,
+    /// The working scene opened from the app's scene. While connected, scene
+    /// tools called without a scene_id use it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_id: Option<String>,
+    /// An earlier copy of the app's scene with edits, if one is still open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Disconnected {
     /// Whether an app was connected.
@@ -353,7 +368,7 @@ pub struct Disconnected {
 #[tool_router(router = app_tool_router, vis = "pub(crate)")]
 impl ObservationMcp {
     #[tool(
-        description = "Connect to the Observation app open on this computer, with its address and the code from its Connect agent dialog. Then every tool works on the user's real area.",
+        description = "Connect to the Observation app open on this computer, with its address and the code from its Connect agent dialog. Opens the app's scene as a working scene and returns its scene_id; scene tools called without one use it.",
         annotations(
             read_only_hint = false,
             idempotent_hint = false,
@@ -363,12 +378,48 @@ impl ObservationMcp {
     pub(crate) async fn connect_app(
         &self,
         Parameters(a): Parameters<ConnectArgs>,
-    ) -> Result<Json<AppStateOut>, String> {
-        self.link
+    ) -> Result<Json<Connected>, String> {
+        let snapshot = self
+            .link
             .connect(&a.url, &a.code)
             .await
-            .map(|s| Json(AppStateOut::of(s).for_profile(self)))
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // A copy of an earlier connection's scene, perhaps another app's,
+        // is no longer the default.
+        let earlier = self.scenes.take_app();
+        let mut state = AppStateOut::of(snapshot);
+        let mut scene_id = None;
+        // Opened now, so that the agent can edit the user's scene straight
+        // away. An app still loading its area has shared no scene yet; the
+        // agent opens it later with open_scene.
+        if state.scene.is_some() {
+            match self.open_app_scene(&state) {
+                Ok(handle) => {
+                    state.scene_summary = Some(handle.summary);
+                    scene_id = Some(handle.scene_id);
+                }
+                Err(e) => {
+                    state.scene_problem = Some(format!(
+                        "the app's scene could not be opened as a working scene: {e}"
+                    ));
+                }
+            }
+        }
+        let note = earlier.and_then(|id| {
+            let (_, version) = self.scenes.latest(id).ok()?;
+            (version > 1).then(|| {
+                format!(
+                    "{id}, the earlier copy of the app's scene, is still open at version \
+                     {version}, with edits this copy does not have: pass scene_id {id} to keep \
+                     working on it"
+                )
+            })
+        });
+        Ok(Json(Connected {
+            state: state.for_profile(self),
+            scene_id,
+            note,
+        }))
     }
 
     #[tool(

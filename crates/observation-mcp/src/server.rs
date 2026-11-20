@@ -1264,8 +1264,8 @@ impl ObservationMcp {
              1. Ask me for the app's address and the code from its Connect agent dialog, then \
              call connect_app.\n\
              2. Call get_started.\n\
-             3. Call open_scene with from \"app\" and keep the scene_id it returns, such as \
-             \"s1\".\n\
+             3. Keep the scene_id connect_app returned, such as \"s1\": it is a working copy \
+             of my scene. If it gave none, call open_scene with from \"app\" for one.\n\
              4. Look before you change anything: scene_summary, then render_map.\n\
              5. Make the change I ask for, passing that scene_id to every scene tool. For a new \
              camera, call suggest_mount_points or suggest_placement first, then place_camera. \

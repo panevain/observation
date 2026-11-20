@@ -386,7 +386,9 @@ impl AppLink {
             Ok(b) => Self::json(&b)?,
             Err(r) if r.status == 404 && !r.message.contains("OBS_AGENT_BRIDGE") => {
                 return Err(ToolError::Link(format!(
-                    "{}. Codes expire after 10 minutes, and a few wrong tries withdraw them",
+                    "{}. Each code works once and expires after 10 minutes, and a few wrong \
+                     tries withdraw it: ask the user for the code the app's Connect agent \
+                     dialog shows now, after they open it again if the connection was lost",
                     r.message
                 )));
             }

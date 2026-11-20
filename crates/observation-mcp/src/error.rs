@@ -31,7 +31,7 @@ pub enum ToolError {
     #[error("the camera catalogue could not be loaded: {0}")]
     Catalog(String),
     #[error(
-        "no app is connected: ask the user for the code in the app's Connect agent dialog, then call connect_app"
+        "no app is connected: ask the user for a new code from the app's Connect agent dialog (each code works once), then call connect_app"
     )]
     NotConnected,
     #[error("{0}")]
