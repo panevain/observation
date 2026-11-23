@@ -201,7 +201,7 @@ RUN cargo auditable build --release --locked -p observation-mcp \
     && cp target/release/observation-mcp /observation-mcp
 
 # The same distroless base as the app image (see runtime-base below), pinned by the same digest.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS mcp
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:532c7a94f9e96ba9db75eb9388f4227751131c7cb0a411d1a8521af4096135de AS mcp
 
 LABEL org.opencontainers.image.title="observation-mcp" \
       org.opencontainers.image.description="MCP server for Observation (stdio, or HTTP with bearer tokens): camera catalogue, scene editing and coverage on the demo street, offline" \
@@ -222,7 +222,7 @@ ENTRYPOINT ["/usr/local/bin/observation-mcp"]
 #   Distroless stops rebuilding a Debian release's images once the next one is out
 #   (cc-debian12 was frozen in August 2026), so move to the new suffix when that happens.
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime-base
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:532c7a94f9e96ba9db75eb9388f4227751131c7cb0a411d1a8521af4096135de AS runtime-base
 
 LABEL org.opencontainers.image.title="observation" \
       org.opencontainers.image.source="https://github.com/panevain/observation" \
