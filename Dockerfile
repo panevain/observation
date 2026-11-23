@@ -35,7 +35,7 @@ RUN set -eux; \
 # build is a regular image layer that the GHA layer cache keeps until the
 # dependency graph changes. Source-only changes rebuild just our crates.
 # ---------------------------------------------------------------------------
-FROM rust:1.99.1-slim-trixie@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7 AS chef
+FROM rust:1.100.0-slim-trixie@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe AS chef
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
